@@ -377,6 +377,10 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 	var stream sandbox.ProcessStream
 	var err error
 	if i.State == "starting" {
+		resources, e := a.Store.resourcesFor(ctx, i.ProjectID)
+		if e != nil {
+			return e
+		}
 		environment := []string{"HOME=/root", "PATH=/opt/node-v24.15.0/bin:/usr/local/bin:/usr/bin:/bin"}
 		if attachment.credential != "" {
 			// The credential travels in the start environment, not in a protocol
@@ -389,7 +393,7 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 				environment = append(environment, "PROJECT_PLATFORM_ENDPOINT="+endpoint)
 			}
 		}
-		stream, err = a.Backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: i.Reference, IdempotencyKey: i.ID, Command: a.RunnerBinary, Arguments: []string{"--session", i.SessionID, "--incarnation", i.ID}, Directory: "/workspace", Environment: environment})
+		stream, err = a.Backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: i.Reference, IdempotencyKey: i.ID, Command: a.RunnerBinary, Arguments: append([]string{"--session", i.SessionID, "--incarnation", i.ID}, resources.Profile.RunnerPaths()...), Directory: resources.Profile.RolePath("workspace"), Environment: environment})
 	} else {
 		stream, err = a.Backend.ConnectProcess(ctx, i.Reference, 0)
 	}

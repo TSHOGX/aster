@@ -95,7 +95,7 @@ func (r *AgentRecovery) recover(ctx context.Context, id string) error {
 		helper = "/usr/local/bin/agent-runner"
 	}
 	ref := sandbox.ProcessReference{StoreID: resources.Reference.StoreID, SandboxID: resources.Reference.SandboxID, Epoch: resources.Reference.Epoch, Handle: "agent-replay-" + uuid.NewString()}
-	stream, err := r.Backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: ref, IdempotencyKey: ref.Handle, Command: helper, Arguments: []string{"--replay", "--session", i.SessionID, "--incarnation", i.ID, "--owner", strconv.FormatUint(i.Owner, 10), "--after", strconv.FormatUint(i.Ingested, 10)}, Directory: "/workspace"})
+	stream, err := r.Backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: ref, IdempotencyKey: ref.Handle, Command: helper, Arguments: append([]string{"--replay", "--session", i.SessionID, "--incarnation", i.ID, "--owner", strconv.FormatUint(i.Owner, 10), "--after", strconv.FormatUint(i.Ingested, 10)}, resources.Profile.RunnerPaths()...), Directory: resources.Profile.RolePath("workspace")})
 	if err != nil {
 		return r.failure(ctx, i, err)
 	}

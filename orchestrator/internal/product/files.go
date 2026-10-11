@@ -178,7 +178,7 @@ type FileBackend interface {
 	sandbox.VolumeReads
 	sandbox.VolumeListings
 	sandbox.VolumeFileMutations
-	WatchWorkspace(context.Context, sandbox.Reference, uint64) (sandbox.FileWatch, error)
+	WatchWorkspace(context.Context, sandbox.Reference, string, uint64) (sandbox.FileWatch, error)
 }
 
 // Files composes read-only reusable readers and durable one-shot mutation helpers. No pathname or workspace locks exist.
@@ -240,6 +240,10 @@ func (f *Files) execute(ctx context.Context, scope Scope, id string, action Prod
 	if err := f.Lifecycle.EnsureActive(ctx, scope, f.Bindings); err != nil {
 		return FileOperation{}, err
 	}
+	active, err := f.Lifecycle.ActiveResources(ctx, scope)
+	if err != nil {
+		return FileOperation{}, err
+	}
 	f.mu.Lock()
 	if len(f.active) >= 16 {
 		f.mu.Unlock()
@@ -274,7 +278,7 @@ func (f *Files) execute(ctx context.Context, scope Scope, id string, action Prod
 		stop := context.AfterFunc(runctx, func() { _ = closer.Close() })
 		defer stop()
 	}
-	stream, err := f.Backend.StartProcess(runctx, sandbox.StartProcessRequest{ProcessReference: o.Reference, IdempotencyKey: o.Reference.Handle, Command: helper, Arguments: []string{string(raw)}, Directory: "/workspace"})
+	stream, err := f.Backend.StartProcess(runctx, sandbox.StartProcessRequest{ProcessReference: o.Reference, IdempotencyKey: o.Reference.Handle, Command: helper, Arguments: []string{"--root", active.Profile.RolePath("workspace"), string(raw)}, Directory: active.Profile.RolePath("workspace")})
 	observed := false
 	if err == nil {
 		stopClose := context.AfterFunc(runctx, func() { _ = stream.Close() })
@@ -515,7 +519,7 @@ func (f *Files) Watch(ctx context.Context, scope Scope, after uint64) (sandbox.F
 	if err != nil {
 		return nil, err
 	}
-	watch, err := f.Backend.WatchWorkspace(ctx, r.Reference, after)
+	watch, err := f.Backend.WatchWorkspace(ctx, r.Reference, r.Profile.RolePath("workspace"), after)
 	if err != nil {
 		return nil, err
 	}

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"harness-platform/orchestrator/internal/content"
+	"harness-platform/orchestrator/internal/runtimerelease"
 	"os"
 
 	"harness-platform/orchestrator/internal/product"
@@ -15,7 +16,7 @@ import (
 	"harness-platform/orchestrator/internal/testfixture"
 )
 
-func prepare(ctx context.Context, path string, profile *product.Profile, entries map[string][]content.Entry) error {
+func prepare(ctx context.Context, path string, profile *product.Profile, entries map[string][]content.Entry, publications []content.Publication) error {
 	if info, err := os.Stat(path); err == nil && info.Size() > 0 {
 		return nil
 	} else if err != nil && !os.IsNotExist(err) {
@@ -48,6 +49,9 @@ func prepare(ctx context.Context, path string, profile *product.Profile, entries
 	if err = testfixture.SeedIdentities(ctx, tx); err != nil {
 		return err
 	}
+	if err = testfixture.RecordRuntimePublications(ctx, tx, publications); err != nil {
+		return err
+	}
 	if profile != nil {
 		raw, err := json.Marshal(profile)
 		if err != nil {
@@ -78,21 +82,59 @@ func prepare(ctx context.Context, path string, profile *product.Profile, entries
 	return tx.Commit()
 }
 func Open(ctx context.Context, path string) (*product.Store, error) {
-	if err := prepare(ctx, path, nil, nil); err != nil {
+	if err := prepare(ctx, path, nil, nil, nil); err != nil {
 		return nil, err
 	}
 	return product.Open(ctx, path)
 }
 func OpenApplication(ctx context.Context, path string, identity product.ApplicationIdentity) (*product.Store, error) {
-	if err := prepare(ctx, path, nil, nil); err != nil {
+	if err := prepare(ctx, path, nil, nil, nil); err != nil {
 		return nil, err
 	}
 	return product.OpenApplication(ctx, path, identity)
 }
 
 func OpenWithProfile(ctx context.Context, path string, profile product.Profile, entries map[string][]content.Entry) (*product.Store, error) {
-	if err := prepare(ctx, path, &profile, entries); err != nil {
+	if err := prepare(ctx, path, &profile, entries, nil); err != nil {
 		return nil, err
 	}
 	return product.Open(ctx, path)
+}
+
+func OpenWithRuntime(ctx context.Context, path string, profile product.Profile, backend content.Backend, entries map[string][]content.Entry, existing ...content.Publication) (*product.Store, product.Profile, error) {
+	fail := func(err error) (*product.Store, product.Profile, error) { return nil, profile, err }
+	raw, err := os.ReadFile(os.Getenv("PROJECT_TEST_MANIFEST"))
+	if err != nil {
+		return fail(err)
+	}
+	var manifest runtimerelease.Manifest
+	if err = json.Unmarshal(raw, &manifest); err != nil {
+		return fail(err)
+	}
+	required := []runtimerelease.RequiredPublication{}
+	for _, role := range manifest.Mounts.RequiredPublications {
+		if _, ok := profile.VolumeForRole(role.Role); !ok {
+			required = append(required, role)
+		}
+	}
+	added, err := testfixture.RuntimePublications(ctx, backend, required)
+	if err != nil {
+		return fail(err)
+	}
+	sources := map[string][]content.Entry{}
+	for digest, value := range entries {
+		sources[digest] = value
+	}
+	records := append([]content.Publication{}, existing...)
+	for _, item := range added {
+		p := item.Publication
+		records = append(records, p)
+		sources[p.RevisionDigest] = p.Entries
+		profile.Volumes = append(profile.Volumes, product.VolumePlan{Key: item.Required.Role, Role: item.Required.Role, Destination: item.Required.Destination, Storage: "shared_readonly", Access: "read_only", CapacityBytes: p.Capacity, Source: &product.VolumeSource{Reference: product.ArtifactReference{ID: item.Required.ArtifactID, Version: p.RevisionDigest, Digest: p.RevisionDigest}, VolumeID: p.PublishedVolumeID, MinimumBytes: p.Capacity}})
+	}
+	if err = prepare(ctx, path, &profile, sources, records); err != nil {
+		return fail(err)
+	}
+	store, err := product.Open(ctx, path)
+	return store, profile, err
 }

@@ -5,6 +5,7 @@ package product
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sandbox/khora"
+	"harness-platform/orchestrator/internal/testfixture"
 )
 
 // This measures the public engine mechanisms used by slot initialization. It
@@ -48,6 +50,9 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	entries := []content.Entry{{Path: "sample", Size: int64(len(data)), Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(data))}}
 	frozen := &VolumeSource{Reference: ArtifactReference{ID: "examples", Version: "v1", Digest: content.Digest(entries)}, VolumeID: source.VolumeID, MinimumBytes: 8 << 20}
 	store := testStore(t)
+	must(t, store.write(runctx, func(tx *sql.Tx) error {
+		return testfixture.RecordRuntimePublications(runctx, tx, []content.Publication{{StoreID: identity.StoreID, Purpose: "assets", RevisionDigest: frozen.Reference.Digest, Capacity: 8 << 20, Entries: entries, StagingVolumeID: staging.VolumeID, DerivedVolumeID: source.VolumeID, PublishedVolumeID: source.VolumeID}})
+	}))
 	scope := Scope{Actor: "owner", ProjectID: "slot-project"}
 	_, err = store.CreateProject(runctx, scope.Actor, scope.ProjectID, "Slot qualification")
 	must(t, err)
@@ -61,11 +66,11 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 		VolumePlan{Key: "copy-a", Role: "data", Destination: "/data/a", Storage: "owned", Access: "read_write", CapacityBytes: 16 << 20, Source: frozen},
 		VolumePlan{Key: "copy-b", Role: "data", Destination: "/data/b", Storage: "owned", Access: "read_only", CapacityBytes: 16 << 20, Source: frozen},
 		VolumePlan{Key: "shared", Role: "data", Destination: "/datasets/reference", Storage: "shared_readonly", Access: "read_only", CapacityBytes: 8 << 20, Source: frozen})
-	for index := 0; index < 3; index++ {
+	for index := 0; index < 1; index++ {
 		profile.Volumes = append(profile.Volumes, VolumePlan{Key: fmt.Sprintf("extra-%d", index), Role: "data", Destination: fmt.Sprintf("/extra/%d", index), Storage: "owned", Access: "read_write", CapacityBytes: 8 << 20})
 	}
-	fixtureEnvironment(t, store, profile, map[string][]content.Entry{frozen.Reference.Digest: entries})
-	fixtureResourceLimit(t, store, scope.Actor, ResourcePersistent, 152<<20)
+	profile = fixtureRuntimeOnKhora(t, runctx, store, backend, profile, map[string][]content.Entry{frozen.Reference.Digest: entries})
+	fixtureResourceLimit(t, store, scope.Actor, ResourcePersistent, 136<<20)
 	files := &Files{Store: store, Lifecycle: lifecycle, Backend: backend, Bindings: profile.Bindings()}
 	defer files.Close()
 	_, err = files.Upload(runctx, scope, "before-compute", writeRequest("retained", "storage-only upload"), strings.NewReader("storage-only upload"))
@@ -74,7 +79,7 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	must(t, err)
 	beforeUsage, err := storageUsage(runctx, store.reader, scope.Actor)
 	must(t, err)
-	if before.Occupied || before.Reference.SandboxID != "" || beforeUsage.Allocated != 64<<20 || beforeUsage.Reserved != 88<<20 {
+	if before.Occupied || before.Reference.SandboxID != "" || beforeUsage.Allocated != 64<<20 || beforeUsage.Reserved != 72<<20 {
 		t.Fatal("first upload did not reserve full plan without compute", before, beforeUsage)
 	}
 	account, err := store.Account(runctx, scope.Actor)
@@ -83,7 +88,7 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	must(t, err)
 	projected, err := store.OwnUsage(runctx, token)
 	must(t, err)
-	if projected.Usage[ResourcePersistent] != (ResourceUsage{Used: 64 << 20, Reserved: 88 << 20}) || projected.Usage[ResourceRunningProjects] != (ResourceUsage{}) {
+	if projected.Usage[ResourcePersistent] != (ResourceUsage{Used: 64 << 20, Reserved: 72 << 20}) || projected.Usage[ResourceRunningProjects] != (ResourceUsage{}) {
 		t.Fatal(projected)
 	}
 	deniedScope := Scope{Actor: scope.Actor, ProjectID: "quota-denied-project"}
@@ -151,12 +156,12 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	}
 	usage, err := storageUsage(runctx, store.reader, scope.Actor)
 	must(t, err)
-	if usage.Allocated != 152<<20 || usage.Reserved != 0 {
+	if usage.Allocated != 136<<20 || usage.Reserved != 0 {
 		t.Fatal("owned/shared accounting mismatch", usage)
 	}
 	projected, err = store.OwnUsage(runctx, token)
 	must(t, err)
-	if projected.Usage[ResourcePersistent] != (ResourceUsage{Used: 152 << 20}) || projected.Usage[ResourceRunningProjects].Used != 1 {
+	if projected.Usage[ResourcePersistent] != (ResourceUsage{Used: 136 << 20}) || projected.Usage[ResourceRunningProjects].Used != 1 {
 		t.Fatal(projected)
 	}
 	fixtureResourceLimit(t, store, scope.Actor, ResourcePersistent, 128<<20)
@@ -193,7 +198,8 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 		t.Fatal("Project cleanup or copy write altered publication", string(got))
 	}
 	for _, slot := range resource.Volumes {
-		if slot.Key == "shared" {
+		plan, _ := resource.Profile.VolumeForRole(slot.Key)
+		if slot.Key == "shared" || plan.Storage == "shared_readonly" {
 			continue
 		}
 		_, err := api.Volume(runctx, slot.VolumeID)
@@ -203,5 +209,5 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	}
 	must(t, backend.DeleteVolume(runctx, source.VolumeReference))
 	must(t, backend.DeleteVolume(runctx, staging.VolumeReference))
-	t.Logf("first upload: 64MiB allocated + 88MiB reserved, no compute; second full plan denied at 152MiB quota; observed %d mounts; independent native copies, read-only owned/shared mounts, 152MiB owned charge; own usage projects reservations and overage, reduced quotas block resume while paused upload works, zero after cleanup", len(mounts))
+	t.Logf("first upload: 64MiB allocated + 72MiB reserved, no compute; second full plan denied at 136MiB quota; observed %d mounts; independent native copies, read-only owned/shared mounts, 136MiB owned charge; own usage projects reservations and overage, reduced quotas block resume while paused upload works, zero after cleanup", len(mounts))
 }

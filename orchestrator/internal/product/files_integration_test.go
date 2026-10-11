@@ -75,16 +75,18 @@ func TestProjectFilesOnKhora(t *testing.T) {
 	_, err = s.CreateProject(runctx, scope.Actor, scope.ProjectID, "Files")
 	must(t, err)
 	profile := testProfile()
+	profile.Volumes[0].Destination = "/workspaces/files-qualification"
+	profile.Volumes[1].Destination = "/state/files-qualification"
 	profile.StoreID = identity.StoreID
 	profile.TemplateID = "agent-runtime"
 	profile.MemoryBytes = 1 << 30
 	profile.DiskBytes = 256 << 20
-	fixtureEnvironment(t, s, profile)
+	profile = fixtureRuntimeOnKhora(t, runctx, s, backend, profile)
 	must(t, l.EnsureActive(runctx, scope, profile.Bindings()))
 	drive(t, l, scope.ProjectID)
 	r, err := l.ActiveResources(runctx, scope)
 	must(t, err)
-	for _, name := range []string{"workspace-files", "projectfiles.test"} {
+	for _, name := range []string{"projectfiles.test"} {
 		file, err := os.Open(os.Getenv("PROJECT_TEST_BIN_DIR") + "/" + name)
 		must(t, err)
 		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/tmp/"+name, file))
@@ -95,7 +97,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		t.Helper()
 		serial++
 		handle := fmt.Sprintf("file-setup-%d", serial)
-		stream, err := backend.StartProcess(runctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: r.Reference.StoreID, SandboxID: r.Reference.SandboxID, Epoch: r.Reference.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/bin/sh", Arguments: []string{"-c", command}, Directory: "/workspace"})
+		stream, err := backend.StartProcess(runctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: r.Reference.StoreID, SandboxID: r.Reference.SandboxID, Epoch: r.Reference.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/bin/sh", Arguments: []string{"-c", command}, Directory: "/workspaces/files-qualification"})
 		must(t, err)
 		defer stream.Close()
 		var output strings.Builder
@@ -111,9 +113,9 @@ func TestProjectFilesOnKhora(t *testing.T) {
 			}
 		}
 	}
-	shell(t, "chmod +x /tmp/workspace-files /tmp/projectfiles.test")
+	shell(t, "chmod +x /tmp/projectfiles.test")
 	wrapped := &loseFileReply{FileBackend: backend}
-	files := &Files{Store: s, Lifecycle: l, Backend: wrapped, Bindings: profile.Bindings(), Helper: "/tmp/workspace-files"}
+	files := &Files{Store: s, Lifecycle: l, Backend: wrapped, Bindings: profile.Bindings()}
 	defer files.Close()
 	t.Cleanup(func() {
 		c, done := context.WithTimeout(context.Background(), 25*time.Second)
@@ -135,10 +137,10 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		t.Log(output)
 	})
 	t.Run("reusable-reader-protocol", func(t *testing.T) {
-		shell(t, "printf immutable > /workspace/reader-data; mkdir -p /workspace/reader-dir; touch /workspace/reader-dir/a /workspace/reader-dir/b /workspace/reader-dir/c")
+		shell(t, "printf immutable > /workspaces/files-qualification/reader-data; mkdir -p /workspaces/files-qualification/reader-dir; touch /workspaces/files-qualification/reader-dir/a /workspaces/files-qualification/reader-dir/b /workspaces/files-qualification/reader-dir/c")
 		ref := sandbox.ProcessReference{StoreID: r.Reference.StoreID, SandboxID: r.Reference.SandboxID, Epoch: r.Reference.Epoch, Handle: "reader-prototype"}
 		started := time.Now()
-		stream, e := backend.StartProcess(runctx, sandbox.StartProcessRequest{ProcessReference: ref, IdempotencyKey: ref.Handle, Command: "/tmp/workspace-files", Arguments: []string{"--reader"}, Directory: "/workspace"})
+		stream, e := backend.StartProcess(runctx, sandbox.StartProcessRequest{ProcessReference: ref, IdempotencyKey: ref.Handle, Command: "/usr/local/bin/workspace-files", Arguments: []string{"--root", r.Profile.RolePath("workspace"), "--reader"}, Directory: r.Profile.RolePath("workspace")})
 		must(t, e)
 		client, e := workspacereader.New(runctx, stream, func(ctx context.Context, data []byte) error { return backend.SendProcessInput(ctx, ref, data) })
 		must(t, e)
@@ -156,7 +158,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		if page.Next == "" || len(page.Entries) != 1 || page.Entries[0].Name != "a" {
 			t.Fatal(page)
 		}
-		shell(t, "rm /workspace/reader-dir/b; touch /workspace/reader-dir/aa")
+		shell(t, "rm /workspaces/files-qualification/reader-dir/b; touch /workspaces/files-qualification/reader-dir/aa")
 		e = client.Call(runctx, projectfiles.ReadRequest{Operation: "list", Path: "reader-dir", Limit: 1, Cursor: page.Next}, func(frame projectfiles.ReadFrame) error {
 			if frame.Page != nil {
 				page = *frame.Page
@@ -267,7 +269,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		guest := &terminalGuest{ctx: runctx, store: s, lifecycle: l, terminals: terminals, backend: backend, resources: r, scope: scope}
 		_, view := guest.start(t, "files-pty", 24, 80)
 		defer view.Close()
-		guest.run(t, view, "printf sibling > /workspace/sibling", "SIBLING-WROTE")
+		guest.run(t, view, "printf sibling > /workspaces/files-qualification/sibling", "SIBLING-WROTE")
 		var out bytes.Buffer
 		capture, err := files.Capture(runctx, scope, "sibling")
 		must(t, err)
@@ -290,7 +292,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		if fmt.Sprintf("%x", hash.Sum(nil)) != request.Digest {
 			t.Fatal("large transfer digest mismatch")
 		}
-		if got := guest.run(t, view, "sha256sum /workspace/large", "HASH"); !strings.Contains(got, request.Digest) {
+		if got := guest.run(t, view, "sha256sum /workspaces/files-qualification/large", "HASH"); !strings.Contains(got, request.Digest) {
 			t.Fatal(got)
 		}
 		must(t, terminals.Stop(runctx, scope.ProjectID, "files-pty"))
@@ -310,7 +312,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		request := writeRequest("contended", "original")
 		o, err := files.Upload(runctx, scope, "lost-write", request, strings.NewReader("original"))
 		wantError(t, err, ErrFileOutcomeUnknown)
-		shell(t, "printf newer > /workspace/contended")
+		shell(t, "printf newer > /workspaces/files-qualification/contended")
 		_, err = files.Upload(runctx, scope, "lost-write", request, strings.NewReader("original"))
 		wantError(t, err, ErrFileOutcomeUnknown)
 		must(t, files.Reconcile(runctx, 32))
@@ -319,12 +321,12 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		if !o.Settled || o.State != "unknown" {
 			t.Fatal(o)
 		}
-		if got := shell(t, "cat /workspace/contended"); got != "newer" {
+		if got := shell(t, "cat /workspaces/files-qualification/contended"); got != "newer" {
 			t.Fatal("recovery overwrote sibling", got)
 		}
 	})
 	t.Run("canceled-upload-keeps-prior-bytes", func(t *testing.T) {
-		shell(t, "printf retained > /workspace/canceled")
+		shell(t, "printf retained > /workspaces/files-qualification/canceled")
 		uploadctx, stop := context.WithCancel(runctx)
 		reader, writer := io.Pipe()
 		request := writeRequest("canceled", strings.Repeat("x", 1<<20))
@@ -344,7 +346,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 			t.Fatal("canceled upload did not return")
 		}
 		must(t, files.Reconcile(runctx, 32))
-		if got := shell(t, "cat /workspace/canceled"); got != "retained" {
+		if got := shell(t, "cat /workspaces/files-qualification/canceled"); got != "retained" {
 			t.Fatal("cancellation published partial bytes", got)
 		}
 		o, err := s.FileOperation(runctx, scope, "canceled-write")
@@ -373,7 +375,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 				must(t, err)
 			}
 			name := fmt.Sprintf("watched-%d", rotation)
-			shell(t, "printf watched > /workspace/"+name)
+			shell(t, "printf watched > /workspaces/files-qualification/"+name)
 			for {
 				e, err := watch.Next()
 				must(t, err)
@@ -412,13 +414,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		drive(t, l, scope.ProjectID)
 		r, err = l.ActiveResources(runctx, scope)
 		must(t, err)
-		// /tmp is overlay, not retained; install the release helper for this new
-		// placement. Production templates include it at its fixed release path.
-		file, err := os.Open(os.Getenv("PROJECT_TEST_BIN_DIR") + "/workspace-files")
-		must(t, err)
-		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/tmp/workspace-files", file))
-		file.Close()
-		shell(t, "chmod +x /tmp/workspace-files")
+
 		var out bytes.Buffer
 		capture, err := files.Capture(runctx, scope, "contended")
 		must(t, err)

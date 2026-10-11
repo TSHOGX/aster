@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"harness-platform/orchestrator/internal/content"
+	"harness-platform/orchestrator/internal/runtimerelease"
 )
 
 func TestEnvironmentResourceFitAccountsForAllOwnedAndSharedSlots(t *testing.T) {
@@ -22,13 +23,13 @@ func TestEnvironmentResourceFitAccountsForAllOwnedAndSharedSlots(t *testing.T) {
 	for dimension, value := range map[ResourceDimension]int64{ResourceCPU: 1, ResourceMemory: 1, ResourceOverlay: 1, ResourceAggregateCPU: 1, ResourceAggregateMemory: 1, ResourceWorkspace: 20, ResourceRuntime: 10, ResourceVolume: 30, ResourceProjectVolumes: 60, ResourcePersistent: 60, ResourceMounts: 6} {
 		values[dimension] = EffectiveResource{Effective: value}
 	}
-	plan, issues, err := EnvironmentResourceFit(environment, artifacts, values, 8)
+	plan, issues, err := EnvironmentResourceFit(environment, runtimerelease.DefaultMountContract(), artifacts, values, 8)
 	must(t, err)
 	if len(issues) != 0 || plan.OwnedBytes != 60 || plan.LargestOwnedBytes != 30 || len(plan.MountPlan) != 6 {
 		t.Fatal(plan, issues)
 	}
 	slices.Reverse(environment.Mounts)
-	reordered, issues, err := EnvironmentResourceFit(environment, artifacts, values, 8)
+	reordered, issues, err := EnvironmentResourceFit(environment, runtimerelease.DefaultMountContract(), artifacts, values, 8)
 	must(t, err)
 	if len(issues) != 0 || reordered.OwnedBytes != plan.OwnedBytes {
 		t.Fatal(reordered, issues)
@@ -36,7 +37,7 @@ func TestEnvironmentResourceFitAccountsForAllOwnedAndSharedSlots(t *testing.T) {
 	for _, dimension := range []ResourceDimension{ResourceVolume, ResourceProjectVolumes, ResourcePersistent, ResourceMounts} {
 		old := values[dimension]
 		values[dimension] = EffectiveResource{Effective: old.Effective - 1}
-		_, issues, err := EnvironmentResourceFit(environment, artifacts, values, 8)
+		_, issues, err := EnvironmentResourceFit(environment, runtimerelease.DefaultMountContract(), artifacts, values, 8)
 		must(t, err)
 		if len(issues) != 1 || issues[0].Code != "quota_exceeded" || issues[0].Dimension != dimension {
 			t.Fatal(dimension, issues)
@@ -45,14 +46,14 @@ func TestEnvironmentResourceFitAccountsForAllOwnedAndSharedSlots(t *testing.T) {
 	}
 	// Seed minima are structural errors, not a reason to resize or substitute empty storage.
 	artifacts[2].MinimumBytes = 31
-	_, issues, err = EnvironmentResourceFit(environment, artifacts, values, 8)
+	_, issues, err = EnvironmentResourceFit(environment, runtimerelease.DefaultMountContract(), artifacts, values, 8)
 	must(t, err)
 	if len(issues) != 1 || issues[0].Code != "environment_invalid" || issues[0].Field == "" {
 		t.Fatal(issues)
 	}
 	artifacts[2].MinimumBytes = 1
 	environment.Mounts[0].Capacity.Bytes = math.MaxInt64
-	_, issues, err = EnvironmentResourceFit(environment, artifacts, values, 8)
+	_, issues, err = EnvironmentResourceFit(environment, runtimerelease.DefaultMountContract(), artifacts, values, 8)
 	must(t, err)
 	if len(issues) != 1 || issues[0].Code != "resource_overflow" {
 		t.Fatal(issues)

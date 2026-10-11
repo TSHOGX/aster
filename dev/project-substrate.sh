@@ -9,6 +9,11 @@ if [[ ${1:-} == --inner ]]; then
  [[ $(readlink /proc/self/ns/mnt) != "$PROJECT_TEST_HOST_NS" ]] || exit 2
  mount --bind "$PROJECT_TEST_TEMPLATE" "$base/templates/agent-runtime"
  mount -o remount,bind,ro "$base/templates/agent-runtime"
+ if [[ -n ${PROJECT_TEST_SECONDARY_TEMPLATE:-} ]]; then
+  mkdir -p "$base/templates/agent-runtime-v2"
+  mount --bind "$PROJECT_TEST_SECONDARY_TEMPLATE" "$base/templates/agent-runtime-v2"
+  mount -o remount,bind,ro "$base/templates/agent-runtime-v2"
+ fi
 
  mount -t tmpfs tmpfs /run
  ip link set lo up

@@ -534,7 +534,11 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 		if err := json.Unmarshal(f.Payload, &capture); err != nil {
 			return err
 		}
-		expectedPrefix := "/runtime/sessions/" + i.SessionID + "/native/captures/"
+		retained, err := resources(ctx, tx, i.ProjectID)
+		if err != nil {
+			return err
+		}
+		expectedPrefix := retained.Profile.RolePath("runtime") + "/sessions/" + i.SessionID + "/native/captures/"
 		if capture.Path != expectedPrefix+f.CommandID+".jsonl" || len(capture.Digest) != len("sha256:")+sha256.Size*2 || capture.Size < 0 {
 			return ErrInvalid
 		}

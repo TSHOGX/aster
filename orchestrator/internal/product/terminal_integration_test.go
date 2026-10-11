@@ -132,11 +132,13 @@ func TestProjectTerminalsOnKhora(t *testing.T) {
 	_, err = s.CreateProject(runctx, scope.Actor, scope.ProjectID, "Terminals")
 	must(t, err)
 	profile := testProfile()
+	profile.Volumes[0].Destination = "/workspaces/terminal-qualification"
+	profile.Volumes[1].Destination = "/state/terminal-qualification"
 	profile.StoreID = identity.StoreID
 	profile.TemplateID = "agent-runtime"
 	profile.MemoryBytes = 2 << 30
 	profile.DiskBytes = 256 << 20
-	fixtureEnvironment(t, s, profile)
+	profile = fixtureRuntimeOnKhora(t, runctx, s, backend, profile)
 	must(t, l.EnsureActive(runctx, scope, profile.Bindings()))
 	drive(t, l, scope.ProjectID)
 	r, err := l.ActiveResources(runctx, scope)
@@ -173,10 +175,13 @@ func TestProjectTerminalsOnKhora(t *testing.T) {
 	t.Run("two-terminals-share-one-workspace", func(t *testing.T) {
 		_, betaView := g.start(t, "beta", 24, 80)
 		g.run(t, betaView, "true", "BETA-LIVE")
-		// One terminal reads what the other wrote: they share /workspace by ordinary
+		// One terminal reads what the other wrote: they share /workspaces/terminal-qualification by ordinary
 		// Linux semantics, with no application file locks involved.
-		g.run(t, alphaView, "printf from-alpha > /workspace/shared.txt", "WROTE-OK")
-		if got := g.run(t, betaView, "cat /workspace/shared.txt", "SIBLING-OK"); !strings.Contains(got, "from-alpha") {
+		if cwd := g.run(t, alphaView, "pwd", "WORKING-DIRECTORY"); !strings.Contains(cwd, "/workspaces/terminal-qualification") {
+			t.Fatal("terminal ignored saved workspace path", cwd)
+		}
+		g.run(t, alphaView, "printf from-alpha > /workspaces/terminal-qualification/shared.txt", "WROTE-OK")
+		if got := g.run(t, betaView, "cat /workspaces/terminal-qualification/shared.txt", "SIBLING-OK"); !strings.Contains(got, "from-alpha") {
 			t.Fatalf("sibling terminal could not read the shared workspace: %q", got)
 		}
 		// Ending one terminal leaves the other running, with its own exit recorded.
@@ -212,14 +217,14 @@ func TestProjectTerminalsOnKhora(t *testing.T) {
 		// a partially typed multi-byte character, which is a readline behavior rather
 		// than anything the transport did. What is under test is that the application
 		// neither re-chunks nor reinterprets a keystroke stream.
-		g.type_(t, alphaView, "cat > /workspace/utf8.bin\r")
+		g.type_(t, alphaView, "cat > /workspaces/terminal-qualification/utf8.bin\r")
 		time.Sleep(300 * time.Millisecond)
 		must(t, terminals.Input(runctx, alphaView, []byte{0xe4, 0xb8}))
 		must(t, terminals.Input(runctx, alphaView, []byte{0x96, 0xe7, 0x95, 0x8c, '\n'}))
 		time.Sleep(300 * time.Millisecond)
 		// Ctrl-D ends cat's input the way a terminal does.
 		must(t, terminals.EOF(runctx, scope, "alpha"))
-		if got := g.run(t, alphaView, "od -An -tx1 < /workspace/utf8.bin | tr -d ' \\n'", "HEX-OK"); !strings.Contains(got, "e4b896e7958c") {
+		if got := g.run(t, alphaView, "od -An -tx1 < /workspaces/terminal-qualification/utf8.bin | tr -d ' \\n'", "HEX-OK"); !strings.Contains(got, "e4b896e7958c") {
 			t.Fatalf("input split across a rune boundary did not arrive intact: %q", got)
 		}
 		// Escape sequences survive as bytes rather than being stripped or rendered.

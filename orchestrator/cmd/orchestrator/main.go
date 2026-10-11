@@ -32,12 +32,15 @@ func main() {
 }
 func run(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE\norchestrator gateway --config FILE\norchestrator release-identity --config FILE\norchestrator gateway-status|gateway-stop --socket PATH [--owner ID --generation N]\norchestrator version\norchestrator diagnostics|publish|notify --socket PATH [flags]\norchestrator drain|drain-status|drain-ready|drain-abort|drain-activate|drain-complete --socket PATH [--owner ID] [--generation N] [--timeout-seconds N] [--mode quiescent|owner] [--target sha256:DIGEST] [--compatibility sha256:DIGEST]\norchestrator account bootstrap|recover-admin --config FILE --username NAME --password-stdin\norchestrator account recover-admin --socket PATH --username NAME --password-stdin")
+		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE\norchestrator gateway --config FILE\norchestrator release-identity --config FILE\norchestrator gateway-status|gateway-stop --socket PATH [--owner ID --generation N]\norchestrator version\norchestrator diagnostics|publish|notify --socket PATH [flags]\norchestrator runtime register --socket PATH --id ID --version VERSION --template TEMPLATE --manifest FILE --digest sha256:DIGEST\norchestrator drain|drain-status|drain-ready|drain-abort|drain-activate|drain-complete --socket PATH [--owner ID] [--generation N] [--timeout-seconds N] [--mode quiescent|owner] [--target sha256:DIGEST] [--compatibility sha256:DIGEST]\norchestrator account bootstrap|recover-admin --config FILE --username NAME --password-stdin\norchestrator account recover-admin --socket PATH --username NAME --password-stdin")
 		return err
 	}
 	action := args[0]
 	if action == "version" {
 		return json.NewEncoder(output).Encode(map[string]string{"version": version, "commit": commit})
+	}
+	if action == "runtime" {
+		return runRuntime(ctx, args[1:], output)
 	}
 	if action == "account" {
 		return runAccount(ctx, args[1:], input, output)

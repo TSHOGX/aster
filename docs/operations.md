@@ -362,3 +362,23 @@ mutation replies. Counts reset on process restart; task/receipt state remains
 durable. No prompts, credentials or private receipt bodies appear in diagnostics.
 Use these alongside writer control/ingest wait and rejection metrics. Due time
 means eligibility, not a hard real-time start guarantee.
+
+## Register a compatible runtime version
+
+After publishing an immutable engine template, register its current-contract
+manifest through the protected owner socket:
+
+```sh
+orchestrator runtime register --socket /var/lib/agent-workbench/control.sock \
+  --id agent-runtime --version v2 --template agent-runtime-v2 \
+  --manifest /srv/build/agent-runtime-v2.manifest.json --digest sha256:EXACT_DIGEST
+```
+
+The CLI validates the exact manifest; the owner checks engine identity and template
+availability, binds its own store identity, and records immutable audited metadata
+under the existing writer/release fence. Registration is idempotent and returns
+`default_changed: false`. It grants no browser raw-template handle. Select the
+application release reference separately through the admin default preview/edit
+API. Retained Projects continue using their exact registrations and complete
+saved mount plans when defaults change. Both versions must satisfy the current
+manifest/protocol contract; there is no historical runtime adapter.

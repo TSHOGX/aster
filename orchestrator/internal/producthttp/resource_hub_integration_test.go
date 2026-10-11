@@ -38,7 +38,7 @@ func TestResourceHubOnKhora(t *testing.T) {
 	profile.StoreID = identity.StoreID
 	profile.TemplateID = "agent-runtime"
 	profile.DiskBytes = 256 << 20
-	store, err := producttest.OpenWithProfile(runctx, filepath.Join(t.TempDir(), "product.db"), profile, nil)
+	store, profile, err := producttest.OpenWithRuntime(runctx, filepath.Join(t.TempDir(), "product.db"), profile, backend, nil)
 	must(t, err)
 	defer store.Close()
 	scope := product.Scope{Actor: "owner", ProjectID: "watch-only"}

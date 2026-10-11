@@ -158,7 +158,6 @@ type Terminals struct {
 	// application to run something the Project policy never declared.
 	Shell         string
 	ShellArgs     []string
-	Directory     string
 	Environment   []string
 	MaxTerminals  int
 	MaxPerProject int
@@ -177,7 +176,7 @@ func NewTerminals(ctx context.Context, s *Store, l *Lifecycle, b TerminalBackend
 	ctx, cancel := context.WithCancel(ctx)
 	return &Terminals{
 		Store: s, Lifecycle: l, Backend: b, Bindings: bindings,
-		Shell: "/bin/bash", ShellArgs: []string{"-l"}, Directory: "/workspace",
+		Shell: "/bin/bash", ShellArgs: []string{"-l"},
 		Environment:  []string{"HOME=/root", "TERM=xterm-256color", "PATH=/opt/node-v24.15.0/bin:/usr/local/bin:/usr/bin:/bin"},
 		MaxTerminals: max, attachments: map[string]*terminalAttachment{}, ctx: ctx, cancel: cancel,
 	}
@@ -658,9 +657,13 @@ func (t *Terminals) attach(ctx context.Context, a *terminalAttachment) error {
 	var stream sandbox.ProcessStream
 	var err error
 	if i.State == "starting" {
+		resources, e := t.Store.resourcesFor(ctx, i.ProjectID)
+		if e != nil {
+			return e
+		}
 		stream, err = t.Backend.StartPTY(ctx, sandbox.StartProcessRequest{
 			ProcessReference: i.Reference, IdempotencyKey: i.ID,
-			Command: t.Shell, Arguments: t.ShellArgs, Directory: t.Directory, Environment: t.Environment,
+			Command: t.Shell, Arguments: t.ShellArgs, Directory: resources.Profile.RolePath("workspace"), Environment: t.Environment,
 		}, i.Rows, i.Cols)
 	} else {
 		observation, e := t.Backend.InspectProcess(ctx, i.Reference)

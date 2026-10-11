@@ -49,12 +49,8 @@ func (s *Store) ValidateReleasedBindings(ctx context.Context, engine string) err
 		return err
 	}
 	for _, profile := range profiles {
-		release, err := registeredSandbox(ctx, s.reader, profile.SandboxRelease, false)
-		if err != nil {
+		if err := validateRetainedProfile(ctx, s.reader, profile); err != nil {
 			return err
-		}
-		if release.StoreID != engine || release.TemplateID != profile.TemplateID || release.Reference.Digest != profile.ReleaseDigest {
-			return Admission("runtime_incompatible", ErrConflict)
 		}
 	}
 	return nil

@@ -2,10 +2,7 @@ package product
 
 import (
 	"fmt"
-	"path"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/runtimerelease"
@@ -39,7 +36,7 @@ func (s MountSource) Reference() ArtifactReference {
 
 type MountCapacity struct {
 	Setting ResourceDimension `json:"setting,omitempty"`
-	Bytes   int64             `json:"bytes,omitempty"`
+	Bytes   int64             `json:"bytes,string,omitempty"`
 }
 type EnvironmentMount struct {
 	Key         string        `json:"key"`
@@ -65,33 +62,24 @@ type BuiltinVolume struct {
 	Reference          ArtifactReference `json:"reference"`
 	StoreID            string            `json:"store_id"`
 	PublicationPurpose string            `json:"publication_purpose"`
-	MinimumBytes       int64             `json:"minimum_bytes"`
+	MinimumBytes       int64             `json:"minimum_bytes,string"`
 	Roles              []string          `json:"roles"`
 	CleanRuntime       bool              `json:"clean_runtime"`
 	Entries            []content.Entry   `json:"entries"`
 }
 type ResolvedMount struct {
 	EnvironmentMount
-	CapacityBytes int64 `json:"capacity_bytes"`
+	CapacityBytes int64 `json:"capacity_bytes,string"`
 }
 type ResolvedEnvironment struct {
 	DefaultEnvironment
 	MountPlan         []ResolvedMount `json:"mount_plan"`
-	OwnedBytes        int64           `json:"owned_bytes"`
-	LargestOwnedBytes int64           `json:"largest_owned_bytes"`
+	OwnedBytes        int64           `json:"owned_bytes,string"`
+	LargestOwnedBytes int64           `json:"largest_owned_bytes,string"`
 }
 
-func validMountPath(value string) bool {
-	if !utf8.ValidString(value) || len(value) > 4096 || value == "/" || !path.IsAbs(value) || path.Clean(value) != value {
-		return false
-	}
-	for _, c := range value {
-		if unicode.IsControl(c) {
-			return false
-		}
-	}
-	return true
-}
+func validMountPath(value string) bool { return runtimerelease.ValidGuestMountPath(value) }
+
 func pathsOverlap(a, b string) bool {
 	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
@@ -100,8 +88,11 @@ func environmentError(field string) error { return Admission("environment_invali
 // ResolveEnvironmentStructure checks mount shape and complete-plan accounting.
 // Runtime qualification additionally checks the registered release's trusted
 // path contract before any allocation. No engine effect occurs here.
-func ResolveEnvironmentStructure(environment DefaultEnvironment, artifacts []BuiltinVolume, workspace, runtime, maxMounts int64) (ResolvedEnvironment, error) {
+func ResolveEnvironmentStructure(environment DefaultEnvironment, contract runtimerelease.MountContract, artifacts []BuiltinVolume, workspace, runtime, maxMounts int64) (ResolvedEnvironment, error) {
 	result := ResolvedEnvironment{DefaultEnvironment: environment, MountPlan: []ResolvedMount{}}
+	if err := contract.Validate(); err != nil {
+		return result, Admission("runtime_incompatible", ErrInvalid)
+	}
 	if err := environment.SandboxRelease.validate(); err != nil {
 		return result, err
 	}
@@ -124,16 +115,14 @@ func ResolveEnvironmentStructure(environment DefaultEnvironment, artifacts []Bui
 				return result, environmentError(field + ".destination")
 			}
 		}
-		for _, root := range []string{"/proc", "/sys", "/dev", "/etc", "/bin", "/sbin", "/lib", "/lib64", "/usr", "/opt/node-v" + runtimerelease.NodeVersion} {
-			if pathsOverlap(mount.Destination, root) {
-				return result, environmentError(field + ".destination")
-			}
-		}
-		switch mount.Role {
-		case "workspace", "runtime", "data", "agent_config", "shared_assets":
-		default:
+		_, requiredRole := contract.Publication(mount.Role)
+		if mount.Role != "workspace" && mount.Role != "runtime" && mount.Role != "data" && !requiredRole {
 			return result, environmentError(field + ".role")
 		}
+		if err := contract.ValidateDestination(mount.Role, mount.Destination); err != nil {
+			return result, environmentError(field + ".destination")
+		}
+
 		roles[mount.Role]++
 		if mount.Role != "data" && roles[mount.Role] > 1 {
 			return result, environmentError(field + ".role")
@@ -214,26 +203,21 @@ func ResolveEnvironmentStructure(environment DefaultEnvironment, artifacts []Bui
 		if artifact != nil && (artifact.MinimumBytes <= 0 || resolved.CapacityBytes < artifact.MinimumBytes) {
 			return result, environmentError(field + ".capacity")
 		}
-		// System publication destinations are part of the current runtime contract.
-		systemPath := ""
-		switch mount.Role {
-		case "agent_config":
-			systemPath = "/opt/agent-config"
-		case "shared_assets":
-			systemPath = "/opt/shared-assets"
-		}
-		for _, root := range []string{"/opt/agent-config", "/opt/shared-assets"} {
-			if pathsOverlap(mount.Destination, root) && mount.Destination != systemPath {
-				return result, environmentError(field + ".destination")
+		if required, ok := contract.Publication(mount.Role); ok {
+			if mount.Storage != "shared_readonly" || mount.Access != "read_only" || mount.Source.Kind != "builtin" || mount.Source.ArtifactID != required.ArtifactID {
+				return result, environmentError(field + ".source")
 			}
 		}
-		if systemPath != "" && (mount.Destination != systemPath || mount.Storage != "shared_readonly") {
-			return result, environmentError(field + ".destination")
-		}
+
 		result.MountPlan = append(result.MountPlan, resolved)
 	}
 	if roles["workspace"] != 1 || roles["runtime"] != 1 {
 		return result, environmentError("required_roles")
+	}
+	for _, required := range contract.RequiredPublications {
+		if roles[required.Role] != 1 {
+			return result, environmentError("required_roles." + required.Role)
+		}
 	}
 	return result, nil
 }

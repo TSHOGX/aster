@@ -67,7 +67,7 @@ func TestStreamConcurrentReceiveAndRepeatedClose(t *testing.T) {
 							next = func() error { _, err := s.Next(); return err }
 							closeStream = s.Close
 						} else {
-							s, err := backend.WatchWorkspace(ctx, sandbox.Reference{StoreID: "store", SandboxID: "sandbox", Epoch: 7}, 0)
+							s, err := backend.WatchWorkspace(ctx, sandbox.Reference{StoreID: "store", SandboxID: "sandbox", Epoch: 7}, "/workspace", 0)
 							if err != nil {
 								t.Fatal(err)
 							}

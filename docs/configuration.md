@@ -226,3 +226,23 @@ fit and conflicts in saved Project capacities. Reductions preserve data and
 allocations; they block incompatible provisioning/resume instead of resizing
 storage. Cleanup and already-admitted settlement remain available. Shared source
 artifacts are not charged repeatedly to user-owned storage.
+
+## Default runtime environment API
+
+`GET /api/admin/runtime/default` returns the revisioned release/mount document,
+required publication metadata and qualified mount bound. Administrators submit
+the complete `sandbox_release` and `mounts` with `expected_revision` to
+`POST /api/admin/runtime/default/preview`. Preview reports all affected accounts,
+the count that cannot fit, and a bounded `limit`/`cursor` page of exact plans,
+resource provenance, usage/overages and saved-plan conflicts. Owned data capacities
+and resolved byte quantities are decimal strings. Workspace/runtime capacities
+use the corresponding resource setting; they have no environment-level override.
+
+`PATCH /api/admin/runtime/default` adds `request_id` and the preview's
+`expected_dependencies`. Save checks current registry, publication, platform and
+account-resource configuration under the writer transaction, then writes the new
+revision with audit and receipt. Missing/disabled/mismatched artifacts, conflicting
+image paths and stale dependencies are refused. A valid plan can exceed some
+users' allowances; saving it does not raise entitlements or reserve capacity.
+First allocation uses current admission rules. An environment edit never changes
+an already-bound Project's release, paths, storage capacities or sources.

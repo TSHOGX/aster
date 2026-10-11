@@ -117,11 +117,13 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 	_, err = s.CreateProject(runctx, scope.Actor, scope.ProjectID, "Agents")
 	must(t, err)
 	profile := testProfile()
+	profile.Volumes[0].Destination = "/workspaces/agent-qualification"
+	profile.Volumes[1].Destination = "/state/agent-qualification"
 	profile.StoreID = identity.StoreID
 	profile.TemplateID = "agent-runtime"
 	profile.MemoryBytes = 2 << 30
 	profile.DiskBytes = 256 << 20
-	fixtureEnvironment(t, s, profile)
+	profile = fixtureRuntimeOnKhora(t, runctx, s, backend, profile)
 	must(t, l.EnsureActive(runctx, scope, profile.Bindings()))
 	drive(t, l, scope.ProjectID)
 	r, err := l.ActiveResources(runctx, scope)
@@ -137,7 +139,7 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 			}
 		}
 	})
-	for _, name := range []string{"agent-runner", "runtime-fixture"} {
+	for _, name := range []string{"runtime-fixture"} {
 		file, err := os.Open(os.Getenv("PROJECT_TEST_BIN_DIR") + "/" + name)
 		must(t, err)
 		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/tmp/"+name, file))
@@ -148,7 +150,7 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 		t.Helper()
 		serial++
 		handle := fmt.Sprintf("setup-%d", serial)
-		stream, err := backend.StartProcess(runctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: r.Reference.StoreID, SandboxID: r.Reference.SandboxID, Epoch: r.Reference.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/bin/sh", Arguments: []string{"-c", command}, Directory: "/workspace"})
+		stream, err := backend.StartProcess(runctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: r.Reference.StoreID, SandboxID: r.Reference.SandboxID, Epoch: r.Reference.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/bin/sh", Arguments: []string{"-c", command}, Directory: "/workspaces/agent-qualification"})
 		must(t, err)
 		defer stream.Close()
 		var b strings.Builder
@@ -164,9 +166,9 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 			}
 		}
 	}
-	shell("chmod 755 /tmp/agent-runner /tmp/runtime-fixture; mkdir -p /runtime/sessions/a /runtime/sessions/b")
+	shell("chmod 755 /tmp/runtime-fixture; mkdir -p /state/agent-qualification/sessions/a /state/agent-qualification/sessions/b")
 	modelRef := sandbox.ProcessReference{StoreID: r.Reference.StoreID, SandboxID: r.Reference.SandboxID, Epoch: r.Reference.Epoch, Handle: "model"}
-	model, err := backend.StartProcess(runctx, sandbox.StartProcessRequest{ProcessReference: modelRef, IdempotencyKey: "model", Command: "/tmp/runtime-fixture", Arguments: []string{"model"}, Directory: "/workspace"})
+	model, err := backend.StartProcess(runctx, sandbox.StartProcessRequest{ProcessReference: modelRef, IdempotencyKey: "model", Command: "/tmp/runtime-fixture", Arguments: []string{"model"}, Directory: "/workspaces/agent-qualification"})
 	must(t, err)
 	defer model.Close()
 	for {
@@ -181,14 +183,14 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 	start := func(session, incarnation, pi string, budget ...int64) *runnerObserver {
 		t.Helper()
 		ref := sandbox.ProcessReference{StoreID: r.Reference.StoreID, SandboxID: r.Reference.SandboxID, Epoch: r.Reference.Epoch, Handle: session + "-" + incarnation}
-		args := []string{"--session", session, "--incarnation", incarnation}
+		args := append([]string{"--session", session, "--incarnation", incarnation}, r.Profile.RunnerPaths()...)
 		if len(budget) > 0 {
 			args = append(args, "--journal-bytes", fmt.Sprint(budget[0]))
 		}
 		if pi != "" {
 			args = append(args, "--pi", pi)
 		}
-		stream, err := backend.StartProcess(runctx, sandbox.StartProcessRequest{ProcessReference: ref, IdempotencyKey: ref.Handle, Command: "/tmp/agent-runner", Arguments: args, Directory: "/workspace", Environment: []string{"PATH=/opt/node-v24.15.0/bin:/usr/local/bin:/usr/bin:/bin", "HOME=/root"}})
+		stream, err := backend.StartProcess(runctx, sandbox.StartProcessRequest{ProcessReference: ref, IdempotencyKey: ref.Handle, Command: "/usr/local/bin/agent-runner", Arguments: args, Directory: "/workspaces/agent-qualification", Environment: []string{"PATH=/opt/node-v24.15.0/bin:/usr/local/bin:/usr/bin:/bin", "HOME=/root"}})
 		must(t, err)
 		o := observeRunner(runctx, stream, ref)
 		t.Cleanup(o.stop)
@@ -206,8 +208,8 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 		must(t, backend.SendProcessInput(runctx, o.ref, b.Bytes()))
 	}
 	for _, id := range []string{"a", "b"} {
-		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/runtime/sessions/"+id+"/models.json", strings.NewReader(models)))
-		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/runtime/sessions/"+id+"/settings.json", strings.NewReader(`{"defaultProvider":"local","defaultModel":"local-model","compaction":{"enabled":false}}`)))
+		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/state/agent-qualification/sessions/"+id+"/models.json", strings.NewReader(models)))
+		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/state/agent-qualification/sessions/"+id+"/settings.json", strings.NewReader(`{"defaultProvider":"local","defaultModel":"local-model","compaction":{"enabled":false}}`)))
 		observers[id] = start(id, "one", "")
 		send(observers[id], agentwire.Frame{Kind: "sync"})
 		runnerWait(t, observers[id], func(f agentwire.Frame) bool { return f.Kind == "synced" })
@@ -266,21 +268,21 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 	runnerWait(t, supervised, func(f agentwire.Frame) bool { return f.Kind == "synced" })
 	send(supervised, agentwire.Frame{Kind: "command", CommandID: "descendants", TurnID: "descendant-turn", Payload: json.RawMessage(`{"type":"prompt","message":"spawn"}`)})
 	runnerWait(t, supervised, func(f agentwire.Frame) bool { return f.State == "command.completed" })
-	got := shell(`for name in group-pid escaped-pid; do p=$(cat /runtime/sessions/supervised/$name); if [ -e /proc/$p/stat ]; then awk '{print $3}' /proc/$p/stat; else echo gone; fi; done`)
+	got := shell(`for name in group-pid escaped-pid; do p=$(cat /state/agent-qualification/sessions/supervised/$name); if [ -e /proc/$p/stat ]; then awk '{print $3}' /proc/$p/stat; else echo gone; fi; done`)
 	if strings.Count(got, "gone")+strings.Count(got, "Z") != 2 {
 		t.Fatal("runner leaked descendants", got)
 	}
 	t.Log("Session replacement loaded its retained native path without Project pause; runner subreaper settled ordinary and setsid descendants while sibling continued")
 	t.Run("application-admission-ingest-projection", func(t *testing.T) {
 		agents := NewAgents(runctx, s, l, backend, profile.Bindings(), 8)
-		agents.RunnerBinary = "/tmp/agent-runner"
+		agents.RunnerBinary = "/usr/local/bin/agent-runner"
 		defer agents.Close()
 		for _, id := range []string{"c", "d"} {
 			_, err := s.CreateSession(runctx, scope, id, "Agent")
 			must(t, err)
-			shell("mkdir -p /runtime/sessions/" + id)
-			must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/runtime/sessions/"+id+"/models.json", strings.NewReader(models)))
-			must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/runtime/sessions/"+id+"/settings.json", strings.NewReader(`{"defaultProvider":"local","defaultModel":"local-model","compaction":{"enabled":false}}`)))
+			shell("mkdir -p /state/agent-qualification/sessions/" + id)
+			must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/state/agent-qualification/sessions/"+id+"/models.json", strings.NewReader(models)))
+			must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/state/agent-qualification/sessions/"+id+"/settings.json", strings.NewReader(`{"defaultProvider":"local","defaultModel":"local-model","compaction":{"enabled":false}}`)))
 			_, err = s.AdmitTurn(runctx, scope, id, "first", "hello-"+id, false)
 			must(t, err)
 		}
@@ -339,8 +341,8 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 				t.Fatalf("runner error under pressure: %s", f.Error)
 			}
 		}
-		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/runtime/sessions/pressure/models.json", strings.NewReader(models)))
-		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/runtime/sessions/pressure/settings.json", strings.NewReader(`{"defaultProvider":"local","defaultModel":"local-model","compaction":{"enabled":false}}`)))
+		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/state/agent-qualification/sessions/pressure/models.json", strings.NewReader(models)))
+		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/state/agent-qualification/sessions/pressure/settings.json", strings.NewReader(`{"defaultProvider":"local","defaultModel":"local-model","compaction":{"enabled":false}}`)))
 		o := start("pressure", "pressure-run", "/usr/local/bin/pi", 2<<20)
 		defer o.stop()
 		send := func(frame agentwire.Frame) {

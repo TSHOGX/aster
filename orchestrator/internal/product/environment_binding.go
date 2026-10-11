@@ -77,7 +77,7 @@ func resolveAllocationProfile(ctx context.Context, q queryer, actor string, bind
 			return Profile{}, &QuotaError{Dimension: dimension, RequestedDelta: 1, Limit: value(dimension)}
 		}
 	}
-	plan, err := ResolveEnvironmentStructure(environment, artifacts, value(ResourceWorkspace), value(ResourceRuntime), settings.Effective[ResourceMounts].PlatformLimit)
+	plan, err := ResolveEnvironmentStructure(environment, release.Manifest.Mounts, artifacts, value(ResourceWorkspace), value(ResourceRuntime), settings.Effective[ResourceMounts].PlatformLimit)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -143,4 +143,37 @@ func decodeEnvironment(raw string, revision int64) (DefaultEnvironment, error) {
 		return out, ErrConflict
 	}
 	return out, nil
+}
+
+// validateRetainedProfile checks an immutable plan against its own registered
+// image contract. Registry defaults never substitute for a retained release.
+func validateRetainedProfile(ctx context.Context, q queryer, profile Profile) error {
+	release, err := registeredSandbox(ctx, q, profile.SandboxRelease, false)
+	if err != nil {
+		return err
+	}
+	if release.StoreID != profile.StoreID || release.TemplateID != profile.TemplateID || release.Reference.Digest != profile.ReleaseDigest {
+		return Admission("runtime_incompatible", ErrConflict)
+	}
+	if err = profile.Validate(); err != nil {
+		return err
+	}
+	roles := map[string]int{}
+	for _, mount := range profile.Volumes {
+		roles[mount.Role]++
+		if err = release.Manifest.Mounts.ValidateDestination(mount.Role, mount.Destination); err != nil {
+			return Admission("runtime_incompatible", ErrConflict)
+		}
+		if required, ok := release.Manifest.Mounts.Publication(mount.Role); ok {
+			if mount.Storage != "shared_readonly" || mount.Access != "read_only" || mount.Source == nil || mount.Source.Reference.ID != required.ArtifactID {
+				return Admission("runtime_incompatible", ErrConflict)
+			}
+		}
+	}
+	for _, required := range release.Manifest.Mounts.RequiredPublications {
+		if roles[required.Role] != 1 {
+			return Admission("runtime_incompatible", ErrConflict)
+		}
+	}
+	return nil
 }

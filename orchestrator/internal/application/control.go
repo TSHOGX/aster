@@ -292,6 +292,7 @@ func (a *Application) controlHandler() http.Handler {
 		}
 		w.WriteHeader(204)
 	})
+	mux.HandleFunc("POST /runtime/register", a.registerRuntime)
 	mux.HandleFunc("POST /publish", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 		defer cancel()
@@ -309,7 +310,10 @@ func writeControl(w http.ResponseWriter, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func decodeControl(w http.ResponseWriter, r *http.Request, value any) bool {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	return decodeControlLimit(w, r, value, 64<<10)
+}
+func decodeControlLimit(w http.ResponseWriter, r *http.Request, value any, limit int64) bool {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
 		http.Error(w, "invalid control request", 400)

@@ -21,7 +21,7 @@ type NativeCapture struct {
 	Reference                                                                  sandbox.Reference
 }
 type CaptureReader interface {
-	ReadNativeCapture(context.Context, sandbox.Reference, string) (io.ReadCloser, error)
+	ReadNativeCapture(context.Context, sandbox.Reference, string, string) (io.ReadCloser, error)
 }
 
 // Captures exports immutable completed native bytes. Once HostPath is committed,
@@ -84,7 +84,17 @@ func (c *Captures) Export(ctx context.Context, capture NativeCapture) error {
 	if state != "guest" {
 		return nil
 	}
-	source, err := c.Backend.ReadNativeCapture(ctx, capture.Reference, path)
+	retained, err := c.Store.resourcesFor(ctx, capture.ProjectID)
+	if err != nil {
+		return err
+	}
+	// The frame binds the exact command filename; export rechecks the saved
+	// role root and Session before delegating to the adapter's path confinement.
+	if !strings.HasPrefix(path, retained.Profile.RolePath("runtime")+"/sessions/"+capture.SessionID+"/native/captures/") {
+		return ErrConflict
+	}
+
+	source, err := c.Backend.ReadNativeCapture(ctx, capture.Reference, retained.Profile.RolePath("runtime"), path)
 	if err != nil {
 		return err
 	}

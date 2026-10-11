@@ -168,7 +168,7 @@ func (c *ChildRetirement) privateDirectory(ctx context.Context, child Child) (re
 	}
 	attempt, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	stream, err := c.Backend.StartProcess(attempt, sandbox.StartProcessRequest{ProcessReference: ref, IdempotencyKey: ref.Handle, Command: helper, Arguments: []string{child.ID}, Directory: "/runtime"})
+	stream, err := c.Backend.StartProcess(attempt, sandbox.StartProcessRequest{ProcessReference: ref, IdempotencyKey: ref.Handle, Command: helper, Arguments: []string{"--root", r.Profile.RolePath("runtime"), child.ID}, Directory: r.Profile.RolePath("runtime")})
 	if err != nil {
 		return err
 	}

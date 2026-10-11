@@ -64,9 +64,9 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 	sharedVolume, err := api.SnapshotVolume(runctx, sharedBase.VolumeID, 8<<20)
 	must(t, err)
 	sharedEntries := []content.Entry{{Path: "sentinel", Size: int64(len("published-shared-asset")), Digest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("published-shared-asset")))}}
-	profile.Volumes = append(profile.Volumes, product.VolumePlan{Key: "shared", Role: "shared_assets", Destination: "/opt/shared-assets", Storage: "shared_readonly", Access: "read_only", CapacityBytes: 8 << 20, Source: &product.VolumeSource{Reference: product.ArtifactReference{ID: "shared", Version: "v1", Digest: content.Digest(sharedEntries)}, VolumeID: sharedVolume, MinimumBytes: 8 << 20}})
+	profile.Volumes = append(profile.Volumes, product.VolumePlan{Key: "shared", Role: "shared_assets", Destination: "/opt/shared-assets", Storage: "shared_readonly", Access: "read_only", CapacityBytes: 8 << 20, Source: &product.VolumeSource{Reference: product.ArtifactReference{ID: "shared_assets", Version: "v1", Digest: content.Digest(sharedEntries)}, VolumeID: sharedVolume, MinimumBytes: 8 << 20}})
 
-	store, err := producttest.OpenWithProfile(runctx, dbPath, profile, map[string][]content.Entry{content.Digest(sharedEntries): sharedEntries})
+	store, profile, err := producttest.OpenWithRuntime(runctx, dbPath, profile, backend, map[string][]content.Entry{content.Digest(sharedEntries): sharedEntries}, content.Publication{StoreID: identity.StoreID, Purpose: "assets", RevisionDigest: content.Digest(sharedEntries), Capacity: 8 << 20, Entries: sharedEntries, StagingVolumeID: sharedBase.VolumeID, DerivedVolumeID: sharedVolume, PublishedVolumeID: sharedVolume})
 	must(t, err)
 	reader, err := sqlitex.OpenReader(runctx, dbPath, 1)
 	must(t, err)
@@ -270,7 +270,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		await(t, "escaped descendant started", func() bool {
 			return strings.Contains(shell(t, "test -s /workspace/escaped-fault.pid && echo ready || true"), "ready")
 		})
-		shell(t, "/usr/local/bin/runtime-fixture kill-worker fault")
+		shell(t, "/tmp/runtime-fixture kill-worker fault")
 		await(t, "journal and guardian cleanup", func() bool {
 			var recovery, cleanup string
 			e := reader.QueryRow(`SELECT recovery_state,cleanup_state FROM agent_incarnations WHERE session_id='fault' ORDER BY created_at DESC LIMIT 1`).Scan(&recovery, &cleanup)
@@ -335,7 +335,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		})
 		var token string
 		must(t, reader.QueryRow(`SELECT input_token FROM input_deliveries WHERE id=?`, receipt.DeliveryID).Scan(&token))
-		shell(t, "/usr/local/bin/runtime-fixture kill-worker steer-crash")
+		shell(t, "/tmp/runtime-fixture kill-worker steer-crash")
 		await(t, "uncertain Steer journal recovery", func() bool {
 			var recovery, cleanup, state string
 			e := reader.QueryRow(`SELECT recovery_state,cleanup_state FROM agent_incarnations WHERE id=?`, run.IncarnationID).Scan(&recovery, &cleanup)
@@ -395,13 +395,13 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		<-done
 		var incarnation string
 		must(t, reader.QueryRow(`SELECT id FROM agent_incarnations WHERE session_id='fault' AND state='running'`).Scan(&incarnation))
-		shell(t, "/usr/local/bin/runtime-fixture kill-worker fault")
+		shell(t, "/tmp/runtime-fixture kill-worker fault")
 		await(t, "fault worker ended", func() bool {
 			var state string
 			e := reader.QueryRow(`SELECT state FROM agent_incarnations WHERE id=?`, incarnation).Scan(&state)
 			return e == nil && state == "exited"
 		})
-		shell(t, "/usr/local/bin/runtime-fixture corrupt-journal fault "+incarnation)
+		shell(t, "/tmp/runtime-fixture corrupt-journal /runtime fault "+incarnation)
 		agents.Close()
 		terminals.Close()
 		must(t, store.Close())
@@ -421,7 +421,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 			}
 		}
 		turn(t, "beta", "during-recovery-failure", "sibling remains independent of journal failure")
-		shell(t, "/usr/local/bin/runtime-fixture restore-journal fault "+incarnation)
+		shell(t, "/tmp/runtime-fixture restore-journal /runtime fault "+incarnation)
 		child, err := store.Session(runctx, scope, "fault")
 		must(t, err)
 		must(t, store.RetryRecovery(runctx, scope, "fault", child.Revision))

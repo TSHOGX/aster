@@ -40,7 +40,7 @@ func (b *rejectFileBackend) SignalProcess(context.Context, sandbox.ProcessRefere
 func (b *rejectFileBackend) CloseProcessInput(context.Context, sandbox.ProcessReference) error {
 	return nil
 }
-func (b *rejectFileBackend) WatchWorkspace(context.Context, sandbox.Reference, uint64) (sandbox.FileWatch, error) {
+func (b *rejectFileBackend) WatchWorkspace(context.Context, sandbox.Reference, string, uint64) (sandbox.FileWatch, error) {
 	b.calls++
 	return nil, errors.New("offline")
 }

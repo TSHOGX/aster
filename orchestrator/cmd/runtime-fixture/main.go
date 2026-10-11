@@ -36,10 +36,10 @@ func main() {
 	case "model-independent":
 		model(false)
 	case "corrupt-journal", "restore-journal":
-		if len(os.Args) != 4 {
-			panic("Session and incarnation required")
+		if len(os.Args) != 5 {
+			panic("Runtime root, Session and incarnation required")
 		}
-		journalFault(os.Args[1], os.Args[2], os.Args[3])
+		journalFault(os.Args[1], os.Args[2], os.Args[3], os.Args[4])
 	case "kill-worker":
 		if len(os.Args) != 3 {
 			panic("Session required")
@@ -259,7 +259,7 @@ func model(coordinated bool) {
 			}
 
 			if bytes.Contains(last, []byte("crash-descendants")) {
-				input, _ := json.Marshal(map[string]string{"command": "setsid sh -c 'echo $$ > /workspace/escaped-fault.pid; exec sleep 300' & echo ready > /workspace/fault-ready; sleep 300"})
+				input, _ := json.Marshal(map[string]string{"command": "setsid sh -c 'echo $$ > escaped-fault.pid; exec sleep 300' & echo ready > fault-ready; sleep 300"})
 				delta, _ := json.Marshal(map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]string{"type": "input_json_delta", "partial_json": string(input)}})
 				records = []string{records[0], `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"fault-tool","name":"bash","input":{}}}`, string(delta), records[3], `{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":4}}`, records[5]}
 			}
@@ -417,13 +417,16 @@ func killWorker(session string) {
 	panic("worker not found")
 }
 
-func journalFault(mode, session, incarnation string) {
+func journalFault(mode, runtimeRoot, session, incarnation string) {
 	for _, id := range []string{session, incarnation} {
 		if id == "" || id == "." || id == ".." || filepath.Base(id) != id {
 			panic("invalid fixture identity")
 		}
 	}
-	path := filepath.Join("/runtime/sessions", session, "incarnations", incarnation, "journal.db")
+	if !filepath.IsAbs(runtimeRoot) || filepath.Clean(runtimeRoot) != runtimeRoot || runtimeRoot == "/" {
+		panic("invalid runtime root")
+	}
+	path := filepath.Join(runtimeRoot, "sessions", session, "incarnations", incarnation, "journal.db")
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		file := path + suffix
 		if mode == "corrupt-journal" {

@@ -2,6 +2,7 @@ package product
 
 import (
 	"errors"
+	"harness-platform/orchestrator/internal/runtimerelease"
 	"strings"
 )
 
@@ -16,7 +17,7 @@ type ResourceFitIssue struct {
 // EnvironmentResourceFit evaluates the entire resolved mount plan, independent
 // of array order. It never edits a plan to make it fit. Usage admission is a
 // separate transaction concern, not a promise made by configuration preview.
-func EnvironmentResourceFit(environment DefaultEnvironment, artifacts []BuiltinVolume, values map[ResourceDimension]EffectiveResource, platformMounts int64) (ResolvedEnvironment, []ResourceFitIssue, error) {
+func EnvironmentResourceFit(environment DefaultEnvironment, contract runtimerelease.MountContract, artifacts []BuiltinVolume, values map[ResourceDimension]EffectiveResource, platformMounts int64) (ResolvedEnvironment, []ResourceFitIssue, error) {
 	issues := []ResourceFitIssue{}
 	for _, dimension := range []ResourceDimension{ResourceCPU, ResourceMemory, ResourceOverlay, ResourceWorkspace, ResourceRuntime} {
 		if values[dimension].Effective <= 0 {
@@ -26,7 +27,7 @@ func EnvironmentResourceFit(environment DefaultEnvironment, artifacts []BuiltinV
 	if len(issues) > 0 {
 		return ResolvedEnvironment{}, issues, nil
 	}
-	plan, err := ResolveEnvironmentStructure(environment, artifacts, values[ResourceWorkspace].Effective, values[ResourceRuntime].Effective, platformMounts)
+	plan, err := ResolveEnvironmentStructure(environment, contract, artifacts, values[ResourceWorkspace].Effective, values[ResourceRuntime].Effective, platformMounts)
 	if err != nil {
 		var admission *AdmissionError
 		if errors.As(err, &admission) {

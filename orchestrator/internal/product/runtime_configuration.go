@@ -29,6 +29,10 @@ func runtimeConfigurationDigest(ctx context.Context, q queryer) (string, error) 
 		`SELECT account_id,revision FROM account_resource_settings ORDER BY account_id`,
 		`SELECT account_id,dimension,requested FROM account_resource_overrides ORDER BY account_id,dimension`,
 	}
+	return configurationDigest(ctx, q, statements)
+}
+
+func configurationDigest(ctx context.Context, q queryer, statements []string) (string, error) {
 	digest := sha256.New()
 	for _, statement := range statements {
 		rows, err := q.QueryContext(ctx, statement)

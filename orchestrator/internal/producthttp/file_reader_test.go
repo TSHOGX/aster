@@ -44,7 +44,7 @@ type readerHTTPBackend struct {
 }
 
 func (b *readerHTTPBackend) StartProcess(_ context.Context, r sandbox.StartProcessRequest) (sandbox.ProcessStream, error) {
-	if len(r.Arguments) != 1 || r.Arguments[0] != "--reader" {
+	if len(r.Arguments) != 3 || r.Arguments[0] != "--root" || r.Arguments[2] != "--reader" {
 		return nil, errors.New("expected read-only service")
 	}
 	in, input := io.Pipe()

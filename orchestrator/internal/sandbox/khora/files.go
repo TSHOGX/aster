@@ -3,6 +3,7 @@ package khora
 import (
 	"connectrpc.com/connect"
 	"context"
+	"fmt"
 	v1 "github.com/TSHOGX/khora/pkg/transport/gen/khora/transport/v1"
 	transport "github.com/TSHOGX/khora/pkg/transport/gen/khora/transport/v1/transportv1connect"
 	"harness-platform/orchestrator/internal/sandbox"
@@ -11,12 +12,15 @@ import (
 	"strings"
 )
 
-func (b *Backend) WatchWorkspace(ctx context.Context, ref sandbox.Reference, after uint64) (sandbox.FileWatch, error) {
+func (b *Backend) WatchWorkspace(ctx context.Context, ref sandbox.Reference, workspace string, after uint64) (sandbox.FileWatch, error) {
+	if !path.IsAbs(workspace) || path.Clean(workspace) != workspace || workspace == "/" {
+		return nil, failure("watch workspace", sandbox.Invalid, fmt.Errorf("invalid workspace root"))
+	}
 	if err := b.validateReference(ctx, ref, false); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	request := connect.NewRequest(&v1.WatchRequest{Path: "/workspace", Recursive: true, PlacementEpoch: ref.Epoch, AfterSequence: after})
+	request := connect.NewRequest(&v1.WatchRequest{Path: workspace, Recursive: true, PlacementEpoch: ref.Epoch, AfterSequence: after})
 	request.Header().Set(sandboxHeader, ref.SandboxID)
 	// Connect can wait for the first response frame. A resumed, quiet watch has
 	// none yet; acquiring the subscription must not block the HTTP headers or
@@ -27,7 +31,7 @@ func (b *Backend) WatchWorkspace(ctx context.Context, ref sandbox.Reference, aft
 		if err != nil {
 			w.err = processError("watch workspace", err)
 		} else {
-			w.watch = &fileWatch{receiveStream: receiveStream[v1.WatchEvent]{stream: stream, cancel: cancel}, epoch: ref.Epoch}
+			w.watch = &fileWatch{receiveStream: receiveStream[v1.WatchEvent]{stream: stream, cancel: cancel}, epoch: ref.Epoch, workspace: workspace}
 			if ctx.Err() != nil {
 				_ = w.watch.Close()
 			}
@@ -70,7 +74,8 @@ func (w *pendingFileWatch) Close() error {
 
 type fileWatch struct {
 	receiveStream[v1.WatchEvent]
-	epoch uint64
+	epoch     uint64
+	workspace string
 }
 
 func (w *fileWatch) Next() (sandbox.FileInvalidation, error) {
@@ -81,23 +86,23 @@ func (w *fileWatch) Next() (sandbox.FileInvalidation, error) {
 		}
 		return sandbox.FileInvalidation{}, processError("watch workspace", err)
 	}
-	return workspaceInvalidation(e, w.epoch), nil
+	return workspaceInvalidation(e, w.epoch, w.workspace), nil
 }
 
-func workspaceInvalidation(e *v1.WatchEvent, epoch uint64) sandbox.FileInvalidation {
+func workspaceInvalidation(e *v1.WatchEvent, epoch uint64, workspace string) sandbox.FileInvalidation {
 	out := sandbox.FileInvalidation{Sequence: e.Sequence, Epoch: e.PlacementEpoch, Reset: e.Overflow || e.Reset_ || e.PlacementEpoch != epoch, Operation: e.Operation, Reason: e.ResetReason}
 	normalize := func(name string) (string, bool) {
 		if name == "" {
 			return "", true
 		}
 		clean := path.Clean(name)
-		if clean == "/workspace" {
+		if clean == workspace {
 			return "", true
 		}
-		if !strings.HasPrefix(clean, "/workspace/") {
+		if !strings.HasPrefix(clean, workspace+"/") {
 			return "", false
 		}
-		return strings.TrimPrefix(clean, "/workspace/"), true
+		return strings.TrimPrefix(clean, workspace+"/"), true
 	}
 	var ok, oldOK bool
 	out.Path, ok = normalize(e.Path)

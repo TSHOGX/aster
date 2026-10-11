@@ -169,7 +169,7 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 			Hosts:    map[string]string{"model.internal": "model"},
 		},
 	}
-	store, err := producttest.OpenWithProfile(runctx, filepath.Join(t.TempDir(), "product.db"), profile, nil)
+	store, profile, err := producttest.OpenWithRuntime(runctx, filepath.Join(t.TempDir(), "product.db"), profile, backend, nil)
 	must(t, err)
 	t.Cleanup(func() { store.Close() })
 	lifecycle := &product.Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: store, Backend: backend, MaxProjects: 1}
@@ -272,21 +272,17 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 	t.Log("Project reachability was materialized once by the lifecycle, before any child started")
 
 	agents := product.NewAgents(runctx, store, lifecycle, backend, profile.Bindings(), 8)
-	agents.RunnerBinary = "/tmp/agent-runner"
 	agents.ServiceAudience = "model"
 	closeAgents := sync.OnceFunc(agents.Close)
 	defer closeAgents()
-	file, err := os.Open(filepath.Join(binaries, "agent-runner"))
-	must(t, err)
-	must(t, api.WriteFile(runctx, resources.Reference.SandboxID, "/tmp/agent-runner", file))
-	file.Close()
-	shell(t, "chmod 755 /tmp/agent-runner")
+
 	session := func(t *testing.T, id string) {
 		t.Helper()
 		_, err := store.CreateSession(runctx, scope, id, "Agent")
 		must(t, err)
 		shell(t, "mkdir -p /runtime/sessions/"+id)
 		must(t, api.WriteFile(runctx, resources.Reference.SandboxID, "/runtime/sessions/"+id+"/models.json", strings.NewReader(guestModels)))
+		must(t, api.WriteFile(runctx, resources.Reference.SandboxID, "/runtime/sessions/"+id+"/authored-models.json", strings.NewReader(guestModels)))
 		must(t, api.WriteFile(runctx, resources.Reference.SandboxID, "/runtime/sessions/"+id+"/settings.json", strings.NewReader(`{"defaultProvider":"gateway","defaultModel":"local-model","compaction":{"enabled":false}}`)))
 	}
 	// step drives the application's own worker path. It returns when each named

@@ -64,7 +64,7 @@ func (s *Store) RegisterBuiltinVolume(ctx context.Context, artifact BuiltinVolum
 	if err := artifact.Reference.validate(); err != nil {
 		return err
 	}
-	if artifact.StoreID == "" || (artifact.PublicationPurpose != "assets" && artifact.PublicationPurpose != "config") || artifact.MinimumBytes <= 0 || len(artifact.Roles) == 0 || len(artifact.Roles) > 5 || content.Digest(artifact.Entries) != artifact.Reference.Digest {
+	if artifact.StoreID == "" || (artifact.PublicationPurpose != "assets" && artifact.PublicationPurpose != "config") || artifact.MinimumBytes <= 0 || len(artifact.Roles) == 0 || len(artifact.Roles) > 35 || content.Digest(artifact.Entries) != artifact.Reference.Digest {
 		return ErrInvalid
 	}
 	roles := slices.Clone(artifact.Roles)
@@ -73,13 +73,10 @@ func (s *Store) RegisterBuiltinVolume(ctx context.Context, artifact BuiltinVolum
 		if index > 0 && role == roles[index-1] {
 			return ErrInvalid
 		}
-		switch role {
-		case "workspace", "data", "agent_config", "shared_assets":
-		case "runtime":
-			if !artifact.CleanRuntime {
-				return ErrInvalid
-			}
-		default:
+		if !validID(role) || len(role) > 64 {
+			return ErrInvalid
+		}
+		if role == "runtime" && !artifact.CleanRuntime {
 			return ErrInvalid
 		}
 	}

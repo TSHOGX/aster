@@ -146,7 +146,11 @@ func userUsage(ctx context.Context, q queryer, actor string) (out UserUsage, err
 	if err != nil {
 		return out, err
 	}
-	_, out.DefaultPlanIssues, err = EnvironmentResourceFit(environment, artifacts, out.Settings.Effective, out.Settings.Effective[ResourceMounts].PlatformLimit)
+	release, err := registeredSandbox(ctx, q, environment.SandboxRelease, false)
+	if err != nil {
+		return out, err
+	}
+	_, out.DefaultPlanIssues, err = EnvironmentResourceFit(environment, release.Manifest.Mounts, artifacts, out.Settings.Effective, out.Settings.Effective[ResourceMounts].PlatformLimit)
 	if err != nil {
 		return
 	}

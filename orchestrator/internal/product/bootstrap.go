@@ -36,15 +36,12 @@ func NewBootstrapSeed(resources ResourceSeed, release RegisteredSandbox, volumes
 			return BootstrapSeed{}, ErrInvalid
 		}
 		role := artifact.Roles[0]
-		destination := ""
-		switch role {
-		case "agent_config":
-			destination = "/opt/agent-config"
-		case "shared_assets":
-			destination = "/opt/shared-assets"
-		default:
+		required, ok := release.Manifest.Mounts.Publication(role)
+		if !ok || required.ArtifactID != artifact.Reference.ID {
 			return BootstrapSeed{}, ErrInvalid
 		}
+		destination := required.Destination
+
 		environment.Mounts = append(environment.Mounts, EnvironmentMount{Key: role, Role: role, Destination: destination, Storage: "shared_readonly", Access: "read_only", Source: MountSource{Kind: "builtin", ArtifactID: artifact.Reference.ID, Version: artifact.Reference.Version, Digest: artifact.Reference.Digest}})
 	}
 	if resources.Mounts != 0 && resources.Mounts != int64(len(environment.Mounts)) {
@@ -106,7 +103,7 @@ func (s BootstrapSeed) Validate() error {
 			return ErrInvalid
 		}
 	}
-	resolved, err := ResolveEnvironmentStructure(s.Environment, s.Volumes, s.Resources.Workspace, s.Resources.Runtime, s.Resources.MaxMounts)
+	resolved, err := ResolveEnvironmentStructure(s.Environment, s.Sandbox.Manifest.Mounts, s.Volumes, s.Resources.Workspace, s.Resources.Runtime, s.Resources.MaxMounts)
 	if err != nil {
 		return err
 	}

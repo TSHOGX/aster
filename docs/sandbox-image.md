@@ -32,8 +32,17 @@ an exported manifest beside it. It hashes sandboxd, all Go guest executables, Pi
 Node and builtin system context, and hashes the complete native dependency tree.
 Native dependency symlinks must resolve inside that hashed tree. All ELF runtime
 components must share a supported Linux architecture. The manifest records
-engine/native/protocol pins, platform and required workspace/runtime paths.
-Manifest version 4 requires agent protocol 2 (bounded flow/pressure telemetry),
+engine/native/protocol pins, platform, bootstrap workspace/runtime defaults and
+mount contract 1. Manifest version 5 records protected guest roots, image files
+and symlinks that mounts must not shadow, and required publication roles with
+fixed destinations and artifact identities. Generation reads this metadata from
+the new image; allocation validates against the selected registered manifest
+without starting a sandbox to inspect paths. Canonical non-default workspace and
+runtime roots are supported. Required publication destinations remain fixed and
+read-only. The saved Project plan supplies every guest role root to runner,
+replay, file reader/mutations, Terminal, capture export and cleanup.
+
+Manifest version 5 requires agent protocol 2 (bounded flow/pressure telemetry),
 reader protocol 3 with per-request chunk credits and directory seek windows, and native input identity/settlement protocol 4.
 A missing capability or an older manifest is rejected. Reader changes require
 a newly assembled immutable template, not replacement of running guest binaries.

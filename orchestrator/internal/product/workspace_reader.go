@@ -25,16 +25,17 @@ const MaxWorkspaceReaders = 16
 const MaxCapturedBytes int64 = 512 << 20
 
 type readerCarrier struct {
-	scope   Scope
-	ref     sandbox.ProcessReference
-	ctx     context.Context
-	cancel  context.CancelFunc
-	ready   chan struct{}
-	client  *workspacereader.Client
-	err     error
-	uses    int
-	listing bool
-	used    time.Time
+	workspace string
+	scope     Scope
+	ref       sandbox.ProcessReference
+	ctx       context.Context
+	cancel    context.CancelFunc
+	ready     chan struct{}
+	client    *workspacereader.Client
+	err       error
+	uses      int
+	listing   bool
+	used      time.Time
 }
 
 // WorkspaceReader owns read-only helper lifetimes and immutable capture leases.
@@ -198,7 +199,7 @@ func (w *WorkspaceReader) start(entry *readerCarrier) {
 	// Start's stream must outlive its first HTTP consumer. The timeout cancels
 	// startup only; a successful handshake transfers lifetime to the carrier.
 	stop := context.AfterFunc(attempt, entry.cancel)
-	stream, err := w.Backend.StartProcess(entry.ctx, sandbox.StartProcessRequest{ProcessReference: entry.ref, IdempotencyKey: entry.ref.Handle, Command: helper, Arguments: []string{"--reader"}, Directory: "/workspace"})
+	stream, err := w.Backend.StartProcess(entry.ctx, sandbox.StartProcessRequest{ProcessReference: entry.ref, IdempotencyKey: entry.ref.Handle, Command: helper, Arguments: []string{"--root", entry.workspace, "--reader"}, Directory: entry.workspace})
 	if err == nil {
 		entry.client, err = workspacereader.New(attempt, stream, func(ctx context.Context, data []byte) error { return w.Backend.SendProcessInput(ctx, entry.ref, data) })
 	}
@@ -286,7 +287,7 @@ func (w *WorkspaceReader) acquire(ctx context.Context, scope Scope, list bool) (
 			return nil, nil, nil, ErrCapacity
 		}
 		lifetime, cancel := context.WithCancel(context.Background())
-		entry = &readerCarrier{scope: scope, ref: sandbox.ProcessReference{StoreID: current.Reference.StoreID, SandboxID: current.Reference.SandboxID, Epoch: current.Reference.Epoch, Handle: "reader-" + uuid.NewString()}, ctx: lifetime, cancel: cancel, ready: make(chan struct{}), used: time.Now()}
+		entry = &readerCarrier{scope: scope, workspace: current.Profile.RolePath("workspace"), ref: sandbox.ProcessReference{StoreID: current.Reference.StoreID, SandboxID: current.Reference.SandboxID, Epoch: current.Reference.Epoch, Handle: "reader-" + uuid.NewString()}, ctx: lifetime, cancel: cancel, ready: make(chan struct{}), used: time.Now()}
 		w.entries[scope.ProjectID] = entry
 		w.group.Add(1)
 		go w.start(entry)

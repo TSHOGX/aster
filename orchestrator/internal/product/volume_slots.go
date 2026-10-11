@@ -55,6 +55,11 @@ func (p Profile) RolePath(role string) string {
 	plan, _ := p.VolumeForRole(role)
 	return plan.Destination
 }
+
+// RunnerPaths derives every guest role root from the immutable saved plan.
+func (p Profile) RunnerPaths() []string {
+	return []string{"--workspace", p.RolePath("workspace"), "--state-root", p.RolePath("runtime"), "--config-root", p.RolePath("agent_config"), "--shared-root", p.RolePath("shared_assets")}
+}
 func (r Resources) VolumeForRole(role string) string {
 	plan, ok := r.Profile.VolumeForRole(role)
 	if !ok {
@@ -360,19 +365,15 @@ func validateVolumePlan(plans []VolumePlan) error {
 		if !validID(plan.Key) || len(plan.Key) > 64 || keys[plan.Key] || !validMountPath(plan.Destination) || plan.CapacityBytes <= 0 {
 			return ErrInvalid
 		}
-		for _, root := range []string{"/proc", "/sys", "/dev", "/etc", "/bin", "/sbin", "/lib", "/lib64", "/usr", "/opt/node-v" + runtimerelease.NodeVersion} {
+		for _, root := range runtimerelease.DefaultMountContract().ProtectedRoots {
 			if pathsOverlap(plan.Destination, root) {
 				return ErrInvalid
 			}
 		}
-		for role, root := range map[string]string{"agent_config": "/opt/agent-config", "shared_assets": "/opt/shared-assets"} {
-			if plan.Role == role && (plan.Destination != root || plan.Storage != "shared_readonly") {
-				return ErrInvalid
-			}
-			if pathsOverlap(plan.Destination, root) && plan.Role != role {
-				return ErrInvalid
-			}
+		if !validID(plan.Role) || len(plan.Role) > 64 {
+			return ErrInvalid
 		}
+
 		keys[plan.Key] = true
 		roles[plan.Role]++
 		for _, other := range plans[:index] {
@@ -380,9 +381,7 @@ func validateVolumePlan(plans []VolumePlan) error {
 				return ErrInvalid
 			}
 		}
-		if plan.Role != "workspace" && plan.Role != "runtime" && plan.Role != "data" && plan.Role != "agent_config" && plan.Role != "shared_assets" {
-			return ErrInvalid
-		}
+
 		if plan.Role != "data" && roles[plan.Role] > 1 {
 			return ErrInvalid
 		}
@@ -393,12 +392,7 @@ func validateVolumePlan(plans []VolumePlan) error {
 			return ErrInvalid
 		}
 		if plan.Role == "workspace" || plan.Role == "runtime" {
-			// The current registered runtime protocol still fixes these roots.
-			// Dynamic role paths are admitted only with its qualified successor.
-			expected := map[string]string{"workspace": "/workspace", "runtime": "/runtime"}[plan.Role]
-			if plan.Destination != expected {
-				return Admission("runtime_incompatible", ErrInvalid)
-			}
+
 			if plan.Storage != "owned" || plan.Access != "read_write" {
 				return ErrInvalid
 			}

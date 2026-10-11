@@ -63,8 +63,8 @@ func (b *localFileBackend) StartProcess(_ context.Context, r sandbox.StartProces
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	var request projectfiles.Request
-	service := len(r.Arguments) == 1 && r.Arguments[0] == "--reader"
-	if err := json.Unmarshal([]byte(r.Arguments[0]), &request); err != nil && !service {
+	service := len(r.Arguments) == 3 && r.Arguments[0] == "--root" && r.Arguments[2] == "--reader"
+	if err := json.Unmarshal([]byte(r.Arguments[len(r.Arguments)-1]), &request); err != nil && !service {
 		return nil, err
 	}
 	reader, writer := io.Pipe()
@@ -118,7 +118,7 @@ func (b *localFileBackend) SignalProcess(_ context.Context, r sandbox.ProcessRef
 func (b *localFileBackend) ConnectProcess(context.Context, sandbox.ProcessReference, uint64) (sandbox.ProcessStream, error) {
 	return nil, &sandbox.Error{Class: sandbox.NotFound}
 }
-func (b *localFileBackend) WatchWorkspace(context.Context, sandbox.Reference, uint64) (sandbox.FileWatch, error) {
+func (b *localFileBackend) WatchWorkspace(context.Context, sandbox.Reference, string, uint64) (sandbox.FileWatch, error) {
 	return nil, errors.New("not configured")
 }
 func fileFixture(t *testing.T) (*Files, Scope, *localFileBackend) {

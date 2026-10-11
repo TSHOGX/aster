@@ -169,3 +169,26 @@ sharing where needed. There is no production missing-account/permission fallback
 External package fixtures author data offline under the same exclusive store lock;
 reopening never rewrites fixture identities or grants. Test helper packages are
 absent from the application executable dependency graph.
+
+### Configurable role paths and retained runtime versions
+
+The `paths` suite requires two independently built, compatible immutable images
+with distinct manifests:
+
+```sh
+dev/verify-khora.sh --suite paths \
+  --template /srv/build/runtime-v1 --manifest /srv/build/runtime-v1.manifest.json \
+  --secondary-template /srv/build/runtime-v2 --secondary-manifest /srv/build/runtime-v2.manifest.json \
+  --output /tmp/runtime-path-qualification-new
+```
+
+The disposable engine namespace mounts both templates read-only. The real owner
+registers v2 without selecting it, edits the default through the admin preview/save
+API, and runs native work on both releases. Existing Projects retain their saved
+release and non-default role paths across default/network edits, restart and
+resume. Additional engine tests exercise native journal/capture behavior,
+workspace confinement/readers/watches/transfers, PTY working directories and
+storage cleanup at non-default roots. Fixture publications supply required system
+roles; tests use the image's immutable application helpers rather than replacing
+them with host builds. The separate fault/recovery suite continues to cover cold
+restart, journal failure, forced process loss, Session retirement and cleanup.

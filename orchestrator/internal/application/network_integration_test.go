@@ -10,10 +10,12 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -21,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"harness-platform/orchestrator/internal/runtimerelease"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sandbox/khora"
 )
@@ -28,6 +31,13 @@ import (
 // This gate exercises actual guest DNS, TLS/package bytes, denial, binding
 // replacement and retained model routing on the isolated disposable substrate.
 // It is deliberately independent of public Internet availability.
+func TestReleasedRuntimePathsAndVersions(t *testing.T) {
+	if os.Getenv("PROJECT_TEST_SECONDARY_MANIFEST") == "" {
+		t.Fatal("second qualified runtime required")
+	}
+	TestReleasedDatabaseNetworkPolicy(t)
+}
+
 func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 	t.Setenv("PROJECT_RELEASE_MODEL_MODE", "model-independent")
 	a := newReleasedApp(t)
@@ -74,6 +84,32 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 	defer tls.Close()
 	port := listener.Addr().(*net.TCPAddr).Port
 	certificate := base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: tls.Certificate().Raw}))
+	workspace, runtimeRoot := "/workspaces/network", "/state/network"
+	var nextRelease any
+	deletedProjects := float64(1)
+	editPaths := func(workspace, runtimeRoot, requestID string) {
+		t.Helper()
+		current := a.request("GET", "/api/admin/runtime/default", nil, 200)
+		mounts := current["mounts"].([]any)
+		for _, raw := range mounts {
+			mount := raw.(map[string]any)
+			if mount["role"] == "workspace" {
+				mount["destination"] = workspace
+			}
+			if mount["role"] == "runtime" {
+				mount["destination"] = runtimeRoot
+			}
+		}
+		body := map[string]any{"expected_revision": current["revision"], "sandbox_release": current["sandbox_release"], "mounts": mounts}
+		if nextRelease != nil {
+			body["sandbox_release"] = nextRelease
+		}
+		preview := a.request("POST", "/api/admin/runtime/default/preview", body, 200)
+		body["request_id"] = requestID
+		body["expected_dependencies"] = preview["expected_dependencies"]
+		a.request("PATCH", "/api/admin/runtime/default", body, 200)
+	}
+	editPaths(workspace, runtimeRoot, "non-default-paths")
 	base := "/api/projects/network"
 	a.request("POST", "/api/projects", map[string]string{"id": "network", "title": "Network policy gate"}, 201)
 	a.request("POST", base+"/resume", nil, 202)
@@ -105,7 +141,7 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 		handle := fmt.Sprintf("network-check-%d", sequence)
 		ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
 		defer cancel()
-		stream, err := backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/usr/bin/python3", Arguments: []string{"-c", code}, Directory: "/workspace"})
+		stream, err := backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/usr/bin/python3", Arguments: []string{"-c", strings.ReplaceAll(code, "/workspace", workspace)}, Directory: workspace})
 		require(t, err)
 		defer stream.Close()
 		var output strings.Builder
@@ -124,6 +160,80 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 		}
 	}
 	shell("open('/workspace/retained','w').write('network-retained'); assert open('/etc/resolv.conf').read()==''")
+	// Both active file helper modes must use the selected role mount.
+	a.writeFile(base+"/files/content?path=via-helper", "saved-path-file", "path-upload")
+	response, err := a.client.Get(a.origin + base + "/files/content?path=" + url.QueryEscape("via-helper"))
+	require(t, err)
+	data, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	require(t, err)
+	if response.StatusCode != 200 || string(data) != "saved-path-file" {
+		t.Fatal(response.StatusCode, string(data))
+	}
+	shell("assert open('/workspace/via-helper').read()=='saved-path-file'")
+	if manifestPath := os.Getenv("PROJECT_TEST_SECONDARY_MANIFEST"); manifestPath != "" {
+		raw, err := os.ReadFile(manifestPath)
+		require(t, err)
+		digest, err := runtimerelease.Digest(raw)
+		require(t, err)
+		registered := a.cli("runtime", "register", "--socket", socket, "--id", "agent-runtime", "--version", "v2", "--template", "agent-runtime-v2", "--manifest", manifestPath, "--digest", digest)
+		nextRelease = registered["reference"]
+		if registered["default_changed"] != false {
+			t.Fatal(registered)
+		}
+		// Registration alone cannot select the new image.
+		unchanged := a.request("GET", "/api/admin/runtime/default", nil, 200)
+		if unchanged["sandbox_release"].(map[string]any)["digest"] == digest {
+			t.Fatal("registration changed default")
+		}
+	}
+	// A later default edit must not reinterpret the already-bound paths.
+	editPaths("/workspaces/future", "/state/future", "future-paths")
+	if nextRelease != nil {
+		secondBase := "/api/projects/network-v2"
+		a.request("POST", "/api/projects", map[string]string{"id": "network-v2", "title": "Second compatible runtime"}, 201)
+		a.writeFile(secondBase+"/files/content?path=second-version", "second version bytes", "v2-first-upload")
+		a.request("POST", secondBase+"/sessions", map[string]string{"id": "native-v2", "title": "Native on second runtime"}, 201)
+		a.request("POST", secondBase+"/sessions/native-v2/turns", map[string]string{"request_id": "v2-native", "content": "Reply briefly"}, 201)
+		a.await(45*time.Second, "second runtime native completion", func() bool {
+			turns, _ := a.request("GET", secondBase+"/sessions/native-v2/turns", nil, 200)["turns"].([]any)
+			return len(turns) == 1 && turns[0].(map[string]any)["state"] == "completed"
+		})
+		second := a.cli("diagnostics", "--socket", socket, "--project", "network-v2")
+		secondResources := second["resources"].(map[string]any)
+		secondProfile := secondResources["profile"].(map[string]any)
+		if secondProfile["template_id"] != "agent-runtime-v2" || !reflect.DeepEqual(secondProfile["sandbox_release"], nextRelease) {
+			t.Fatal(secondProfile)
+		}
+		response, err := a.client.Get(a.origin + secondBase + "/files/content?path=second-version")
+		require(t, err)
+		content, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		require(t, err)
+		if response.StatusCode != 200 || string(content) != "second version bytes" {
+			t.Fatal(response.StatusCode, string(content))
+		}
+		// Both template bindings coexist. Removing v2 resources leaves v1 intact.
+		secondProject := a.request("GET", secondBase, nil, 200)
+		a.request("DELETE", fmt.Sprintf("%s?revision=%.0f", secondBase, secondProject["revision"]), nil, 202)
+		a.await(25*time.Second, "second runtime cleanup", func() bool {
+			return a.cli("diagnostics", "--socket", socket)["state"].(map[string]any)["projects"].(map[string]any)["deleted"] == float64(1)
+		})
+		deletedProjects = 2
+		// Idle reconciliation may pause the first Project while v2 runs. Resume it
+		// explicitly and prove the original release and role paths are retained.
+		first := a.request("GET", base, nil, 200)
+		if first["state"] != "active" {
+			a.request("POST", base+"/resume", nil, 202)
+			a.await(25*time.Second, "first runtime retained", func() bool { return a.request("GET", base, nil, 200)["state"] == "active" })
+		}
+		observed, current := inspect()
+		ref = observed
+		if !reflect.DeepEqual(current["resources"].(map[string]any)["profile"].(map[string]any)["sandbox_release"], original["resources"].(map[string]any)["profile"].(map[string]any)["sandbox_release"]) {
+			t.Fatal("retained release rebound")
+		}
+	}
+
 	raw, err := os.ReadFile(a.config)
 	require(t, err)
 	var cfg map[string]any
@@ -229,10 +339,10 @@ print('DNS TLS PACKAGE DENIAL OK')`, certificate, port, len(payload))
 	p := a.request("GET", base, nil, 200)
 	a.request("DELETE", fmt.Sprintf("%s?revision=%.0f", base, p["revision"]), nil, 202)
 	a.await(25*time.Second, "network Project cleanup", func() bool {
-		return a.cli("diagnostics", "--socket", socket)["state"].(map[string]any)["projects"].(map[string]any)["deleted"] == float64(1)
+		return a.cli("diagnostics", "--socket", socket)["state"].(map[string]any)["projects"].(map[string]any)["deleted"] == deletedProjects
 	})
 	checkStorage("0")
-	report := map[string]any{"dns": true, "tls_package_bytes": len(payload), "undeclared_denied": true, "running_unchanged": true, "permission_removal": true, "user_override_restart": true, "inheritance_restored": true, "retained_model_completed": true, "public_internet_tested": false, "destination": netip.MustParseAddr("192.0.2.1").String()}
+	report := map[string]any{"dns": true, "tls_package_bytes": len(payload), "undeclared_denied": true, "running_unchanged": true, "permission_removal": true, "user_override_restart": true, "workspace_path": workspace, "runtime_path": runtimeRoot, "active_file_helpers": true, "second_release": nextRelease, "inheritance_restored": true, "retained_model_completed": true, "public_internet_tested": false, "destination": netip.MustParseAddr("192.0.2.1").String()}
 	raw, _ = json.MarshalIndent(report, "", "  ")
 	require(t, os.WriteFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "network-policy.json"), raw, 0644))
 }

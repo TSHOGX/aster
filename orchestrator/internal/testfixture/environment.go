@@ -70,7 +70,7 @@ func SetRuntime(ctx context.Context, tx *sql.Tx, raw []byte, manifest runtimerel
 				capacity["setting"] = dimension
 				defaults[dimension] = volume.Capacity
 			default:
-				capacity["bytes"] = volume.Capacity
+				capacity["bytes"] = fmt.Sprint(volume.Capacity)
 			}
 		}
 		if volume.Source != nil {

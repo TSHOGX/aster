@@ -25,6 +25,7 @@ import (
 	"harness-platform/orchestrator/internal/runtimerelease"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sandbox/khora"
+	"harness-platform/orchestrator/internal/testfixture"
 )
 
 // browserSubstrate installs only deterministic test dependencies into disposable
@@ -55,19 +56,18 @@ func (b *browserSubstrate) WriteProjection(ctx context.Context, ref sandbox.Refe
 	if b.initialized[key] {
 		return nil
 	}
-	for _, name := range []string{"agent-runner", "workspace-files", "runtime-fixture", "runtime-cleanup"} {
-		f, err := os.Open(filepath.Join(b.binaries, name))
-		if err != nil {
-			return err
-		}
-		err = b.api.WriteFile(ctx, ref.SandboxID, "/usr/local/bin/"+name, f)
-		f.Close()
-		if err != nil {
-			return err
-		}
+	f, err := os.Open(filepath.Join(b.binaries, "runtime-fixture"))
+	if err != nil {
+		return err
 	}
+	err = b.api.WriteFile(ctx, ref.SandboxID, "/tmp/runtime-fixture", f)
+	f.Close()
+	if err != nil {
+		return err
+	}
+
 	handle := fmt.Sprintf("browser-setup-%s-%d", ref.SandboxID, ref.Epoch)
-	stream, err := b.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/bin/sh", Arguments: []string{"-c", "chmod +x /usr/local/bin/agent-runner /usr/local/bin/workspace-files /usr/local/bin/runtime-fixture /usr/local/bin/runtime-cleanup; mkdir -p /opt/agent-config/pi"}, Directory: "/workspace"})
+	stream, err := b.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/bin/sh", Arguments: []string{"-c", "chmod +x /tmp/runtime-fixture"}, Directory: "/workspace"})
 	if err != nil {
 		return err
 	}
@@ -85,18 +85,12 @@ func (b *browserSubstrate) WriteProjection(ctx context.Context, ref sandbox.Refe
 			break
 		}
 	}
-	models := `{"providers":{"local":{"baseUrl":"http://127.0.0.1:18889","api":"anthropic-messages","apiKey":"fixture-only","models":[{"id":"local-model","name":"Local model","reasoning":false,"input":["text"],"contextWindow":8192,"maxTokens":256,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]}}}`
-	if err = b.api.WriteFile(ctx, ref.SandboxID, "/opt/agent-config/pi/models.json", strings.NewReader(models)); err != nil {
-		return err
-	}
-	if err = b.api.WriteFile(ctx, ref.SandboxID, "/opt/agent-config/pi/settings.json", strings.NewReader(`{"defaultProvider":"local","defaultModel":"local-model","compaction":{"enabled":false}}`)); err != nil {
-		return err
-	}
+
 	mode := b.modelMode
 	if mode == "" {
 		mode = "model"
 	}
-	model, err := b.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: fmt.Sprintf("browser-model-%s-%d", ref.SandboxID, ref.Epoch)}, IdempotencyKey: fmt.Sprintf("browser-model-%s-%d", ref.SandboxID, ref.Epoch), Command: "/usr/local/bin/runtime-fixture", Arguments: []string{mode}, Directory: "/workspace"})
+	model, err := b.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: fmt.Sprintf("browser-model-%s-%d", ref.SandboxID, ref.Epoch)}, IdempotencyKey: fmt.Sprintf("browser-model-%s-%d", ref.SandboxID, ref.Epoch), Command: "/tmp/runtime-fixture", Arguments: []string{mode}, Directory: "/workspace"})
 	if err != nil {
 		return err
 	}
@@ -156,7 +150,22 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	profile.ReleaseDigest = releaseDigest
 	network, err := product.NewNetworkPolicy(profile.Reachability)
 	must(t, err)
-	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: profile.CPUMillis, Memory: profile.MemoryBytes, Overlay: profile.DiskBytes, Workspace: profile.CapacityForRole("workspace"), Runtime: profile.CapacityForRole("runtime"), MaxMounts: 8, ProjectSlots: 4, AgentSlots: 8, TerminalSlots: 8}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: "agent-runtime", Version: "v1", Digest: releaseDigest}, StoreID: identity.StoreID, TemplateID: profile.TemplateID, Manifest: manifest}, nil, network)
+	publications, err := testfixture.RuntimePublications(runctx, backend, manifest.Mounts.RequiredPublications)
+	must(t, err)
+	artifacts := []product.BuiltinVolume{}
+	for _, item := range publications {
+		p := item.Publication
+		claimed, e := store.ClaimContentPublication(runctx, p)
+		must(t, e)
+		claimed, e = store.RecordContentStaging(runctx, claimed, p.StagingVolumeID)
+		must(t, e)
+		claimed, e = store.RecordContentDerivation(runctx, claimed, p.DerivedVolumeID)
+		must(t, e)
+		_, e = store.CommitContentPublication(runctx, claimed, p.PublishedVolumeID, p.RevisionDigest)
+		must(t, e)
+		artifacts = append(artifacts, product.BuiltinVolume{Reference: product.ArtifactReference{ID: item.Required.ArtifactID, Version: p.RevisionDigest, Digest: p.RevisionDigest}, StoreID: p.StoreID, PublicationPurpose: p.Purpose, MinimumBytes: p.Capacity, Roles: []string{item.Required.Role}, Entries: p.Entries})
+	}
+	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: profile.CPUMillis, Memory: profile.MemoryBytes, Overlay: profile.DiskBytes, Workspace: profile.CapacityForRole("workspace"), Runtime: profile.CapacityForRole("runtime"), MaxMounts: 8, ProjectSlots: 4, AgentSlots: 8, TerminalSlots: 8}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: "agent-runtime", Version: "v1", Digest: releaseDigest}, StoreID: identity.StoreID, TemplateID: profile.TemplateID, Manifest: manifest}, artifacts, network)
 	must(t, err)
 
 	lifecycle := &product.Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: store, Backend: fixture, MaxProjects: 4}

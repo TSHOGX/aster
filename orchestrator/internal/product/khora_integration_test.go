@@ -59,7 +59,7 @@ func TestProjectLifecycleOnKhora(t *testing.T) {
 	profile.TemplateID = "agent-runtime"
 	profile.MemoryBytes = 1 << 30
 	profile.DiskBytes = 256 << 20
-	fixtureEnvironment(t, s, profile)
+	profile = fixtureRuntimeOnKhora(t, runctx, s, backend, profile)
 	must(t, l.EnsureActive(runctx, a, profile.Bindings()))
 	converge()
 	r, err := l.ActiveResources(runctx, a)

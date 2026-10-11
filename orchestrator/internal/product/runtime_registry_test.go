@@ -62,7 +62,7 @@ func TestBuiltinRegistrationRequiresVerifiedPublicationAndImmutableMetadata(t *t
 	wantError(t, s.RegisterBuiltinVolume(ctx, changed), ErrInvalid)
 	changed = artifact
 	changed.Reference.ID = "bad-role"
-	changed.Roles = []string{"unknown"}
+	changed.Roles = []string{"invalid/role"}
 	wantError(t, s.RegisterBuiltinVolume(ctx, changed), ErrInvalid)
 	var events int
 	must(t, s.reader.QueryRow(`SELECT count(*) FROM audit_events WHERE action='volume_artifact.register' AND target_id='dataset/v1'`).Scan(&events))

@@ -254,6 +254,10 @@ func (s *Store) PreviewResourceChange(ctx context.Context, token string, input R
 	if err != nil {
 		return out, err
 	}
+	release, err := registeredSandbox(ctx, tx, environment.SandboxRelease, false)
+	if err != nil {
+		return out, err
+	}
 	platform, err := platformResourceLimits(ctx, tx)
 	if err != nil {
 		return out, err
@@ -289,11 +293,11 @@ func (s *Store) PreviewResourceChange(ctx context.Context, token string, input R
 		if err != nil {
 			return out, err
 		}
-		_, user.BeforePlan, err = EnvironmentResourceFit(environment, artifacts, user.Before, platform[ResourceMounts])
+		_, user.BeforePlan, err = EnvironmentResourceFit(environment, release.Manifest.Mounts, artifacts, user.Before, platform[ResourceMounts])
 		if err != nil {
 			return out, err
 		}
-		_, user.AfterPlan, err = EnvironmentResourceFit(environment, artifacts, user.After, platform[ResourceMounts])
+		_, user.AfterPlan, err = EnvironmentResourceFit(environment, release.Manifest.Mounts, artifacts, user.After, platform[ResourceMounts])
 		if err != nil {
 			return out, err
 		}
