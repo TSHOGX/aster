@@ -14,6 +14,7 @@ import (
 const loginCookie = "project_login"
 
 type Authentication struct {
+	ProjectInspector product.ProjectInspector
 	RuntimeInspector product.RuntimeInspector
 	Store            *product.Store
 	Config           Config

@@ -382,3 +382,29 @@ application release reference separately through the admin default preview/edit
 API. Retained Projects continue using their exact registrations and complete
 saved mount plans when defaults change. Both versions must satisfy the current
 manifest/protocol contract; there is no historical runtime adapter.
+
+## Project and Volume metadata
+
+Administration’s Projects page lists cross-account ownership, recorded state,
+saved environment/release, mount count and allocated/reserved owned bytes. Filter
+by owner account ID, Project title/ID or state. User details link to that owner's
+Projects. `GET /api/admin/projects` is bounded by `limit` and a filter-scoped cursor;
+`GET /api/admin/projects/{id}` returns the full saved mount metadata and lifecycle
+progress. Both require current platform-admin authority in the product service.
+
+Detail views show immutable role paths, access, source versions/digests, requested
+capacity, readiness/initialization state and allocation versus reservation.
+Read-only engine identities are diagnostics, never mutation inputs. Files,
+conversation payloads, service credentials, routes and host mappings are omitted;
+private-content inspection retains its separate authorization and audit path.
+
+Live engine/Volume observations have timestamps and a ten-second request budget,
+performed after the metadata snapshot transaction. Unavailable, absent and
+unchecked observations remain distinct. Unknown observations do not prove a stop
+or release any capacity. The active observed network revision is shown only when
+the complete live binding matches the saved profile and lifecycle readiness has
+settled. Desired changes remain pending while the old running policy is retained.
+Opening or refreshing metadata never initializes a Volume, resumes compute,
+retries a mutation or changes resource charges. Unbound Projects remain unbound;
+paused Projects remain paused. Latest lifecycle progress and recent administrative
+operation links provide the route to recorded action/outcome evidence.

@@ -8,6 +8,7 @@ import { ACTIVE_APPEARANCE_KEY, appearanceKey, applyAppearance, bindAppearance, 
 import { PolicyList } from "./policy-list";
 import { PolicyEditor } from "./policy-editor";
 import { GroupEditor } from "./group-editor";
+import { ProjectList, ProjectView } from "./project-views";
 import { UserList } from "./user-list";
 import { ResourceEditor } from "./resource-editor";
 import { RuntimeEditor } from "./runtime-editor";
@@ -74,7 +75,7 @@ export function Administration({ route }: { route: string[] }) {
   };
   return <div className="admin-shell">
     <header className="admin-header"><strong>{displayName} <span>Administration</span></strong><nav aria-label="Administration" onClickCapture={event => { if ((event.target as Element).closest("a") && !mayLeave()) { event.preventDefault(); event.stopPropagation(); } }}>
-      {status === "ready" && <><Link href="/users" aria-current={!route.length || route[0] === "users" ? "page" : undefined}>Users</Link><Link href="/groups" aria-current={route[0] === "groups" ? "page" : undefined}>Groups</Link><Link href="/policies" aria-current={route[0] === "policies" ? "page" : undefined}>Policies</Link><Link href="/runtime" aria-current={route[0] === "runtime" ? "page" : undefined}>Runtime</Link><Link href="/network" aria-current={route[0] === "network" ? "page" : undefined}>Network</Link><Link href="/audit" aria-current={route[0] === "audit" ? "page" : undefined}>Audit</Link></>}
+      {status === "ready" && <><Link href="/users" aria-current={!route.length || route[0] === "users" ? "page" : undefined}>Users</Link><Link href="/groups" aria-current={route[0] === "groups" ? "page" : undefined}>Groups</Link><Link href="/policies" aria-current={route[0] === "policies" ? "page" : undefined}>Policies</Link><Link href="/projects" aria-current={route[0] === "projects" ? "page" : undefined}>Projects</Link><Link href="/runtime" aria-current={route[0] === "runtime" ? "page" : undefined}>Runtime</Link><Link href="/network" aria-current={route[0] === "network" ? "page" : undefined}>Network</Link><Link href="/audit" aria-current={route[0] === "audit" ? "page" : undefined}>Audit</Link></>}
       <WorkbenchLink />{identity && <button onClick={() => void logout()}>Sign out</button>}
     </nav></header>
     <main>
@@ -92,6 +93,8 @@ export function Administration({ route }: { route: string[] }) {
           : route[0] === "groups" && route.length === 2 ? <GroupEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : route[0] === "policies" && route.length === 2 ? <PolicyEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : (route[0] === "users" || route[0] === "groups") && route.length === 3 && route[2] === "resources" ? <ResourceEditor key={`${route[0]}-${route[1]}-resources`} kind={route[0] === "users" ? "user" : "group"} id={route[1]} onDirty={setEditorDirty} />
+          : route[0] === "projects" && route.length === 1 ? <ProjectList />
+          : route[0] === "projects" && route.length === 2 ? <ProjectView key={route[1]} id={route[1]} />
           : route[0] === "runtime" && route.length === 1 ? <RuntimeEditor onDirty={setEditorDirty} />
           : route[0] === "network" && route.length === 1 ? <NetworkEditor key="default-network" onDirty={setEditorDirty} />
           : route[0] === "users" && route.length === 3 && route[2] === "network" ? <NetworkEditor key={`network-${route[1]}`} id={route[1]} onDirty={setEditorDirty} />

@@ -100,6 +100,7 @@ export function UserEditor({ id, onDirty }: { id?: string; onDirty: (dirty: bool
       {user.must_change_password && <p>Password setup is required.</p>}
       <p>Resetting issues a new one-time password and revokes this account’s sessions. Existing work is not stopped.</p>
       <button disabled={busy || !!pending || changedName || changedRole} onClick={() => void submit({ path: `/api/admin/users/${encodeURIComponent(user.id)}/password-reset`, body: { request_id: crypto.randomUUID(), expected_revision: user.revision }, method: "POST", kind: "reset" })}>Reset password</button>
+      <Link className="inline-link" href={`/projects?owner_id=${encodeURIComponent(user.id)}`}>Projects and Volumes</Link>
       <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/resources`}>Resources and usage</Link>
       <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/network`}>Network settings</Link>
       <Link className="inline-link" href={`/audit?target=${encodeURIComponent(user.id)}`}>View account audit</Link>

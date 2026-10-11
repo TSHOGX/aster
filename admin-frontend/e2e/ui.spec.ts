@@ -181,3 +181,24 @@ test("runtime editor locks required publications and keeps optional mounts withi
   await page.getByLabel("Mount 3 destination", { exact: true }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: info.outputPath("required-runtime-mounts-mobile.png") });
 });
+
+test("Project Volume metadata distinguishes allocated initialization from reservation on mobile", async ({ page }, info) => {
+  await adminFixture(page); await page.setViewportSize({ width: 390, height: 900 });
+  const digest = `sha256:${"a".repeat(64)}`;
+  const slot = { key: "workspace", role: "workspace", destination: "/workspaces/project", storage: "owned", access: "read_write", capacity_bytes: "9007199254740993", source_minimum_bytes: "0", clean_runtime: false, volume_id: "recorded-volume", state: "initializing", allocated_bytes: "9007199254740993", reserved_bytes: "0", observation: "unavailable" };
+  await page.route("**/api/admin/projects/partial", route => route.fulfill({ json: {
+    id: "partial", title: "Partial initialization", owner_id: "user-id", owner_username: "ordinary", owner_status: "disabled", state: "blocked", revision: 2, updated_at: "2026-10-11T00:00:00Z", bound: true, environment_revision: 4, sandbox_release: { id: "runtime", version: "v1", digest }, allocated_bytes: "9007199254740993", reserved_bytes: "1048576", slot_count: "2",
+    binding: { resource_revision: 3, store_id: "diagnostic-store", template_id: "diagnostic-template", epoch: "0", occupied: false, cpu_millis: "1000", memory_bytes: "1073741824", overlay_bytes: "268435456", slots: [slot, { ...slot, key: "runtime", role: "runtime", destination: "/state/project", capacity_bytes: "1048576", allocated_bytes: "0", reserved_bytes: "1048576", volume_id: undefined, state: "reserved", observation: "not_materialized" }] },
+    desired_network: { revision: digest, direct: [], resolvers: [] }, network_mode: "inherit", saved_network_revision: digest, network_pending: true, observation: { status: "unavailable" }, operation: { id: "pending-operation", kind: "create", phase: "volume_initialization", state: "unknown", error: "Create reply was lost", created_at: "2026-10-11T00:00:00Z", attempted_at: "2026-10-11T00:00:01Z" }, admin_operations: ["suspension-operation"],
+  } }));
+  await page.goto("/admin/projects/partial");
+  await expect(page.getByRole("heading", { name: "Partial initialization", exact: true })).toBeVisible();
+  await expect(page.getByText("9007199254740993 bytes", { exact: true })).toBeVisible();
+  await expect(page.getByText("initializing", { exact: true })).toBeVisible();
+  await expect(page.getByText("reserved", { exact: true })).toBeVisible();
+  await expect(page.getByText("Not confirmed by this observation", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "suspension-operation", exact: true })).toHaveAttribute("href", "/admin/operations/suspension-operation");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await page.getByRole("heading", { name: "Volume slots", exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath("partial-volume-metadata-mobile.png") });
+});

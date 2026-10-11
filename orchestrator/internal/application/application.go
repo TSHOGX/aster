@@ -149,6 +149,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	}
 	app.Auth = producthttp.NewAuthentication(store, transportConfig)
 	app.Auth.RuntimeInspector = app.Backend
+	app.Auth.ProjectInspector = app.Backend
 	app.API = &producthttp.Server{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Bindings: bindings, Auth: app.Auth, Config: transportConfig}
 	api := app.API.Handler()
 	mux := http.NewServeMux()

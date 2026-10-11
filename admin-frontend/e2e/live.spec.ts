@@ -342,3 +342,28 @@ test("real runtime editor preserves concurrent slots and resolves the original s
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   await page.screenshot({ path: info.outputPath("runtime-environment-mobile.png") });
 });
+
+test("real Project administration is metadata-only and leaves an unbound Project cold", async ({ page }, info) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto("/admin/projects");
+  await page.getByLabel("Username", { exact: true }).fill("administrator");
+  await page.getByLabel("Password", { exact: true }).fill("web-test-permanent-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Projects and Volumes", exact: true })).toBeVisible();
+  const response = await page.request.post("/api/projects", { data: { id: "metadata-browser", title: "Metadata browser Project" } }); expect(response.status()).toBe(201);
+  const identity = await (await page.request.get("/api/auth/session")).json();
+  await page.getByLabel("Owner account ID", { exact: true }).fill(identity.id);
+  await page.getByLabel("Search Projects", { exact: true }).fill("Metadata browser Project");
+  await page.getByRole("button", { name: "Filter Projects", exact: true }).click();
+  await page.getByRole("link", { name: "Metadata browser Project", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "No saved environment", exact: true })).toBeVisible();
+  await expect(page.getByText("No lifecycle operation has been recorded.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Refresh observations", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Refresh observations", exact: true })).toBeEnabled();
+  const detail = await (await page.request.get("/api/admin/projects/metadata-browser")).json();
+  expect(detail.binding).toBeNull(); expect(detail.bound).toBe(false); expect(detail.state).toBe("created"); expect(detail.operation).toBeNull(); expect(detail.allocated_bytes).toBe("0"); expect(detail.reserved_bytes).toBe("0");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await page.screenshot({ path: info.outputPath("project-metadata-mobile.png") });
+  await page.getByRole("link", { name: "Back to Projects", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Projects and Volumes", exact: true })).toBeVisible();
+});
