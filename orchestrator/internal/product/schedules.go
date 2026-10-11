@@ -410,7 +410,7 @@ func (s *Store) ScheduleRuns(ctx context.Context, scope Scope, id, after string,
 // rows from eligibility without changing their original occurrence identity.
 func (s *Store) TickSchedules(ctx context.Context, limit int) (int, error) {
 	now := s.timestamp()
-	rows, err := s.reader.QueryContext(ctx, `SELECT id FROM schedules WHERE state='active' AND ((next_at<=? AND (retry_at IS NULL OR retry_at<=?)) OR expires_at<=?) ORDER BY coalesce(next_at,expires_at),id LIMIT ?`, now, now, now, pageSize(limit))
+	rows, err := s.reader.QueryContext(ctx, `SELECT id FROM schedules WHERE state='active' AND (expires_at<=? OR (EXISTS(SELECT 1 FROM projects p WHERE p.id=schedules.project_id AND p.execution_suspended=0 AND NOT EXISTS(SELECT 1 FROM admin_operations o WHERE o.target_kind='project' AND o.target_id=p.id AND o.state NOT IN ('succeeded','failed') AND o.action IN (`+adminProjectActions+`))) AND next_at<=? AND (retry_at IS NULL OR retry_at<=?))) ORDER BY coalesce(next_at,expires_at),id LIMIT ?`, now, now, now, pageSize(limit))
 	if err != nil {
 		return 0, err
 	}
@@ -443,6 +443,19 @@ func (s *Store) TickSchedules(ctx context.Context, limit int) (int, error) {
 			}
 			if task.ExpiresAt != "" && task.ExpiresAt <= now {
 				_, e = tx.ExecContext(ctx, `UPDATE schedules SET state='exhausted',end_reason='deadline',next_at=NULL,retry_at=NULL,updated_at=? WHERE id=?`, now, id)
+				return e
+			}
+			var held bool
+			if e = tx.QueryRowContext(ctx, `SELECT execution_suspended FROM projects WHERE id=?`, task.ProjectID).Scan(&held); e != nil {
+				return e
+			}
+			if held {
+				return nil
+			}
+			if e = noAdminProjectControl(ctx, tx, task.ProjectID); e != nil {
+				if errors.Is(e, ErrConflict) {
+					return nil
+				}
 				return e
 			}
 			if task.NextAt == "" || task.NextAt > now || task.RetryAt > now {

@@ -17,6 +17,7 @@ type AdminProjectQuery struct {
 	Limit                          int
 }
 type AdminProjectSummary struct {
+	ExecutionHoldReason string             `json:"execution_hold_reason,omitempty"`
 	ExecutionSuspended  bool               `json:"execution_suspended"`
 	ID                  string             `json:"id"`
 	Title               string             `json:"title"`
@@ -38,11 +39,11 @@ type AdminProjectPage struct {
 	NextCursor string                `json:"next_cursor,omitempty"`
 }
 
-const adminProjectSelect = `SELECT p.id,p.title,p.owner_id,a.username,a.status,p.state,p.revision,p.updated_at,r.project_id IS NOT NULL,coalesce(json_extract(r.profile,'$.environment_revision'),0),coalesce(json_extract(r.profile,'$.sandbox_release.id'),''),coalesce(json_extract(r.profile,'$.sandbox_release.version'),''),coalesce(json_extract(r.profile,'$.sandbox_release.digest'),''),coalesce((SELECT sum(capacity) FROM storage_reservations s WHERE s.project_id=p.id AND s.state='allocated'),0),coalesce((SELECT sum(capacity) FROM storage_reservations s WHERE s.project_id=p.id AND s.state='reserved'),0),coalesce(json_array_length(r.profile,'$.volumes'),0),p.execution_suspended FROM projects p JOIN accounts a ON a.id=p.owner_id LEFT JOIN project_resources r ON r.project_id=p.id `
+const adminProjectSelect = `SELECT p.id,p.title,p.owner_id,a.username,a.status,p.state,p.revision,p.updated_at,r.project_id IS NOT NULL,coalesce(json_extract(r.profile,'$.environment_revision'),0),coalesce(json_extract(r.profile,'$.sandbox_release.id'),''),coalesce(json_extract(r.profile,'$.sandbox_release.version'),''),coalesce(json_extract(r.profile,'$.sandbox_release.digest'),''),coalesce((SELECT sum(capacity) FROM storage_reservations s WHERE s.project_id=p.id AND s.state='allocated'),0),coalesce((SELECT sum(capacity) FROM storage_reservations s WHERE s.project_id=p.id AND s.state='reserved'),0),coalesce(json_array_length(r.profile,'$.volumes'),0),p.execution_suspended,p.execution_hold_reason FROM projects p JOIN accounts a ON a.id=p.owner_id LEFT JOIN project_resources r ON r.project_id=p.id `
 
 func scanAdminProject(row scanner) (out AdminProjectSummary, err error) {
 	var release ArtifactReference
-	err = missing(row.Scan(&out.ID, &out.Title, &out.OwnerID, &out.OwnerUsername, &out.OwnerStatus, &out.State, &out.Revision, &out.UpdatedAt, &out.Bound, &out.EnvironmentRevision, &release.ID, &release.Version, &release.Digest, &out.AllocatedBytes, &out.ReservedBytes, &out.SlotCount, &out.ExecutionSuspended))
+	err = missing(row.Scan(&out.ID, &out.Title, &out.OwnerID, &out.OwnerUsername, &out.OwnerStatus, &out.State, &out.Revision, &out.UpdatedAt, &out.Bound, &out.EnvironmentRevision, &release.ID, &release.Version, &release.Digest, &out.AllocatedBytes, &out.ReservedBytes, &out.SlotCount, &out.ExecutionSuspended, &out.ExecutionHoldReason))
 	if out.Bound {
 		out.SandboxRelease = &release
 	}
@@ -143,6 +144,7 @@ type AdminProjectObservation struct {
 	NetworkRevision     string `json:"network_revision,omitempty"`
 }
 type AdminProjectDetail struct {
+	ControlPending bool `json:"control_pending"`
 	AdminProjectSummary
 	Failure              string                   `json:"failure,omitempty"`
 	Binding              *AdminProjectBinding     `json:"binding"`
@@ -249,6 +251,9 @@ func (s *Store) AdminProject(ctx context.Context, token, id string, inspector Pr
 			}
 		}
 		out.Operation = &op
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM admin_operation_targets t JOIN admin_operations o ON o.id=t.operation_id WHERE t.project_id=? AND o.state NOT IN ('succeeded','failed'))`, id).Scan(&out.ControlPending); err != nil {
+		return out, err
 	}
 	out.AdminOperations = []string{}
 	rows, err := tx.QueryContext(ctx, `SELECT operation_id FROM admin_operation_targets WHERE project_id=? ORDER BY rowid DESC LIMIT 20`, id)

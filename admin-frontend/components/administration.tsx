@@ -94,7 +94,7 @@ export function Administration({ route }: { route: string[] }) {
           : route[0] === "policies" && route.length === 2 ? <PolicyEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : (route[0] === "users" || route[0] === "groups") && route.length === 3 && route[2] === "resources" ? <ResourceEditor key={`${route[0]}-${route[1]}-resources`} kind={route[0] === "users" ? "user" : "group"} id={route[1]} onDirty={setEditorDirty} />
           : route[0] === "projects" && route.length === 1 ? <ProjectList />
-          : route[0] === "projects" && route.length === 2 ? <ProjectView key={route[1]} id={route[1]} />
+          : route[0] === "projects" && route.length === 2 ? <ProjectView key={route[1]} id={route[1]} onDirty={setEditorDirty} />
           : route[0] === "runtime" && route.length === 1 ? <RuntimeEditor onDirty={setEditorDirty} />
           : route[0] === "network" && route.length === 1 ? <NetworkEditor key="default-network" onDirty={setEditorDirty} />
           : route[0] === "users" && route.length === 3 && route[2] === "network" ? <NetworkEditor key={`network-${route[1]}`} id={route[1]} onDirty={setEditorDirty} />

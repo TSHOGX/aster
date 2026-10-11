@@ -172,6 +172,9 @@ func (w *Workers) project(ctx context.Context, p Project) error {
 	if err != nil {
 		return err
 	}
+	if handled, err := w.adminProjectStep(ctx, current); handled || err != nil {
+		return err
+	}
 	if current.ExecutionSuspended && current.State != "deleting" && current.State != "deleted" {
 		var pending bool
 		if err := w.Store.reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM admin_operation_targets t JOIN admin_operations o ON o.id=t.operation_id WHERE t.project_id=? AND o.action='account.suspend' AND t.state<>'succeeded')`, p.ID).Scan(&pending); err != nil {

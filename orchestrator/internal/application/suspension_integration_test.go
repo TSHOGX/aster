@@ -155,6 +155,43 @@ func TestReleasedAccountSuspensionReconcilesAfterOwnerRestart(t *testing.T) {
 	if !reflect.DeepEqual(slots(resumed), slots(original)) {
 		t.Fatal("resume altered saved slots")
 	}
+	adminControl := func(action, requestID string) {
+		t.Helper()
+		target := a.request("GET", "/api/admin/projects/suspension-active", nil, 200)
+		input := map[string]any{"request_id": requestID, "expected_revision": target["revision"], "interruption_acknowledged": true}
+		if action == "apply-network" {
+			input["expected_network_revision"] = target["desired_network"].(map[string]any)["revision"]
+		}
+		accepted := a.request("POST", "/api/admin/projects/suspension-active/"+action, input, 202)
+		id := accepted["operation"].(map[string]any)["id"].(string)
+		replay := a.request("POST", "/api/admin/projects/suspension-active/"+action, input, 202)
+		if replay["operation"].(map[string]any)["id"] != id || replay["replayed"] != true {
+			t.Fatal(replay)
+		}
+		a.await(30*time.Second, "admin "+action+" observed completion", func() bool {
+			operation := a.request("GET", "/api/admin/operations/"+id, nil, 200)
+			if operation["state"] == "failed" {
+				t.Fatal(operation)
+			}
+			return operation["state"] == "succeeded"
+		})
+	}
+	adminControl("stop", "cross-user-stop")
+	stopped := a.request("GET", "/api/admin/projects/suspension-active", nil, 200)
+	if stopped["state"] != "paused" || stopped["execution_suspended"] != true || stopped["execution_hold_reason"] != "admin_stop" {
+		t.Fatal(stopped)
+	}
+	owner.request("POST", session+"/turns", map[string]string{"request_id": "admin-stop-holds", "content": "must stay stopped"}, 403)
+	adminControl("restart", "cross-user-restart")
+	netPath := "/api/admin/users/" + user["id"].(string) + "/network"
+	network := a.request("GET", netPath, nil, 200)
+	changed := a.request("PATCH", netPath, map[string]any{"request_id": "network-before-apply", "expected_revision": network["configuration_revision"], "expected_default_revision": network["default_configuration_revision"], "mode": "override", "direct": []any{}, "resolvers": []string{"192.0.2.1"}}, 200)
+	adminControl("apply-network", "cross-user-network-apply")
+	applied := a.request("GET", "/api/admin/projects/suspension-active", nil, 200)
+	if applied["network_pending"] != false || applied["saved_network_revision"] != changed["desired"].(map[string]any)["revision"] || !reflect.DeepEqual(slots(applied), slots(original)) {
+		t.Fatal(applied)
+	}
+	adminControl("pause", "cross-user-pause")
 	// Deletion remains an explicit independent reduction, including the still-held
 	// cold Project. It never deletes the shared source publications.
 	for _, path := range []string{base, cold} {

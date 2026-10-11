@@ -423,3 +423,34 @@ test("suspension and enable preserve separate sharing fences until explicit owne
     expect(JSON.stringify(audit)).toContain("share.reactivate"); expect(JSON.stringify(audit)).toContain("conversation.reactivate");
   } finally { await context.close(); }
 });
+
+test("admin Project controls require interruption review and retry the same accepted operation", async ({ page }) => {
+  await page.goto("/admin/projects");
+  await page.getByLabel("Username", { exact: true }).fill("administrator");
+  await page.getByLabel("Password", { exact: true }).fill("web-test-permanent-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Projects and Volumes", exact: true })).toBeVisible();
+  expect((await page.request.post("/api/projects", { data: { id: "admin-controls-browser", title: "Control review" } })).status()).toBe(201);
+  await page.goto("/admin/projects/admin-controls-browser");
+  const controls = page.getByRole("region", { name: "Administrative runtime controls", exact: true });
+  await expect(controls.getByRole("button", { name: "Pause Project", exact: true })).toBeDisabled();
+  await expect(controls.getByRole("button", { name: "Restart saved environment", exact: true })).toBeDisabled();
+  await controls.getByRole("checkbox").check();
+  let lost = false;
+  const calls: unknown[] = [];
+  await page.route("**/api/admin/projects/admin-controls-browser/pause", async route => {
+    calls.push(route.request().postDataJSON());
+    if (!lost) { lost = true; const response = await route.fetch(); expect(response.status()).toBe(202); await response.dispose(); await route.abort("failed"); return; }
+    await route.continue();
+  });
+  await controls.getByRole("button", { name: "Pause Project", exact: true }).click();
+  await controls.getByRole("button", { name: "Check original control request", exact: true }).click();
+  await expect(controls.getByText("Operation accepted. Runtime completion is confirmed separately by observation.", { exact: true })).toBeVisible();
+  expect(calls).toHaveLength(2); expect(calls[0]).toEqual(calls[1]);
+  await controls.getByRole("link", { name: "View runtime control operation", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "project.pause", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "admin-controls-browser", exact: true })).toBeVisible();
+  await expect(page.getByText("stopping", { exact: true })).toBeVisible();
+  const detail = await (await page.request.get("/api/admin/projects/admin-controls-browser")).json();
+  expect(detail.binding).toBeNull(); expect(detail.execution_suspended).toBe(true); expect(detail.control_pending).toBe(true);
+});

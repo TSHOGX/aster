@@ -24,16 +24,19 @@ func authorizeExecution(ctx context.Context, q queryer, scope Scope, action Prod
 	if err := authorizeAction(ctx, q, scope.Actor, action); err != nil {
 		return err
 	}
+	if err := noAdminProjectControl(ctx, q, scope.ProjectID); err != nil {
+		return err
+	}
 	return executionAllowed(ctx, q, scope.ProjectID)
 }
 
-// suspendPlacement runs under the same Project lane as ordinary reconciliation.
+// stopHeldPlacement runs under the same Project lane as ordinary reconciliation.
 // It settles only admitted compute effects and never materializes another slot,
 // projects guest configuration or admits child work. Persistent storage remains.
-func (l *Lifecycle) suspendPlacement(ctx context.Context, project string) error {
+func (l *Lifecycle) stopHeldPlacement(ctx context.Context, project string) error {
 	r, err := l.Store.resourcesFor(ctx, project)
 	if errors.Is(err, ErrNotFound) {
-		return l.finishSuspension(ctx, project, nil)
+		return l.finishExecutionHold(ctx, project, nil)
 	}
 	if err != nil {
 		return err
@@ -67,12 +70,12 @@ func (l *Lifecycle) suspendPlacement(ctx context.Context, project string) error 
 			}
 			r.Reference = obs.Reference
 		} else {
-			return l.finishSuspension(ctx, project, nil)
+			return l.finishExecutionHold(ctx, project, nil)
 		}
 	}
 	observed, err := l.Backend.Inspect(ctx, r.Reference)
 	if sandbox.Is(err, sandbox.NotFound) {
-		return l.finishSuspension(ctx, project, nil)
+		return l.finishExecutionHold(ctx, project, nil)
 	}
 	if err != nil {
 		return err
@@ -91,13 +94,13 @@ func (l *Lifecycle) suspendPlacement(ctx context.Context, project string) error 
 	if observed.State != "paused" || observed.PlacementState != "lost" || observed.MutationRevision == "" {
 		return ErrPending
 	}
-	return l.finishSuspension(ctx, project, &observed)
+	return l.finishExecutionHold(ctx, project, &observed)
 }
-func (l *Lifecycle) finishSuspension(ctx context.Context, project string, observation *sandbox.Observation) error {
+func (l *Lifecycle) finishExecutionHold(ctx context.Context, project string, observation *sandbox.Observation) error {
 	return l.Store.write(ctx, func(tx *sql.Tx) error {
 		var held bool
-		var state string
-		if err := tx.QueryRowContext(ctx, `SELECT execution_suspended,state FROM projects WHERE id=?`, project).Scan(&held, &state); err != nil {
+		var state, reason string
+		if err := tx.QueryRowContext(ctx, `SELECT execution_suspended,state,execution_hold_reason FROM projects WHERE id=?`, project).Scan(&held, &state, &reason); err != nil {
 			return err
 		}
 		if !held || state == "deleting" || state == "deleted" {
@@ -112,16 +115,16 @@ func (l *Lifecycle) finishSuspension(ctx context.Context, project string, observ
 				return err
 			}
 		}
-		if err := l.Store.loseStaleAgents(ctx, tx, project, 0, "account suspended; placement stopped; native outcome may require recovery"); err != nil {
+		if err := l.Store.loseStaleAgents(ctx, tx, project, 0, reason+"; placement stopped; native outcome may require recovery"); err != nil {
 			return err
 		}
-		if _, err := l.Store.loseStalePTYs(ctx, tx, project, 0, "account suspended; placement stopped"); err != nil {
+		if _, err := l.Store.loseStalePTYs(ctx, tx, project, 0, reason+"; placement stopped"); err != nil {
 			return err
 		}
 		if err := l.Store.settleLostActivities(ctx, tx, project); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE project_operations SET state='canceled',error='account_suspended' WHERE project_id=? AND kind IN ('create','resume','pause') AND state NOT IN ('succeeded','canceled')`, project); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE project_operations SET state='canceled',error=? WHERE project_id=? AND kind IN ('create','resume','pause') AND state NOT IN ('succeeded','canceled')`, reason, project); err != nil {
 			return err
 		}
 		// Unbound metadata keeps its created state. Bound plans preserve all slot
@@ -141,10 +144,35 @@ func (l *Lifecycle) finishSuspension(ctx context.Context, project string, observ
 	})
 }
 func (w *Workers) suspendProject(ctx context.Context, p Project) error {
+	if err := w.stopProjectChildren(ctx, p.ID); err != nil {
+		return err
+	}
+	err := w.Lifecycle.Reconcile(ctx, p.ID)
+	state := "succeeded"
+	detail := ""
+	if err != nil {
+		state = "unknown"
+		detail = fmt.Sprintf("placement stop not confirmed: %v", err)
+	}
+	if errors.Is(err, ErrPending) {
+		state = "running"
+	}
+	if len(detail) > 1024 {
+		detail = detail[:1024]
+	}
+	recordCtx, done := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer done()
+	recorded := w.Store.write(recordCtx, func(tx *sql.Tx) error {
+		_, e := tx.ExecContext(recordCtx, `UPDATE admin_operation_targets SET state=?,error=? WHERE project_id=? AND state<>'succeeded' AND operation_id IN (SELECT id FROM admin_operations WHERE action='account.suspend' AND state<>'succeeded')`, state, detail, p.ID)
+		return e
+	})
+	return errors.Join(err, recorded)
+}
+func (w *Workers) stopProjectChildren(ctx context.Context, project string) error {
 	// Bounded graceful requests reduce interrupted native work. The placement
 	// pause provides mandatory isolation-unit stop evidence, even without a local
 	// attachment or with an unresponsive child. Never delete conversation data.
-	rows, err := w.Store.reader.QueryContext(ctx, `SELECT session_id,'agent' FROM agent_incarnations WHERE project_id=? AND state IN ('starting','running','stopping') UNION ALL SELECT terminal_id,'terminal' FROM terminal_incarnations WHERE project_id=? AND state IN ('starting','running') LIMIT 32`, p.ID, p.ID)
+	rows, err := w.Store.reader.QueryContext(ctx, `SELECT session_id,'agent' FROM agent_incarnations WHERE project_id=? AND state IN ('starting','running','stopping') UNION ALL SELECT terminal_id,'terminal' FROM terminal_incarnations WHERE project_id=? AND state IN ('starting','running') LIMIT 32`, project, project)
 	if err != nil {
 		return err
 	}
@@ -167,33 +195,14 @@ func (w *Workers) suspendProject(ctx context.Context, p Project) error {
 			break
 		}
 		if c.kind == "agent" && w.Agents != nil {
-			w.report("suspension agent stop", w.Agents.Stop(stopCtx, p.ID, c.id))
+			w.report("suspension agent stop", w.Agents.Stop(stopCtx, project, c.id))
 		}
 		if c.kind == "terminal" && w.Terminals != nil {
-			w.report("suspension terminal stop", w.Terminals.Stop(stopCtx, p.ID, c.id))
+			w.report("suspension terminal stop", w.Terminals.Stop(stopCtx, project, c.id))
 		}
 	}
 	cancelStops()
-	err = w.Lifecycle.Reconcile(ctx, p.ID)
-	state := "succeeded"
-	detail := ""
-	if err != nil {
-		state = "unknown"
-		detail = fmt.Sprintf("placement stop not confirmed: %v", err)
-	}
-	if errors.Is(err, ErrPending) {
-		state = "running"
-	}
-	if len(detail) > 1024 {
-		detail = detail[:1024]
-	}
-	recordCtx, done := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-	defer done()
-	recorded := w.Store.write(recordCtx, func(tx *sql.Tx) error {
-		_, e := tx.ExecContext(recordCtx, `UPDATE admin_operation_targets SET state=?,error=? WHERE project_id=? AND state<>'succeeded' AND operation_id IN (SELECT id FROM admin_operations WHERE action='account.suspend' AND state<>'succeeded')`, state, detail, p.ID)
-		return e
-	})
-	return errors.Join(err, recorded)
+	return nil
 }
 func (w *Workers) suspensionOperations(ctx context.Context) error {
 	var pending bool

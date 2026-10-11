@@ -132,6 +132,9 @@ CREATE TABLE admin_operations (
 CREATE INDEX admin_suspension_pending ON admin_operations(action,updated_at,id) WHERE state<>'succeeded';
 
 CREATE TABLE admin_operation_targets (
+ phase TEXT NOT NULL DEFAULT '',
+ lifecycle_id TEXT NOT NULL DEFAULT '',
+ network_revision TEXT NOT NULL DEFAULT '',
  operation_id TEXT NOT NULL REFERENCES admin_operations(id),
  project_id TEXT NOT NULL REFERENCES projects(id),
  state TEXT NOT NULL DEFAULT 'accepted' CHECK(state IN ('accepted','running','succeeded','failed','unknown')),
@@ -525,6 +528,7 @@ CREATE TRIGGER volume_slot_identity_immutable BEFORE UPDATE OF intent_key,slot_k
 BEGIN SELECT RAISE(ABORT,'immutable volume slot identity'); END;
 CREATE TABLE projects (
  execution_suspended INTEGER NOT NULL DEFAULT 0 CHECK(execution_suspended IN (0,1)),
+ execution_hold_reason TEXT NOT NULL DEFAULT '',
  id TEXT PRIMARY KEY CHECK(id<>''),
  owner_id TEXT NOT NULL REFERENCES accounts(id) CHECK(owner_id<>''),
  title TEXT NOT NULL,
@@ -988,7 +992,7 @@ WHERE (state IN ('starting','stopping','unknown') OR recovery_state IN ('pending
  SELECT 1 FROM execution_runs r WHERE r.incarnation_id=agent_incarnations.id AND r.state='unknown' AND r.acknowledged=0
 ))
 UNION ALL SELECT 'terminal_start' AS kind,id AS id FROM terminal_incarnations INDEXED BY release_terminal_start_pending WHERE state='starting'
-UNION ALL SELECT 'admin_suspension',id FROM admin_operations WHERE action='account.suspend' AND state<>'succeeded'
+UNION ALL SELECT 'admin_runtime_control',id FROM admin_operations WHERE action IN ('account.suspend','project.pause','project.stop','project.restart','project.apply_network') AND state NOT IN ('succeeded','failed')
 UNION ALL SELECT 'project_operation' AS kind,id AS id FROM project_operations INDEXED BY release_project_operation_pending WHERE state NOT IN ('succeeded','canceled')
 UNION ALL SELECT 'project_transition' AS kind,id AS id FROM projects INDEXED BY release_project_transition_pending WHERE state IN ('provisioning','resuming','pausing','deleting')
 UNION ALL SELECT 'volume_slot',project_id||':'||slot_key FROM project_volume_slots INDEXED BY release_volume_slot_pending WHERE state IN ('creating','initializing','deleting')

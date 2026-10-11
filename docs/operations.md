@@ -453,3 +453,37 @@ and writable while paused, within capacity; initialized files are never reseeded
 Pending native outcomes retain their original journal/unknown evidence for recovery
 after explicit resume. Project deletion remains an independent authorized cleanup
 path, including for held or partially initialized plans.
+
+## Administrative Project runtime controls
+
+The Project detail view offers Pause Project, Stop Project work, Restart saved
+environment and Apply desired network now after an explicit interruption review.
+These actions are also available at `POST /api/admin/projects/{id}/pause|stop|restart|apply-network`.
+Submit `request_id`, `expected_revision` and `interruption_acknowledged: true`;
+apply-network additionally requires the displayed `expected_network_revision`.
+All four require current platform-admin authority in the product service and
+return 202 with a durable operation ID, not a remote-completion claim.
+
+Pause and stop both stop active child work and retain the paused placement and
+Volumes under an execution hold. Restart and apply-network-now stop first, then
+use the normal lifecycle admission to resume the complete saved environment.
+They recheck the administrator, owner account, quotas, current registered
+artifacts and platform compute admission. Apply-network refuses to resume if its
+reviewed desired policy changed while stopping. No control swaps the saved
+release, drops a mount, resizes a Volume, reseeds ready data or deletes a Project.
+Unstarted prompts are held with an action-specific administrative outcome;
+schedules skip held/in-progress control targets without changing their definitions.
+
+Per-Project progress records stopping and resuming phases and the exact lifecycle
+intent ID. Engine timeouts remain unknown and retry the original intent. New user
+execution and competing controls cannot race that administrative continuation.
+If authority or quota is withdrawn after resume admission, the operation stops its
+admitted effects before failing. Account suspension supersedes an earlier admin
+restart; re-enable cannot resurrect it. Explicit Project deletion supersedes a
+control and continues through normal cleanup.
+
+Request replay returns the original operation, even if its input revision is now
+stale. Read current status at `GET /api/admin/operations/{id}` and bounded target
+progress at `/targets?limit=25&cursor=...`. Intent and terminal outcome are audited.
+A denied resume leaves data and the execution hold intact for a new authorized
+control or explicit owner resume after the blocking condition is resolved.

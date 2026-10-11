@@ -22,6 +22,9 @@ func (l *Lifecycle) Observe(ctx context.Context, project string) error {
 		if err := tx.QueryRowContext(ctx, `SELECT state FROM projects WHERE id=?`, project).Scan(&state); err != nil {
 			return missing(err)
 		}
+		if err := noAdminProjectControl(ctx, tx, project); err != nil {
+			return err
+		}
 		if err := executionAllowed(ctx, tx, project); err != nil {
 			return err
 		}
@@ -179,6 +182,9 @@ func (l *Lifecycle) ForceRestart(ctx context.Context, scope Scope, revision int6
 			return err
 		}
 		if err := authorizeAction(ctx, tx, scope.Actor, ActionProjectsManage); err != nil {
+			return err
+		}
+		if err := noAdminProjectControl(ctx, tx, p.ID); err != nil {
 			return err
 		}
 		if p.Revision != revision || p.State != "active" {

@@ -11,12 +11,15 @@ import (
 // cannot restart them. Sending/native work retains its settlement authority.
 func (s *Store) rejectAgentQueue(ctx context.Context, tx *sql.Tx, project, session string) error {
 	reason := "permission_revoked"
-	var status string
+	var status, holdReason string
 	var held bool
-	if err := tx.QueryRowContext(ctx, `SELECT a.status,p.execution_suspended FROM projects p JOIN accounts a ON a.id=p.owner_id WHERE p.id=?`, project).Scan(&status, &held); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT a.status,p.execution_suspended,p.execution_hold_reason FROM projects p JOIN accounts a ON a.id=p.owner_id WHERE p.id=?`, project).Scan(&status, &held, &holdReason); err != nil {
 		return err
 	}
-	if status != "active" || held {
+	if held && holdReason != "" {
+		reason = holdReason
+	}
+	if status != "active" {
 		reason = "account_suspended"
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT id,kind FROM agent_commands WHERE session_id=? AND state='pending' AND kind IN ('prompt','steer')`, session)

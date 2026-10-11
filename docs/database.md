@@ -239,3 +239,11 @@ in owner-handoff configuration fencing. Pending administrative suspension blocks
 release readiness. `project_operations.state='canceled'` records interrupted
 creation/resume intent without claiming success; slot identities/reservations
 remain independent and intact. Canceled operations are outside the active lane.
+
+Administrative Project controls use `admin_operations` and its existing targets.
+Target phase, lifecycle ID and optional reviewed network revision are the small
+continuation state for stop/resume. `execution_hold_reason` distinguishes account
+suspension from an administrative pause/stop/restart. It travels with the durable
+execution hold in handoff configuration fencing. Pending Project controls block
+release readiness. The same saved-plan compute admission and lifecycle worker
+serve named administrative authority; no owner session is forged.

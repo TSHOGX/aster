@@ -38,7 +38,7 @@ export function AuditView() {
   </section>;
 }
 export function OperationView({ id }: { id: string }) {
-  const [targets,setTargets]=useState<{targets:{project_id:string;state:string;error?:string}[];next_cursor?:string}>({targets:[]}),[cursors,setCursors]=useState([""]);
+  const [targets,setTargets]=useState<{targets:{project_id:string;state:string;phase?:string;error?:string}[];next_cursor?:string}>({targets:[]}),[cursors,setCursors]=useState([""]);
   const cursor=cursors.at(-1)!;
   const [operation, setOperation] = useState<Operation | null>(null), [error, setError] = useState(""), [refresh, setRefresh] = useState(0);
   useEffect(() => {
@@ -53,7 +53,7 @@ export function OperationView({ id }: { id: string }) {
       {operation.state === "accepted" && <p>The request is recorded. Resource work has not been confirmed complete.</p>}
       {operation.state === "unknown" && <p>The resource outcome is uncertain. Reconciliation will retry the original intent; refresh to see new evidence. It has not been reported as stopped or complete.</p>}
       {operation.error && <p role="alert" className="error">{operation.error}</p>}
-      <div className="table-scroll"><table><thead><tr><th>Project target</th><th>Observed progress</th><th>Detail</th></tr></thead><tbody>{targets.targets.map(target=><tr key={target.project_id}><td><Link href={`/projects/${encodeURIComponent(target.project_id)}`}>{target.project_id}</Link></td><td>{target.state}</td><td>{target.error || "—"}</td></tr>)}</tbody></table></div>
+      <div className="table-scroll"><table><thead><tr><th>Project target</th><th>Observed progress</th><th>Detail</th></tr></thead><tbody>{targets.targets.map(target=><tr key={target.project_id}><td><Link href={`/projects/${encodeURIComponent(target.project_id)}`}>{target.project_id}</Link></td><td>{target.state}{target.phase && <small>{target.phase}</small>}</td><td>{target.error || "—"}</td></tr>)}</tbody></table></div>
       <nav className="pagination" aria-label="Operation target pages"><button disabled={cursors.length===1} onClick={()=>setCursors(value=>value.slice(0,-1))}>Previous targets</button><button disabled={!targets.next_cursor} onClick={()=>setCursors(value=>[...value,targets.next_cursor!])}>Next targets</button></nav>
 
     </article> : !error && <p role="status">Loading operation…</p>}

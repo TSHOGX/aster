@@ -265,6 +265,7 @@ func (s *Store) AdminOperation(ctx context.Context, token, id string) (AdminOper
 }
 
 type AdminOperationTarget struct {
+	Phase     string `json:"phase,omitempty"`
 	ProjectID string `json:"project_id"`
 	State     string `json:"state"`
 	Error     string `json:"error,omitempty"`
@@ -288,14 +289,14 @@ func (s *Store) AdminOperationTargets(ctx context.Context, token, id, cursor str
 	if err != nil {
 		return out, err
 	}
-	rows, err := s.reader.QueryContext(ctx, `SELECT project_id,state,error FROM admin_operation_targets WHERE operation_id=? AND project_id>? ORDER BY project_id LIMIT ?`, id, after, limit+1)
+	rows, err := s.reader.QueryContext(ctx, `SELECT project_id,state,error,phase FROM admin_operation_targets WHERE operation_id=? AND project_id>? ORDER BY project_id LIMIT ?`, id, after, limit+1)
 	if err != nil {
 		return out, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var target AdminOperationTarget
-		if err = rows.Scan(&target.ProjectID, &target.State, &target.Error); err != nil {
+		if err = rows.Scan(&target.ProjectID, &target.State, &target.Error, &target.Phase); err != nil {
 			return out, err
 		}
 		out.Targets = append(out.Targets, target)

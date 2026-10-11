@@ -205,6 +205,9 @@ func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, bindings Runt
 		if err != nil {
 			return err
 		}
+		if err := noAdminProjectControl(ctx, tx, p.ID); err != nil {
+			return err
+		}
 		if err := activeAccount(ctx, tx, scope.Actor); err != nil {
 			return err
 		}
@@ -219,7 +222,7 @@ func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, bindings Runt
 			if pending {
 				return Admission("suspension_pending", ErrConflict)
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE projects SET execution_suspended=0 WHERE id=?`, p.ID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE projects SET execution_suspended=0,execution_hold_reason='' WHERE id=?`, p.ID); err != nil {
 				return err
 			}
 			if err := l.Store.auditEvent(ctx, tx, scope.Actor, "project.reactivate", "project", p.ID, "", p.Revision, map[string]any{}); err != nil {
@@ -231,64 +234,71 @@ func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, bindings Runt
 				return err
 			}
 		}
-		r, err := resources(ctx, tx, p.ID)
-		if errors.Is(err, ErrNotFound) {
-			profile, err := resolveAllocationProfile(ctx, tx, scope.Actor, bindings)
-			if err != nil {
-				return err
-			}
-			if err = admitCompute(ctx, tx, scope.Actor, profile, false); err != nil {
-				return err
-			}
-			if err = l.reserve(ctx, tx); err != nil {
-				return err
-			}
-			if err = l.Store.bindVolumePlan(ctx, tx, p.ID, profile, true); err != nil {
-				return err
-			}
-			return l.newOperation(ctx, tx, p.ID, "create", "volumes", operationRequest{})
-		}
+		return l.admitProjectActivation(ctx, tx, p, bindings)
+	})
+}
+
+// admitProjectActivation is shared by named owner and administrative admission.
+// Callers establish their own authority; this function resolves only saved plans
+// and enforces the owner's current quotas in the same transaction.
+func (l *Lifecycle) admitProjectActivation(ctx context.Context, tx *sql.Tx, p Project, bindings RuntimeBindings) error {
+	r, err := resources(ctx, tx, p.ID)
+	if errors.Is(err, ErrNotFound) {
+		profile, err := resolveAllocationProfile(ctx, tx, p.OwnerID, bindings)
 		if err != nil {
 			return err
 		}
-		if r.Reference.StoreID != bindings.StoreID {
-			return Admission("engine_store_mismatch", ErrConflict)
-		}
-		if _, err := registeredSandbox(ctx, tx, r.Profile.SandboxRelease, false); err != nil {
-			return err
-		}
-		if _, err := pendingOperation(ctx, tx, p.ID); err == nil {
-			return nil
-		} else if !errors.Is(err, ErrNotFound) {
-			return err
-		}
-		if p.State == "active" {
-			return nil
-		}
-		if p.State != "paused" && p.State != "created" {
-			return ErrConflict
-		}
-		var pendingFiles int
-		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM file_operations WHERE project_id=? AND volume_id<>'' AND settled=0`, p.ID).Scan(&pendingFiles); err != nil {
-			return err
-		}
-		if pendingFiles > 0 {
-			return ErrBusy
-		}
-		if err = admitCompute(ctx, tx, scope.Actor, r.Profile, false); err != nil {
+		if err = admitCompute(ctx, tx, p.OwnerID, profile, false); err != nil {
 			return err
 		}
 		if err = l.reserve(ctx, tx); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE project_resources SET occupied=1 WHERE project_id=?`, p.ID); err != nil {
+		if err = l.Store.bindVolumePlan(ctx, tx, p.ID, profile, true); err != nil {
 			return err
 		}
-		if r.Reference.SandboxID == "" {
-			return l.newOperation(ctx, tx, p.ID, "create", "volumes", operationRequest{})
-		}
-		return l.newOperation(ctx, tx, p.ID, "resume", "sandbox", operationRequest{Reference: r.Reference})
-	})
+		return l.newOperation(ctx, tx, p.ID, "create", "volumes", operationRequest{})
+	}
+	if err != nil {
+		return err
+	}
+	if r.Reference.StoreID != bindings.StoreID {
+		return Admission("engine_store_mismatch", ErrConflict)
+	}
+	if _, err := registeredSandbox(ctx, tx, r.Profile.SandboxRelease, false); err != nil {
+		return err
+	}
+	if _, err := pendingOperation(ctx, tx, p.ID); err == nil {
+		return nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if p.State == "active" {
+		return nil
+	}
+	if p.State != "paused" && p.State != "created" {
+		return ErrConflict
+	}
+	var pendingFiles int
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM file_operations WHERE project_id=? AND volume_id<>'' AND settled=0`, p.ID).Scan(&pendingFiles); err != nil {
+		return err
+	}
+	if pendingFiles > 0 {
+		return ErrBusy
+	}
+	if err = admitCompute(ctx, tx, p.OwnerID, r.Profile, false); err != nil {
+		return err
+	}
+	if err = l.reserve(ctx, tx); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE project_resources SET occupied=1 WHERE project_id=?`, p.ID); err != nil {
+		return err
+	}
+	if r.Reference.SandboxID == "" {
+		return l.newOperation(ctx, tx, p.ID, "create", "volumes", operationRequest{})
+	}
+	return l.newOperation(ctx, tx, p.ID, "resume", "sandbox", operationRequest{Reference: r.Reference})
 }
 func (l *Lifecycle) ActiveResources(ctx context.Context, scope Scope) (Resources, error) {
 	p, err := ownedProject(ctx, l.Store.reader, scope)
@@ -322,6 +332,9 @@ func (l *Lifecycle) requestPause(ctx context.Context, scope Scope, revision int6
 	return l.Store.write(ctx, func(tx *sql.Tx) error {
 		p, err := mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
+			return err
+		}
+		if err := noAdminProjectControl(ctx, tx, p.ID); err != nil {
 			return err
 		}
 		// Idle reconciliation retains service authority. Explicit controls use
@@ -379,7 +392,7 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 		return missing(err)
 	}
 	if held {
-		return l.suspendPlacement(ctx, project)
+		return l.stopHeldPlacement(ctx, project)
 	}
 	var o operation
 	var r Resources
