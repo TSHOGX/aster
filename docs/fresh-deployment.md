@@ -1,4 +1,7 @@
-# Fresh development deployment
+# Historical development deployment
+
+This record predates the account/environment refactor and describes that
+installation only. Current source contracts are in [compatibility](compatibility.md).
 
 The 2026-10-10 development installation runs the conversational scheduling release
 with schema 4, runtime manifest 4, native protocol 4 and schedule protocol 1.

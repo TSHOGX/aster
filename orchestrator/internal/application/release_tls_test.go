@@ -39,7 +39,7 @@ func engineTLS(t *testing.T, directory, endpoint string) map[string]any {
 	require(t, err)
 	pool := x509.NewCertPool()
 	pool.AppendCertsFromPEM(certPEM)
-	listener, err := net.Listen("tcp", "192.0.2.1:18194")
+	listener, err := net.Listen("tcp", "192.0.2.1:18195")
 	require(t, err)
 	target, err := url.Parse(endpoint)
 	require(t, err)
@@ -48,5 +48,5 @@ func engineTLS(t *testing.T, directory, endpoint string) map[string]any {
 	t.Cleanup(func() { server.Close() })
 	require(t, os.WriteFile(filepath.Join(directory, "tls.crt"), certPEM, 0644))
 	require(t, os.WriteFile(filepath.Join(directory, "tls.key"), keyPEM, 0644))
-	return map[string]any{"endpoint": "https://192.0.2.1:18194", "ca_file": "tls.crt", "client_cert": "tls.crt", "client_key": "tls.key"}
+	return map[string]any{"endpoint": "https://192.0.2.1:18195", "ca_file": "tls.crt", "client_cert": "tls.crt", "client_key": "tls.key"}
 }

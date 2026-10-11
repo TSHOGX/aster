@@ -39,6 +39,8 @@ if [[ -n $candidate ]]; then
  [[ $(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["commit"])' "$candidate/candidate.json") == "$(git -C "$repo" rev-parse HEAD)" ]] || { echo 'candidate/source revision mismatch' >&2; exit 2; }
 fi
 if [[ $suite == browser || $suite == combined || $suite == all ]]; then
+ # Privileged namespaces run as root; retain the invoking user's browser cache.
+ export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-${XDG_CACHE_HOME:-$HOME/.cache}/ms-playwright}"
  command -v node >/dev/null
  [[ -f "$repo/frontend/node_modules/@playwright/test/cli.js" && -f "${candidate:-$repo}/frontend/.next/BUILD_ID" && -f "${candidate:-$repo}/admin-frontend/.next/BUILD_ID" ]] || { echo 'browser qualification requires installed Playwright and both production frontend builds' >&2; exit 2; }
 fi

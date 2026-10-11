@@ -59,6 +59,19 @@ func TestReleasedAccountSuspensionReconcilesAfterOwnerRestart(t *testing.T) {
 	conn := owner.terminal(terminal)
 	defer conn.Close()
 	require(t, conn.WriteMessage(websocket.BinaryMessage, []byte("while :; do echo suspension-live; sleep 0.2; done\n")))
+	streams := map[string]<-chan time.Time{}
+	for name, endpoint := range map[string]string{"resources": base + "/resources/events", "conversation": "/api/conversations/native/events", "schedules": "/api/schedules/events"} {
+		response, err := owner.client.Get(owner.origin + endpoint)
+		require(t, err)
+		if response.StatusCode != 200 {
+			response.Body.Close()
+			t.Fatal(name, response.StatusCode)
+		}
+		defer response.Body.Close()
+		done := make(chan time.Time, 1)
+		go func() { io.Copy(io.Discard, response.Body); done <- time.Now() }()
+		streams[name] = done
+	}
 	original := a.request("GET", "/api/admin/projects/suspension-active", nil, 200)
 	beforeCold := a.request("GET", "/api/admin/projects/suspension-cold", nil, 200)
 	// Freeze only this disposable test engine. API/identity/connection revocation
@@ -83,6 +96,19 @@ func TestReleasedAccountSuspensionReconcilesAfterOwnerRestart(t *testing.T) {
 		t.Fatal("terminal authority did not close within five seconds")
 	}
 	revocation := time.Since(start)
+	streamRevocation := map[string]int64{}
+	for name, done := range streams {
+		select {
+		case ended := <-done:
+			elapsed := ended.Sub(start)
+			if elapsed < 0 || elapsed >= 5*time.Second {
+				t.Fatal("stream did not close after committed suspension within bound", name, elapsed)
+			}
+			streamRevocation[name] = elapsed.Milliseconds()
+		case <-time.After(time.Until(start.Add(5 * time.Second))):
+			t.Fatal("stream suspension revocation missed five seconds", name)
+		}
+	}
 	owner.request("GET", "/api/auth/session", nil, 401)
 	owner.request("GET", "/api/shared/"+share["token"].(string), nil, 404)
 	opPath := "/api/admin/operations/" + operation["id"].(string)
@@ -201,6 +227,6 @@ func TestReleasedAccountSuspensionReconcilesAfterOwnerRestart(t *testing.T) {
 	a.await(35*time.Second, "suspension Projects cleanup", func() bool {
 		return a.cli("diagnostics", "--socket", filepath.Join(a.root, "state/control.sock"))["state"].(map[string]any)["projects"].(map[string]any)["deleted"] == float64(2)
 	})
-	raw, _ := json.MarshalIndent(map[string]any{"revocation_ms": revocation.Milliseconds(), "unknown_while_engine_unavailable": true, "owner_restart_same_operation": operation["id"], "preserved_cold_reservations": true, "explicit_resume_retains_slots": true}, "", "  ")
+	raw, _ := json.MarshalIndent(map[string]any{"revocation_ms": revocation.Milliseconds(), "stream_revocation_ms": streamRevocation, "admin_controls": []string{"stop", "restart", "apply-network", "pause"}, "unknown_while_engine_unavailable": true, "owner_restart_same_operation": operation["id"], "preserved_cold_reservations": true, "explicit_resume_retains_slots": true}, "", "  ")
 	require(t, os.WriteFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "suspension.json"), raw, 0644))
 }

@@ -145,6 +145,6 @@ recorded in the [sanitized deployment record](../dev/measurements/current-deploy
 Physical power-loss behavior and the optional combined-load and external-provider
 handoff suites were not exercised. The installed smoke verifies actual model tool
 selection for one scheduling request; deterministic native tests cover the full
-tool lifecycle. The release requires schema 4, manifest 4, native protocol 4 and
+tool lifecycle. The release requires schema 5, manifest 5, native protocol 4 and
 schedule protocol 1. Old databases/manifests are refused; there is no migration or
 compatibility adapter. Follow [delivery](delivery.md) and [bootstrap](bootstrap.md).

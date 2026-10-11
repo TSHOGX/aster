@@ -67,7 +67,7 @@ owner checks platform protocol 1 and the Project's measured current runtime
 before launching tools. A zero-gateway Project can still use the Scheduled page.
 Existing immutable service bindings are never silently modified.
 
-Current source requires schema 4, manifest 4, native protocol 4 and schedule
+Current source requires schema 5, manifest 5, native protocol 4 and schedule
 protocol 1. Install a measured runtime containing the reviewed explicit extension
 and qualify the reserved gateway prefix before enabling it. Gateway replacement
 requires full quiescence. Owner-only handoff is insufficient for this schema or
