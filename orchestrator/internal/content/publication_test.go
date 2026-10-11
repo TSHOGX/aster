@@ -441,6 +441,22 @@ func TestPublishRejectsIncoherentRequests(t *testing.T) {
 	}
 }
 
+func TestBuiltinPublicationReplayChecksOriginalCapacity(t *testing.T) {
+	publisher, _, _, revision := fixture(t)
+	ctx := context.Background()
+	first, err := publisher.Publish(ctx, "builtin", revision, 8<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := publisher.Publish(ctx, "builtin", revision, 8<<20)
+	if err != nil || first != second {
+		t.Fatal(first, second, err)
+	}
+	if _, err = publisher.Publish(ctx, "builtin", revision, 16<<20); err == nil {
+		t.Fatal("published shortcut ignored changed physical capacity")
+	}
+}
+
 func TestPublishRefusesSourceChangedAfterRevision(t *testing.T) {
 	engine, repository := newEngine(), newRepository()
 	root := authored(t, map[string]string{"AGENTS.md": "original\n"})

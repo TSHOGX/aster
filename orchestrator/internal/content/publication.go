@@ -62,7 +62,7 @@ func (p Publisher) Publish(ctx context.Context, purpose string, revision Revisio
 	if p.Repository == nil || p.Backend == nil {
 		return "", fmt.Errorf("content publication repository and engine backend required")
 	}
-	if purpose != "assets" && purpose != "config" {
+	if !ValidPurpose(purpose) {
 		return "", fmt.Errorf("unsupported content purpose %q", purpose)
 	}
 	if !ValidDigest(revision.Digest) || len(revision.Entries) == 0 {
@@ -78,11 +78,6 @@ func (p Publisher) Publish(ctx context.Context, purpose string, revision Revisio
 	identity, err := p.Backend.Identity(ctx)
 	if err != nil {
 		return "", err
-	}
-	if volume, found, err := p.Repository.FindPublishedContent(ctx, identity.StoreID, purpose, revision.Digest); err != nil {
-		return "", err
-	} else if found {
-		return volume, nil
 	}
 	record, err := p.Repository.ClaimContentPublication(ctx, Publication{StoreID: identity.StoreID, Purpose: purpose, RevisionDigest: revision.Digest, Capacity: capacity, Entries: revision.Entries})
 	if err != nil {
@@ -325,4 +320,10 @@ func terminal(err error) bool { return errors.Is(err, ErrContentRefused) }
 
 func contextWithoutCancelTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+}
+
+// ValidPurpose separates system publications from operator-authored builtin
+// content while sharing the same immutable transport and accounting.
+func ValidPurpose(purpose string) bool {
+	return purpose == "assets" || purpose == "config" || purpose == "builtin"
 }

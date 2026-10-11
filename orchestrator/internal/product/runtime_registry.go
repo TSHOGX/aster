@@ -60,11 +60,11 @@ func (s *Store) RegisterSandbox(ctx context.Context, release RegisteredSandbox) 
 		return s.auditEvent(ctx, tx, "operator", "runtime.register", "sandbox_release", release.Reference.ID+"/"+release.Reference.Version, "", 1, map[string]any{"reference": release.Reference, "store_id": release.StoreID, "template_id": release.TemplateID})
 	})
 }
-func (s *Store) RegisterBuiltinVolume(ctx context.Context, artifact BuiltinVolume) error {
+func ValidateBuiltinVolume(artifact BuiltinVolume) error {
 	if err := artifact.Reference.validate(); err != nil {
 		return err
 	}
-	if artifact.StoreID == "" || (artifact.PublicationPurpose != "assets" && artifact.PublicationPurpose != "config") || artifact.MinimumBytes <= 0 || len(artifact.Roles) == 0 || len(artifact.Roles) > 35 || content.Digest(artifact.Entries) != artifact.Reference.Digest {
+	if artifact.StoreID == "" || !content.ValidPurpose(artifact.PublicationPurpose) || artifact.MinimumBytes <= 0 || len(artifact.Roles) == 0 || len(artifact.Roles) > 35 || content.Digest(artifact.Entries) != artifact.Reference.Digest {
 		return ErrInvalid
 	}
 	roles := slices.Clone(artifact.Roles)
@@ -109,26 +109,53 @@ func (s *Store) RegisterBuiltinVolume(ctx context.Context, artifact BuiltinVolum
 	if total > artifact.MinimumBytes || total > content.MaxTotalBytes {
 		return ErrInvalid
 	}
-	return s.write(ctx, func(tx *sql.Tx) error {
-		var digest, store, purpose, oldRoles, retired string
-		var minimum int64
-		var clean bool
-		err := tx.QueryRowContext(ctx, `SELECT digest,store_id,publication_purpose,minimum_bytes,roles,clean_runtime,retired_at FROM builtin_volumes WHERE id=? AND version=?`, artifact.Reference.ID, artifact.Reference.Version).Scan(&digest, &store, &purpose, &minimum, &oldRoles, &clean, &retired)
-		if err == nil {
-			if retired != "" {
-				return Admission("artifact_retired", ErrConflict)
-			}
-			var declared []string
-			if err = json.Unmarshal([]byte(oldRoles), &declared); err != nil {
-				return err
-			}
-			slices.Sort(declared)
-			if digest != artifact.Reference.Digest || store != artifact.StoreID || purpose != artifact.PublicationPurpose || minimum != artifact.MinimumBytes || clean != artifact.CleanRuntime || !slices.Equal(declared, roles) {
-				return ErrConflict
-			}
-			return nil
+	return nil
+}
+func checkBuiltinRegistration(ctx context.Context, q queryer, artifact BuiltinVolume) (bool, error) {
+	roles := slices.Clone(artifact.Roles)
+	slices.Sort(roles)
+	var digest, store, purpose, oldRoles, retired string
+	var minimum int64
+	var clean bool
+	err := q.QueryRowContext(ctx, `SELECT digest,store_id,publication_purpose,minimum_bytes,roles,clean_runtime,retired_at FROM builtin_volumes WHERE id=? AND version=?`, artifact.Reference.ID, artifact.Reference.Version).Scan(&digest, &store, &purpose, &minimum, &oldRoles, &clean, &retired)
+	if err == nil {
+		if retired != "" {
+			return true, Admission("artifact_retired", ErrConflict)
 		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		var declared []string
+		if err = json.Unmarshal([]byte(oldRoles), &declared); err != nil {
+			return true, err
+		}
+		slices.Sort(declared)
+		if digest != artifact.Reference.Digest || store != artifact.StoreID || purpose != artifact.PublicationPurpose || minimum != artifact.MinimumBytes || clean != artifact.CleanRuntime || !slices.Equal(declared, roles) {
+			return true, ErrConflict
+		}
+		return true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return true, err
+	}
+	return false, nil
+}
+
+// CheckBuiltinRegistration rejects incompatible declarations before publication
+// can allocate storage. Registration repeats the check under the writer lock.
+func (s *Store) CheckBuiltinRegistration(ctx context.Context, artifact BuiltinVolume) error {
+	if err := ValidateBuiltinVolume(artifact); err != nil {
+		return err
+	}
+	_, err := checkBuiltinRegistration(ctx, s.reader, artifact)
+	return err
+}
+func (s *Store) RegisterBuiltinVolume(ctx context.Context, artifact BuiltinVolume) error {
+	if err := ValidateBuiltinVolume(artifact); err != nil {
+		return err
+	}
+	roles := slices.Clone(artifact.Roles)
+	slices.Sort(roles)
+	return s.write(ctx, func(tx *sql.Tx) error {
+		exists, err := checkBuiltinRegistration(ctx, tx, artifact)
+		if err != nil || exists {
 			return err
 		}
 		state, err := releaseState(ctx, tx)

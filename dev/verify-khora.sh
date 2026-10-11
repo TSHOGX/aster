@@ -3,7 +3,7 @@ set -euo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
 usage() {
  cat <<'HELP'
-Usage: dev/verify-khora.sh --template DIR --manifest FILE --output NEW_DIR [--engine FILE] [--candidate DIR] [--secondary-template DIR --secondary-manifest FILE] [--suite release|slots|paths|suspension|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all]
+Usage: dev/verify-khora.sh --template DIR --manifest FILE --output NEW_DIR [--engine FILE] [--candidate DIR] [--secondary-template DIR --secondary-manifest FILE] [--suite release|slots|paths|publication|suspension|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all]
 Builds test executables, then uses sudo -n for a disposable namespace/btrfs substrate.
 Default suite: release. Browser/combined/all require both frontend production builds and Chromium.
 Combined is opt-in and adds two real browser tabs, network profiles and gated handoff.
@@ -24,7 +24,7 @@ while (($#)); do
  esac
 done
 [[ -d $template && -f $manifest && -n $output ]] || { usage >&2;exit 2; }
-case "$suite" in release|slots|paths|suspension|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all) ;; *) usage >&2;exit 2;; esac
+case "$suite" in release|slots|paths|publication|suspension|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all) ;; *) usage >&2;exit 2;; esac
 if [[ $suite == paths ]]; then
  [[ -d $secondary_template && -f $secondary_manifest ]] || { echo 'paths requires a second immutable runtime and manifest' >&2;exit 2; }
  secondary_template=$(realpath "$secondary_template")
@@ -161,3 +161,5 @@ if [[ $suite == faults || $suite == all ]]; then
  run producthttp '^TestComposedProjectRecoveryOnKhora$' recovery 9m
  run servicegateway '^TestProjectServiceAuthorityOnKhora$' services 6m
 fi
+
+if [[ $suite == publication || $suite == all ]]; then run application '^TestReleasedBuiltinVolumePublication$' publication 4m;fi

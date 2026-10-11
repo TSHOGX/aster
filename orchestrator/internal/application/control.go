@@ -292,6 +292,7 @@ func (a *Application) controlHandler() http.Handler {
 		}
 		w.WriteHeader(204)
 	})
+	mux.HandleFunc("POST /volume/publish", a.publishVolume)
 	mux.HandleFunc("POST /runtime/register", a.registerRuntime)
 	mux.HandleFunc("GET /runtime/registry", a.runtimeRegistryState)
 	mux.HandleFunc("PATCH /runtime/registry", a.editRuntimeRegistryState)

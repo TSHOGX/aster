@@ -241,7 +241,7 @@ CREATE TABLE default_environment (
 
 CREATE TABLE content_publications (
  store_id TEXT NOT NULL,
- purpose TEXT NOT NULL CHECK(purpose IN ('assets','config')),
+ purpose TEXT NOT NULL CHECK(purpose IN ('assets','config','builtin')),
  revision_digest TEXT NOT NULL CHECK(revision_digest LIKE 'sha256:%'),
  capacity INTEGER NOT NULL CHECK(capacity>0),
  entries TEXT NOT NULL,

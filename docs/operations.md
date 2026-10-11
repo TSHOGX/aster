@@ -409,6 +409,33 @@ The original ID/version cannot be reused or revived by registration replay.
 Registry retirement does not delete engine templates or publication Volumes and
 does not release publication storage accounting.
 
+## Publish a built-in Volume artifact
+
+An operator can publish a reviewed directory as an immutable built-in Volume
+through the protected owner socket. First inspect the source to obtain its exact
+content digest, then publish with an explicit physical capacity, copy minimum,
+permitted roles, and (for runtime seeds) the clean-runtime declaration:
+
+```sh
+digest=$(orchestrator volume inspect-source --source /srv/reviewed/examples \
+  | jq -r .digest)
+orchestrator volume publish --socket /var/lib/agent-workbench/control.sock \
+  --source /srv/reviewed/examples --id examples --version v1 --digest "$digest" \
+  --capacity-bytes 8388608 --minimum-bytes 1048576 --roles data,workspace
+```
+
+The source must be an absolute regular directory containing bounded, non-
+executable files. The digest is checked again while publishing; changed bytes,
+invalid paths, duplicate roles, insufficient capacity, and role-incompatible
+runtime declarations are refused. Publication uses the existing durable staging,
+verification, and derivative path. Staging and derivative capacity remains
+charged through an uncertain outcome until observed. Repeating the same request
+is idempotent; a different capacity or content declaration conflicts with the
+existing immutable revision. Successful publication only registers inventory and
+does not select or edit the default environment. `--clean-runtime-seed` requires
+the explicit operator assertion that the source has no user identity, journals,
+live handles, or secrets.
+
 ## Project and Volume metadata
 
 Administration’s Projects page lists cross-account ownership, recorded state,
