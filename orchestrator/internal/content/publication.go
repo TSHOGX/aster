@@ -213,7 +213,11 @@ type VolumeVerifier interface {
 	sandbox.VolumeListings
 	sandbox.VolumeReads
 }
-type volumeVerifier struct{ Backend VolumeVerifier }
+type volumeVerifier struct {
+	Backend VolumeVerifier
+	entries int
+	bytes   int64
+}
 
 func (p Publisher) verify(ctx context.Context, reference sandbox.VolumeReference, expected string) error {
 	return VerifyVolume(ctx, p.Backend, reference, expected)
@@ -233,9 +237,9 @@ func VerifyVolume(ctx context.Context, backend VolumeVerifier, reference sandbox
 	return nil
 }
 
-func (p volumeVerifier) walk(ctx context.Context, reference sandbox.VolumeReference, directory string, depth int) ([]Entry, error) {
+func (p *volumeVerifier) walk(ctx context.Context, reference sandbox.VolumeReference, directory string, depth int) ([]Entry, error) {
 	if depth > 16 {
-		return nil, fmt.Errorf("published content nests deeper than 16 directories")
+		return nil, fmt.Errorf("%w: published content nests deeper than 16 directories", ErrContentRefused)
 	}
 	listing, err := p.Backend.ListVolume(ctx, reference, directory)
 	if err != nil {
@@ -245,6 +249,10 @@ func (p volumeVerifier) walk(ctx context.Context, reference sandbox.VolumeRefere
 	for _, item := range listing {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		p.entries++
+		if p.entries > MaxEntries {
+			return nil, fmt.Errorf("%w: published content exceeds %d entries", ErrContentRefused, MaxEntries)
 		}
 		name := item.Name
 		if strings.ContainsAny(name, "/\x00") || name == "" || name == "." || name == ".." {
@@ -260,6 +268,10 @@ func (p volumeVerifier) walk(ctx context.Context, reference sandbox.VolumeRefere
 			}
 			result = append(result, children...)
 		case "file":
+			if item.Size < 0 || item.Size > MaxTotalBytes-p.bytes {
+				return nil, fmt.Errorf("%w: published content exceeds %d bytes", ErrContentRefused, MaxTotalBytes)
+			}
+			p.bytes += item.Size
 			digest, err := p.readVolumeDigest(ctx, reference, full, item.Size)
 			if err != nil {
 				return nil, err
@@ -267,9 +279,6 @@ func (p volumeVerifier) walk(ctx context.Context, reference sandbox.VolumeRefere
 			result = append(result, Entry{Path: full, Size: item.Size, Digest: digest})
 		default:
 			return nil, fmt.Errorf("%w: published content entry %q has unsupported type %q", ErrContentRefused, full, item.Type)
-		}
-		if len(result) > MaxEntries {
-			return nil, fmt.Errorf("published content exceeds %d entries", MaxEntries)
 		}
 	}
 	return result, nil

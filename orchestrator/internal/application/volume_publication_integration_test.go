@@ -20,9 +20,11 @@ func TestReleasedBuiltinVolumePublication(t *testing.T) {
 	source := filepath.Join(a.root, "dataset")
 	require(t, os.Mkdir(source, 0755))
 	require(t, os.WriteFile(filepath.Join(source, "example.txt"), []byte("reviewed original"), 0644))
+	large := strings.Repeat("bounded builtin publication\n", 80000)
+	require(t, os.WriteFile(filepath.Join(source, "large.txt"), []byte(large), 0644))
 	measured := a.cli("volume", "inspect-source", "--source", source)
 	digest := measured["digest"].(string)
-	args := []string{"volume", "publish", "--socket", socket, "--source", source, "--id", "examples", "--version", "v1", "--digest", digest, "--capacity-bytes", "8388608", "--minimum-bytes", "1048576", "--roles", "workspace,data"}
+	args := []string{"volume", "publish", "--socket", socket, "--source", source, "--id", "examples", "--version", "v1", "--digest", digest, "--capacity-bytes", "8388608", "--minimum-bytes", "4194304", "--roles", "workspace,data"}
 	before := a.request("GET", "/api/admin/runtime/default", nil, 200)
 	first := a.cli(args...)
 	if replay := a.cli(args...); !reflect.DeepEqual(first, replay) || replay["default_changed"] != false {
@@ -47,7 +49,7 @@ func TestReleasedBuiltinVolumePublication(t *testing.T) {
 	for _, raw := range options {
 		option := raw.(map[string]any)
 		if option["reference"].(map[string]any)["id"] == "examples" {
-			found = option["availability"] == "available" && option["source_capacity_bytes"] == "8388608" && option["minimum_bytes"] == "1048576"
+			found = option["availability"] == "available" && option["source_capacity_bytes"] == "8388608" && option["minimum_bytes"] == "4194304"
 		}
 	}
 	if !found {
@@ -82,6 +84,14 @@ func TestReleasedBuiltinVolumePublication(t *testing.T) {
 		if value := read(base); value != "reviewed original" {
 			t.Fatal(value)
 		}
+	}
+	response, err := a.client.Get(a.origin + "/api/projects/seed-b/files/content?path=large.txt")
+	require(t, err)
+	largeBytes, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	require(t, err)
+	if response.StatusCode != 200 || string(largeBytes) != large {
+		t.Fatal("bounded multi-megabyte publication differed", response.StatusCode, len(largeBytes))
 	}
 	a.writeFile("/api/projects/seed-a/files/content?path=example.txt", "private changed copy", "change-seed-copy")
 	// Mutable authoring input is changed after publication. Restart must use the

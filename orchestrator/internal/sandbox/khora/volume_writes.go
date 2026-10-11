@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/sandbox"
 
 	sdk "github.com/TSHOGX/khora/pkg/khora"
@@ -12,7 +13,7 @@ import (
 // maxWriteChunk bounds one direct volume write. The engine holds its write-regime
 // marker for the whole request, so a single unbounded body would park cold starts
 // on that volume for as long as the transfer takes.
-const maxWriteChunk = 1 << 20
+const maxWriteChunk = content.MaxFileBytes
 
 // MkdirVolume creates one directory, tolerating an existing one.
 //
