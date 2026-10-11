@@ -61,15 +61,16 @@ func (s *Store) ValidateReleasedBindings(ctx context.Context, engine string) err
 }
 
 type DiagnosticCounts struct {
-	Projects         map[string]int `json:"projects"`
-	Sessions         map[string]int `json:"sessions"`
-	Terminals        map[string]int `json:"terminals"`
-	Occupied         int            `json:"occupied_projects"`
-	PendingLifecycle int            `json:"pending_lifecycle"`
-	PendingFiles     int            `json:"pending_files"`
-	PendingRecovery  int            `json:"pending_recovery"`
-	PendingCapture   int            `json:"pending_capture"`
-	DatabaseBytes    int64          `json:"database_bytes"`
+	Storage          PlatformStorage `json:"storage"`
+	Projects         map[string]int  `json:"projects"`
+	Sessions         map[string]int  `json:"sessions"`
+	Terminals        map[string]int  `json:"terminals"`
+	Occupied         int             `json:"occupied_projects"`
+	PendingLifecycle int             `json:"pending_lifecycle"`
+	PendingFiles     int             `json:"pending_files"`
+	PendingRecovery  int             `json:"pending_recovery"`
+	PendingCapture   int             `json:"pending_capture"`
+	DatabaseBytes    int64           `json:"database_bytes"`
 }
 
 func (s *Store) OperatorDiagnostics(ctx context.Context) (DiagnosticCounts, error) {
@@ -98,6 +99,9 @@ func (s *Store) OperatorDiagnostics(ctx context.Context) (DiagnosticCounts, erro
 		}
 	}
 	err := s.reader.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM project_resources WHERE occupied=1),(SELECT count(*) FROM project_operations WHERE state<>'succeeded'),(SELECT count(*) FROM file_operations WHERE settled=0),(SELECT count(*) FROM agent_incarnations WHERE recovery_state IN ('pending','replaying')),(SELECT count(*) FROM native_captures WHERE state='guest'),(SELECT page_count*page_size FROM pragma_page_count(),pragma_page_size())`).Scan(&result.Occupied, &result.PendingLifecycle, &result.PendingFiles, &result.PendingRecovery, &result.PendingCapture, &result.DatabaseBytes)
+	if err == nil {
+		result.Storage, err = s.OperatorStorageUsage(ctx)
+	}
 	return result, err
 }
 

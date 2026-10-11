@@ -87,6 +87,17 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 		return ref, d
 	}
 	ref, original := inspect()
+	checkStorage := func(owned string) {
+		t.Helper()
+		storage := a.cli("diagnostics", "--socket", socket)["state"].(map[string]any)["storage"].(map[string]any)
+		publications := storage["publications"].(map[string]any)
+		// Two 64MiB system publications each retain staging and immutable derivative.
+		if publications["used"] != "268435456" || publications["reserved"] != "0" || storage["published_bytes"] != "134217728" || storage["owned"].(map[string]any)["used"] != owned {
+			t.Fatal(storage)
+		}
+	}
+	checkStorage("268435456")
+
 	sequence := 0
 	shell := func(code string) string {
 		t.Helper()
@@ -220,6 +231,7 @@ print('DNS TLS PACKAGE DENIAL OK')`, certificate, port, len(payload))
 	a.await(25*time.Second, "network Project cleanup", func() bool {
 		return a.cli("diagnostics", "--socket", socket)["state"].(map[string]any)["projects"].(map[string]any)["deleted"] == float64(1)
 	})
+	checkStorage("0")
 	report := map[string]any{"dns": true, "tls_package_bytes": len(payload), "undeclared_denied": true, "running_unchanged": true, "permission_removal": true, "user_override_restart": true, "inheritance_restored": true, "retained_model_completed": true, "public_internet_tested": false, "destination": netip.MustParseAddr("192.0.2.1").String()}
 	raw, _ = json.MarshalIndent(report, "", "  ")
 	require(t, os.WriteFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "network-policy.json"), raw, 0644))

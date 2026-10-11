@@ -81,6 +81,17 @@ orchestrator publish --socket /var/lib/agent-workbench/control.sock
 orchestrator notify --socket /var/lib/agent-workbench/control.sock --audience ACCOUNT_ID --title Notice --body 'Maintenance is scheduled.'
 ```
 
+Diagnostics include `state.storage`: declared Project-owned allocated/reserved
+capacity, publication allocated/reserved capacity, the published subset, and total
+Volume capacity. Publication staging and immutable derivative are separate
+objects. The published pointer aliases the derivative and is never a third
+charge; registrations and shared Project mounts add no storage charge. Unknown
+creates and failed publication preparation retain the original reservation or
+allocation. These are logical capacities, not measured filesystem block usage;
+copy-on-write savings do not increase entitlement. Compute overlay accounting
+remains separate from persistent Volumes. Publication retirement is an explicit
+operator lifecycle concern; diagnostics do not garbage-collect sources.
+
 Diagnostics report resource counts, occupied Projects, pending work and database
 bytes. Preview diagnostics expose snapshot leases/bytes without source paths/tokens.
 Network diagnostics show accepted database defaults, the owner’s inherit/override

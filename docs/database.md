@@ -213,3 +213,12 @@ audited and release-fenced; they do not update default_environment. Direct/DNS
 defaults have a monotonic configuration revision plus a content digest. The admin
 edit transaction checks revision/receipt/retained service constraints and writes
 the audit with the new policy. No startup writer or file watcher replaces it.
+
+Platform storage accounting derives from the existing storage-reservation and
+content-publication authorities. Each publication claim reserves two capacities
+(staging plus immutable derivative), converting each to allocation when its
+engine identity is durably observed. Derived and published pointers refer to one
+object. The projection deduplicates source objects by engine store and Volume
+identity, rejects contradictory capacities and checks all sums for overflow.
+Failed/uncertain publication rows remain charged. There is no second inventory,
+copy-on-write discount, or per-Project duplicate charge for shared sources.

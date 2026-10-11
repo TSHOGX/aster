@@ -25,6 +25,9 @@ func (s *Store) ClaimContentPublication(ctx context.Context, p content.Publicati
 	if p.StoreID == "" || (p.Purpose != "assets" && p.Purpose != "config") || !content.ValidDigest(p.RevisionDigest) || p.Capacity <= 0 || len(p.Entries) == 0 {
 		return empty, fmt.Errorf("store identity, purpose, revision digest, capacity and entries required")
 	}
+	if _, err := checkedProduct(p.Capacity, 2); err != nil {
+		return empty, err
+	}
 	entries, err := json.Marshal(p.Entries)
 	if err != nil {
 		return empty, err
@@ -49,6 +52,9 @@ func (s *Store) ClaimContentPublication(ctx context.Context, p content.Publicati
 	}
 	if stored.Capacity != p.Capacity || content.Digest(stored.Entries) != p.RevisionDigest {
 		return empty, fmt.Errorf("existing publication of this revision declares different content or capacity")
+	}
+	if _, err = platformStorage(ctx, tx); err != nil {
+		return empty, err
 	}
 	return stored, tx.Commit()
 }
