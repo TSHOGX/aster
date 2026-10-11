@@ -7,6 +7,7 @@ import (
 )
 
 type ResourceFitIssue struct {
+	Reason    string            `json:"reason,omitempty"`
 	Code      string            `json:"code"`
 	Dimension ResourceDimension `json:"dimension,omitempty"`
 	Requested int64             `json:"requested,string"`
@@ -29,6 +30,10 @@ func EnvironmentResourceFit(environment DefaultEnvironment, contract runtimerele
 	}
 	plan, err := ResolveEnvironmentStructure(environment, contract, artifacts, values[ResourceWorkspace].Effective, values[ResourceRuntime].Effective, platformMounts)
 	if err != nil {
+		var field *SettingError
+		if errors.As(err, &field) {
+			return plan, []ResourceFitIssue{{Code: "environment_invalid", Field: field.Field, Reason: field.Reason}}, nil
+		}
 		var admission *AdmissionError
 		if errors.As(err, &admission) {
 			code, field, _ := strings.Cut(admission.Code, ":")

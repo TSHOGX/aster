@@ -291,3 +291,54 @@ test("real resource editors preserve exact quantities and show retained usage to
     await page.screenshot({ path: info.outputPath("admin-resource-usage-mobile.png") });
   } finally { await ownerContext.close(); }
 });
+
+test("real runtime editor preserves concurrent slots and resolves the original save", async ({ page }, info) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto("/admin/runtime");
+  await page.getByLabel("Username", { exact: true }).fill("administrator");
+  await page.getByLabel("Password", { exact: true }).fill("web-test-permanent-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Default runtime environment", exact: true })).toBeVisible();
+  await page.getByLabel("Mount 1 destination", { exact: true }).fill("/etc/blocked");
+  await page.getByRole("button", { name: "Preview environment changes", exact: true }).click();
+  await expect(page.locator("main").getByRole("alert")).toContainText("Mount 1 destination: mount overlaps protected runtime path");
+  await page.getByLabel("Mount 1 destination", { exact: true }).fill("/workspaces/browser");
+  await page.getByRole("button", { name: "Preview environment changes", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Environment preview", exact: true })).toBeVisible();
+  const current = await (await page.request.get("/api/admin/runtime/default")).json();
+  const remote = { expected_revision: current.revision, sandbox_release: current.sandbox_release, mounts: [...current.mounts, { key: "remote-data", role: "data", destination: "/data/remote", storage: "owned", access: "read_write", source: { kind: "empty" }, capacity: { bytes: "1048576" } }] };
+  const impact = await page.request.post("/api/admin/runtime/default/preview", { data: remote }); expect(impact.ok()).toBe(true);
+  expect((await page.request.patch("/api/admin/runtime/default", { data: { ...remote, request_id: crypto.randomUUID(), expected_dependencies: (await impact.json()).expected_dependencies } })).ok()).toBe(true);
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Save default environment", exact: true }).click();
+  await expect(page.locator("main").getByRole("alert")).toContainText("dependencies changed");
+  await page.getByRole("button", { name: "Reload current environment", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Changed fields are retained");
+  await expect(page.getByLabel("Mount 1 destination", { exact: true })).toHaveValue("/workspaces/browser");
+  await expect(page.getByLabel("Mount 3 destination", { exact: true })).toHaveValue("/data/remote");
+  await page.getByRole("button", { name: "Preview environment changes", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Environment preview", exact: true })).toBeVisible();
+  let lost = false;
+  const requests: unknown[] = [];
+  await page.route("**/api/admin/runtime/default", async route => {
+    if (route.request().method() === "PATCH") {
+      requests.push(route.request().postDataJSON());
+      if (!lost) { lost = true; const response = await route.fetch(); expect(response.ok()).toBe(true); await response.dispose(); await route.abort("failed"); return; }
+    }
+    await route.continue();
+  });
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Save default environment", exact: true }).click();
+  await page.getByRole("button", { name: "Check original request", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Original environment change confirmed");
+  expect(requests).toHaveLength(2); expect(requests[0]).toEqual(requests[1]);
+  const saved = await (await page.request.get("/api/admin/runtime/default")).json();
+  expect(saved.mounts[0].destination).toBe("/workspaces/browser"); expect(saved.mounts[2].key).toBe("remote-data"); expect(saved.mounts[2].capacity.bytes).toBe("1048576");
+  await page.getByRole("button", { name: "Add data mount", exact: true }).click();
+  page.once("dialog", dialog => dialog.dismiss());
+  await page.getByRole("link", { name: "Users", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\/runtime$/);
+  await page.getByRole("button", { name: "Discard edits", exact: true }).click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await page.screenshot({ path: info.outputPath("runtime-environment-mobile.png") });
+});

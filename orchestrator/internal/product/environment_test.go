@@ -58,7 +58,7 @@ func TestEnvironmentUsesSelectedManifestPathsAndRequiredPublications(t *testing.
 	artifacts := []BuiltinVolume{}
 	for _, required := range contract.RequiredPublications {
 		reference := ArtifactReference{ID: required.ArtifactID, Version: "v1", Digest: content.Digest(nil)}
-		artifacts = append(artifacts, BuiltinVolume{Reference: reference, MinimumBytes: 1, Roles: []string{required.Role}})
+		artifacts = append(artifacts, BuiltinVolume{Reference: reference, MinimumBytes: 1, SourceCapacityBytes: 1, Roles: []string{required.Role}})
 		environment.Mounts = append(environment.Mounts, EnvironmentMount{Key: required.Role, Role: required.Role, Destination: required.Destination, Storage: "shared_readonly", Access: "read_only", Source: MountSource{Kind: "builtin", ArtifactID: reference.ID, Version: reference.Version, Digest: reference.Digest}})
 	}
 	plan, err := ResolveEnvironmentStructure(environment, contract, artifacts, 20, 10, 8)

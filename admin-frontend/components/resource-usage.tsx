@@ -1,7 +1,7 @@
 "use client";
 import { resourceDimensions, type FitIssue, type PlanConflicts, type UserUsage } from "@web/resources";
 export function FitIssues({ issues }: { issues: FitIssue[] }) {
-  return issues.length ? <ul>{issues.map((issue, index) => <li key={index}>{issue.dimension || issue.field || issue.code}: {issue.requested} requested, {issue.limit} allowed{issue.field && ` (${issue.field})`}</li>)}</ul> : <p>No conflicts.</p>;
+  return issues.length ? <ul>{issues.map((issue, index) => <li key={index}>{issue.dimension || issue.field || issue.code}: {issue.reason || `${issue.requested} requested, ${issue.limit} allowed`}{issue.field && ` (${issue.field})`}</li>)}</ul> : <p>No conflicts.</p>;
 }
 export function SavedPlanIssues({ value }: { value: PlanConflicts }) {
   return <><p>{value.count} saved Projects conflict with these limits. Existing data is retained.</p>{value.projects.map(project => <details key={project.project_id}><summary>{project.project_id} · {project.state}</summary><FitIssues issues={project.issues} /></details>)}{value.truncated && <p>Showing the first 20 conflicting Projects.</p>}</>;

@@ -43,7 +43,7 @@ func accountSeed(cfg Config) (product.BootstrapSeed, error) {
 			role = "agent_config"
 		}
 		// The content digest itself is the immutable initial publication version.
-		volumes = append(volumes, product.BuiltinVolume{Reference: product.ArtifactReference{ID: role, Version: publication.revision.Digest, Digest: publication.revision.Digest}, StoreID: cfg.Engine.StoreID, PublicationPurpose: publication.purpose, MinimumBytes: cfg.Content.VolumeBytes, Roles: []string{role}, Entries: publication.revision.Entries})
+		volumes = append(volumes, product.BuiltinVolume{Reference: product.ArtifactReference{ID: role, Version: publication.revision.Digest, Digest: publication.revision.Digest}, StoreID: cfg.Engine.StoreID, PublicationPurpose: publication.purpose, MinimumBytes: cfg.Content.VolumeBytes, SourceCapacityBytes: cfg.Content.VolumeBytes, Roles: []string{role}, Entries: publication.revision.Entries})
 	}
 	p := cfg.Project
 	network, err := product.NewNetworkPolicy(p.Reachability)

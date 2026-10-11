@@ -148,6 +148,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 		}
 	}
 	app.Auth = producthttp.NewAuthentication(store, transportConfig)
+	app.Auth.RuntimeInspector = app.Backend
 	app.API = &producthttp.Server{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Bindings: bindings, Auth: app.Auth, Config: transportConfig}
 	api := app.API.Handler()
 	mux := http.NewServeMux()
@@ -213,7 +214,7 @@ func (a *Application) publishPrepared(ctx context.Context, sources []preparedPub
 		if source.purpose == "config" {
 			role = "agent_config"
 		}
-		artifact := product.BuiltinVolume{Reference: product.ArtifactReference{ID: role, Version: source.revision.Digest, Digest: source.revision.Digest}, StoreID: bindings.StoreID, PublicationPurpose: source.purpose, MinimumBytes: a.Config.Content.VolumeBytes, Roles: []string{role}, Entries: source.revision.Entries}
+		artifact := product.BuiltinVolume{Reference: product.ArtifactReference{ID: role, Version: source.revision.Digest, Digest: source.revision.Digest}, StoreID: bindings.StoreID, PublicationPurpose: source.purpose, MinimumBytes: a.Config.Content.VolumeBytes, SourceCapacityBytes: a.Config.Content.VolumeBytes, Roles: []string{role}, Entries: source.revision.Entries}
 		if err := a.Store.RegisterBuiltinVolume(ctx, artifact); err != nil {
 			return bindings, err
 		}

@@ -144,3 +144,40 @@ test("revoked inspection cannot display a late content response",async({page})=>
   release();
   await expect(panel).toContainText("An explicit admin.content.read grant is required");await expect(panel).not.toContainText("Late private content");
 });
+
+test("runtime editor locks required publications and keeps optional mounts within the bound", async ({ page }, info) => {
+  await adminFixture(page); await page.setViewportSize({ width: 390, height: 900 });
+  const digest = `sha256:${"a".repeat(64)}`;
+  const reference = { id: "runtime", version: "v1", digest };
+  const required = [{ role: "agent_config", destination: "/opt/agent-config", artifact_id: "agent_config" }, { role: "shared_assets", destination: "/opt/shared-assets", artifact_id: "shared_assets" }];
+  const mounts = [
+    { key: "workspace", role: "workspace", destination: "/workspace", storage: "owned", access: "read_write", source: { kind: "empty" }, capacity: { setting: "workspace_bytes" } },
+    { key: "runtime", role: "runtime", destination: "/runtime", storage: "owned", access: "read_write", source: { kind: "empty" }, capacity: { setting: "runtime_bytes" } },
+    ...required.map(item => ({ key: item.role, role: item.role, destination: item.destination, storage: "shared_readonly", access: "read_only", source: { kind: "builtin", artifact_id: item.artifact_id, version: "v1", digest }, capacity: {} })),
+  ];
+  await page.route("**/api/admin/runtime/**", route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/default") && route.request().method() === "PATCH") return route.fulfill({ status: 503, json: { code: "artifact_unavailable", error: "registered runtime artifact unavailable" } });
+    if (url.pathname.endsWith("/preview")) return route.fulfill({ json: { affected_accounts: "1", accounts_with_plan_conflicts: "1", expected_dependencies: "fingerprint", users: [] } });
+    if (url.pathname.endsWith("/default")) return route.fulfill({ json: { revision: 1, sandbox_release: reference, mounts, required_publications: required, max_mounts: "5" } });
+    return route.fulfill({ json: { max_mounts: "5", options: url.searchParams.get("kind") === "sandbox" ? [{ reference, kind: "sandbox", enabled: true, availability: "available", required_publications: required, protected_roots: ["/etc", "/proc"], blocked_path_count: 2 }] : required.map(item => ({ reference: { id: item.artifact_id, version: "v1", digest }, kind: "volume", roles: [item.role], enabled: true, availability: "available", minimum_bytes: "1048576", source_capacity_bytes: "8388608" })) } });
+  });
+  await page.goto("/admin/runtime");
+  await expect(page.getByLabel("Mount 3 destination", { exact: true })).toHaveAttribute("readonly", "");
+  await expect(page.getByLabel("Mount 3 storage", { exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Mount 4 access", { exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Remove agent_config", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Add data mount", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Add data mount", exact: true })).toBeDisabled();
+  await page.getByLabel("Mount 5 capacity in bytes", { exact: true }).fill("9007199254740993");
+  await expect(page.getByLabel("Mount 5 capacity in bytes", { exact: true })).toHaveValue("9007199254740993");
+  await page.getByRole("button", { name: "Preview environment changes", exact: true }).click();
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Save default environment", exact: true }).click();
+  await expect(page.locator("main").getByRole("alert")).toContainText("registered runtime artifact unavailable");
+  await expect(page.getByLabel("Mount 5 capacity in bytes", { exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Check original request", exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await page.getByLabel("Mount 3 destination", { exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath("required-runtime-mounts-mobile.png") });
+});

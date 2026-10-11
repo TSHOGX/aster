@@ -153,6 +153,7 @@ func proposedEnvironment(ctx context.Context, q queryer, input EnvironmentChange
 		if capacity < artifact.MinimumBytes {
 			return fail(ErrConflict)
 		}
+		artifact.SourceCapacityBytes = capacity
 		artifacts = append(artifacts, artifact)
 	}
 	limits, err = platformResourceLimits(ctx, q)

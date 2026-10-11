@@ -41,6 +41,28 @@ func TestReleasedRuntimePathsAndVersions(t *testing.T) {
 func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 	t.Setenv("PROJECT_RELEASE_MODEL_MODE", "model-independent")
 	a := newReleasedApp(t)
+
+	for _, kind := range []string{"sandbox", "volume"} {
+		inventory := a.request("GET", "/api/admin/runtime/options?kind="+kind+"&limit=20", nil, 200)
+		options := inventory["options"].([]any)
+		if len(options) == 0 {
+			t.Fatal("runtime inventory missing", kind)
+		}
+		for _, raw := range options {
+			option := raw.(map[string]any)
+			if option["availability"] != "available" || option["checked_at"] == nil {
+				t.Fatal("actual runtime dependency not observed", option)
+			}
+			if kind == "volume" && option["source_capacity_bytes"] != "67108864" {
+				t.Fatal(option)
+			}
+			for _, private := range []string{"store_id", "template_id", "volume_id", "entries"} {
+				if _, exists := option[private]; exists {
+					t.Fatal("private binding exposed", option)
+				}
+			}
+		}
+	}
 	socket := filepath.Join(a.root, "state/control.sock")
 	backend, err := khora.New(a.ctx, khora.Config{Endpoint: os.Getenv("PROJECT_TEST_ENDPOINT")})
 	require(t, err)

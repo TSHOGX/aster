@@ -59,13 +59,14 @@ type RegisteredSandbox struct {
 	Manifest   runtimerelease.Manifest `json:"manifest"`
 }
 type BuiltinVolume struct {
-	Reference          ArtifactReference `json:"reference"`
-	StoreID            string            `json:"store_id"`
-	PublicationPurpose string            `json:"publication_purpose"`
-	MinimumBytes       int64             `json:"minimum_bytes,string"`
-	Roles              []string          `json:"roles"`
-	CleanRuntime       bool              `json:"clean_runtime"`
-	Entries            []content.Entry   `json:"entries"`
+	SourceCapacityBytes int64             `json:"-"`
+	Reference           ArtifactReference `json:"reference"`
+	StoreID             string            `json:"store_id"`
+	PublicationPurpose  string            `json:"publication_purpose"`
+	MinimumBytes        int64             `json:"minimum_bytes,string"`
+	Roles               []string          `json:"roles"`
+	CleanRuntime        bool              `json:"clean_runtime"`
+	Entries             []content.Entry   `json:"entries"`
 }
 type ResolvedMount struct {
 	EnvironmentMount
@@ -83,7 +84,30 @@ func validMountPath(value string) bool { return runtimerelease.ValidGuestMountPa
 func pathsOverlap(a, b string) bool {
 	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
-func environmentError(field string) error { return Admission("environment_invalid:"+field, ErrInvalid) }
+func environmentError(field string) error {
+	reason := "Check the environment configuration."
+	switch {
+	case strings.HasSuffix(field, ".key"):
+		reason = "Use a unique slot key of 1–64 ASCII letters, digits, underscores or hyphens."
+	case strings.HasSuffix(field, ".destination"):
+		reason = "Use a canonical absolute path that does not overlap another mount."
+	case strings.HasSuffix(field, ".source"):
+		reason = "Choose an exact registered source compatible with this mount role."
+	case strings.HasSuffix(field, ".capacity"):
+		reason = "Capacity must match the role setting and meet the source minimum; owned data needs a positive byte value."
+	case strings.HasSuffix(field, ".role"):
+		reason = "Use a role declared by the selected release, with no duplicate required roles."
+	case strings.HasSuffix(field, ".storage"):
+		reason = "Choose storage compatible with this role and source."
+	case strings.HasSuffix(field, ".access"):
+		reason = "Use read/write for workspace and runtime, and read-only for shared publications."
+	case strings.HasPrefix(field, "required_roles"):
+		reason = "Include exactly one workspace, one runtime and every required publication role."
+	case field == "mounts":
+		reason = "The complete mount list must fit the qualified platform bound and have positive workspace/runtime capacities."
+	}
+	return &SettingError{Field: field, Reason: reason}
+}
 
 // ResolveEnvironmentStructure checks mount shape and complete-plan accounting.
 // Runtime qualification additionally checks the registered release's trusted
@@ -120,7 +144,7 @@ func ResolveEnvironmentStructure(environment DefaultEnvironment, contract runtim
 			return result, environmentError(field + ".role")
 		}
 		if err := contract.ValidateDestination(mount.Role, mount.Destination); err != nil {
-			return result, environmentError(field + ".destination")
+			return result, &SettingError{Field: field + ".destination", Reason: err.Error()}
 		}
 
 		roles[mount.Role]++
@@ -169,7 +193,10 @@ func ResolveEnvironmentStructure(environment DefaultEnvironment, contract runtim
 			if mount.Access != "read_only" || mount.Source.Kind != "builtin" || mount.Capacity != (MountCapacity{}) {
 				return result, environmentError(field + ".capacity")
 			}
-			resolved.CapacityBytes = artifact.MinimumBytes
+			if artifact.SourceCapacityBytes <= 0 {
+				return result, ErrArtifactUnavailable
+			}
+			resolved.CapacityBytes = artifact.SourceCapacityBytes
 		} else {
 			switch mount.Role {
 			case "workspace":

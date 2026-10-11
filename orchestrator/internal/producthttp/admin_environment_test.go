@@ -32,6 +32,10 @@ func TestEnvironmentHTTPAdminAuthorityAndExactArtifactInputs(t *testing.T) {
 		must(t, json.Unmarshal(response.Body.Bytes(), &out))
 		return response.Code, out
 	}
+	status, options := perform("GET", "/api/admin/runtime/options?kind=sandbox", token, "https://app", nil)
+	if status != 200 || len(options["options"].([]any)) != 1 {
+		t.Fatal(status, options)
+	}
 	path := "/api/admin/runtime/default"
 	status, current := perform("GET", path, token, "https://app", nil)
 	if status != 200 {
@@ -74,6 +78,10 @@ func TestEnvironmentHTTPAdminAuthorityAndExactArtifactInputs(t *testing.T) {
 		want := 403
 		if credential == "" {
 			want = 401
+		}
+		status, _ = perform("GET", "/api/admin/runtime/options?kind=sandbox", credential, "https://app", nil)
+		if status != want {
+			t.Fatal(status)
 		}
 		status, _ = perform("GET", path, credential, "https://app", nil)
 		if status != want {

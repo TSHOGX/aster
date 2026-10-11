@@ -6,6 +6,7 @@ import (
 )
 
 func (a *Authentication) environmentRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/admin/runtime/options", a.runtimeOptions)
 	mux.HandleFunc("GET /api/admin/runtime/default", a.adminEnvironment)
 	mux.HandleFunc("POST /api/admin/runtime/default/preview", a.previewEnvironment)
 	mux.HandleFunc("PATCH /api/admin/runtime/default", a.editEnvironment)
@@ -40,6 +41,23 @@ func (a *Authentication) editEnvironment(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	value, err := a.Store.EditEnvironment(r.Context(), requestToken(r), input)
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, 200, value)
+}
+
+func (a *Authentication) runtimeOptions(w http.ResponseWriter, r *http.Request) {
+	limit, ok := adminPageLimit(w, r)
+	if !ok {
+		return
+	}
+	kind := r.URL.Query().Get("kind")
+	if kind == "" {
+		kind = "sandbox"
+	}
+	value, err := a.Store.AdminRuntimeOptions(r.Context(), requestToken(r), kind, r.URL.Query().Get("cursor"), limit, a.RuntimeInspector)
 	if err != nil {
 		adminFailure(w, err)
 		return

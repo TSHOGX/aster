@@ -14,10 +14,11 @@ import (
 const loginCookie = "project_login"
 
 type Authentication struct {
-	Store    *product.Store
-	Config   Config
-	attempts *auth.RateLimiter
-	requests *auth.IPRateLimiter
+	RuntimeInspector product.RuntimeInspector
+	Store            *product.Store
+	Config           Config
+	attempts         *auth.RateLimiter
+	requests         *auth.IPRateLimiter
 }
 
 func NewAuthentication(store *product.Store, config Config) *Authentication {

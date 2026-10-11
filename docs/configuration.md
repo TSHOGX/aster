@@ -246,3 +246,21 @@ image paths and stale dependencies are refused. A valid plan can exceed some
 users' allowances; saving it does not raise entitlements or reserve capacity.
 First allocation uses current admission rules. An environment edit never changes
 an already-bound Project's release, paths, storage capacities or sources.
+
+The Administration Runtime page edits this document with an exact release picker,
+required publication rows, optional data mounts, and per-user capacity provenance
+in the preview. Required roles cannot be removed or moved; shared mounts are
+read-only. Stable slot keys survive ordinary edits. Reload merges changed fields
+with unrelated concurrent edits by slot key; an uncertain save checks the original
+request. Header navigation and page links both protect unsaved edits.
+
+`GET /api/admin/runtime/options?kind=sandbox|volume&limit=20&cursor=...` returns
+bounded immutable version metadata without engine handles, host paths or file
+entries. Source minimum copy capacity and actual published source capacity are
+separate decimal strings. Shared-plan previews use the actual published capacity;
+owned copies use their requested capacity subject to the source minimum.
+Availability reports `available`, `unavailable`, `unknown`, `unchecked`, `disabled`,
+`other_store` or `incompatible`, with a timestamp when observed. The owner checks
+public engine template/Volume metadata outside the database transaction, within
+a ten-second page budget; unobserved entries remain explicitly unchecked.
+Availability never reserves resources or bypasses allocation checks.

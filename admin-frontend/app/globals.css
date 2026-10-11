@@ -43,3 +43,6 @@ textarea { font: inherit; width: 100%; min-height: 6rem; padding: .6rem .7rem; r
 
 .resource-form { max-width: 65rem; }.resource-row { display: grid; grid-template-columns: minmax(12rem,1.4fr) minmax(9rem,1fr) minmax(9rem,1fr); gap: .75rem; align-items: end; border-bottom: 1px solid var(--border); padding-bottom: 1rem; }.resource-row input { font-family: ui-monospace,monospace; font-size: .9rem; }
 @media(max-width:700px) { .resource-row { grid-template-columns: minmax(0,1fr); } }
+
+.runtime-form { max-width: 70rem; }.runtime-form select { max-width: 100%; text-overflow: ellipsis; }.runtime-mount { border: 1px solid var(--border); border-radius: .5rem; padding: 1rem; display: grid; gap: .8rem; min-width: 0; }.runtime-mount header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .6rem; }.runtime-mount h3 { margin: 0; font-size: 1rem; }.runtime-mount .identifier { overflow-wrap: anywhere; }.runtime-fields { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }.runtime-form input[readonly] { background: var(--surface-muted); }
+@media(max-width:600px) { .runtime-fields { grid-template-columns: minmax(0,1fr); }.runtime-mount { padding: .75rem; } }

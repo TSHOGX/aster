@@ -40,7 +40,13 @@ func adminFailure(w http.ResponseWriter, err error) {
 	case errors.Is(err, product.ErrDraining):
 		status, code, message = 409, "release_fenced", "configuration changes are closed during release activation"
 	}
-	writeJSON(w, status, map[string]string{"code": code, "error": message})
+	body := map[string]string{"code": code, "error": message}
+	var field *product.SettingError
+	if errors.As(err, &field) {
+		body["field"] = field.Field
+		body["error"] = field.Reason
+	}
+	writeJSON(w, status, body)
 }
 func adminPageLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
 	raw := r.URL.Query().Get("limit")

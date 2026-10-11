@@ -12,7 +12,7 @@ export function AccountUsage() {
     void api<UserUsage>("/api/me/usage", { signal: abort.signal }).then(value => { if (!abort.signal.aborted) setValue(value); }).catch(error => { if (!abort.signal.aborted) setError(String(error)); });
     return () => abort.abort();
   }, [attempt]);
-  const issues = (items: FitIssue[]) => <ul>{items.map((issue, index) => { const dimension = resourceDimensions.find(([key]) => key === issue.dimension); return <li key={index}>{dimension ? tr(dimension[1]) : tr("Environment configuration")}: {tr("Requested {requested}; allowed {limit}", { requested: issue.requested, limit: issue.limit })}</li>; })}</ul>;
+  const issues = (items: FitIssue[]) => <ul>{items.map((issue, index) => { const dimension = resourceDimensions.find(([key]) => key === issue.dimension); return <li key={index}>{dimension ? tr(dimension[1]) : tr("Environment configuration")}: {issue.reason || tr("Requested {requested}; allowed {limit}", { requested: issue.requested, limit: issue.limit })}</li>; })}</ul>;
   return <div className="account-usage">
     <p>{tr("Your administrator manages these limits. Existing data is retained after reductions; new allocations and resume must fit current limits.")}</p>
     {error && <p className="settings-error" role="alert">{error}</p>}
