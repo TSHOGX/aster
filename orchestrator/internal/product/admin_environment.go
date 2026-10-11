@@ -97,8 +97,9 @@ func (s *Store) AdminEnvironment(ctx context.Context, token string) (Environment
 }
 
 // proposedEnvironment resolves exact enabled registry identities and published
-// bindings. It validates structure at platform W/R maxima, independently of a
-// user's ability to fit it; a valid default may exceed some users' entitlements.
+// bindings. W/R capacities are inherited policy, not environment fields. Validate
+// their structure using positive source minima; preview/allocation then resolve
+// each user's actual values and report zero or insufficient policy as non-fit.
 func proposedEnvironment(ctx context.Context, q queryer, input EnvironmentChange) (DefaultEnvironment, RegisteredSandbox, []BuiltinVolume, map[ResourceDimension]int64, error) {
 	environment := DefaultEnvironment{Revision: input.ExpectedRevision + 1, SandboxRelease: input.SandboxRelease, Mounts: input.Mounts}
 	var release RegisteredSandbox
@@ -160,7 +161,23 @@ func proposedEnvironment(ctx context.Context, q queryer, input EnvironmentChange
 	if err != nil {
 		return fail(err)
 	}
-	_, err = ResolveEnvironmentStructure(environment, release.Manifest.Mounts, artifacts, limits[ResourceWorkspace], limits[ResourceRuntime], limits[ResourceMounts])
+	workspace, runtime := int64(1), int64(1)
+	for _, mount := range environment.Mounts {
+		if mount.Storage != "owned" || mount.Source.Kind != "builtin" {
+			continue
+		}
+		for _, artifact := range artifacts {
+			if artifact.Reference == mount.Source.Reference() {
+				switch mount.Role {
+				case "workspace":
+					workspace = max(workspace, artifact.MinimumBytes)
+				case "runtime":
+					runtime = max(runtime, artifact.MinimumBytes)
+				}
+			}
+		}
+	}
+	_, err = ResolveEnvironmentStructure(environment, release.Manifest.Mounts, artifacts, workspace, runtime, limits[ResourceMounts])
 	return fail(err)
 }
 func registeredBuiltin(ctx context.Context, q queryer, reference ArtifactReference, newSelection bool) (BuiltinVolume, error) {

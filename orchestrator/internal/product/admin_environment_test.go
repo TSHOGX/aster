@@ -74,6 +74,40 @@ func TestEnvironmentAdminPreviewRevisionsDependenciesAndAudit(t *testing.T) {
 	wantError(t, err, ErrInvalid)
 }
 
+func TestZeroPlatformRoleCapacityReportsNonFitWithoutInvalidatingDefault(t *testing.T) {
+	s, admin := accountStore(t)
+	token := adminTestToken(t, s, admin)
+	before, err := s.AdminEnvironment(ctx, token)
+	must(t, err)
+	_, err = s.db.Exec(`UPDATE platform_resource_limits SET maximum=0,revision=revision+1 WHERE dimension IN ('workspace_bytes','runtime_bytes')`)
+	must(t, err)
+	change := EnvironmentChange{ExpectedRevision: before.Revision, SandboxRelease: before.SandboxRelease, Mounts: before.Mounts}
+	preview, err := s.PreviewEnvironment(ctx, token, change, "", 10)
+	must(t, err)
+	if preview.AccountsWithPlanConflicts != 1 || len(preview.Users) != 1 || len(preview.Users[0].Issues) != 2 {
+		t.Fatal(preview)
+	}
+	for _, issue := range preview.Users[0].Issues {
+		if issue.Code != "quota_exceeded" || issue.Limit != 0 {
+			t.Fatal(issue)
+		}
+	}
+	_, err = s.EditEnvironment(ctx, token, EnvironmentEdit{EnvironmentChange: change, RequestID: "save-with-zero-roles", ExpectedDependencies: preview.ExpectedDependencies})
+	must(t, err)
+	scope := Scope{Actor: admin.ID, ProjectID: "zero-role-authority"}
+	_, err = s.CreateProject(ctx, scope.Actor, scope.ProjectID, "Zero capacity cannot allocate")
+	must(t, err)
+	l := &Lifecycle{Store: s, Backend: fakeBackend(), MaxProjects: 2}
+	wantError(t, l.EnsureActive(ctx, scope, RuntimeBindings{StoreID: "engine"}), ErrQuotaExceeded)
+	_, err = s.Resources(ctx, scope)
+	wantError(t, err, ErrNotFound)
+	settings, err := s.UserResourceSettings(ctx, token, admin.ID)
+	must(t, err)
+	if settings.Effective[ResourceWorkspace].Effective != 0 || settings.Effective[ResourceRuntime].Effective != 0 {
+		t.Fatal("default save raised caps", settings)
+	}
+}
+
 func TestEnvironmentEditsNeverRebindAllocatedProjects(t *testing.T) {
 	l, scope, _ := lifecycleFixture(t)
 	s := l.Store
