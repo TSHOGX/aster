@@ -383,6 +383,32 @@ API. Retained Projects continue using their exact registrations and complete
 saved mount plans when defaults change. Both versions must satisfy the current
 manifest/protocol contract; there is no historical runtime adapter.
 
+Inspect and change registry selection eligibility through the same protected
+socket. Use `--kind volume` for a built-in Volume artifact. Every mutation requires
+the revision returned by inspect and a unique request ID; retry an uncertain reply
+with the identical command and request ID to recover its committed receipt.
+
+```sh
+orchestrator runtime inspect --socket /var/lib/agent-workbench/control.sock \
+  --kind sandbox --id agent-runtime --version v2 --digest sha256:EXACT_DIGEST
+orchestrator runtime disable --socket /var/lib/agent-workbench/control.sock \
+  --kind sandbox --id agent-runtime --version v2 --digest sha256:EXACT_DIGEST \
+  --expected-revision 1 --request-id disable-runtime-v2
+```
+
+`disable` prevents new selections and allocations; already bound Projects retain
+their exact release and source versions, including interrupted provisioning and
+resume. `enable` restores selection eligibility. Neither changes the database
+default. Select an enabled default before expecting new allocations to succeed.
+
+`retire` permanently tombstones an already disabled registration. It rejects
+references from the default, live or deleting Projects, and pending lifecycle/file
+operations. Owned seed provenance and shared mounts both retain their sources.
+Cleanup must finish before retirement; a deletion request alone is insufficient.
+The original ID/version cannot be reused or revived by registration replay.
+Registry retirement does not delete engine templates or publication Volumes and
+does not release publication storage accounting.
+
 ## Project and Volume metadata
 
 Administration’s Projects page lists cross-account ownership, recorded state,

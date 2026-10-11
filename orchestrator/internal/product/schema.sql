@@ -195,6 +195,8 @@ CREATE TABLE platform_resource_limits (
  revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0)
 );
 CREATE TABLE registered_sandboxes (
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ retired_at TEXT NOT NULL DEFAULT '',
  id TEXT NOT NULL,
  version TEXT NOT NULL,
  digest TEXT NOT NULL,
@@ -206,6 +208,8 @@ CREATE TABLE registered_sandboxes (
  PRIMARY KEY(id,version)
 );
 CREATE TABLE builtin_volumes (
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ retired_at TEXT NOT NULL DEFAULT '',
  id TEXT NOT NULL,
  version TEXT NOT NULL,
  digest TEXT NOT NULL,
@@ -219,6 +223,15 @@ CREATE TABLE builtin_volumes (
  created_at TEXT NOT NULL,
  PRIMARY KEY(id,version)
 );
+CREATE TABLE operator_receipts (
+ request_id TEXT PRIMARY KEY,
+ action TEXT NOT NULL,
+ target_id TEXT NOT NULL,
+ body_digest TEXT NOT NULL CHECK(length(body_digest)=64),
+ result TEXT NOT NULL CHECK(json_valid(result)),
+ created_at TEXT NOT NULL
+);
+
 CREATE TABLE default_environment (
  id INTEGER PRIMARY KEY CHECK(id=1),
  revision INTEGER NOT NULL CHECK(revision>0),

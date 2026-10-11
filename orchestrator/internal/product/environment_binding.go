@@ -31,16 +31,16 @@ func (b RuntimeBindings) validate() error {
 }
 func registeredSandbox(ctx context.Context, q queryer, reference ArtifactReference, newAllocation bool) (RegisteredSandbox, error) {
 	var out RegisteredSandbox
-	var manifest string
+	var manifest, retired string
 	var enabled bool
-	err := missing(q.QueryRowContext(ctx, `SELECT id,version,digest,store_id,template_id,manifest,enabled FROM registered_sandboxes WHERE id=? AND version=?`, reference.ID, reference.Version).Scan(&out.Reference.ID, &out.Reference.Version, &out.Reference.Digest, &out.StoreID, &out.TemplateID, &manifest, &enabled))
+	err := missing(q.QueryRowContext(ctx, `SELECT id,version,digest,store_id,template_id,manifest,enabled,retired_at FROM registered_sandboxes WHERE id=? AND version=?`, reference.ID, reference.Version).Scan(&out.Reference.ID, &out.Reference.Version, &out.Reference.Digest, &out.StoreID, &out.TemplateID, &manifest, &enabled, &retired))
 	if errors.Is(err, ErrNotFound) {
 		return out, ErrArtifactUnavailable
 	}
 	if err != nil {
 		return out, err
 	}
-	if out.Reference != reference || newAllocation && !enabled {
+	if out.Reference != reference || retired != "" || newAllocation && !enabled {
 		return out, ErrArtifactUnavailable
 	}
 	out.Manifest, err = runtimerelease.Load(bytes.NewReader([]byte(manifest)), reference.Digest)
@@ -98,7 +98,7 @@ func resolveAllocationProfile(ctx context.Context, q queryer, actor string, bind
 				return Profile{}, ErrArtifactUnavailable
 			}
 			var enabled bool
-			if err = q.QueryRowContext(ctx, `SELECT enabled FROM builtin_volumes WHERE id=? AND version=? AND digest=?`, artifact.Reference.ID, artifact.Reference.Version, artifact.Reference.Digest).Scan(&enabled); err != nil {
+			if err = q.QueryRowContext(ctx, `SELECT enabled AND retired_at='' FROM builtin_volumes WHERE id=? AND version=? AND digest=?`, artifact.Reference.ID, artifact.Reference.Version, artifact.Reference.Digest).Scan(&enabled); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					return Profile{}, ErrArtifactUnavailable
 				}

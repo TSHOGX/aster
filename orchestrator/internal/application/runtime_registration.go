@@ -35,3 +35,25 @@ func (a *Application) registerRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 	writeControl(w, map[string]any{"status": "registered", "reference": input.Reference, "default_changed": false})
 }
+
+func (a *Application) runtimeRegistryState(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	value, err := a.Store.OperatorRegistryState(r.Context(), q.Get("kind"), product.ArtifactReference{ID: q.Get("id"), Version: q.Get("version"), Digest: q.Get("digest")})
+	if err != nil {
+		http.Error(w, err.Error(), 409)
+		return
+	}
+	writeControl(w, value)
+}
+func (a *Application) editRuntimeRegistryState(w http.ResponseWriter, r *http.Request) {
+	var input product.RegistryStateEdit
+	if !decodeControl(w, r, &input) {
+		return
+	}
+	value, err := a.Store.EditRegistryState(r.Context(), input)
+	if err != nil {
+		http.Error(w, err.Error(), 409)
+		return
+	}
+	writeControl(w, value)
+}

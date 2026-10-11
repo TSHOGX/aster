@@ -18,6 +18,8 @@ type RuntimeInspector interface {
 	InspectVolume(context.Context, sandbox.VolumeReference) (sandbox.Volume, error)
 }
 type RuntimeOption struct {
+	Revision                      int64                                `json:"revision"`
+	RetiredAt                     string                               `json:"retired_at,omitempty"`
 	Reference                     ArtifactReference                    `json:"reference"`
 	Kind                          string                               `json:"kind"`
 	Enabled                       bool                                 `json:"enabled"`
@@ -83,9 +85,9 @@ func (s *Store) AdminRuntimeOptions(ctx context.Context, token, kind, cursor str
 		return out, err
 	}
 	out.MaxMounts = limits[ResourceMounts]
-	statement := `SELECT id,version,digest,store_id,template_id,manifest,enabled FROM registered_sandboxes WHERE id>? OR (id=? AND version>?) ORDER BY id,version LIMIT ?`
+	statement := `SELECT id,version,digest,store_id,template_id,manifest,enabled,revision,retired_at FROM registered_sandboxes WHERE id>? OR (id=? AND version>?) ORDER BY id,version LIMIT ?`
 	if kind == "volume" {
-		statement = `SELECT v.id,v.version,v.digest,v.store_id,v.roles,v.minimum_bytes,v.clean_runtime,v.enabled,coalesce(p.published_volume_id,''),coalesce(p.capacity,0) FROM builtin_volumes v LEFT JOIN content_publications p ON p.store_id=v.store_id AND p.purpose=v.publication_purpose AND p.revision_digest=v.digest AND p.stage='published' WHERE v.id>? OR (v.id=? AND v.version>?) ORDER BY v.id,v.version LIMIT ?`
+		statement = `SELECT v.id,v.version,v.digest,v.store_id,v.roles,v.minimum_bytes,v.clean_runtime,v.enabled,coalesce(p.published_volume_id,''),coalesce(p.capacity,0),v.revision,v.retired_at FROM builtin_volumes v LEFT JOIN content_publications p ON p.store_id=v.store_id AND p.purpose=v.publication_purpose AND p.revision_digest=v.digest AND p.stage='published' WHERE v.id>? OR (v.id=? AND v.version>?) ORDER BY v.id,v.version LIMIT ?`
 	}
 	rows, err := tx.QueryContext(ctx, statement, after.ID, after.ID, after.Version, limit+1)
 	if err != nil {
@@ -95,7 +97,7 @@ func (s *Store) AdminRuntimeOptions(ctx context.Context, token, kind, cursor str
 		option := RuntimeOption{Kind: kind, Availability: "unchecked"}
 		if kind == "sandbox" {
 			var raw string
-			err = rows.Scan(&option.Reference.ID, &option.Reference.Version, &option.Reference.Digest, &option.storeID, &option.templateID, &raw, &option.Enabled)
+			err = rows.Scan(&option.Reference.ID, &option.Reference.Version, &option.Reference.Digest, &option.storeID, &option.templateID, &raw, &option.Enabled, &option.Revision, &option.RetiredAt)
 			if err != nil {
 				break
 			}
@@ -109,7 +111,7 @@ func (s *Store) AdminRuntimeOptions(ctx context.Context, token, kind, cursor str
 		} else {
 			var raw string
 			var minimum int64
-			err = rows.Scan(&option.Reference.ID, &option.Reference.Version, &option.Reference.Digest, &option.storeID, &raw, &minimum, &option.CleanRuntime, &option.Enabled, &option.volumeID, &option.capacity)
+			err = rows.Scan(&option.Reference.ID, &option.Reference.Version, &option.Reference.Digest, &option.storeID, &raw, &minimum, &option.CleanRuntime, &option.Enabled, &option.volumeID, &option.capacity, &option.Revision, &option.RetiredAt)
 			if err != nil {
 				break
 			}
@@ -130,6 +132,9 @@ func (s *Store) AdminRuntimeOptions(ctx context.Context, token, kind, cursor str
 		}
 		if !option.Enabled {
 			option.Availability = "disabled"
+		}
+		if option.RetiredAt != "" {
+			option.Availability = "retired"
 		}
 		out.Options = append(out.Options, option)
 	}

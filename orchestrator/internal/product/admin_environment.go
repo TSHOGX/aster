@@ -50,8 +50,8 @@ type EnvironmentPreview struct {
 func environmentDependencies(ctx context.Context, q queryer) (string, error) {
 	return configurationDigest(ctx, q, []string{
 		`SELECT revision,document FROM default_environment WHERE id=1`,
-		`SELECT id,version,digest,store_id,template_id,manifest,enabled FROM registered_sandboxes ORDER BY id,version`,
-		`SELECT id,version,digest,store_id,publication_purpose,minimum_bytes,roles,clean_runtime,entries,enabled FROM builtin_volumes ORDER BY id,version`,
+		`SELECT id,version,digest,store_id,template_id,manifest,enabled,revision,retired_at FROM registered_sandboxes ORDER BY id,version`,
+		`SELECT id,version,digest,store_id,publication_purpose,minimum_bytes,roles,clean_runtime,entries,enabled,revision,retired_at FROM builtin_volumes ORDER BY id,version`,
 		`SELECT store_id,purpose,revision_digest,capacity,published_volume_id,stage FROM content_publications ORDER BY store_id,purpose,revision_digest`,
 		`SELECT id,status,authorization_revision FROM accounts ORDER BY id`,
 		`SELECT id,revision FROM account_groups ORDER BY id`,
@@ -165,16 +165,16 @@ func proposedEnvironment(ctx context.Context, q queryer, input EnvironmentChange
 }
 func registeredBuiltin(ctx context.Context, q queryer, reference ArtifactReference, newSelection bool) (BuiltinVolume, error) {
 	var artifact BuiltinVolume
-	var roles, entries string
+	var roles, entries, retired string
 	var enabled bool
-	err := q.QueryRowContext(ctx, `SELECT id,version,digest,store_id,publication_purpose,minimum_bytes,roles,clean_runtime,entries,enabled FROM builtin_volumes WHERE id=? AND version=?`, reference.ID, reference.Version).Scan(&artifact.Reference.ID, &artifact.Reference.Version, &artifact.Reference.Digest, &artifact.StoreID, &artifact.PublicationPurpose, &artifact.MinimumBytes, &roles, &artifact.CleanRuntime, &entries, &enabled)
+	err := q.QueryRowContext(ctx, `SELECT id,version,digest,store_id,publication_purpose,minimum_bytes,roles,clean_runtime,entries,enabled,retired_at FROM builtin_volumes WHERE id=? AND version=?`, reference.ID, reference.Version).Scan(&artifact.Reference.ID, &artifact.Reference.Version, &artifact.Reference.Digest, &artifact.StoreID, &artifact.PublicationPurpose, &artifact.MinimumBytes, &roles, &artifact.CleanRuntime, &entries, &enabled, &retired)
 	if errors.Is(err, sql.ErrNoRows) {
 		return artifact, ErrArtifactUnavailable
 	}
 	if err != nil {
 		return artifact, err
 	}
-	if artifact.Reference != reference || newSelection && !enabled {
+	if artifact.Reference != reference || retired != "" || newSelection && !enabled {
 		return artifact, ErrArtifactUnavailable
 	}
 	if err = json.Unmarshal([]byte(roles), &artifact.Roles); err != nil {

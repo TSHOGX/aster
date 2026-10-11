@@ -17,6 +17,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -211,7 +212,26 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 	}
 	// A later default edit must not reinterpret the already-bound paths.
 	editPaths("/workspaces/future", "/state/future", "future-paths")
+	var originalRegistryArgs []string
 	if nextRelease != nil {
+		originalRelease := original["resources"].(map[string]any)["profile"].(map[string]any)["sandbox_release"].(map[string]any)
+		originalRegistryArgs = []string{"--socket", socket, "--kind", "sandbox", "--id", originalRelease["id"].(string), "--version", originalRelease["version"].(string), "--digest", originalRelease["digest"].(string)}
+		state := a.cli(append([]string{"runtime", "inspect"}, originalRegistryArgs...)...)
+		if state["default_referenced"] != false || state["project_references"] != "1" {
+			t.Fatal(state)
+		}
+		disableArgs := append(append([]string{"runtime", "disable"}, originalRegistryArgs...), "--expected-revision", fmt.Sprint(state["revision"]), "--request-id", "disable-retained-runtime")
+		disabled := a.cli(disableArgs...)
+		if disabled["enabled"] != false || disabled["revision"] != float64(2) {
+			t.Fatal(disabled)
+		}
+		if replay := a.cli(disableArgs...); replay["replayed"] != true {
+			t.Fatal(replay)
+		}
+		retireArgs := append(append([]string{"runtime", "retire"}, originalRegistryArgs...), "--expected-revision", "2", "--request-id", "retire-retained-runtime")
+		if raw, err := exec.CommandContext(a.ctx, a.binary, retireArgs...).CombinedOutput(); err == nil || !strings.Contains(string(raw), "artifact_referenced") {
+			t.Fatal(string(raw), err)
+		}
 		secondBase := "/api/projects/network-v2"
 		a.request("POST", "/api/projects", map[string]string{"id": "network-v2", "title": "Second compatible runtime"}, 201)
 		a.writeFile(secondBase+"/files/content?path=second-version", "second version bytes", "v2-first-upload")
@@ -364,7 +384,17 @@ print('DNS TLS PACKAGE DENIAL OK')`, certificate, port, len(payload))
 		return a.cli("diagnostics", "--socket", socket)["state"].(map[string]any)["projects"].(map[string]any)["deleted"] == deletedProjects
 	})
 	checkStorage("0")
-	report := map[string]any{"dns": true, "tls_package_bytes": len(payload), "undeclared_denied": true, "running_unchanged": true, "permission_removal": true, "user_override_restart": true, "workspace_path": workspace, "runtime_path": runtimeRoot, "active_file_helpers": true, "second_release": nextRelease, "inheritance_restored": true, "retained_model_completed": true, "public_internet_tested": false, "destination": netip.MustParseAddr("192.0.2.1").String()}
+	if originalRegistryArgs != nil {
+		retireArgs := append(append([]string{"runtime", "retire"}, originalRegistryArgs...), "--expected-revision", "2", "--request-id", "retire-retained-runtime")
+		retired := a.cli(retireArgs...)
+		if retired["retired_at"] == nil || retired["project_references"] != "0" || retired["pending_references"] != "0" {
+			t.Fatal(retired)
+		}
+		if replay := a.cli(retireArgs...); replay["replayed"] != true {
+			t.Fatal(replay)
+		}
+	}
+	report := map[string]any{"dns": true, "tls_package_bytes": len(payload), "undeclared_denied": true, "running_unchanged": true, "permission_removal": true, "user_override_restart": true, "workspace_path": workspace, "runtime_path": runtimeRoot, "active_file_helpers": true, "second_release": nextRelease, "disabled_release_retained": originalRegistryArgs != nil, "registry_retired_after_cleanup": originalRegistryArgs != nil, "inheritance_restored": true, "retained_model_completed": true, "public_internet_tested": false, "destination": netip.MustParseAddr("192.0.2.1").String()}
 	raw, _ = json.MarshalIndent(report, "", "  ")
 	require(t, os.WriteFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "network-policy.json"), raw, 0644))
 }

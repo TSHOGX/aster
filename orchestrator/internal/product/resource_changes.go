@@ -116,8 +116,8 @@ func resourceDependencies(ctx context.Context, q queryer, input ResourceChange) 
 		{`SELECT account_id,dimension,requested FROM account_resource_overrides WHERE account_id IN (` + affected + `) ORDER BY account_id,dimension`, []any{input.Kind, input.TargetID, input.Kind, input.TargetID}},
 		{`SELECT dimension,maximum,revision FROM platform_resource_limits ORDER BY dimension`, nil},
 		{`SELECT revision,document FROM default_environment WHERE id=1`, nil},
-		{`SELECT r.id,r.version,r.digest,r.manifest,r.enabled FROM registered_sandboxes r JOIN default_environment e ON r.id=json_extract(e.document,'$.sandbox_release.id') AND r.version=json_extract(e.document,'$.sandbox_release.version')`, nil},
-		{`SELECT v.id,v.version,v.digest,v.minimum_bytes,v.roles,v.clean_runtime,v.enabled FROM builtin_volumes v WHERE EXISTS(SELECT 1 FROM default_environment e,json_each(e.document,'$.mounts') m WHERE json_extract(m.value,'$.source.artifact_id')=v.id AND json_extract(m.value,'$.source.version')=v.version) ORDER BY v.id,v.version`, nil},
+		{`SELECT r.id,r.version,r.digest,r.manifest,r.enabled,r.revision,r.retired_at FROM registered_sandboxes r JOIN default_environment e ON r.id=json_extract(e.document,'$.sandbox_release.id') AND r.version=json_extract(e.document,'$.sandbox_release.version')`, nil},
+		{`SELECT v.id,v.version,v.digest,v.minimum_bytes,v.roles,v.clean_runtime,v.enabled,v.revision,v.retired_at FROM builtin_volumes v WHERE EXISTS(SELECT 1 FROM default_environment e,json_each(e.document,'$.mounts') m WHERE json_extract(m.value,'$.source.artifact_id')=v.id AND json_extract(m.value,'$.source.version')=v.version) ORDER BY v.id,v.version`, nil},
 	}
 	for _, statement := range statements {
 		rows, err := q.QueryContext(ctx, statement.sql, statement.args...)

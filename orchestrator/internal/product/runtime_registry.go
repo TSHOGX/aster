@@ -110,11 +110,14 @@ func (s *Store) RegisterBuiltinVolume(ctx context.Context, artifact BuiltinVolum
 		return ErrInvalid
 	}
 	return s.write(ctx, func(tx *sql.Tx) error {
-		var digest, store, purpose, oldRoles string
+		var digest, store, purpose, oldRoles, retired string
 		var minimum int64
 		var clean bool
-		err := tx.QueryRowContext(ctx, `SELECT digest,store_id,publication_purpose,minimum_bytes,roles,clean_runtime FROM builtin_volumes WHERE id=? AND version=?`, artifact.Reference.ID, artifact.Reference.Version).Scan(&digest, &store, &purpose, &minimum, &oldRoles, &clean)
+		err := tx.QueryRowContext(ctx, `SELECT digest,store_id,publication_purpose,minimum_bytes,roles,clean_runtime,retired_at FROM builtin_volumes WHERE id=? AND version=?`, artifact.Reference.ID, artifact.Reference.Version).Scan(&digest, &store, &purpose, &minimum, &oldRoles, &clean, &retired)
 		if err == nil {
+			if retired != "" {
+				return Admission("artifact_retired", ErrConflict)
+			}
 			var declared []string
 			if err = json.Unmarshal([]byte(oldRoles), &declared); err != nil {
 				return err

@@ -293,6 +293,8 @@ func (a *Application) controlHandler() http.Handler {
 		w.WriteHeader(204)
 	})
 	mux.HandleFunc("POST /runtime/register", a.registerRuntime)
+	mux.HandleFunc("GET /runtime/registry", a.runtimeRegistryState)
+	mux.HandleFunc("PATCH /runtime/registry", a.editRuntimeRegistryState)
 	mux.HandleFunc("POST /publish", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 		defer cancel()
