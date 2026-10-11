@@ -59,13 +59,15 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 			app.Close()
 		}
 	}()
-	prepared, err := prepareRelease(cfg)
+	prepared, err := prepareStartupRelease(cfg)
 	if err != nil {
 		return app, err
 	}
 	cfg = prepared.config
 	app.Config = cfg
 	app.releaseIdentity = prepared.identity
+	startup, done := context.WithTimeout(ctx, 2*time.Minute)
+	defer done()
 
 	if err := os.MkdirAll(cfg.StateDirectory, 0700); err != nil {
 		return app, err
@@ -75,6 +77,22 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 		return app, err
 	}
 	app.Store = store
+	// A clean bootstrap has no persisted publication rows yet. In that one case
+	// consume the reviewed source trees once and persist their immutable revisions;
+	// restarts use those rows and do not reread or republish mutable paths.
+	if len(prepared.publications) == 0 && (cfg.Content.AgentConfig != "" || cfg.Content.SharedAssets != "") {
+		publications, listErr := store.ListContentPublications(startup, cfg.Engine.StoreID)
+		if listErr != nil {
+			return app, listErr
+		}
+		if len(publications) == 0 {
+			prepared, err = prepareRelease(cfg)
+			if err != nil {
+				return app, err
+			}
+			app.releaseIdentity = prepared.identity
+		}
+	}
 	if err := store.ConfigureNotificationPolicy(ctx, product.NotificationPolicy{
 		AgentRunOutcome:    cfg.Notifications.AgentRunOutcome,
 		ConversationShared: cfg.Notifications.ConversationShared,
@@ -87,8 +105,6 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	if err != nil {
 		return app, err
 	}
-	startup, done := context.WithTimeout(ctx, 2*time.Minute)
-	defer done()
 	backend, err := khora.New(startup, engineConfig)
 	if err != nil {
 		return app, err

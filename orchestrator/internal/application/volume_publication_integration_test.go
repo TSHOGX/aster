@@ -84,18 +84,29 @@ func TestReleasedBuiltinVolumePublication(t *testing.T) {
 		}
 	}
 	a.writeFile("/api/projects/seed-a/files/content?path=example.txt", "private changed copy", "change-seed-copy")
+	// Mutable authoring input is changed after publication. Restart must use the
+	// persisted immutable publication rather than silently republishing it.
+	require(t, os.WriteFile(filepath.Join(source, "example.txt"), []byte("unreviewed replacement"), 0644))
 	a.stop()
 	a.start()
 	if read("/api/projects/seed-a") != "private changed copy" || read("/api/projects/seed-b") != "reviewed original" {
 		t.Fatal("copy reset or source aliased")
 	}
-	for _, id := range []string{"seed-a", "seed-b"} {
+	a.request("POST", "/api/projects", map[string]string{"id": "seed-c", "title": "Restart publication authority"}, 201)
+	a.writeFile("/api/projects/seed-c/files/content?path=uploaded.txt", "third upload", "upload-seed-c")
+	if value := read("/api/projects/seed-c"); value != "reviewed original" {
+		t.Fatal("restart reread mutable publication source", value)
+	}
+	// Restore only for the idempotent operator replay below; the restart check
+	// above already proved the persisted publication was authoritative.
+	require(t, os.WriteFile(filepath.Join(source, "example.txt"), []byte("reviewed original"), 0644))
+	for _, id := range []string{"seed-a", "seed-b", "seed-c"} {
 		base := "/api/projects/" + id
 		p := a.request("GET", base, nil, 200)
 		a.request("DELETE", fmt.Sprintf("%s?revision=%.0f", base, p["revision"]), nil, 202)
 	}
 	a.await(25*time.Second, "published copy cleanup", func() bool {
-		return a.cli("diagnostics", "--socket", socket)["state"].(map[string]any)["projects"].(map[string]any)["deleted"] == float64(2)
+		return a.cli("diagnostics", "--socket", socket)["state"].(map[string]any)["projects"].(map[string]any)["deleted"] == float64(3)
 	})
 	if replay := a.cli(args...); replay["default_changed"] != false {
 		t.Fatal(replay)

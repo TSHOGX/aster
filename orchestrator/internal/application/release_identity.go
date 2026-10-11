@@ -86,11 +86,23 @@ func readPublications(cfg Config) ([]preparedPublication, error) {
 // Startup uses the same preparation, so its identity names published revisions,
 // not an independent second read of possibly changed source files.
 func InspectRelease(cfg Config) (ReleaseIdentity, error) {
-	prepared, err := prepareRelease(cfg)
+	prepared, err := prepareReleaseWithSources(cfg, true)
 	return prepared.identity, err
 }
 
 func prepareRelease(cfg Config) (out preparedRelease, err error) {
+	return prepareReleaseWithSources(cfg, true)
+}
+
+// prepareStartupRelease validates executable/runtime inputs without reopening
+// authored publication trees. Persisted publication rows are the startup source
+// of truth; source trees are read only by candidate inspection or first clean
+// bootstrap publication.
+func prepareStartupRelease(cfg Config) (preparedRelease, error) {
+	return prepareReleaseWithSources(cfg, false)
+}
+
+func prepareReleaseWithSources(cfg Config, includeSources bool) (out preparedRelease, err error) {
 	if err = cfg.Validate(); err != nil {
 		return out, err
 	}
@@ -108,9 +120,11 @@ func prepareRelease(cfg Config) (out preparedRelease, err error) {
 		return out, err
 	}
 	out.config = cfg
-	out.publications, err = readPublications(cfg)
-	if err != nil {
-		return out, err
+	if includeSources {
+		out.publications, err = readPublications(cfg)
+		if err != nil {
+			return out, err
+		}
 	}
 	// Version 5 separates persisted runtime configuration from candidate inputs.
 	id := ReleaseIdentity{Version: 5, PlatformProtocol: servicegateway.PlatformVersion, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, RuntimeDigest: cfg.Template.Digest, GatewayProtocol: servicegateway.AuthorityVersion, ContentDigests: map[string]string{}}
