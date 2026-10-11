@@ -260,9 +260,11 @@ inspection.
 
 The compatibility digest excludes executable bytes, so separately built candidates
 can describe the same inputs. Configuration, configuration base directory, reviewed
-content, guest release or schema changes alter it. Startup publishes the exact
-measured content revisions; files that change before upload are refused by the
-publisher. A matching digest describes compatibility inputs and does not grant
+content, guest release or schema changes alter it. Clean bootstrap publishes the
+exact measured content revisions once. Later startup uses persisted publication
+records and does not reread mutable source trees; the operator publish path refuses
+files that change after their measured digest. A matching digest describes
+compatibility inputs and does not grant
 permission to bypass admission/drain or prove arbitrary binary compatibility.
 The owner-only workflow below applies an additional transfer predicate and live
 gateway checks. Full updates continue to require quiescence.
