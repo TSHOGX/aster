@@ -87,8 +87,8 @@ interpret arbitrary transport failures as those explicit rejections.
 Derived replay retention removes bounded prefixes with revision/ordinal frontiers.
 Current details and retained change-version details are pinned. Raw records, source
 identity, native captures and uncertain command identities remain until their
-existing explicit retirement authority permits deletion. Schema 6 removes obsolete
-read command rows while retaining original helper identities for cleanup; no read
+existing explicit retirement authority permits deletion. The canonical schema
+excludes obsolete read command rows while retaining original helper identities for cleanup; no read
 is replayed through a mutation dispatcher. Product events no longer include
 per-token raw-record notifications.
 
