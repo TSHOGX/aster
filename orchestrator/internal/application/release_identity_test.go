@@ -145,3 +145,20 @@ func TestCandidateCompatibilityIncludesNotificationPolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestStartupPreparationDoesNotReadAuthoredPublicationSources(t *testing.T) {
+	cfg, _ := releaseConfiguration(t)
+	if err := os.RemoveAll(cfg.Content.SharedAssets); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := prepareStartupRelease(cfg)
+	if err != nil {
+		t.Fatal("startup reopened authored source", err)
+	}
+	if len(prepared.publications) != 0 || prepared.identity.RuntimeDigest != cfg.Template.Digest {
+		t.Fatal(prepared)
+	}
+	if _, err = InspectRelease(cfg); err == nil {
+		t.Fatal("candidate inspection accepted missing authored source")
+	}
+}
