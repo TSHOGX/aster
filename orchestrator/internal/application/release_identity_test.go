@@ -97,8 +97,8 @@ func TestCandidateCompatibilityTracksConfigurationAndReviewedBytes(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed.CompatibilityDigest == original.CompatibilityDigest || changed.ContentDigests["assets"] == original.ContentDigests["assets"] {
-		t.Fatal("reviewed content change omitted from contract")
+	if changed.CompatibilityDigest != original.CompatibilityDigest || changed.ContentDigests["assets"] == original.ContentDigests["assets"] {
+		t.Fatal("reviewed content measurement changed host compatibility")
 	}
 	if changed.ConfigurationDigest != original.ConfigurationDigest {
 		t.Fatal("authored bytes are not separate from configuration")
@@ -148,6 +148,10 @@ func TestCandidateCompatibilityIncludesNotificationPolicy(t *testing.T) {
 
 func TestStartupPreparationDoesNotReadAuthoredPublicationSources(t *testing.T) {
 	cfg, _ := releaseConfiguration(t)
+	candidate, err := InspectRelease(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.RemoveAll(cfg.Content.SharedAssets); err != nil {
 		t.Fatal(err)
 	}
@@ -157,6 +161,9 @@ func TestStartupPreparationDoesNotReadAuthoredPublicationSources(t *testing.T) {
 	}
 	if len(prepared.publications) != 0 || prepared.identity.RuntimeDigest != cfg.Template.Digest {
 		t.Fatal(prepared)
+	}
+	if prepared.identity.CompatibilityDigest != candidate.CompatibilityDigest {
+		t.Fatal("startup and inspection must share host compatibility", prepared.identity, candidate)
 	}
 	if _, err = InspectRelease(cfg); err == nil {
 		t.Fatal("candidate inspection accepted missing authored source")

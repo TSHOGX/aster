@@ -126,8 +126,8 @@ func prepareReleaseWithSources(cfg Config, includeSources bool) (out preparedRel
 			return out, err
 		}
 	}
-	// Version 5 separates persisted runtime configuration from candidate inputs.
-	id := ReleaseIdentity{Version: 5, PlatformProtocol: servicegateway.PlatformVersion, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, RuntimeDigest: cfg.Template.Digest, GatewayProtocol: servicegateway.AuthorityVersion, ContentDigests: map[string]string{}}
+	// Version 6 separates deployment compatibility from operator publication content.
+	id := ReleaseIdentity{Version: 6, PlatformProtocol: servicegateway.PlatformVersion, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, RuntimeDigest: cfg.Template.Digest, GatewayProtocol: servicegateway.AuthorityVersion, ContentDigests: map[string]string{}}
 	id.RuntimeTemplate = cfg.Template.ID
 	id.SchemaVersion, id.SchemaDigest, err = product.SchemaIdentity()
 	if err != nil {
@@ -149,6 +149,10 @@ func prepareReleaseWithSources(cfg Config, includeSources bool) (out preparedRel
 	contract := id
 	contract.ExecutableDigest = ""
 	contract.NetworkPolicyRevision = ""
+	// Exact registered runtime/content contracts are checked independently from
+	// the database under the owner handoff fence. Authored source bytes do not
+	// describe the serving executable's host protocol or configuration.
+	contract.ContentDigests = nil
 	id.CompatibilityDigest, err = digestJSON(contract)
 	if err != nil {
 		return out, err
