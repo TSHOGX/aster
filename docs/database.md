@@ -222,3 +222,11 @@ object. The projection deduplicates source objects by engine store and Volume
 identity, rejects contradictory capacities and checks all sums for overflow.
 Failed/uncertain publication rows remain charged. There is no second inventory,
 copy-on-write discount, or per-Project duplicate charge for shared sources.
+
+`shares.suspended` and `conversation_grants.suspended` preserve suspension
+separately from revoked access. The account-status transaction sets these flags,
+pauses active schedules, holds unstarted queued prompts and revokes service
+grants alongside its operation/audit intent. Re-enabling the account leaves the
+flags intact. Explicit, authorized reactivation clears only the selected resource;
+public-link retries resolve their original receipt rather than reapplying a past
+reactivation after a new suspension.

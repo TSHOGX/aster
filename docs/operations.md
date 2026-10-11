@@ -408,3 +408,28 @@ Opening or refreshing metadata never initializes a Volume, resumes compute,
 retries a mutation or changes resource charges. Unbound Projects remain unbound;
 paused Projects remain paused. Latest lifecycle progress and recent administrative
 operation links provide the route to recorded action/outcome evidence.
+
+## Suspension access fences and explicit reactivation
+
+Suspension commits disabled account status, session revocation and an accepted
+administrative operation together with logical resource fences. Active schedules
+are paused with `account_suspended`; unstarted prompts remain held with that
+specific outcome. Already-sent work retains its dispatch and settlement evidence.
+Service grants are revoked. Public snapshots and internal reader grants gain a
+separate suspended flag: frozen bytes and grant records are preserved, and
+ordinary revocation remains distinct.
+
+Enabling an account restores login and current policy authority. It does not
+reactivate schedules, release held prompts or restore suspended sharing. Schedule
+resume and prompt release use their existing explicit controls. In the Share
+panel, Reactivate reader explicitly grants access again; Reactivate public link
+restores only a still-published, unexpired snapshot and never recaptures files.
+Sharing reactivation uses a request ID and durable receipt, so retrying an old
+successful request cannot undo a later suspension. Both sharing reactivations are
+audited and require the owner's current named sharing grant. Expired/revoked links
+cannot be reactivated through this operation.
+
+These transactional access fences do not prove an Agent, Terminal or placement
+has stopped. Suspension operations remain accepted until the stop/pause execution
+and observed completion path settles their targets. Consult operation state;
+account status alone is not a runtime completion signal.

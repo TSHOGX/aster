@@ -6,6 +6,7 @@ import (
 )
 
 type ConversationReader struct {
+	Suspended   bool   `json:"suspended"`
 	ID          string `json:"id"`
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
@@ -53,7 +54,7 @@ func (s *Store) ConversationReaders(ctx context.Context, scope Scope, session, a
 	if len(after) > 256 {
 		return nil, ErrInvalid
 	}
-	rows, err := s.reader.QueryContext(ctx, `SELECT a.id,a.username,a.display_name,a.status FROM conversation_grants g JOIN accounts a ON a.id=g.reader_id WHERE g.session_id=? AND g.revoked=0 AND a.id>? ORDER BY a.id LIMIT ?`, session, after, pageSize(limit))
+	rows, err := s.reader.QueryContext(ctx, `SELECT a.id,a.username,a.display_name,a.status,g.suspended FROM conversation_grants g JOIN accounts a ON a.id=g.reader_id WHERE g.session_id=? AND g.revoked=0 AND a.id>? ORDER BY a.id LIMIT ?`, session, after, pageSize(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +62,7 @@ func (s *Store) ConversationReaders(ctx context.Context, scope Scope, session, a
 	out := []ConversationReader{}
 	for rows.Next() {
 		var reader ConversationReader
-		if err := rows.Scan(&reader.ID, &reader.Username, &reader.DisplayName, &reader.Status); err != nil {
+		if err := rows.Scan(&reader.ID, &reader.Username, &reader.DisplayName, &reader.Status, &reader.Suspended); err != nil {
 			return nil, err
 		}
 		out = append(out, reader)

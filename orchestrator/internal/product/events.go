@@ -83,7 +83,15 @@ func (s *Store) GrantConversation(ctx context.Context, scope Scope, session, rea
 		if err := missing(tx.QueryRowContext(ctx, `SELECT id FROM accounts WHERE id=? AND id<>? AND status='active'`, reader, scope.Actor).Scan(&recipient)); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO conversation_grants(session_id,reader_id) VALUES(?,?) ON CONFLICT(session_id,reader_id) DO UPDATE SET revoked=0`, session, reader); err != nil {
+		var suspended bool
+		err = tx.QueryRowContext(ctx, `SELECT suspended AND revoked=0 FROM conversation_grants WHERE session_id=? AND reader_id=?`, session, reader).Scan(&suspended)
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		if suspended {
+			return Admission("reader_suspended", ErrConflict)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO conversation_grants(session_id,reader_id) VALUES(?,?) ON CONFLICT(session_id,reader_id) DO UPDATE SET revoked=0,suspended=0`, session, reader); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO notifications(id,audience,project_id,session_id,title,body,created_at) SELECT ?,?,?,?,?,?,? FROM notification_policy WHERE id=1 AND conversation_shared=1`, "share/"+session+"/"+reader, reader, scope.ProjectID, session, "Conversation shared with you", "Open the shared conversation to read it.", s.timestamp()); err != nil {
@@ -113,7 +121,7 @@ func (s *Store) CanReadConversation(ctx context.Context, actor, session string) 
 		return ErrNotFound
 	}
 	var owner string
-	err := missing(s.reader.QueryRowContext(ctx, `SELECT p.owner_id FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND (p.owner_id=? OR EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0))`, session, actor, actor).Scan(&owner))
+	err := missing(s.reader.QueryRowContext(ctx, `SELECT p.owner_id FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND (p.owner_id=? OR EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0 AND g.suspended=0))`, session, actor, actor).Scan(&owner))
 	if err != nil {
 		return err
 	}

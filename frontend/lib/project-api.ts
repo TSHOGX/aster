@@ -162,6 +162,7 @@ export type Conversation = {
   revision: number;
 };
 export type Share = {
+ suspended?: boolean;
   id: string;
   title: string;
   state: string;

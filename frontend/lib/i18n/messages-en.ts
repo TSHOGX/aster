@@ -1,4 +1,7 @@
 export const EN = {
+  "Access suspended": "Access suspended",
+  "Reactivate reader": "Reactivate reader",
+  "Reactivate public link": "Reactivate public link",
   "None": "None",
   "Resources and usage": "Resources and usage",
   "Loading resources…": "Loading resources…",

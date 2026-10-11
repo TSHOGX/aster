@@ -1,6 +1,6 @@
 "use client";
 import { useT } from "@/lib/i18n";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   command,
@@ -13,7 +13,7 @@ import {
   type Share,
 } from "@/lib/project-api";
 import { useCapabilities } from "./capability-provider";
-type ReaderAccount = { id: string; username: string; display_name: string; status: string };
+type ReaderAccount = { id: string; username: string; display_name: string; status: string; suspended?: boolean };
 export function SharePanel({
   project,
   sessions,
@@ -36,6 +36,7 @@ export function SharePanel({
   const [readerAfter, setReaderAfter] = useState("");
   const [paths, setPaths] = useState("");
   const [shares, setShares] = useState<Share[]>([]);
+ const reactivationRequests = useRef(new Map<string,string>());
   const [link, setLink] = useState("");
   const [error, setError] = useState("");
   const refresh = useCallback(async () => {
@@ -114,7 +115,14 @@ export function SharePanel({
         <button disabled={!session || !canShare || !reader}>{tr("Grant conversation access")}</button>
       </form>
       {readers.map(account => <article className="schedule-card" key={account.id}>
-        <strong>{account.display_name}</strong><small>@{account.username} · {account.status}</small>
+        <strong>{account.display_name}</strong><small>@{account.username} · {account.status}{account.suspended && ` · ${tr("Access suspended")}`}</small>
+        {account.suspended && <button type="button" disabled={!canShare} onClick={() => void act(async () => {
+          const key=`reader/${session}/${account.id}`;
+          let requestID=reactivationRequests.current.get(key);
+          if(!requestID) {requestID=crypto.randomUUID();reactivationRequests.current.set(key,requestID);}
+          await command(`${sessionURL(project,session)}/readers/${encode(account.id)}/reactivate`,{request_id:requestID});
+          reactivationRequests.current.delete(key);
+        })}>{tr("Reactivate reader")}</button>}
         <button type="button" onClick={() => void act(() => command(`${sessionURL(project, session)}/readers/${encode(account.id)}`, undefined, "DELETE"))}>{tr("Revoke reader")}</button>
       </article>)}
       <div className="row-actions">
@@ -130,7 +138,7 @@ export function SharePanel({
             }>(`${sessionURL(project, session)}/shares`, {
               paths: paths
                 .split("\n")
-                .map((p) => p.trim().replace(/^\/workspace\//, ""))
+                .map((p) => p.trim())
                 .filter(Boolean),
             });
             setLink(`${location.origin}/s/${result.token}`);
@@ -161,12 +169,18 @@ export function SharePanel({
       )}
       {shares.map((share) => (
         <article className="schedule-card" key={share.id}>
-          <strong>{share.title}</strong> · {share.state}
+          <strong>{share.title}</strong> · {share.state}{share.suspended && ` · ${tr("Access suspended")}`}
           <small>
             {tr("Expires")}
             {new Date(share.expires_at).toLocaleString()}
           </small>
           <div className="row-actions">
+            {share.state === "published" && share.suspended && <button disabled={!canPublish} onClick={() => void act(async () => {
+              let requestID=reactivationRequests.current.get(share.id);
+              if(!requestID) {requestID=crypto.randomUUID();reactivationRequests.current.set(share.id,requestID);}
+              await command(`${projectURL(project)}/shares/${encode(share.id)}/reactivate`,{request_id:requestID});
+              reactivationRequests.current.delete(share.id);
+            })}>{tr("Reactivate public link")}</button>}
             {share.state === "published" && (
               <button disabled={!canPublish}
                 onClick={() =>

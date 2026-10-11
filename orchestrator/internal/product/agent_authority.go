@@ -10,6 +10,14 @@ import (
 // fact. Prompts remain held with a visible rejection; restoring a grant alone
 // cannot restart them. Sending/native work retains its settlement authority.
 func (s *Store) rejectAgentQueue(ctx context.Context, tx *sql.Tx, project, session string) error {
+	reason := "permission_revoked"
+	var status string
+	if err := tx.QueryRowContext(ctx, `SELECT a.status FROM projects p JOIN accounts a ON a.id=p.owner_id WHERE p.id=?`, project).Scan(&status); err != nil {
+		return err
+	}
+	if status != "active" {
+		reason = "account_suspended"
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT id,kind FROM agent_commands WHERE session_id=? AND state='pending' AND kind IN ('prompt','steer')`, session)
 	if err != nil {
 		return err
@@ -29,13 +37,13 @@ func (s *Store) rejectAgentQueue(ctx context.Context, tx *sql.Tx, project, sessi
 	}
 	now := s.timestamp()
 	for _, c := range commands {
-		if err = restoreUndelivered(ctx, tx, c.id, "rejected", "permission_revoked", now); err != nil {
+		if err = restoreUndelivered(ctx, tx, c.id, "rejected", reason, now); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE turns SET dispatch_error='permission_revoked' WHERE id IN (SELECT prompt_id FROM input_deliveries WHERE command_id=?)`, c.id); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE turns SET dispatch_error=? WHERE id IN (SELECT prompt_id FROM input_deliveries WHERE command_id=?)`, reason, c.id); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE agent_commands SET state='rejected',error='permission_revoked' WHERE id=?`, c.id); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE agent_commands SET state='rejected',error=? WHERE id=?`, reason, c.id); err != nil {
 			return err
 		}
 		if c.kind == "prompt" {
@@ -44,7 +52,7 @@ func (s *Store) rejectAgentQueue(ctx context.Context, tx *sql.Tx, project, sessi
 			}
 		}
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE turns SET queue_policy='held',dispatch_error='permission_revoked',updated_at=? WHERE session_id=? AND disposition='pending' AND queue_policy='released'`, now, session)
+	result, err := tx.ExecContext(ctx, `UPDATE turns SET queue_policy='held',dispatch_error=?,updated_at=? WHERE session_id=? AND disposition='pending' AND queue_policy='released'`, reason, now, session)
 	if err != nil {
 		return err
 	}
@@ -58,7 +66,7 @@ func (s *Store) rejectAgentQueue(ctx context.Context, tx *sql.Tx, project, sessi
 	if _, err = tx.ExecContext(ctx, `UPDATE sessions SET state='idle' WHERE id=? AND state IN ('starting','running') AND NOT EXISTS(SELECT 1 FROM execution_runs WHERE session_id=? AND state IN ('starting','running','stopping','unknown') AND acknowledged=0)`, session, session); err != nil {
 		return err
 	}
-	return s.bumpSession(ctx, tx, project, session, "turn.permission_revoked")
+	return s.bumpSession(ctx, tx, project, session, "turn."+reason)
 }
 
 // agentAdmission fences new provisioning while allowing reattachment to an

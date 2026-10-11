@@ -419,3 +419,31 @@ func (s *Server) conversationRecipients(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"readers": readers})
 }
+
+func (s *Server) reactivateShare(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		RequestID string `json:"request_id"`
+	}
+	if !decode(w, r, 4<<10, &input) {
+		return
+	}
+	if err := s.Store.ReactivateShare(r.Context(), s.scope(r), r.PathValue("share"), input.RequestID); err != nil {
+		fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) reactivateConversation(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		RequestID string `json:"request_id"`
+	}
+	if !decode(w, r, 4<<10, &input) {
+		return
+	}
+	if err := s.Store.ReactivateConversation(r.Context(), s.scope(r), r.PathValue("session"), r.PathValue("reader"), input.RequestID); err != nil {
+		fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

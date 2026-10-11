@@ -398,6 +398,9 @@ func (s *Store) changeAccountStatus(ctx context.Context, token, id string, input
 			return adminAccountReceipt{}, false, err
 		}
 		if status == "disabled" {
+			if err = s.suspendAccountResources(ctx, tx, id); err != nil {
+				return adminAccountReceipt{}, false, err
+			}
 			if _, err = tx.ExecContext(ctx, `INSERT INTO admin_operation_targets(operation_id,project_id) SELECT ?,id FROM projects WHERE owner_id=? AND state<>'deleted'`, operation.ID, id); err != nil {
 				return adminAccountReceipt{}, false, err
 			}

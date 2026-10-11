@@ -21,6 +21,7 @@ import (
 )
 
 type Share struct {
+	Suspended bool         `json:"suspended"`
 	ID        string       `json:"id"`
 	ProjectID string       `json:"project_id"`
 	SessionID string       `json:"session_id"`
@@ -37,10 +38,10 @@ type SharedFile struct {
 	Size   int64  `json:"size"`
 }
 
-const shareColumns = `id,project_id,session_id,title,frontier,state,expires_at,created_at`
+const shareColumns = `id,project_id,session_id,title,frontier,state,expires_at,created_at,suspended`
 
 func scanShare(row scanner) (s Share, err error) {
-	err = missing(row.Scan(&s.ID, &s.ProjectID, &s.SessionID, &s.Title, &s.Frontier, &s.State, &s.ExpiresAt, &s.CreatedAt))
+	err = missing(row.Scan(&s.ID, &s.ProjectID, &s.SessionID, &s.Title, &s.Frontier, &s.State, &s.ExpiresAt, &s.CreatedAt, &s.Suspended))
 	s.Files = []SharedFile{}
 	return
 }
@@ -256,7 +257,7 @@ func (s *Store) PublicShare(ctx context.Context, token string) (Share, error) {
 		return Share{}, ErrNotFound
 	}
 	// Parent state is checked even though revocation triggers also enforce it.
-	share, err := scanShare(s.reader.QueryRowContext(ctx, `SELECT `+shareColumns+` FROM shares WHERE token_digest=? AND state='published' AND expires_at>? AND EXISTS(SELECT 1 FROM sessions s JOIN projects p ON p.id=s.project_id JOIN accounts a ON a.id=p.owner_id AND a.status='active' WHERE s.id=shares.session_id AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted'))`, tokenDigest(token), s.timestamp()))
+	share, err := scanShare(s.reader.QueryRowContext(ctx, `SELECT `+shareColumns+` FROM shares WHERE token_digest=? AND state='published' AND suspended=0 AND expires_at>? AND EXISTS(SELECT 1 FROM sessions s JOIN projects p ON p.id=s.project_id JOIN accounts a ON a.id=p.owner_id AND a.status='active' WHERE s.id=shares.session_id AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted'))`, tokenDigest(token), s.timestamp()))
 	if err != nil {
 		return share, err
 	}

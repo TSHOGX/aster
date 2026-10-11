@@ -367,3 +367,51 @@ test("real Project administration is metadata-only and leaves an unbound Project
   await page.getByRole("link", { name: "Back to Projects", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Projects and Volumes", exact: true })).toBeVisible();
 });
+
+test("suspension and enable preserve separate sharing fences until explicit owner reactivation", async ({ page, browser, baseURL }) => {
+  await page.goto("/admin/users");
+  await page.getByLabel("Username", { exact: true }).fill("administrator");
+  await page.getByLabel("Password", { exact: true }).fill("web-test-permanent-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Users", exact: true })).toBeVisible();
+  const admin = await (await page.request.get("/api/auth/session")).json();
+  const policy = await (await page.request.post("/api/admin/policies", { data: { request_id: crypto.randomUUID(), name: "Suspension public publisher", statements: { "shares.public.create": "allow" } } })).json();
+  const group = await (await page.request.post("/api/admin/groups", { data: { request_id: crypto.randomUUID(), name: "Suspension publishers" } })).json();
+  expect((await page.request.put(`/api/admin/groups/${group.group.id}/policies`, { data: { request_id: crypto.randomUUID(), expected_revision: group.group.revision, policy_ids: [policy.policy.id] } })).ok()).toBe(true);
+  const created = await (await page.request.post("/api/admin/users", { data: { request_id: crypto.randomUUID(), username: "suspension-owner", display_name: "Suspension Owner", role: "user", group_ids: ["standard-users", group.group.id] } })).json();
+  const context = await browser.newContext({ baseURL, locale: "en-US" });
+  try {
+    const owner = await context.newPage();
+    expect((await owner.request.post("/api/auth/login", { data: { username: "suspension-owner", password: created.temporary_password } })).ok()).toBe(true);
+    expect((await owner.request.post("/api/auth/password/setup", { data: { new_password: "suspension-owner-password" } })).ok()).toBe(true);
+    expect((await owner.request.post("/api/projects", { data: { id: "suspension-share", title: "Retained sharing" } })).status()).toBe(201);
+    const session = "/api/projects/suspension-share/sessions/suspension-conversation";
+    expect((await owner.request.post("/api/projects/suspension-share/sessions", { data: { id: "suspension-conversation", title: "Retained conversation" } })).ok()).toBe(true);
+    expect((await owner.request.post(`${session}/readers`, { data: { reader_id: admin.id } })).ok()).toBe(true);
+    const shareResponse = await owner.request.post(`${session}/shares`, { data: { paths: [] } }); expect(shareResponse.status()).toBe(201);
+    const share = await shareResponse.json();
+    const publicPath = `/api/shared/${share.token}`;
+    const publicBefore = await owner.request.get(publicPath);
+    expect(publicBefore.ok()).toBe(true);
+    const before = await (await page.request.get(`/api/admin/users/${created.user.id}`)).json();
+    const suspendedResponse = await page.request.post(`/api/admin/users/${created.user.id}/suspend`, { data: { request_id: crypto.randomUUID(), expected_revision: before.revision } }); expect(suspendedResponse.status()).toBe(202);
+    const suspended = await suspendedResponse.json();
+    expect((await owner.request.get(publicPath)).status()).toBe(404);
+    expect((await owner.request.get("/api/auth/session")).status()).toBe(401);
+    const enabled = await page.request.post(`/api/admin/users/${created.user.id}/enable`, { data: { request_id: crypto.randomUUID(), expected_revision: suspended.user.revision } }); expect(enabled.ok()).toBe(true);
+    expect((await owner.request.get(publicPath)).status()).toBe(404);
+    expect((await owner.request.post("/api/auth/login", { data: { username: "suspension-owner", password: "suspension-owner-password" } })).ok()).toBe(true);
+    await owner.goto("/?view=share&project=suspension-share&session=suspension-conversation");
+    await expect(owner.getByRole("button", { name: "Reactivate reader", exact: true })).toBeVisible();
+    await expect(owner.getByRole("button", { name: "Reactivate public link", exact: true })).toBeVisible();
+    await owner.getByRole("button", { name: "Reactivate reader", exact: true }).click();
+    await expect(owner.getByRole("button", { name: "Reactivate reader", exact: true })).toHaveCount(0);
+    await owner.getByRole("button", { name: "Reactivate public link", exact: true }).click();
+    await expect(owner.getByRole("button", { name: "Reactivate public link", exact: true })).toHaveCount(0);
+    expect((await owner.request.get(publicPath)).ok()).toBe(true);
+    const project = await (await page.request.get("/api/admin/projects/suspension-share")).json();
+    expect(project.bound).toBe(false); expect(project.state).toBe("created");
+    const audit = await (await page.request.get(`/api/admin/audit-events?actor=${created.user.id}`)).json();
+    expect(JSON.stringify(audit)).toContain("share.reactivate"); expect(JSON.stringify(audit)).toContain("conversation.reactivate");
+  } finally { await context.close(); }
+});

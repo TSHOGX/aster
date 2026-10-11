@@ -92,7 +92,7 @@ func TestProductionFrontendBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	authentication := producthttp.NewAuthentication(store, producthttp.Config{TrustForwardedHost: true})
-	app := httptest.NewServer(authentication.Handler((&producthttp.Server{Store: store, Auth: authentication}).Handler()))
+	app := httptest.NewServer(authentication.Handler((&producthttp.Server{Store: store, Auth: authentication, Shares: &product.Shares{Store: store, Directory: t.TempDir()}}).Handler()))
 	defer app.Close()
 	appURL, _ := url.Parse(app.URL)
 	handler, err := edge.New(edge.Config{Application: appURL, Frontend: workbench, AdminFrontend: admin, PageAccount: authentication.Actor})

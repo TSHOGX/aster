@@ -285,6 +285,7 @@ CREATE TABLE conversation_dirty_turns (
 );
 
 CREATE TABLE conversation_grants (
+ suspended INTEGER NOT NULL DEFAULT 0 CHECK(suspended IN (0,1)),
  session_id TEXT NOT NULL REFERENCES sessions(id),
  reader_id TEXT NOT NULL REFERENCES accounts(id) CHECK(reader_id<>''),
  revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1)),
@@ -681,6 +682,7 @@ CREATE TABLE share_files (
 );
 
 CREATE TABLE shares (
+ suspended INTEGER NOT NULL DEFAULT 0 CHECK(suspended IN (0,1)),
  id TEXT PRIMARY KEY,
  project_id TEXT NOT NULL,
  session_id TEXT NOT NULL,
