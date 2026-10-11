@@ -5,7 +5,7 @@ set -euo pipefail
 if [[ ${1:-} == --inner ]]; then
  shift
  base=$PROJECT_TEST_BASE
- [[ $EUID == 0 && $base == /tmp/project-khora-runtime.* ]] || exit 2
+ [[ $EUID == 0 && $base == /var/cache/project-khora-runtime.* ]] || exit 2
  [[ $(readlink /proc/self/ns/mnt) != "$PROJECT_TEST_HOST_NS" ]] || exit 2
  mount --bind "$PROJECT_TEST_TEMPLATE" "$base/templates/agent-runtime"
  mount -o remount,bind,ro "$base/templates/agent-runtime"
@@ -49,7 +49,8 @@ export PROJECT_TEST_ENGINE=$(realpath "$PROJECT_TEST_ENGINE") PROJECT_TEST_TEMPL
 mkdir -p "$PROJECT_TEST_OUTPUT"
 export PROJECT_TEST_OUTPUT=$(realpath "$PROJECT_TEST_OUTPUT")
 export PROJECT_TEST_VIA_UID=${PROJECT_TEST_VIA_UID:-65534} PROJECT_TEST_VIA_GID=${PROJECT_TEST_VIA_GID:-65534}
-base=$(mktemp -d /tmp/project-khora-runtime.XXXXXX)
+# Keep the sparse engine disk off small memory-backed /tmp filesystems.
+base=$(mktemp -d /var/cache/project-khora-runtime.XXXXXX)
 chmod 0755 "$base"
 export PROJECT_TEST_BASE="$base" PROJECT_TEST_CGROUP="/sys/fs/cgroup/$(basename "$base")" PROJECT_TEST_HOST_NS
 PROJECT_TEST_HOST_NS=$(readlink /proc/self/ns/mnt)
