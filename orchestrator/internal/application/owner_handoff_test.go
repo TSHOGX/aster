@@ -18,11 +18,7 @@ import (
 func TestCompletedOwnerHandoffRetryDoesNotDependOnCurrentGateway(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "product.db")
-	network, err := product.NewNetworkPolicy(product.Reachability{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	identity := product.ApplicationIdentity{NetworkPolicyRevision: network.Revision, ExecutableDigest: "sha256:" + strings.Repeat("a", 64), CompatibilityDigest: "sha256:" + strings.Repeat("c", 64)}
+	identity := product.ApplicationIdentity{ExecutableDigest: "sha256:" + strings.Repeat("a", 64), CompatibilityDigest: "sha256:" + strings.Repeat("c", 64)}
 	store, err := producttest.OpenApplication(ctx, path, identity)
 	if err != nil {
 		t.Fatal(err)

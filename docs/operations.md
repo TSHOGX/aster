@@ -241,7 +241,9 @@ and content digests, gateway protocol and a compatibility digest. It does not
 open the product Store, acquire its lock, contact the engine/provider or create
 application state. It can run while the current owner is serving. Raw configuration,
 content and credential values are not returned. `diagnostics.release_identity`
-reports the running owner's corresponding startup identity.
+reports the running owner's corresponding startup identity plus the currently
+accepted database network revision; that live field is absent from candidate
+inspection.
 
 The compatibility digest excludes executable bytes, so separately built candidates
 can describe the same inputs. Configuration, configuration base directory, reviewed
@@ -259,6 +261,14 @@ candidate and running-owner compatibility digests. The contract includes the
 owner handoff protocol, exact schema, configuration/base directory, guest release,
 reviewed content and gateway protocol. Schema, template, engine, configuration or
 gateway changes require the default full drain. Keep the gateway process running.
+
+Beginning an owner handoff captures `runtime_configuration_digest` from persisted
+registry, environment, network and account-policy/resource settings. The same
+transaction closes configuration admission. Every checkpoint and replacement
+startup verifies the digest; accepted DB network edits made before the drain do
+not require changing bootstrap config. Credential/preference traffic and usage
+settlement are excluded. A changed digest refuses activation or writer acquisition
+rather than adopting a different configuration silently.
 
 ```sh
 orchestrator drain --socket /var/lib/agent-workbench/control.sock --owner UPDATE_ID --mode owner --target TARGET_DIGEST --compatibility COMPATIBILITY_DIGEST --timeout-seconds 120

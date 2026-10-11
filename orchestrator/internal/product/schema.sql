@@ -56,7 +56,7 @@ CREATE TABLE application_release (
  deadline TEXT NOT NULL DEFAULT '',
  reason TEXT NOT NULL DEFAULT '',
  updated_at TEXT NOT NULL DEFAULT ''
-, current_instance TEXT NOT NULL DEFAULT '', activation_instance TEXT NOT NULL DEFAULT '', target_digest TEXT NOT NULL DEFAULT '', finished_digest TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT 'quiescent' CHECK(mode IN ('quiescent','owner')), compatibility_digest TEXT NOT NULL DEFAULT '', schema_digest TEXT NOT NULL DEFAULT '', gateway_snapshot TEXT NOT NULL DEFAULT '');
+, current_instance TEXT NOT NULL DEFAULT '', activation_instance TEXT NOT NULL DEFAULT '', target_digest TEXT NOT NULL DEFAULT '', finished_digest TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT 'quiescent' CHECK(mode IN ('quiescent','owner')), compatibility_digest TEXT NOT NULL DEFAULT '', schema_digest TEXT NOT NULL DEFAULT '', runtime_configuration_digest TEXT NOT NULL DEFAULT '', gateway_snapshot TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE accounts (
  id TEXT PRIMARY KEY,
@@ -955,6 +955,7 @@ JOIN agent_commands c ON c.id=r.id AND c.state='applied'
 JOIN agent_incarnations i ON i.id=r.incarnation_id AND i.session_id=r.session_id AND i.state='running'
 JOIN sessions s ON s.id=r.session_id AND s.deletion_intent=0 AND s.state='running'
 JOIN projects p ON p.id=r.project_id AND p.state='active'
+JOIN accounts a ON a.id=p.owner_id AND a.status='active'
 WHERE r.state='running';
 
 CREATE VIEW release_blockers AS

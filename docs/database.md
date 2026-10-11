@@ -116,9 +116,14 @@ The application's startup identity and candidate CLI therefore agree even while
 the current owner holds the exclusive Store lock.
 
 
-The release singleton records mode, compatibility/schema digests and the pinned
-gateway registration snapshot. `owner_transferable_turns` identifies running turns
-with durably applied original prompts, active Projects and running incarnations.
+The release singleton records mode, compatibility/schema/runtime-configuration
+digests and the pinned gateway registration snapshot. The runtime digest covers
+registry bindings, default environment/network and account-policy/resource
+configuration; it excludes credentials, preferences, operational traffic and usage.
+It is captured with the drain and rechecked at readiness, activation, completion
+and read-only startup under the lifetime lock. `owner_transferable_turns` identifies running turns
+with durably applied original prompts, active accounts/Projects and running
+incarnations.
 `owner_handoff_blockers` retains every other release blocker, including requests
 whose turn or grant no longer qualifies. Changes to retained prompt/turn/session,
 grant/request authority or gateway registration revoke a pending owner-ready

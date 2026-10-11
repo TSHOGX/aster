@@ -7,9 +7,8 @@ import (
 )
 
 type ApplicationIdentity struct {
-	ExecutableDigest      string
-	CompatibilityDigest   string
-	NetworkPolicyRevision string
+	ExecutableDigest    string
+	CompatibilityDigest string
 }
 
 func (i ApplicationIdentity) validate() error {
@@ -22,18 +21,17 @@ func (i ApplicationIdentity) validate() error {
 // Verify release authority on the read-only connection under the database's
 // lifetime lock. There are no historical schema branches or rollback bypasses.
 func (i *ApplicationIdentity) check(ctx context.Context, q queryer) error {
-	var phase, mode, compatibility, schema, source, target string
-	if err := q.QueryRowContext(ctx, `SELECT phase,mode,compatibility_digest,schema_digest,activation_instance,target_digest FROM application_release WHERE id=1`).Scan(&phase, &mode, &compatibility, &schema, &source, &target); err != nil {
+	var phase, mode, compatibility, schema, source, target, configuration string
+	if err := q.QueryRowContext(ctx, `SELECT phase,mode,compatibility_digest,schema_digest,activation_instance,target_digest,runtime_configuration_digest FROM application_release WHERE id=1`).Scan(&phase, &mode, &compatibility, &schema, &source, &target, &configuration); err != nil {
 		return err
 	}
 	if phase != "open" && mode == "owner" {
-		policy, err := networkDefaults(ctx, q)
-		if err == nil {
-			if i == nil || policy.Revision != i.NetworkPolicyRevision {
-				return errors.New("owner handoff requires the accepted network policy revision")
-			}
-		} else if !errors.Is(err, ErrNotFound) || (i != nil && i.NetworkPolicyRevision != "") {
-			return errors.New("owner handoff has no accepted network policy")
+		observed, err := runtimeConfigurationDigest(ctx, q)
+		if err != nil {
+			return err
+		}
+		if !content.ValidDigest(configuration) || configuration != observed {
+			return errors.New("owner handoff configuration changed after fencing")
 		}
 		_, expected, err := SchemaIdentity()
 		if err != nil {

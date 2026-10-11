@@ -13,10 +13,8 @@ import (
 func ownerHandoffFixture(t *testing.T) (*Store, ServiceRequest, string, func() GatewayObservation) {
 	t.Helper()
 	s, scope, i, c := agentServiceFixture(t)
-	network, err := s.NetworkDefaults(ctx)
-	must(t, err)
-	s.identity = ApplicationIdentity{NetworkPolicyRevision: network.Revision, ExecutableDigest: "sha256:" + strings.Repeat("a", 64), CompatibilityDigest: "sha256:" + strings.Repeat("c", 64)}
-	_, err = s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{"success":true}`))
+	s.identity = ApplicationIdentity{ExecutableDigest: "sha256:" + strings.Repeat("a", 64), CompatibilityDigest: "sha256:" + strings.Repeat("c", 64)}
+	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{"success":true}`))
 	must(t, err)
 	_, err = s.IngestAgent(ctx, i, record(i, c, 2, "native", consumedPayload(c)))
 	must(t, err)
@@ -89,7 +87,6 @@ func TestOwnerHandoffTransfersOnlyAppliedNativeWorkAcrossVerifiedReplacement(t *
 	var name, path string
 	must(t, s.reader.QueryRow(`PRAGMA database_list`).Scan(&seq, &name, &path))
 	compatibility := s.identity.CompatibilityDigest
-	networkRevision := s.identity.NetworkPolicyRevision
 	must(t, s.Close())
 	before, err := os.ReadFile(path)
 	must(t, err)
@@ -112,7 +109,7 @@ func TestOwnerHandoffTransfersOnlyAppliedNativeWorkAcrossVerifiedReplacement(t *
 		unmeasured.Close()
 		t.Fatal("unmeasured Store bypassed handoff compatibility")
 	}
-	s, err = OpenApplication(ctx, path, ApplicationIdentity{ExecutableDigest: target, CompatibilityDigest: compatibility, NetworkPolicyRevision: networkRevision})
+	s, err = OpenApplication(ctx, path, ApplicationIdentity{ExecutableDigest: target, CompatibilityDigest: compatibility})
 	must(t, err)
 	defer s.Close()
 	must(t, s.CheckGatewayRequest(ctx, r))

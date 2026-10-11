@@ -30,7 +30,7 @@ type ReleaseIdentity struct {
 	PlatformProtocol      int               `json:"platform_protocol"`
 	GatewayProtocol       int               `json:"gateway_protocol"`
 	CompatibilityDigest   string            `json:"compatibility_digest"`
-	NetworkPolicyRevision string            `json:"network_policy_revision"`
+	NetworkPolicyRevision string            `json:"network_policy_revision,omitempty"`
 }
 
 type preparedPublication struct {
@@ -112,13 +112,8 @@ func prepareRelease(cfg Config) (out preparedRelease, err error) {
 	if err != nil {
 		return out, err
 	}
-	// Version 4 includes the reserved platform protocol and schedule lifecycle.
-	id := ReleaseIdentity{Version: 4, PlatformProtocol: servicegateway.PlatformVersion, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, RuntimeDigest: cfg.Template.Digest, GatewayProtocol: servicegateway.AuthorityVersion, ContentDigests: map[string]string{}}
-	policy, err := product.NewNetworkPolicy(cfg.Project.Reachability)
-	if err != nil {
-		return out, err
-	}
-	id.NetworkPolicyRevision = policy.Revision
+	// Version 5 separates persisted runtime configuration from candidate inputs.
+	id := ReleaseIdentity{Version: 5, PlatformProtocol: servicegateway.PlatformVersion, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, RuntimeDigest: cfg.Template.Digest, GatewayProtocol: servicegateway.AuthorityVersion, ContentDigests: map[string]string{}}
 	id.RuntimeTemplate = cfg.Template.ID
 	id.SchemaVersion, id.SchemaDigest, err = product.SchemaIdentity()
 	if err != nil {

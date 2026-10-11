@@ -176,18 +176,21 @@ func TestNetworkPolicyConcurrentAdmissionAndProjectionFailure(t *testing.T) {
 
 func TestNetworkPolicyFencedDuringHandoffAndCheckedBeforeWriter(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "product.db")
-	first := policyFixture(t, "", "")
-	second := policyFixture(t, "192.0.2.0/24", "")
-	identity := ApplicationIdentity{ExecutableDigest: "sha256:" + strings.Repeat("a", 64), CompatibilityDigest: "sha256:" + strings.Repeat("c", 64), NetworkPolicyRevision: first.Revision}
+	initial := policyFixture(t, "", "")
+	accepted := policyFixture(t, "192.0.2.0/24", "")
+	identity := ApplicationIdentity{ExecutableDigest: "sha256:" + strings.Repeat("a", 64), CompatibilityDigest: "sha256:" + strings.Repeat("c", 64)}
 	s, err := OpenApplication(ctx, path, identity)
 	must(t, err)
-	_, err = s.AcceptNetworkPolicy(ctx, first)
+	_, err = s.AcceptNetworkPolicy(ctx, accepted)
 	must(t, err)
 	proof := func() GatewayObservation { return GatewayObservation{Started: time.Now()} }
 	target := "sha256:" + strings.Repeat("b", 64)
 	drain, err := s.BeginOwnerHandoff(ctx, "operator", time.Minute, target, identity.CompatibilityDigest, proof())
 	must(t, err)
-	_, err = s.AcceptNetworkPolicy(ctx, second)
+	if drain.RuntimeConfigurationDigest == "" {
+		t.Fatal("configuration was not pinned")
+	}
+	_, err = s.AcceptNetworkPolicy(ctx, initial)
 	wantError(t, err, ErrDraining)
 	_, err = s.TryReleaseReady(ctx, drain.Owner, drain.Generation, proof())
 	must(t, err)
@@ -195,16 +198,15 @@ func TestNetworkPolicyFencedDuringHandoffAndCheckedBeforeWriter(t *testing.T) {
 	must(t, err)
 	must(t, s.Close())
 	identity.ExecutableDigest = target
-	identity.NetworkPolicyRevision = second.Revision
-	if rejected, err := OpenApplication(ctx, path, identity); err == nil {
-		rejected.Close()
-		t.Fatal("stale policy candidate acquired writer")
-	}
-	identity.NetworkPolicyRevision = first.Revision
 	s, err = OpenApplication(ctx, path, identity)
 	must(t, err)
 	defer s.Close()
-	_, err = s.AcceptNetworkPolicy(ctx, first)
+	current, err := s.NetworkDefaults(ctx)
+	must(t, err)
+	if current.Revision != accepted.Revision {
+		t.Fatal("candidate replaced accepted database policy", current)
+	}
+	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target, proof())
 	must(t, err)
 }
 

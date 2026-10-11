@@ -258,7 +258,10 @@ func newReleasedApp(t *testing.T) *releaseApp {
 		t.Fatalf("bootstrap failed: %v: %s", err, bootstrapOutput)
 	}
 	a.start()
-	current := a.cli("diagnostics", "--socket", filepath.Join(root, "state/control.sock"))["release_identity"]
+	current := a.cli("diagnostics", "--socket", filepath.Join(root, "state/control.sock"))["release_identity"].(map[string]any)
+	// Live diagnostics add DB policy state; candidate inspection is read-only
+	// deployment measurement and does not guess it from bootstrap declarations.
+	delete(current, "network_policy_revision")
 	candidateJSON, _ := json.Marshal(candidate)
 	currentJSON, _ := json.Marshal(current)
 	liveCandidate := a.cli("release-identity", "--config", a.config)

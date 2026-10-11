@@ -13,9 +13,11 @@ configuration, bootstrap publication/runtime inputs. Its compatibility
 field is a deployment-contract digest for guarded owner handoff, not a promise
 that older builds or persisted formats are supported.
 
-Direct/DNS defaults have a separate accepted policy revision. Owner handoff checks
-that revision before acquiring the writer, and administrative edits cannot change it while
-release admission is fenced. A running Project retains its effective policy until
+Owner handoff pins a digest of persisted registry, environment, network and
+account-policy/resource configuration. Readiness, activation, completion and
+read-only startup validation recheck that digest. Candidate inspection does not
+substitute bootstrap network declarations for the accepted database policy.
+Administrative edits remain fenced while release admission is closed. A running Project retains its effective policy until
 creation/resume selects a new snapshot.
 
 For an update within this exact schema/protocol contract, the selected executable
