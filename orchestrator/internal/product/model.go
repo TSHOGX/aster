@@ -26,16 +26,17 @@ func (e *AdmissionError) Unwrap() error        { return e.Cause }
 func Admission(code string, cause error) error { return &AdmissionError{Code: code, Cause: cause} }
 
 type Project struct {
-	ID               string `json:"id"`
-	OwnerID          string `json:"owner_id"`
-	Title            string `json:"title"`
-	State            string `json:"state"`
-	Revision         int64  `json:"revision"`
-	ActivityRevision int64  `json:"activity_revision"`
-	IdleDeadline     string `json:"idle_deadline,omitempty"`
-	Failure          string `json:"failure,omitempty"`
-	CreatedAt        string `json:"created_at"`
-	UpdatedAt        string `json:"updated_at"`
+	ExecutionSuspended bool   `json:"execution_suspended"`
+	ID                 string `json:"id"`
+	OwnerID            string `json:"owner_id"`
+	Title              string `json:"title"`
+	State              string `json:"state"`
+	Revision           int64  `json:"revision"`
+	ActivityRevision   int64  `json:"activity_revision"`
+	IdleDeadline       string `json:"idle_deadline,omitempty"`
+	Failure            string `json:"failure,omitempty"`
+	CreatedAt          string `json:"created_at"`
+	UpdatedAt          string `json:"updated_at"`
 }
 
 // Deletion is a child's cleanup progress, held separately from its execution

@@ -124,7 +124,7 @@ type operationRequest struct {
 type operation struct{ ID, ProjectID, Kind, State, Phase, Request, Error string }
 
 func pendingOperation(ctx context.Context, q queryer, project string) (o operation, err error) {
-	err = missing(q.QueryRowContext(ctx, `SELECT id,project_id,kind,state,phase,request,error FROM project_operations WHERE project_id=? AND state<>'succeeded'`, project).Scan(&o.ID, &o.ProjectID, &o.Kind, &o.State, &o.Phase, &o.Request, &o.Error))
+	err = missing(q.QueryRowContext(ctx, `SELECT id,project_id,kind,state,phase,request,error FROM project_operations WHERE project_id=? AND state NOT IN ('succeeded','canceled')`, project).Scan(&o.ID, &o.ProjectID, &o.Kind, &o.State, &o.Phase, &o.Request, &o.Error))
 	return
 }
 func (l *Lifecycle) reserve(ctx context.Context, tx *sql.Tx) error {
@@ -205,6 +205,27 @@ func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, bindings Runt
 		if err != nil {
 			return err
 		}
+		if err := activeAccount(ctx, tx, scope.Actor); err != nil {
+			return err
+		}
+		if p.ExecutionSuspended {
+			if !requireManage {
+				return Admission("project_suspended", ErrForbidden)
+			}
+			var pending bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM admin_operation_targets t JOIN admin_operations o ON o.id=t.operation_id WHERE t.project_id=? AND o.action='account.suspend' AND t.state<>'succeeded')`, p.ID).Scan(&pending); err != nil {
+				return err
+			}
+			if pending {
+				return Admission("suspension_pending", ErrConflict)
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE projects SET execution_suspended=0 WHERE id=?`, p.ID); err != nil {
+				return err
+			}
+			if err := l.Store.auditEvent(ctx, tx, scope.Actor, "project.reactivate", "project", p.ID, "", p.Revision, map[string]any{}); err != nil {
+				return err
+			}
+		}
 		if requireManage {
 			if err := authorizeAction(ctx, tx, scope.Actor, ActionProjectsManage); err != nil {
 				return err
@@ -273,6 +294,9 @@ func (l *Lifecycle) ActiveResources(ctx context.Context, scope Scope) (Resources
 	p, err := ownedProject(ctx, l.Store.reader, scope)
 	if err != nil {
 		return Resources{}, err
+	}
+	if p.ExecutionSuspended {
+		return Resources{}, Admission("project_suspended", ErrForbidden)
 	}
 	if p.State == "deleting" || p.State == "deleted" {
 		return Resources{}, ErrDeleting
@@ -350,6 +374,13 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 	lock := l.lane(project)
 	lock.Lock()
 	defer lock.Unlock()
+	var held bool
+	if err := l.Store.reader.QueryRowContext(ctx, `SELECT execution_suspended=1 AND state NOT IN ('deleting','deleted') FROM projects WHERE id=?`, project).Scan(&held); err != nil {
+		return missing(err)
+	}
+	if held {
+		return l.suspendPlacement(ctx, project)
+	}
 	var o operation
 	var r Resources
 	var quotaDenial error
@@ -407,6 +438,11 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 			}
 			o, err = pendingOperation(ctx, tx, project)
 			if err != nil {
+				return err
+			}
+		}
+		if !deleting {
+			if err := executionAllowed(ctx, tx, project); err != nil && (o.Kind == "create" || o.Kind == "resume") {
 				return err
 			}
 		}
@@ -501,7 +537,7 @@ func (l *Lifecycle) unknown(ctx context.Context, o operation, cause error) error
 		if errors.Is(cause, ErrQuotaExceeded) {
 			state = "pending"
 		}
-		if _, err := tx.ExecContext(settle, `UPDATE project_operations SET state=?,error=? WHERE id=? AND state<>'succeeded'`, state, cause.Error(), o.ID); err != nil {
+		if _, err := tx.ExecContext(settle, `UPDATE project_operations SET state=?,error=? WHERE id=? AND state NOT IN ('succeeded','canceled')`, state, cause.Error(), o.ID); err != nil {
 			return err
 		}
 		res, err := tx.ExecContext(settle, `UPDATE projects SET failure=? WHERE id=? AND failure<>?`, cause.Error(), o.ProjectID, cause.Error())
@@ -526,7 +562,7 @@ func (l *Lifecycle) phase(ctx context.Context, o operation, next, column, value 
 				return err
 			}
 		}
-		return changed(tx.ExecContext(ctx, `UPDATE project_operations SET phase=?,state='pending',error='' WHERE id=? AND phase=? AND state<>'succeeded'`, next, o.ID, o.Phase))
+		return changed(tx.ExecContext(ctx, `UPDATE project_operations SET phase=?,state='pending',error='' WHERE id=? AND phase=? AND state NOT IN ('succeeded','canceled')`, next, o.ID, o.Phase))
 	})
 }
 func (l *Lifecycle) provision(ctx context.Context, o operation, r Resources) error {
@@ -667,7 +703,7 @@ func (l *Lifecycle) commit(ctx context.Context, o operation, obs sandbox.Observa
 		if _, err := l.Store.loseStalePTYs(ctx, tx, o.ProjectID, obs.Epoch, "placement replaced; PTY process did not survive"); err != nil {
 			return err
 		}
-		return changed(tx.ExecContext(ctx, `UPDATE project_operations SET phase=?,state='pending',error='' WHERE id=? AND phase=? AND state<>'succeeded'`, next, o.ID, o.Phase))
+		return changed(tx.ExecContext(ctx, `UPDATE project_operations SET phase=?,state='pending',error='' WHERE id=? AND phase=? AND state NOT IN ('succeeded','canceled')`, next, o.ID, o.Phase))
 	})
 }
 func (l *Lifecycle) finish(ctx context.Context, o operation, obs sandbox.Observation, state string, occupied, restart bool) error {
@@ -701,7 +737,7 @@ func (l *Lifecycle) finish(ctx context.Context, o operation, obs sandbox.Observa
 	})
 }
 func (l *Lifecycle) settle(ctx context.Context, tx *sql.Tx, o operation, state string, occupied, restart bool, resume ...sandbox.Reference) error {
-	if err := changed(tx.ExecContext(ctx, `UPDATE project_operations SET state='succeeded',error='' WHERE id=? AND state<>'succeeded'`, o.ID)); err != nil {
+	if err := changed(tx.ExecContext(ctx, `UPDATE project_operations SET state='succeeded',error='' WHERE id=? AND state NOT IN ('succeeded','canceled')`, o.ID)); err != nil {
 		return err
 	}
 	var deleting bool
@@ -718,6 +754,9 @@ func (l *Lifecycle) settle(ctx context.Context, tx *sql.Tx, o operation, state s
 		return err
 	}
 	if restart && len(resume) == 1 {
+		if err := executionAllowed(ctx, tx, o.ProjectID); err != nil {
+			return nil
+		}
 		return l.newOperation(ctx, tx, o.ProjectID, "resume", "sandbox", operationRequest{Reference: resume[0]})
 	}
 	return nil
@@ -784,7 +823,7 @@ func (l *Lifecycle) destroy(ctx context.Context, o operation, r Resources) error
 // PendingProjects rotates attempts by oldest attempt, and includes deletion
 // tombstones even when no remote operation had yet been created at a crash.
 func (s *Store) PendingProjects(ctx context.Context, limit int) ([]string, error) {
-	rows, err := s.reader.QueryContext(ctx, `SELECT p.id FROM projects p LEFT JOIN project_operations o ON o.project_id=p.id AND o.state<>'succeeded' WHERE o.id IS NOT NULL OR p.state='deleting' ORDER BY coalesce(o.attempted_at,p.updated_at),p.id LIMIT ?`, pageSize(limit))
+	rows, err := s.reader.QueryContext(ctx, `SELECT p.id FROM projects p LEFT JOIN project_operations o ON o.project_id=p.id AND o.state NOT IN ('succeeded','canceled') WHERE o.id IS NOT NULL OR p.state='deleting' ORDER BY coalesce(o.attempted_at,p.updated_at),p.id LIMIT ?`, pageSize(limit))
 	if err != nil {
 		return nil, err
 	}

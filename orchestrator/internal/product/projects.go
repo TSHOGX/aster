@@ -9,14 +9,14 @@ import (
 	"fmt"
 )
 
-const projectColumns = `id,owner_id,title,state,revision,activity_revision,coalesce(idle_deadline,''),failure,created_at,updated_at`
+const projectColumns = `id,owner_id,title,state,revision,activity_revision,coalesce(idle_deadline,''),failure,created_at,updated_at,execution_suspended`
 const sessionColumns = `id,project_id,title,state,deletion_intent,control_revision,revision,failure,created_at,updated_at`
 const terminalColumns = `id,project_id,title,state,deletion_intent,revision,rows,cols,exit_code,failure,created_at,updated_at,coalesce((SELECT ti.id FROM terminal_incarnations ti WHERE ti.terminal_id=terminals.id ORDER BY ti.rowid DESC LIMIT 1),'')`
 
 type scanner interface{ Scan(...any) error }
 
 func scanProject(row scanner) (p Project, err error) {
-	err = missing(row.Scan(&p.ID, &p.OwnerID, &p.Title, &p.State, &p.Revision, &p.ActivityRevision, &p.IdleDeadline, &p.Failure, &p.CreatedAt, &p.UpdatedAt))
+	err = missing(row.Scan(&p.ID, &p.OwnerID, &p.Title, &p.State, &p.Revision, &p.ActivityRevision, &p.IdleDeadline, &p.Failure, &p.CreatedAt, &p.UpdatedAt, &p.ExecutionSuspended))
 	return
 }
 func scanSession(row scanner) (p Session, err error) {
@@ -42,6 +42,11 @@ func projectAction(ctx context.Context, q queryer, scope Scope, action ProductAc
 	p, err := ownedProject(ctx, q, scope)
 	if err != nil {
 		return p, err
+	}
+	if action == ActionAgentsRun || action == ActionTerminalsUse {
+		if err = executionAllowed(ctx, q, scope.ProjectID); err != nil {
+			return Project{}, err
+		}
 	}
 	if err = authorizeAction(ctx, q, scope.Actor, action); err != nil {
 		return Project{}, err

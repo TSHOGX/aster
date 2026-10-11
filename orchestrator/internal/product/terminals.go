@@ -43,7 +43,7 @@ func (s *Store) CanUseTerminal(ctx context.Context, scope Scope, terminal string
 	if child.Deletion != Live {
 		return ErrDeleting
 	}
-	return authorizeAction(ctx, s.reader, scope.Actor, ActionTerminalsUse)
+	return authorizeExecution(ctx, s.reader, scope, ActionTerminalsUse)
 }
 
 // LiveTerminal returns the Terminal's current PTY process, or ErrNotFound when it
@@ -82,7 +82,7 @@ func (s *Store) reserveTerminal(ctx context.Context, scope Scope, terminal strin
 		if child.Deletion != Live {
 			return ErrDeleting
 		}
-		if err := authorizeAction(ctx, tx, scope.Actor, ActionTerminalsUse); err != nil {
+		if err := authorizeExecution(ctx, tx, scope, ActionTerminalsUse); err != nil {
 			return err
 		}
 		i, err = liveTerminalIncarnation(ctx, tx, terminal)
@@ -180,7 +180,7 @@ func (s *Store) resizeTerminal(ctx context.Context, scope Scope, terminal string
 		if child.Deletion != Live {
 			return ErrDeleting
 		}
-		if err := authorizeAction(ctx, tx, scope.Actor, ActionTerminalsUse); err != nil {
+		if err := authorizeExecution(ctx, tx, scope, ActionTerminalsUse); err != nil {
 			return err
 		}
 		if expected != nil {

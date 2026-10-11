@@ -38,19 +38,24 @@ export function AuditView() {
   </section>;
 }
 export function OperationView({ id }: { id: string }) {
+  const [targets,setTargets]=useState<{targets:{project_id:string;state:string;error?:string}[];next_cursor?:string}>({targets:[]}),[cursors,setCursors]=useState([""]);
+  const cursor=cursors.at(-1)!;
   const [operation, setOperation] = useState<Operation | null>(null), [error, setError] = useState(""), [refresh, setRefresh] = useState(0);
   useEffect(() => {
     const abort = new AbortController();
-    void api<Operation>(`/api/admin/operations/${encodeURIComponent(id)}`, { signal: abort.signal }).then(value => { if (!abort.signal.aborted) { setOperation(value); setError(""); } })
+    void Promise.all([api<Operation>(`/api/admin/operations/${encodeURIComponent(id)}`, { signal: abort.signal }),api<typeof targets>(`/api/admin/operations/${encodeURIComponent(id)}/targets?limit=25&cursor=${encodeURIComponent(cursor)}`,{signal:abort.signal})]).then(([value,page]) => { if (!abort.signal.aborted) { setOperation(value);setTargets(page); setError(""); } })
       .catch(error => { if (!abort.signal.aborted) setError(String(error)); });
     return () => abort.abort();
-  }, [id, refresh]);
+  }, [id, refresh,cursor]);
   return <section><header className="page-heading"><h1>Operation</h1><button onClick={() => setRefresh(v => v + 1)}>Refresh</button></header>
     {error && <p role="alert" className="error">{error}</p>}
     {operation ? <article className="panel"><h2>{operation.action}</h2><p role="status">{operation.state}</p><dl><dt>Target</dt><dd className="identifier">{operation.target_id}</dd><dt>Observed completion</dt><dd>{operation.completed_targets} of {operation.total_targets} targets</dd><dt>Updated</dt><dd>{date(operation.updated_at)}</dd></dl>
       {operation.state === "accepted" && <p>The request is recorded. Resource work has not been confirmed complete.</p>}
-      {operation.state === "unknown" && <p>The resource outcome is uncertain. It has not been reported as stopped or complete.</p>}
+      {operation.state === "unknown" && <p>The resource outcome is uncertain. Reconciliation will retry the original intent; refresh to see new evidence. It has not been reported as stopped or complete.</p>}
       {operation.error && <p role="alert" className="error">{operation.error}</p>}
+      <div className="table-scroll"><table><thead><tr><th>Project target</th><th>Observed progress</th><th>Detail</th></tr></thead><tbody>{targets.targets.map(target=><tr key={target.project_id}><td><Link href={`/projects/${encodeURIComponent(target.project_id)}`}>{target.project_id}</Link></td><td>{target.state}</td><td>{target.error || "—"}</td></tr>)}</tbody></table></div>
+      <nav className="pagination" aria-label="Operation target pages"><button disabled={cursors.length===1} onClick={()=>setCursors(value=>value.slice(0,-1))}>Previous targets</button><button disabled={!targets.next_cursor} onClick={()=>setCursors(value=>[...value,targets.next_cursor!])}>Next targets</button></nav>
+
     </article> : !error && <p role="status">Loading operation…</p>}
   </section>;
 }

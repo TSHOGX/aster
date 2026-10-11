@@ -22,6 +22,9 @@ func (l *Lifecycle) Observe(ctx context.Context, project string) error {
 		if err := tx.QueryRowContext(ctx, `SELECT state FROM projects WHERE id=?`, project).Scan(&state); err != nil {
 			return missing(err)
 		}
+		if err := executionAllowed(ctx, tx, project); err != nil {
+			return err
+		}
 		priorState = state
 		if state != "active" && state != "paused" && state != "blocked" {
 			return ErrPending

@@ -58,7 +58,7 @@ func (s *Store) admitTurn(ctx context.Context, tx *sql.Tx, scope Scope, session,
 		if child.Deletion != Live {
 			return ErrDeleting
 		}
-		if err := authorizeAction(ctx, tx, scope.Actor, ActionAgentsRun); err != nil {
+		if err := authorizeExecution(ctx, tx, scope, ActionAgentsRun); err != nil {
 			return err
 		}
 		old, err := scanTurn(tx.QueryRowContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE session_id=? AND request_id=?`, session, request))

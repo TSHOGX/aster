@@ -429,7 +429,27 @@ successful request cannot undo a later suspension. Both sharing reactivations ar
 audited and require the owner's current named sharing grant. Expired/revoked links
 cannot be reactivated through this operation.
 
-These transactional access fences do not prove an Agent, Terminal or placement
-has stopped. Suspension operations remain accepted until the stop/pause execution
-and observed completion path settles their targets. Consult operation state;
-account status alone is not a runtime completion signal.
+The same transaction sets a durable execution hold on every owned Project.
+The existing bounded worker requests graceful Agent/Terminal stops, then reconciles
+placement pause through the Project lane. A timeout produces an unknown target,
+never a stopped claim or early compute release. A dispatched create with a lost
+reply settles its original idempotency key and complete request solely to pause
+that placement, without advancing guest projection or child execution. Undispatched
+compute intent is canceled explicitly. Slot initialization/reservations and owned
+files are retained; suspension never creates another storage slot or deletes it.
+
+Operation and per-Project target reads expose accepted/running/unknown/succeeded
+progress and errors. Worker recovery after owner replacement continues the same
+operation. Completion and its audit require every mandatory stop/pause target to
+settle; an empty target set can complete without engine effects. Account status
+alone is not a runtime completion signal.
+
+Enable does not clear Project execution holds. After suspension completion, an
+explicit owner Resume Project rechecks current management authority and all
+applicable quotas, then clears the hold and records normal creation/resume intent
+in the same transaction. Automatic Agent/Terminal starts, recovery and ordinary
+EnsureActive calls cannot clear it. Ready existing workspace files remain readable
+and writable while paused, within capacity; initialized files are never reseeded.
+Pending native outcomes retain their original journal/unknown evidence for recovery
+after explicit resume. Project deletion remains an independent authorized cleanup
+path, including for held or partially initialized plans.

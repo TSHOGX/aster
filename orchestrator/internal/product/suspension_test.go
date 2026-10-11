@@ -145,6 +145,11 @@ func TestSuspendedPublishedSnapshotRetainsFrozenBytes(t *testing.T) {
 	wantError(t, err, ErrNotFound)
 	_, err = s.EnableAccount(ctx, token, scope.Actor, AccountRevision{RequestID: "enable-snapshot", ExpectedRevision: result.User.Revision})
 	must(t, err)
+	worker := &Workers{Store: s, Lifecycle: files.Lifecycle}
+	current, err := s.Project(ctx, scope)
+	must(t, err)
+	must(t, worker.project(ctx, current))
+	must(t, worker.suspensionOperations(ctx))
 	_, err = files.Upload(ctx, scope, "change-live-file", writeRequest("result.txt", "new private bytes"), strings.NewReader("new private bytes"))
 	must(t, err)
 	must(t, s.ReactivateShare(ctx, scope, share.ID, "restore-snapshot"))

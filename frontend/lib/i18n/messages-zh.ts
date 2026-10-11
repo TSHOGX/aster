@@ -1,5 +1,7 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Execution suspended": "执行已暂停",
+  "Resume suspended Project": "恢复已暂停项目",
   "Access suspended": "访问已暂停",
   "Reactivate reader": "重新启用读者访问",
   "Reactivate public link": "重新启用公开链接",

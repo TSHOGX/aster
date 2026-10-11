@@ -12,10 +12,11 @@ import (
 func (s *Store) rejectAgentQueue(ctx context.Context, tx *sql.Tx, project, session string) error {
 	reason := "permission_revoked"
 	var status string
-	if err := tx.QueryRowContext(ctx, `SELECT a.status FROM projects p JOIN accounts a ON a.id=p.owner_id WHERE p.id=?`, project).Scan(&status); err != nil {
+	var held bool
+	if err := tx.QueryRowContext(ctx, `SELECT a.status,p.execution_suspended FROM projects p JOIN accounts a ON a.id=p.owner_id WHERE p.id=?`, project).Scan(&status, &held); err != nil {
 		return err
 	}
-	if status != "active" {
+	if status != "active" || held {
 		reason = "account_suspended"
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT id,kind FROM agent_commands WHERE session_id=? AND state='pending' AND kind IN ('prompt','steer')`, session)
@@ -77,7 +78,7 @@ func (s *Store) agentAdmission(ctx context.Context, scope Scope, session string)
 	if _, err := sessionIn(ctx, s.reader, scope, session); err != nil {
 		return err
 	}
-	if err := authorizeAction(ctx, s.reader, scope.Actor, ActionAgentsRun); err == nil {
+	if err := authorizeExecution(ctx, s.reader, scope, ActionAgentsRun); err == nil {
 		return nil
 	}
 	var denial error
@@ -85,7 +86,7 @@ func (s *Store) agentAdmission(ctx context.Context, scope Scope, session string)
 		if _, err := sessionIn(ctx, tx, scope, session); err != nil {
 			return err
 		}
-		denial = authorizeAction(ctx, tx, scope.Actor, ActionAgentsRun)
+		denial = authorizeExecution(ctx, tx, scope, ActionAgentsRun)
 		if denial == nil {
 			return nil
 		}

@@ -1,4 +1,6 @@
 export const EN = {
+  "Execution suspended": "Execution suspended",
+  "Resume suspended Project": "Resume suspended Project",
   "Access suspended": "Access suspended",
   "Reactivate reader": "Reactivate reader",
   "Reactivate public link": "Reactivate public link",

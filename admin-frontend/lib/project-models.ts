@@ -1,5 +1,5 @@
 import type { Artifact } from "./runtime-models";
-export type AdminProject = { id: string; title: string; owner_id: string; owner_username: string; owner_status: string; state: string; revision: number; updated_at: string; bound: boolean; environment_revision: number; sandbox_release: Artifact | null; allocated_bytes: string; reserved_bytes: string; slot_count: string };
+export type AdminProject = { execution_suspended: boolean; id: string; title: string; owner_id: string; owner_username: string; owner_status: string; state: string; revision: number; updated_at: string; bound: boolean; environment_revision: number; sandbox_release: Artifact | null; allocated_bytes: string; reserved_bytes: string; slot_count: string };
 export type AdminProjectPage = { projects: AdminProject[]; next_cursor?: string };
 export type VolumeSlot = { key: string; role: string; destination: string; storage: string; access: string; capacity_bytes: string; source?: Artifact; source_minimum_bytes: string; clean_runtime: boolean; volume_id?: string; state: string; error?: string; allocated_bytes: string; reserved_bytes: string; observation: string; observed_capacity_bytes?: string; checked_at?: string };
 export type ProjectDetail = AdminProject & {

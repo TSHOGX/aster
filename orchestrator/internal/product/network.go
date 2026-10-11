@@ -78,7 +78,7 @@ func (s *Store) GrantService(ctx context.Context, scope Scope, session, incarnat
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM agent_incarnations WHERE id=? AND project_id=? AND session_id=? AND state IN ('starting','running')`, incarnation, scope.ProjectID, session).Scan(&found); err != nil {
 			return missing(err)
 		}
-		if err := activeAccount(ctx, tx, scope.Actor); err != nil {
+		if err := authorizeExecution(ctx, tx, scope, ActionAgentsRun); err != nil {
 			return err
 		}
 		// One live grant per incarnation and audience. A replayed start reuses it
@@ -129,7 +129,7 @@ func authorizeService(ctx context.Context, q queryer, now, audience, token strin
 	if subtle.ConstantTimeCompare([]byte(digest), []byte(credentialDigest(token))) != 1 {
 		return Attribution{}, ErrNotFound
 	}
-	if err := authorizeAction(ctx, q, actor, ActionAgentsRun); err != nil {
+	if err := authorizeExecution(ctx, q, Scope{Actor: actor, ProjectID: a.Grant.ProjectID}, ActionAgentsRun); err != nil {
 		return Attribution{}, err
 	}
 	return a, nil

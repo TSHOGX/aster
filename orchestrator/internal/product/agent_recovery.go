@@ -25,7 +25,7 @@ func (r *AgentRecovery) Step(ctx context.Context, limit int) error {
 	if limit < 1 || limit > 16 {
 		limit = 8
 	}
-	rows, err := r.Store.reader.QueryContext(ctx, `SELECT i.id FROM agent_incarnations i JOIN projects p ON p.id=i.project_id WHERE i.state='exited' AND i.recovery_state IN ('pending','replaying') AND p.state NOT IN ('deleting','deleted') ORDER BY i.recovery_attempted,i.id LIMIT ?`, limit)
+	rows, err := r.Store.reader.QueryContext(ctx, `SELECT i.id FROM agent_incarnations i JOIN projects p ON p.id=i.project_id WHERE i.state='exited' AND i.recovery_state IN ('pending','replaying') AND p.state NOT IN ('deleting','deleted') AND p.execution_suspended=0 ORDER BY i.recovery_attempted,i.id LIMIT ?`, limit)
 	if err != nil {
 		return err
 	}
@@ -58,6 +58,13 @@ func (r *AgentRecovery) recover(ctx context.Context, id string) error {
 	}
 	defer releaseMaintenance()
 
+	var project string
+	if err := r.Store.reader.QueryRowContext(ctx, `SELECT project_id FROM agent_incarnations WHERE id=?`, id).Scan(&project); err != nil {
+		return missing(err)
+	}
+	if err := executionAllowed(ctx, r.Store.reader, project); err != nil {
+		return err
+	}
 	var i Incarnation
 	err := r.Store.write(ctx, func(tx *sql.Tx) error {
 		var err error

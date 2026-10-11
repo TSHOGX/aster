@@ -94,7 +94,7 @@ func (s *Store) OperatorDiagnostics(ctx context.Context) (DiagnosticCounts, erro
 			return result, err
 		}
 	}
-	err := s.reader.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM project_resources WHERE occupied=1),(SELECT count(*) FROM project_operations WHERE state<>'succeeded'),(SELECT count(*) FROM file_operations WHERE settled=0),(SELECT count(*) FROM agent_incarnations WHERE recovery_state IN ('pending','replaying')),(SELECT count(*) FROM native_captures WHERE state='guest'),(SELECT page_count*page_size FROM pragma_page_count(),pragma_page_size())`).Scan(&result.Occupied, &result.PendingLifecycle, &result.PendingFiles, &result.PendingRecovery, &result.PendingCapture, &result.DatabaseBytes)
+	err := s.reader.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM project_resources WHERE occupied=1),(SELECT count(*) FROM project_operations WHERE state NOT IN ('succeeded','canceled')),(SELECT count(*) FROM file_operations WHERE settled=0),(SELECT count(*) FROM agent_incarnations WHERE recovery_state IN ('pending','replaying')),(SELECT count(*) FROM native_captures WHERE state='guest'),(SELECT page_count*page_size FROM pragma_page_count(),pragma_page_size())`).Scan(&result.Occupied, &result.PendingLifecycle, &result.PendingFiles, &result.PendingRecovery, &result.PendingCapture, &result.DatabaseBytes)
 	if err == nil {
 		result.Storage, err = s.OperatorStorageUsage(ctx)
 	}

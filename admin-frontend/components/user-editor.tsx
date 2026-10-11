@@ -8,13 +8,14 @@ import { ContentInspection } from "./content-inspection";
 import { EffectiveAccessView } from "./effective-access";
 import { CredentialDialog } from "./credential-dialog";
 
-type Pending = { path: string; body: Record<string, unknown>; method: string; kind: "create" | "edit" | "reset" };
+type Pending = { path: string; body: Record<string, unknown>; method: string; kind: "create" | "edit" | "reset" | "status" };
 export function UserEditor({ id, onDirty }: { id?: string; onDirty: (dirty: boolean) => void }) {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null), [username, setUsername] = useState(""), [name, setName] = useState(""), [role, setRole] = useState("user");
   const [membership, setMembership] = useState("default"), [selected, setSelected] = useState<string[]>([]), [groups, setGroups] = useState<Group[]>([]), [groupCursor, setGroupCursor] = useState("");
   const [loading, setLoading] = useState(!!id), [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [pending, setPending] = useState<Pending | null>(null), [credential, setCredential] = useState<{ username: string; password: string } | null>(null);
+  const [operationID,setOperationID]=useState("");
   const alive = useRef(true);
   const changedName = user ? name !== user.display_name : !!name;
   const changedRole = user ? role !== user.role : role !== "user";
@@ -44,6 +45,7 @@ export function UserEditor({ id, onDirty }: { id?: string; onDirty: (dirty: bool
       }
       setUser(currentUser); setName(currentUser.display_name); setRole(currentUser.role); setPending(null);
       if (result.temporary_password) setCredential({ username: result.user.username, password: result.temporary_password });
+      else if(request.kind==="status") {setOperationID(result.operation?.id || "");setNotice(result.user.status==="disabled" ? "Suspension recorded. Follow the operation for observed stop/pause progress." : "Account enabled. Projects, schedules and sharing remain suspended until explicitly resumed or reactivated.");}
       else setNotice(result.replayed && request.kind !== "edit" ? "The original change is confirmed. Its password cannot be shown again; issue a new reset if needed." : "Saved.");
     } catch (error) {
       if (!alive.current) return;
@@ -77,7 +79,7 @@ export function UserEditor({ id, onDirty }: { id?: string; onDirty: (dirty: bool
     <header className="page-heading"><div><h1 id="user-title">{user ? user.display_name : id ? "User details" : "Create user"}</h1><p>{user ? user.username : "Issue a one-time password for account setup."}</p></div><Link href="/users">Back to users</Link></header>
     {loading && <p role="status">Loading account…</p>}
     {error && <p className="error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
-    {pending && !busy && <div className="notice"><p>The outcome is unconfirmed. Retry checks the original request; it does not create another account or recover a previously displayed password.</p><button onClick={() => void submit(pending)}>Check original request</button></div>}
+    {pending && !busy && <div className="notice"><p>The outcome is unconfirmed. Retry checks the original request without repeating its effects.</p><button onClick={() => void submit(pending)}>Check original request</button></div>}
     {(!id || user) && <form className="account-form" onSubmit={event => { event.preventDefault(); save(); }}>
       <fieldset disabled={loading || busy || !!pending}>
         {!user && <label>Username<input required maxLength={64} autoComplete="off" pattern="[A-Za-z0-9_-]{1,64}" value={username} onChange={event => setUsername(event.target.value)} /></label>}
@@ -100,6 +102,13 @@ export function UserEditor({ id, onDirty }: { id?: string; onDirty: (dirty: bool
       {user.must_change_password && <p>Password setup is required.</p>}
       <p>Resetting issues a new one-time password and revokes this account’s sessions. Existing work is not stopped.</p>
       <button disabled={busy || !!pending || changedName || changedRole} onClick={() => void submit({ path: `/api/admin/users/${encodeURIComponent(user.id)}/password-reset`, body: { request_id: crypto.randomUUID(), expected_revision: user.revision }, method: "POST", kind: "reset" })}>Reset password</button>
+      <button disabled={busy || !!pending || changedName || changedRole} onClick={() => {
+        const suspend=user.status==="active";
+        if(suspend && !window.confirm(`Suspend ${user.username}? Sessions and sharing access will close, schedules and queues will be held, and running work will be stopped and Projects paused. Files and history are preserved.`)) return;
+        void submit({path:`/api/admin/users/${encodeURIComponent(user.id)}/${suspend?"suspend":"enable"}`,body:{request_id:crypto.randomUUID(),expected_revision:user.revision},method:"POST",kind:"status"});
+      }}>{user.status==="active"?"Suspend account":"Enable account"}</button>
+      {operationID && <Link className="inline-link" href={`/operations/${encodeURIComponent(operationID)}`}>View suspension operation</Link>}
+
       <Link className="inline-link" href={`/projects?owner_id=${encodeURIComponent(user.id)}`}>Projects and Volumes</Link>
       <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/resources`}>Resources and usage</Link>
       <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/network`}>Network settings</Link>

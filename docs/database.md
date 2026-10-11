@@ -230,3 +230,12 @@ grants alongside its operation/audit intent. Re-enabling the account leaves the
 flags intact. Explicit, authorized reactivation clears only the selected resource;
 public-link retries resolve their original receipt rather than reapplying a past
 reactivation after a new suspension.
+
+`projects.execution_suspended` is durable resource authority independent of account
+status. Suspension sets it atomically with the administrative intent; account
+enable cannot clear it. Explicit owner resume clears it only after all suspension
+targets have succeeded and current admission checks pass. The hold participates
+in owner-handoff configuration fencing. Pending administrative suspension blocks
+release readiness. `project_operations.state='canceled'` records interrupted
+creation/resume intent without claiming success; slot identities/reservations
+remain independent and intact. Canceled operations are outside the active lane.

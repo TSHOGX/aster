@@ -63,6 +63,7 @@ func (w *Workers) Run(ctx context.Context) {
 		}()
 	}
 	loop("runtime", interval, w.Step)
+	loop("suspension completion", interval, w.suspensionOperations)
 	loop("release deadline", time.Second, w.Store.ExpireReleaseDrain)
 	loop("conversation display", 100*time.Millisecond, w.displayStep)
 	loop("agent recovery", time.Second, func(ctx context.Context) error {
@@ -167,6 +168,20 @@ func (w *Workers) Step(ctx context.Context) error {
 	return nil
 }
 func (w *Workers) project(ctx context.Context, p Project) error {
+	current, err := ownedProject(ctx, w.Store.reader, Scope{p.OwnerID, p.ID})
+	if err != nil {
+		return err
+	}
+	if current.ExecutionSuspended && current.State != "deleting" && current.State != "deleted" {
+		var pending bool
+		if err := w.Store.reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM admin_operation_targets t JOIN admin_operations o ON o.id=t.operation_id WHERE t.project_id=? AND o.action='account.suspend' AND t.state<>'succeeded')`, p.ID).Scan(&pending); err != nil {
+			return err
+		}
+		if !pending {
+			return nil
+		}
+		return w.suspendProject(ctx, current)
+	}
 	scope := Scope{p.OwnerID, p.ID}
 	w.report("placement observation", w.Lifecycle.Observe(ctx, p.ID))
 	if w.Terminals != nil {

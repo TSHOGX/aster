@@ -61,6 +61,7 @@ export async function adminFixture(page: Page, role: "admin" | "user" = "admin")
       return route.fulfill({ json: { users: filtered } });
     }
     if (path === "/api/admin/audit-events") return route.fulfill({ json: { events: [{ id: 1, actor_id: identity.id, action: "account.create", target_kind: "account", target_id: "user-id", request_id: "create-fixture", revision: 1, created_at: "2026-10-11T00:00:00Z", details: { after: { display_name: "ordinary", role: "user" } } }] } });
+    if (path.startsWith("/api/admin/operations/") && path.endsWith("/targets")) return route.fulfill({json:{targets:[{project_id:"project-a",state:"accepted"},{project_id:"project-b",state:"unknown",error:"Engine unavailable"}]}});
     if (path.startsWith("/api/admin/operations/")) return route.fulfill({ json: { id: "operation", actor_id: identity.id, action: "account.suspend", target_kind: "account", target_id: "user-id", state: "accepted", total_targets: 2, completed_targets: 0, created_at: "2026-10-11T00:00:00Z", updated_at: "2026-10-11T00:00:00Z" } });
     if (body?.request_id && receipts.has(String(body.request_id))) return route.fulfill({ json: { ...receipts.get(String(body.request_id)), replayed: true } });
     if (path === "/api/admin/users" && method === "POST") {

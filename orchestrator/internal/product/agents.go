@@ -64,7 +64,7 @@ func (s *Store) reserveAgent(ctx context.Context, scope Scope, session string) (
 		if !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		if err := authorizeAction(ctx, tx, scope.Actor, ActionAgentsRun); err != nil {
+		if err := authorizeExecution(ctx, tx, scope, ActionAgentsRun); err != nil {
 			return err
 		}
 		if err := admitCount(ctx, tx, scope.Actor, ResourceAgents, 1); err != nil {
@@ -131,7 +131,7 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 		if current.ID != i.ID || current.Owner != i.Owner || current.State != "running" {
 			return ErrConflict
 		}
-		denied = authorizeAction(ctx, tx, actor, ActionAgentsRun)
+		denied = authorizeExecution(ctx, tx, Scope{Actor: actor, ProjectID: i.ProjectID}, ActionAgentsRun)
 		if denied != nil {
 			if !errors.Is(denied, ErrForbidden) && !errors.Is(denied, ErrUnauthorized) {
 				return denied

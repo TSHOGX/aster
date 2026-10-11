@@ -121,6 +121,9 @@ func (s *Store) bindVolumePlan(ctx context.Context, tx *sql.Tx, project string, 
 	if err := tx.QueryRowContext(ctx, `SELECT owner_id FROM projects WHERE id=?`, project).Scan(&actor); err != nil {
 		return err
 	}
+	if err := executionAllowed(ctx, tx, project); err != nil {
+		return err
+	}
 	if err := activeAccount(ctx, tx, actor); err != nil {
 		return err
 	}
@@ -186,6 +189,9 @@ func (l *Lifecycle) materializeSlot(ctx context.Context, r Resources, key string
 	}
 	if slot.State == "ready" {
 		return true, nil
+	}
+	if err := executionAllowed(ctx, l.Store.reader, r.ProjectID); err != nil {
+		return false, err
 	}
 	if plan.Storage != "owned" || slot.State == "deleted" {
 		return false, ErrConflict

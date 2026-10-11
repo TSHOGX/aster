@@ -263,3 +263,49 @@ func (s *Store) AdminOperation(ctx context.Context, token, id string) (AdminOper
 	err := missing(s.reader.QueryRowContext(ctx, `SELECT o.id,o.actor_id,o.action,o.target_kind,o.target_id,o.state,o.error,o.created_at,o.updated_at,count(t.project_id),coalesce(sum(t.state='succeeded'),0) FROM admin_operations o LEFT JOIN admin_operation_targets t ON t.operation_id=o.id WHERE o.id=? GROUP BY o.id`, id).Scan(&result.ID, &result.ActorID, &result.Action, &result.TargetKind, &result.TargetID, &result.State, &result.Error, &result.CreatedAt, &result.UpdatedAt, &result.Total, &result.Completed))
 	return result, err
 }
+
+type AdminOperationTarget struct {
+	ProjectID string `json:"project_id"`
+	State     string `json:"state"`
+	Error     string `json:"error,omitempty"`
+}
+type AdminOperationTargets struct {
+	Targets    []AdminOperationTarget `json:"targets"`
+	NextCursor string                 `json:"next_cursor,omitempty"`
+}
+
+func (s *Store) AdminOperationTargets(ctx context.Context, token, id, cursor string, limit int) (AdminOperationTargets, error) {
+	out := AdminOperationTargets{Targets: []AdminOperationTarget{}}
+	if _, err := s.AdminOperation(ctx, token, id); err != nil {
+		return out, err
+	}
+	limit, err := adminLimit(limit)
+	if err != nil {
+		return out, err
+	}
+	scope := cursorScope("operation-targets", id)
+	after, err := readAdminCursor(cursor, scope)
+	if err != nil {
+		return out, err
+	}
+	rows, err := s.reader.QueryContext(ctx, `SELECT project_id,state,error FROM admin_operation_targets WHERE operation_id=? AND project_id>? ORDER BY project_id LIMIT ?`, id, after, limit+1)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var target AdminOperationTarget
+		if err = rows.Scan(&target.ProjectID, &target.State, &target.Error); err != nil {
+			return out, err
+		}
+		out.Targets = append(out.Targets, target)
+	}
+	if err = rows.Err(); err != nil {
+		return out, err
+	}
+	if len(out.Targets) > limit {
+		out.Targets = out.Targets[:limit]
+		out.NextCursor = nextAdminCursor(out.Targets[limit-1].ProjectID, scope)
+	}
+	return out, nil
+}

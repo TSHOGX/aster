@@ -488,19 +488,19 @@ function Application({
         })(),
     },
     {
-      label: p.state === "active" ? tr("Pause") : tr("Resume Project"),
+      label: p.execution_suspended ? tr("Resume suspended Project") : p.state === "active" ? tr("Pause") : tr("Resume Project"),
       disabled: ["deleting", "deleted"].includes(p.state) || (p.state !== "active" && !canManage),
       action: () =>
         void act(() =>
           command(
-            `${projectURL(p.id)}/${p.state === "active" ? "pause" : "resume"}?revision=${p.revision}`,
+            `${projectURL(p.id)}/${p.state === "active" && !p.execution_suspended ? "pause" : "resume"}?revision=${p.revision}`,
           ),
         ),
     },
     ...[false, true].map((force) => ({
       label: force ? tr("Force restart") : tr("Restart"),
       danger: force,
-      disabled: p.state !== "active" || !canManage,
+      disabled: !!p.execution_suspended || p.state !== "active" || !canManage,
       action: () =>
         void (async () => {
           if (
@@ -746,7 +746,7 @@ function Application({
                   <IconButton
                     className="icon-button project-new-chat"
                     label={tr("New chat in {project}", { project: p.title })}
-                    disabled={!canRun || ["deleting", "deleted"].includes(p.state)}
+                    disabled={!canRun || !!p.execution_suspended || ["deleting", "deleted"].includes(p.state)}
                     onClick={() => newChat(p.id)}
                   >
                     <Plus size={16} />

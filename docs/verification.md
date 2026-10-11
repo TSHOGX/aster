@@ -194,3 +194,16 @@ storage cleanup at non-default roots. Fixture publications supply required syste
 roles; tests use the image's immutable application helpers rather than replacing
 them with host builds. The separate fault/recovery suite continues to cover cold
 restart, journal failure, forced process loss, Session retirement and cleanup.
+
+### Account suspension under unavailable engine and owner replacement
+
+`dev/verify-khora.sh --suite suspension` creates running native work, a live PTY,
+queued prompts, a future schedule, sharing and a separate storage-only Project.
+It stops only the disposable engine process long enough to verify login/link/PTY
+revocation and an unknown suspension outcome. It then replaces the application
+owner, restores the engine and requires the original operation to confirm every
+Project target. Account enable must leave execution held, schedules paused and
+queues held. Explicit resume rechecks admission and preserves the exact saved
+release, mount/Volume identities and data; final deletion reclaims owned storage.
+The suite is included in `all`; the standalone run uses the same template,
+manifest and fresh-output arguments as other runtime gates.

@@ -382,7 +382,7 @@ func (t *Terminals) ClaimInput(ctx context.Context, o *TerminalObserver) error {
 	if _, err := t.observerIdentity(ctx, o, false); err != nil {
 		return err
 	}
-	if err := authorizeAction(ctx, t.Store.reader, o.scope.Actor, ActionTerminalsUse); err != nil {
+	if err := authorizeExecution(ctx, t.Store.reader, o.scope, ActionTerminalsUse); err != nil {
 		return err
 	}
 	a := o.pty
@@ -429,7 +429,7 @@ func (t *Terminals) Input(ctx context.Context, o *TerminalObserver, data []byte)
 	if _, err = t.observerIdentity(ctx, o, true); err != nil {
 		return err
 	}
-	if err = authorizeAction(ctx, t.Store.reader, o.scope.Actor, ActionTerminalsUse); err != nil {
+	if err = authorizeExecution(ctx, t.Store.reader, o.scope, ActionTerminalsUse); err != nil {
 		return err
 	}
 	kind := runtimeInput
@@ -449,7 +449,7 @@ func (t *Terminals) Input(ctx context.Context, o *TerminalObserver, data []byte)
 	if _, err = t.observerIdentity(ctx, o, true); err != nil {
 		return err
 	}
-	if err = authorizeAction(ctx, t.Store.reader, o.scope.Actor, ActionTerminalsUse); err != nil {
+	if err = authorizeExecution(ctx, t.Store.reader, o.scope, ActionTerminalsUse); err != nil {
 		return err
 	}
 	return t.Backend.SendPTYInput(ctx, i.Reference, data)

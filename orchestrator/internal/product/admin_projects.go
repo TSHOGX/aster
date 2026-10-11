@@ -17,6 +17,7 @@ type AdminProjectQuery struct {
 	Limit                          int
 }
 type AdminProjectSummary struct {
+	ExecutionSuspended  bool               `json:"execution_suspended"`
 	ID                  string             `json:"id"`
 	Title               string             `json:"title"`
 	OwnerID             string             `json:"owner_id"`
@@ -37,11 +38,11 @@ type AdminProjectPage struct {
 	NextCursor string                `json:"next_cursor,omitempty"`
 }
 
-const adminProjectSelect = `SELECT p.id,p.title,p.owner_id,a.username,a.status,p.state,p.revision,p.updated_at,r.project_id IS NOT NULL,coalesce(json_extract(r.profile,'$.environment_revision'),0),coalesce(json_extract(r.profile,'$.sandbox_release.id'),''),coalesce(json_extract(r.profile,'$.sandbox_release.version'),''),coalesce(json_extract(r.profile,'$.sandbox_release.digest'),''),coalesce((SELECT sum(capacity) FROM storage_reservations s WHERE s.project_id=p.id AND s.state='allocated'),0),coalesce((SELECT sum(capacity) FROM storage_reservations s WHERE s.project_id=p.id AND s.state='reserved'),0),coalesce(json_array_length(r.profile,'$.volumes'),0) FROM projects p JOIN accounts a ON a.id=p.owner_id LEFT JOIN project_resources r ON r.project_id=p.id `
+const adminProjectSelect = `SELECT p.id,p.title,p.owner_id,a.username,a.status,p.state,p.revision,p.updated_at,r.project_id IS NOT NULL,coalesce(json_extract(r.profile,'$.environment_revision'),0),coalesce(json_extract(r.profile,'$.sandbox_release.id'),''),coalesce(json_extract(r.profile,'$.sandbox_release.version'),''),coalesce(json_extract(r.profile,'$.sandbox_release.digest'),''),coalesce((SELECT sum(capacity) FROM storage_reservations s WHERE s.project_id=p.id AND s.state='allocated'),0),coalesce((SELECT sum(capacity) FROM storage_reservations s WHERE s.project_id=p.id AND s.state='reserved'),0),coalesce(json_array_length(r.profile,'$.volumes'),0),p.execution_suspended FROM projects p JOIN accounts a ON a.id=p.owner_id LEFT JOIN project_resources r ON r.project_id=p.id `
 
 func scanAdminProject(row scanner) (out AdminProjectSummary, err error) {
 	var release ArtifactReference
-	err = missing(row.Scan(&out.ID, &out.Title, &out.OwnerID, &out.OwnerUsername, &out.OwnerStatus, &out.State, &out.Revision, &out.UpdatedAt, &out.Bound, &out.EnvironmentRevision, &release.ID, &release.Version, &release.Digest, &out.AllocatedBytes, &out.ReservedBytes, &out.SlotCount))
+	err = missing(row.Scan(&out.ID, &out.Title, &out.OwnerID, &out.OwnerUsername, &out.OwnerStatus, &out.State, &out.Revision, &out.UpdatedAt, &out.Bound, &out.EnvironmentRevision, &release.ID, &release.Version, &release.Digest, &out.AllocatedBytes, &out.ReservedBytes, &out.SlotCount, &out.ExecutionSuspended))
 	if out.Bound {
 		out.SandboxRelease = &release
 	}

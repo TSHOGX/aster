@@ -4,6 +4,7 @@ import { fetchFileRead, FILE_BUSY_MESSAGE } from "./file-read";
 import { requestCategory, startTiming } from "./interaction-metrics";
 
 export type Project = {
+ execution_suspended?: boolean;
   id: string;
   title: string;
   state: string;

@@ -129,6 +129,8 @@ CREATE TABLE admin_operations (
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL
 );
+CREATE INDEX admin_suspension_pending ON admin_operations(action,updated_at,id) WHERE state<>'succeeded';
+
 CREATE TABLE admin_operation_targets (
  operation_id TEXT NOT NULL REFERENCES admin_operations(id),
  project_id TEXT NOT NULL REFERENCES projects(id),
@@ -136,6 +138,8 @@ CREATE TABLE admin_operation_targets (
  error TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(operation_id,project_id)
 );
+
+CREATE INDEX admin_target_project ON admin_operation_targets(project_id,operation_id,state);
 
 CREATE TABLE account_groups (
  id TEXT PRIMARY KEY,
@@ -469,7 +473,7 @@ CREATE TABLE project_operations (
  id TEXT PRIMARY KEY,
  project_id TEXT NOT NULL REFERENCES projects(id),
  kind TEXT NOT NULL CHECK(kind IN ('create','pause','resume','delete')),
- state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','issued','unknown','succeeded')),
+ state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','issued','unknown','succeeded','canceled')),
  phase TEXT NOT NULL,
  request TEXT NOT NULL,
  error TEXT NOT NULL DEFAULT '',
@@ -520,6 +524,7 @@ WHEN NEW.capacity<>OLD.capacity BEGIN SELECT RAISE(ABORT,'immutable storage rese
 CREATE TRIGGER volume_slot_identity_immutable BEFORE UPDATE OF intent_key,slot_key,project_id,store_id,storage ON project_volume_slots
 BEGIN SELECT RAISE(ABORT,'immutable volume slot identity'); END;
 CREATE TABLE projects (
+ execution_suspended INTEGER NOT NULL DEFAULT 0 CHECK(execution_suspended IN (0,1)),
  id TEXT PRIMARY KEY CHECK(id<>''),
  owner_id TEXT NOT NULL REFERENCES accounts(id) CHECK(owner_id<>''),
  title TEXT NOT NULL,
@@ -878,7 +883,7 @@ CREATE INDEX project_activity_pending ON project_activity(project_id,state);
 
 CREATE INDEX project_event_pressure ON project_event_frontiers(event_count,project_id);
 
-CREATE UNIQUE INDEX project_operation_lane ON project_operations(project_id) WHERE state<>'succeeded';
+CREATE UNIQUE INDEX project_operation_lane ON project_operations(project_id) WHERE state NOT IN ('succeeded','canceled');
 
 CREATE INDEX project_operations_pending ON project_operations(state,attempted_at,project_id);
 
@@ -904,7 +909,7 @@ CREATE INDEX release_model_request_pending ON service_request_slots(audience,slo
 
 CREATE INDEX release_native_capture_pending ON native_captures(path) WHERE state='guest';
 
-CREATE INDEX release_project_operation_pending ON project_operations(id) WHERE state<>'succeeded';
+CREATE INDEX release_project_operation_pending ON project_operations(id) WHERE state NOT IN ('succeeded','canceled');
 
 CREATE INDEX release_project_transition_pending ON projects(id) WHERE state IN ('provisioning','resuming','pausing','deleting');
 
@@ -983,7 +988,8 @@ WHERE (state IN ('starting','stopping','unknown') OR recovery_state IN ('pending
  SELECT 1 FROM execution_runs r WHERE r.incarnation_id=agent_incarnations.id AND r.state='unknown' AND r.acknowledged=0
 ))
 UNION ALL SELECT 'terminal_start' AS kind,id AS id FROM terminal_incarnations INDEXED BY release_terminal_start_pending WHERE state='starting'
-UNION ALL SELECT 'project_operation' AS kind,id AS id FROM project_operations INDEXED BY release_project_operation_pending WHERE state<>'succeeded'
+UNION ALL SELECT 'admin_suspension',id FROM admin_operations WHERE action='account.suspend' AND state<>'succeeded'
+UNION ALL SELECT 'project_operation' AS kind,id AS id FROM project_operations INDEXED BY release_project_operation_pending WHERE state NOT IN ('succeeded','canceled')
 UNION ALL SELECT 'project_transition' AS kind,id AS id FROM projects INDEXED BY release_project_transition_pending WHERE state IN ('provisioning','resuming','pausing','deleting')
 UNION ALL SELECT 'volume_slot',project_id||':'||slot_key FROM project_volume_slots INDEXED BY release_volume_slot_pending WHERE state IN ('creating','initializing','deleting')
 UNION ALL SELECT 'file_write' AS kind,id AS id FROM file_operations INDEXED BY release_file_write_pending WHERE settled=0
@@ -1260,11 +1266,11 @@ WHEN NEW.state IN ('creating','initializing','deleting') AND (SELECT phase FROM 
 BEGIN UPDATE application_release SET phase='draining',reason='work_resumed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
 
 CREATE TRIGGER release_ready_project_operation_insert AFTER INSERT ON project_operations
-WHEN (NEW.state<>'succeeded') AND (SELECT phase FROM application_release WHERE id=1)='ready'
+WHEN (NEW.state NOT IN ('succeeded','canceled')) AND (SELECT phase FROM application_release WHERE id=1)='ready'
 BEGIN UPDATE application_release SET phase='draining',reason='work_resumed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
 
 CREATE TRIGGER release_ready_project_operation_update AFTER UPDATE OF state ON project_operations
-WHEN (NEW.state<>'succeeded') AND (SELECT phase FROM application_release WHERE id=1)='ready'
+WHEN (NEW.state NOT IN ('succeeded','canceled')) AND (SELECT phase FROM application_release WHERE id=1)='ready'
 BEGIN UPDATE application_release SET phase='draining',reason='work_resumed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
 
 CREATE TRIGGER release_ready_project_transition_insert AFTER INSERT ON projects

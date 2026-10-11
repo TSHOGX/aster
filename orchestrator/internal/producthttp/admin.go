@@ -78,6 +78,7 @@ func (a *Authentication) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/users/{id}/enable", a.adminEnableUser)
 	mux.HandleFunc("GET /api/admin/groups", a.adminGroups)
 	mux.HandleFunc("GET /api/admin/audit-events", a.adminAudit)
+	mux.HandleFunc("GET /api/admin/operations/{id}/targets", a.adminOperationTargets)
 	mux.HandleFunc("GET /api/admin/operations/{id}", a.adminOperation)
 }
 func (a *Authentication) adminUsers(w http.ResponseWriter, r *http.Request) {
@@ -197,4 +198,17 @@ func (a *Authentication) adminOperation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, 200, result)
+}
+
+func (a *Authentication) adminOperationTargets(w http.ResponseWriter, r *http.Request) {
+	limit, ok := adminPageLimit(w, r)
+	if !ok {
+		return
+	}
+	value, err := a.Store.AdminOperationTargets(r.Context(), requestToken(r), r.PathValue("id"), r.URL.Query().Get("cursor"), limit)
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, 200, value)
 }

@@ -52,7 +52,7 @@ func (s *Store) ControlRun(ctx context.Context, scope Scope, session string, req
 			return err
 		}
 		if req.Action == "steer" {
-			if err := authorizeAction(ctx, tx, scope.Actor, ActionAgentsRun); err != nil {
+			if err := authorizeExecution(ctx, tx, scope, ActionAgentsRun); err != nil {
 				return err
 			}
 		}

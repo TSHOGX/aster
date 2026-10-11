@@ -11,6 +11,7 @@ import (
 // a share, release a queued prompt or reactivate a schedule.
 func (s *Store) suspendAccountResources(ctx context.Context, tx *sql.Tx, account string) error {
 	for _, statement := range []string{
+		`UPDATE projects SET execution_suspended=1 WHERE owner_id=? AND state<>'deleted'`,
 		`UPDATE shares SET suspended=1 WHERE project_id IN (SELECT id FROM projects WHERE owner_id=?) AND state IN ('pending','published')`,
 		`UPDATE conversation_grants SET suspended=1 WHERE session_id IN (SELECT s.id FROM sessions s JOIN projects p ON p.id=s.project_id WHERE p.owner_id=?) AND revoked=0`,
 		`UPDATE service_grants SET state='revoked' WHERE project_id IN (SELECT id FROM projects WHERE owner_id=?) AND state='active'`,

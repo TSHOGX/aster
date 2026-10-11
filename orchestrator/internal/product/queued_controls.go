@@ -38,7 +38,7 @@ func (s *Store) MutatePrompt(ctx context.Context, scope Scope, session, prompt, 
 			return err
 		}
 		if action == "release" {
-			if err := authorizeAction(ctx, tx, scope.Actor, ActionAgentsRun); err != nil {
+			if err := authorizeExecution(ctx, tx, scope, ActionAgentsRun); err != nil {
 				return err
 			}
 		}
