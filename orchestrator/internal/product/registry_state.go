@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 )
 
 // RegistryState is operator metadata. Browser selection never accepts engine
@@ -106,20 +105,16 @@ func (s *Store) EditRegistryState(ctx context.Context, input RegistryStateEdit) 
 		return out, err
 	}
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		var action, target, digest, raw string
-		err := tx.QueryRowContext(ctx, `SELECT action,target_id,body_digest,result FROM operator_receipts WHERE request_id=?`, request.ID).Scan(&action, &target, &digest, &raw)
-		if err == nil {
-			if action != request.Action || target != request.Target || digest != request.Digest {
-				return Admission("request_id_conflict", ErrConflict)
-			}
-			if err = json.Unmarshal([]byte(raw), &out); err != nil {
+		raw, exists, err := readOperatorReceipt(ctx, tx, request)
+		if err != nil {
+			return err
+		}
+		if exists {
+			if err = json.Unmarshal(raw, &out); err != nil {
 				return err
 			}
 			out.Replayed = true
 			return nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
 		}
 		release, err := releaseState(ctx, tx)
 		if err != nil {
@@ -159,12 +154,7 @@ func (s *Store) EditRegistryState(ctx context.Context, input RegistryStateEdit) 
 		if err = s.auditEvent(ctx, tx, "operator", request.Action, input.Kind, input.Reference.ID+"/"+input.Reference.Version, request.ID, out.Revision, map[string]any{"before": before, "after": out.RegistryState}); err != nil {
 			return err
 		}
-		encoded, err := json.Marshal(out)
-		if err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO operator_receipts(request_id,action,target_id,body_digest,result,created_at) VALUES(?,?,?,?,?,?)`, request.ID, request.Action, request.Target, request.Digest, string(encoded), s.timestamp())
-		return err
+		return s.writeOperatorReceipt(ctx, tx, request, out)
 	})
 	if err != nil {
 		return RegistryStateResult{}, err

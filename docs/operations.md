@@ -445,6 +445,27 @@ live handles, or secrets.
 
 ## Project and Volume metadata
 
+The operator can inspect and change the finite per-user platform caps through
+the owner socket. Group ceilings and saved user requests remain distinct; this
+command changes only the platform cap used by their effective-value resolver:
+
+```sh
+orchestrator limits inspect --socket /var/lib/agent-workbench/control.sock
+orchestrator limits set --socket /var/lib/agent-workbench/control.sock \
+  --dimension workspace_bytes --maximum 1073741824 \
+  --expected-revision 1 --request-id workspace-platform-cap
+```
+
+Use the closed dimension names returned by inspect and a nonnegative integer.
+The `mount_count` maximum is a qualified operator declaration from 2 through 128;
+the transfer cap cannot exceed the existing 256 MiB hard bound. Other zero caps
+disable new allocation authority. Lowering a cap preserves saved override requests
+and allocations, marks requests capped, and blocks increases/resume that no longer
+fit. Raising it can restore retained requests without rewriting them. Every
+change checks its dimension revision and release fence and commits audit/receipt
+and affected effective revisions atomically. Retry an uncertain result with the
+identical request ID/body. No engine resource is resized or deleted.
+
 Administration’s Projects page lists cross-account ownership, recorded state,
 saved environment/release, mount count and allocated/reserved owned bytes. Filter
 by owner account ID, Project title/ID or state. User details link to that owner's

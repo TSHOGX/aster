@@ -293,6 +293,26 @@ func (a *Application) controlHandler() http.Handler {
 		w.WriteHeader(204)
 	})
 	mux.HandleFunc("POST /volume/publish", a.publishVolume)
+	mux.HandleFunc("GET /limits", func(w http.ResponseWriter, r *http.Request) {
+		values, err := a.Store.OperatorPlatformLimits(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), 409)
+			return
+		}
+		writeControl(w, map[string]any{"limits": values})
+	})
+	mux.HandleFunc("PATCH /limits", func(w http.ResponseWriter, r *http.Request) {
+		var input product.PlatformLimitEdit
+		if !decodeControl(w, r, &input) {
+			return
+		}
+		result, err := a.Store.EditPlatformLimit(r.Context(), input)
+		if err != nil {
+			http.Error(w, err.Error(), 409)
+			return
+		}
+		writeControl(w, result)
+	})
 	mux.HandleFunc("POST /runtime/register", a.registerRuntime)
 	mux.HandleFunc("GET /runtime/registry", a.runtimeRegistryState)
 	mux.HandleFunc("PATCH /runtime/registry", a.editRuntimeRegistryState)

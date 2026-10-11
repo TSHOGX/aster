@@ -32,7 +32,7 @@ func main() {
 }
 func run(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE\norchestrator gateway --config FILE\norchestrator release-identity --config FILE\norchestrator gateway-status|gateway-stop --socket PATH [--owner ID --generation N]\norchestrator version\norchestrator diagnostics|publish|notify --socket PATH [flags]\norchestrator volume inspect-source --source DIR\norchestrator volume publish --socket PATH --source DIR --id ID --version VERSION --digest sha256:DIGEST --capacity-bytes N --minimum-bytes N --roles ROLE[,ROLE] [--clean-runtime-seed]\norchestrator runtime inspect|disable|enable|retire --socket PATH --kind sandbox|volume --id ID --version VERSION --digest sha256:DIGEST [--expected-revision N --request-id ID]\norchestrator runtime register --socket PATH --id ID --version VERSION --template TEMPLATE --manifest FILE --digest sha256:DIGEST\norchestrator drain|drain-status|drain-ready|drain-abort|drain-activate|drain-complete --socket PATH [--owner ID] [--generation N] [--timeout-seconds N] [--mode quiescent|owner] [--target sha256:DIGEST] [--compatibility sha256:DIGEST]\norchestrator account bootstrap|recover-admin --config FILE --username NAME --password-stdin\norchestrator account recover-admin --socket PATH --username NAME --password-stdin")
+		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE\norchestrator gateway --config FILE\norchestrator release-identity --config FILE\norchestrator gateway-status|gateway-stop --socket PATH [--owner ID --generation N]\norchestrator version\norchestrator diagnostics|notify --socket PATH [flags]\norchestrator publish --socket PATH --config FILE\norchestrator limits inspect --socket PATH\norchestrator limits set --socket PATH --dimension DIMENSION --maximum N --expected-revision N --request-id ID\norchestrator volume inspect-source --source DIR\norchestrator volume publish --socket PATH --source DIR --id ID --version VERSION --digest sha256:DIGEST --capacity-bytes N --minimum-bytes N --roles ROLE[,ROLE] [--clean-runtime-seed]\norchestrator runtime inspect|disable|enable|retire --socket PATH --kind sandbox|volume --id ID --version VERSION --digest sha256:DIGEST [--expected-revision N --request-id ID]\norchestrator runtime register --socket PATH --id ID --version VERSION --template TEMPLATE --manifest FILE --digest sha256:DIGEST\norchestrator drain|drain-status|drain-ready|drain-abort|drain-activate|drain-complete --socket PATH [--owner ID] [--generation N] [--timeout-seconds N] [--mode quiescent|owner] [--target sha256:DIGEST] [--compatibility sha256:DIGEST]\norchestrator account bootstrap|recover-admin --config FILE --username NAME --password-stdin\norchestrator account recover-admin --socket PATH --username NAME --password-stdin")
 		return err
 	}
 	action := args[0]
@@ -41,6 +41,9 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 	}
 	if action == "volume" {
 		return runVolume(ctx, args[1:], output)
+	}
+	if action == "limits" {
+		return runLimits(ctx, args[1:], output)
 	}
 	if action == "runtime" {
 		return runRuntime(ctx, args[1:], output)
