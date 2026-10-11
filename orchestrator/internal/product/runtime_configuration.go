@@ -19,6 +19,7 @@ func runtimeConfigurationDigest(ctx context.Context, q queryer) (string, error) 
 		`SELECT revision,document FROM default_environment WHERE id=1`,
 		`SELECT configuration_revision,revision,policy FROM network_defaults WHERE id=1`,
 		`SELECT id,role,status FROM accounts ORDER BY id`,
+		`SELECT account_id,revision,policy FROM account_network_settings ORDER BY account_id`,
 		`SELECT id,revision FROM account_groups ORDER BY id`,
 		`SELECT account_id,group_id FROM account_memberships ORDER BY account_id,group_id`,
 		`SELECT id,revision,statements FROM permission_policies ORDER BY id`,

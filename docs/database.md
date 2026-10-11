@@ -150,6 +150,12 @@ Creating/initializing/deleting slots also participate in release readiness fence
 The canonical DDL contains the final admission triggers, indexes and blocker
 views directly. Migration-only read-command retirement state has been removed.
 
+`account_network_settings` stores a monotonic per-account configuration revision
+and nullable complete policy: null means live inheritance. An absent row is
+revision zero and inheritance. Clearing an override retains the row/revision;
+it cannot reset the concurrency fence. User overrides join the handoff
+configuration digest. Receipts, configuration changes and audit commit together.
+
 The network-defaults singleton stores only direct rules, resolver order, content
 revision and acceptance time. A lifecycle operation records its selected target
 in durable request JSON. The `network` resume phase commits verified binding

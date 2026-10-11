@@ -411,6 +411,13 @@ CREATE TABLE network_defaults (
  accepted_at TEXT NOT NULL
 );
 
+CREATE TABLE account_network_settings (
+ account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ policy TEXT,
+ updated_at TEXT NOT NULL
+);
+
 CREATE TABLE notification_reads (
  notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
  actor TEXT NOT NULL REFERENCES accounts(id),

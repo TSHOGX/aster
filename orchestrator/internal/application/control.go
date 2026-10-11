@@ -263,10 +263,12 @@ func (a *Application) controlHandler() http.Handler {
 		report := map[string]any{"project": project, "blockers": blockers}
 		if resourceErr == nil {
 			report["resources"] = resources
-			if network, err := a.Store.NetworkDefaults(r.Context()); err == nil {
-				report["default_network_policy_revision"] = network.Revision
+			if network, err := a.Store.OperatorUserNetwork(r.Context(), project.OwnerID); err == nil {
+				report["default_network_policy_revision"] = network.Default.Revision
+				report["desired_network_policy_revision"] = network.Desired.Revision
+				report["network_policy_mode"] = network.Mode
 				report["effective_network_policy_revision"] = resources.Profile.NetworkPolicyRevision
-				report["network_policy_pending"] = network.Revision != resources.Profile.NetworkPolicyRevision
+				report["network_policy_pending"] = network.Desired.Revision != resources.Profile.NetworkPolicyRevision
 			}
 			observed, e := a.Backend.InspectConfiguration(r.Context(), resources.Reference)
 			if e != nil {

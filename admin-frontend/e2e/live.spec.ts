@@ -149,3 +149,60 @@ test("private inspection requires an explicit grant and records its purpose",asy
   expect(audit.events).toHaveLength(1);expect(audit.events[0].details.purpose).toBe("Case 7: verify conversation state");expect(audit.events[0].details.message_count).toBe(0);
   await panel.getByRole("button",{name:"Clear inspected content",exact:true}).click();await expect(panel.getByRole("heading",{name:"Inspection conversation",exact:true})).toHaveCount(0);
 });
+
+test("real network editors preserve overrides, stale edits and lost-reply identity", async ({ page }, info) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto("/admin/network");
+  await page.getByLabel("Username", { exact: true }).fill("administrator");
+  await page.getByLabel("Password", { exact: true }).fill("web-test-permanent-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Default network settings" })).toBeVisible();
+  const identity = await (await page.request.get("/api/auth/session")).json();
+  const before = await (await page.request.get("/api/admin/network/default")).json();
+  await page.getByRole("button", { name: "Add resolver", exact: true }).click();
+  await page.getByLabel(`Resolver ${before.resolvers.length + 1}`, { exact: true }).fill("192.0.2.53");
+  await page.getByRole("button", { name: "Save network settings" }).click();
+  await expect(page.getByRole("status")).toContainText("Saved.");
+  const path = `/api/admin/users/${identity.id}/network`;
+  await page.goto(`/admin/users/${identity.id}/network`);
+  await expect(page.getByRole("combobox", { name: "Network policy" })).toHaveValue("inherit");
+  await expect(page.getByRole("button", { name: "Add resolver", exact: true })).toBeDisabled();
+  await page.getByRole("combobox", { name: "Network policy" }).selectOption("override");
+  await page.getByLabel("Resolver 1", { exact: true }).fill("198.51.100.53");
+  let lost = false;
+  const requests: unknown[] = [];
+  await page.route(`**${path}`, async route => {
+    if (route.request().method() === "PATCH") {
+      requests.push(route.request().postDataJSON());
+      if (!lost) { lost = true; const response = await route.fetch(); expect(response.ok()).toBe(true); await response.dispose(); await route.abort("failed"); return; }
+    }
+    await route.continue();
+  });
+  await page.getByRole("button", { name: "Save network settings" }).click();
+  await page.getByRole("button", { name: "Check original request" }).click();
+  await expect(page.getByRole("status")).toContainText("Original change confirmed");
+  expect(requests).toHaveLength(2); expect(requests[0]).toEqual(requests[1]);
+  await page.getByLabel("Resolver 1", { exact: true }).fill("203.0.113.53");
+  const current = await (await page.request.get("/api/admin/network/default")).json();
+  expect((await page.request.patch("/api/admin/network/default", { data: { request_id: crypto.randomUUID(), expected_revision: current.configuration_revision, direct: [], resolvers: ["192.0.2.54"] } })).ok()).toBe(true);
+  await page.getByRole("button", { name: "Save network settings" }).click();
+  await expect(page.locator("main").getByRole("alert")).toContainText("Settings changed");
+  await page.getByRole("button", { name: "Reload current settings" }).click();
+  await expect(page.getByRole("status")).toContainText("Current settings loaded");
+  await expect(page.getByLabel("Resolver 1", { exact: true })).toHaveValue("203.0.113.53");
+  await page.getByRole("button", { name: "Save network settings" }).click();
+  await expect(page.getByRole("status")).toContainText("Saved.");
+  await page.getByRole("combobox", { name: "Network policy" }).selectOption("inherit");
+  await expect(page.getByLabel("Resolver 1", { exact: true })).toHaveValue("192.0.2.54");
+  page.once("dialog", dialog => dialog.dismiss());
+  await page.getByRole("link", { name: "Back to account", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/admin/users/${identity.id}/network$`));
+  await page.getByRole("button", { name: "Save network settings" }).click();
+  await expect(page.getByRole("status")).toContainText("Saved.");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await page.screenshot({ path: info.outputPath("user-network-mobile.png") });
+  const saved = await (await page.request.get(path)).json();
+  expect(saved.mode).toBe("inherit"); expect(saved.override).toBeNull(); expect(saved.desired.resolvers).toEqual(["192.0.2.54"]);
+  const audit = await (await page.request.get(`/api/admin/audit-events?target=${identity.id}`)).json();
+  expect(JSON.stringify(audit)).toContain("network.user.update");
+});

@@ -25,3 +25,24 @@ func (a *Authentication) editNetworkDefaults(w http.ResponseWriter, r *http.Requ
 	}
 	writeJSON(w, 200, value)
 }
+
+func (a *Authentication) adminUserNetwork(w http.ResponseWriter, r *http.Request) {
+	value, err := a.Store.AdminUserNetwork(r.Context(), requestToken(r), r.PathValue("id"))
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, 200, value)
+}
+func (a *Authentication) editUserNetwork(w http.ResponseWriter, r *http.Request) {
+	var input product.UserNetworkEdit
+	if !decode(w, r, 64<<10, &input) {
+		return
+	}
+	value, err := a.Store.EditUserNetwork(r.Context(), requestToken(r), r.PathValue("id"), input)
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, 200, value)
+}

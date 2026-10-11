@@ -68,7 +68,7 @@ func (s *Store) EditNetworkDefaults(ctx context.Context, token string, input Net
 		if before.ConfigurationRevision != input.ExpectedRevision {
 			return ErrConflict
 		}
-		if err = validateRetainedNetwork(ctx, tx, policy); err != nil {
+		if err = validateRetainedNetwork(ctx, tx, policy, ""); err != nil {
 			return err
 		}
 		encoded, err := json.Marshal(policy)

@@ -26,6 +26,7 @@ func TestHandoffConfigurationIncludesPersistedAuthorityAndExcludesTraffic(t *tes
 	statements := []string{
 		`UPDATE network_defaults SET configuration_revision=configuration_revision+1`,
 		`UPDATE default_environment SET revision=revision+1`,
+		`INSERT INTO account_network_settings(account_id,revision,policy,updated_at) VALUES('alice',1,NULL,'test')`,
 		`UPDATE registered_sandboxes SET enabled=0`,
 		`UPDATE platform_resource_limits SET revision=revision+1 WHERE dimension='projects'`,
 		`UPDATE group_resource_policy SET default_value=default_value-1 WHERE dimension='projects'`,

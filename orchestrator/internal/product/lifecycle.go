@@ -146,7 +146,11 @@ func (l *Lifecycle) newOperation(ctx context.Context, tx *sql.Tx, project, kind,
 		if err != nil {
 			return err
 		}
-		target, policy, err := selectedNetworkProfile(ctx, tx, r.Profile)
+		var actor string
+		if err := tx.QueryRowContext(ctx, `SELECT owner_id FROM projects WHERE id=?`, project).Scan(&actor); err != nil {
+			return err
+		}
+		target, policy, err := selectedNetworkProfile(ctx, tx, actor, r.Profile)
 		if err != nil {
 			return err
 		}

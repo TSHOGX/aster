@@ -83,8 +83,10 @@ orchestrator notify --socket /var/lib/agent-workbench/control.sock --audience AC
 
 Diagnostics report resource counts, occupied Projects, pending work and database
 bytes. Preview diagnostics expose snapshot leases/bytes without source paths/tokens.
-Network diagnostics show accepted database defaults and each Project’s effective
-policy revision/pending change. Administrative network edits take effect on the
+Network diagnostics show accepted database defaults, the owner’s inherit/override
+mode and desired revision, and each Project’s effective policy revision/pending
+change. Pending compares the owner’s desired policy with the retained placement,
+so a deliberate override does not appear perpetually pending against the default. Administrative network edits take effect on the
 next creation/resume, without stopping live work. Project diagnostics compare the
 complete saved mount/network projection to public engine observations. Publication
 registers immutable versions and does not change the selected environment on

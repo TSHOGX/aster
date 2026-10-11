@@ -75,7 +75,7 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 	port := listener.Addr().(*net.TCPAddr).Port
 	certificate := base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: tls.Certificate().Raw}))
 	base := "/api/projects/network"
-	a.request("POST", "/api/projects", map[string]string{"id": "network", "title": "Network reload gate"}, 201)
+	a.request("POST", "/api/projects", map[string]string{"id": "network", "title": "Network policy gate"}, 201)
 	a.request("POST", base+"/resume", nil, 202)
 	a.await(25*time.Second, "initial active placement", func() bool { return a.request("GET", base, nil, 200)["state"] == "active" })
 	inspect := func() (sandbox.Reference, map[string]any) {
@@ -178,13 +178,36 @@ print('DNS TLS PACKAGE DENIAL OK')`, certificate, port, len(payload))
 		t.Fatal("restart replaced database network authority", retained)
 	}
 	shell(code)
-	reach["direct"] = []any{}
-	reach["resolvers"] = []string{}
-	apply()
+
+	identity := a.request("GET", "/api/auth/session", nil, 200)
+	userPath := "/api/admin/users/" + identity["id"].(string) + "/network"
+	userNetwork := a.request("GET", userPath, nil, 200)
+	userNetwork = a.request("PATCH", userPath, map[string]any{"request_id": "override-deny", "expected_revision": userNetwork["configuration_revision"], "expected_default_revision": userNetwork["default_configuration_revision"], "mode": "override", "direct": []any{}, "resolvers": []string{}}, 200)
+	_, pending := inspect()
+	if pending["network_policy_pending"] != true || pending["network_policy_mode"] != "override" {
+		t.Fatal(pending)
+	}
 	// The live placement still has the previously selected permission.
 	shell(code)
 	pauseResume()
 	shell(fmt.Sprintf("import socket\nassert open('/etc/resolv.conf').read()==''\ntry:\n socket.create_connection(('192.0.2.1',%d),timeout=1)\nexcept OSError: pass\nelse: raise Exception('removed access remains')", port))
+
+	// Override and default are distinct across owner replacement. Inheritance
+	// restores the current default only on a later verified resume.
+	a.stop()
+	a.start()
+	_, overridden := inspect()
+	if overridden["network_policy_pending"] != false || overridden["default_network_policy_revision"] != accepted || overridden["effective_network_policy_revision"] == accepted {
+		t.Fatal(overridden)
+	}
+	userNetwork = a.request("GET", userPath, nil, 200)
+	a.request("PATCH", userPath, map[string]any{"request_id": "restore-inheritance", "expected_revision": userNetwork["configuration_revision"], "expected_default_revision": userNetwork["default_configuration_revision"], "mode": "inherit"}, 200)
+	shell("assert open('/etc/resolv.conf').read()==''")
+	pauseResume()
+	shell(code)
+	if current["desired_network_policy_revision"] != accepted || current["network_policy_pending"] != false || !reflect.DeepEqual(current["resources"].(map[string]any)["volumes"], original["resources"].(map[string]any)["volumes"]) {
+		t.Fatal(current)
+	}
 	// Retained service routes still support a real native turn after replacement.
 	a.request("POST", base+"/sessions", map[string]string{"id": "model", "title": "Retained model route"}, 201)
 	a.request("POST", base+"/sessions/model/turns", map[string]string{"request_id": "network-model", "content": "Reply briefly"}, 201)
@@ -197,7 +220,7 @@ print('DNS TLS PACKAGE DENIAL OK')`, certificate, port, len(payload))
 	a.await(25*time.Second, "network Project cleanup", func() bool {
 		return a.cli("diagnostics", "--socket", socket)["state"].(map[string]any)["projects"].(map[string]any)["deleted"] == float64(1)
 	})
-	report := map[string]any{"dns": true, "tls_package_bytes": len(payload), "undeclared_denied": true, "running_unchanged": true, "permission_removal": true, "retained_model_completed": true, "public_internet_tested": false, "destination": netip.MustParseAddr("192.0.2.1").String()}
+	report := map[string]any{"dns": true, "tls_package_bytes": len(payload), "undeclared_denied": true, "running_unchanged": true, "permission_removal": true, "user_override_restart": true, "inheritance_restored": true, "retained_model_completed": true, "public_internet_tested": false, "destination": netip.MustParseAddr("192.0.2.1").String()}
 	raw, _ = json.MarshalIndent(report, "", "  ")
 	require(t, os.WriteFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "network-policy.json"), raw, 0644))
 }

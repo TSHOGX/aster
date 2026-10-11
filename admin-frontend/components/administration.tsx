@@ -9,6 +9,7 @@ import { PolicyList } from "./policy-list";
 import { PolicyEditor } from "./policy-editor";
 import { GroupEditor } from "./group-editor";
 import { UserList } from "./user-list";
+import { NetworkEditor } from "./network-editor";
 import { UserEditor } from "./user-editor";
 import { AuditView, OperationView } from "./audit-view";
 export function Administration({ route }: { route: string[] }) {
@@ -71,7 +72,7 @@ export function Administration({ route }: { route: string[] }) {
   };
   return <div className="admin-shell">
     <header className="admin-header"><strong>{displayName} <span>Administration</span></strong><nav aria-label="Administration" onClick={event => { if ((event.target as Element).closest("a") && !mayLeave()) event.preventDefault(); }}>
-      {status === "ready" && <><Link href="/users" aria-current={!route.length || route[0] === "users" ? "page" : undefined}>Users</Link><Link href="/groups" aria-current={route[0] === "groups" ? "page" : undefined}>Groups</Link><Link href="/policies" aria-current={route[0] === "policies" ? "page" : undefined}>Policies</Link><Link href="/audit" aria-current={route[0] === "audit" ? "page" : undefined}>Audit</Link></>}
+      {status === "ready" && <><Link href="/users" aria-current={!route.length || route[0] === "users" ? "page" : undefined}>Users</Link><Link href="/groups" aria-current={route[0] === "groups" ? "page" : undefined}>Groups</Link><Link href="/policies" aria-current={route[0] === "policies" ? "page" : undefined}>Policies</Link><Link href="/network" aria-current={route[0] === "network" ? "page" : undefined}>Network</Link><Link href="/audit" aria-current={route[0] === "audit" ? "page" : undefined}>Audit</Link></>}
       <WorkbenchLink />{identity && <button onClick={() => void logout()}>Sign out</button>}
     </nav></header>
     <main>
@@ -88,6 +89,8 @@ export function Administration({ route }: { route: string[] }) {
           : (route[0] === "groups" || route[0] === "policies") && route.length === 1 ? <PolicyList key={route[0]} kind={route[0]} />
           : route[0] === "groups" && route.length === 2 ? <GroupEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : route[0] === "policies" && route.length === 2 ? <PolicyEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
+          : route[0] === "network" && route.length === 1 ? <NetworkEditor key="default-network" onDirty={setEditorDirty} />
+          : route[0] === "users" && route.length === 3 && route[2] === "network" ? <NetworkEditor key={`network-${route[1]}`} id={route[1]} onDirty={setEditorDirty} />
           : route[0] === "audit" && route.length === 1 ? <AuditView />
           : route[0] === "operations" && route.length === 2 ? <OperationView id={route[1]} />
           : <><h1>Page not found</h1><Link href="/users">Open users</Link></>}

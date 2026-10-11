@@ -11,7 +11,7 @@ import (
 	"sort"
 )
 
-// NetworkPolicy contains only mutable defaults. A snapshot is selected inside
+// NetworkPolicy contains only administrator-managed direct/DNS settings. A snapshot is selected inside
 // the transaction recording creation/resume intent, never from child copies.
 type NetworkPolicy struct {
 	Revision  string       `json:"revision"`
@@ -25,6 +25,9 @@ type NetworkDefaults struct {
 }
 
 func NewNetworkPolicy(r Reachability) (NetworkPolicy, error) {
+	if len(r.Direct) > 256 || len(r.Resolvers) > 16 {
+		return NetworkPolicy{}, fmt.Errorf("%w: at most 256 direct rules and 16 resolvers", ErrInvalid)
+	}
 	p := NetworkPolicy{Direct: append([]DirectRule{}, r.Direct...), Resolvers: append([]netip.Addr{}, r.Resolvers...)}
 	if err := (Reachability{Direct: p.Direct, Resolvers: p.Resolvers}).validate(); err != nil {
 		return p, err
@@ -89,7 +92,7 @@ func (s *Store) AcceptNetworkPolicy(ctx context.Context, p NetworkPolicy) (out N
 		if phase != "open" {
 			return ErrDraining
 		}
-		if e = validateRetainedNetwork(ctx, tx, checked); e != nil {
+		if e = validateRetainedNetwork(ctx, tx, checked, ""); e != nil {
 			return e
 		}
 		out = NetworkDefaults{NetworkPolicy: checked, AcceptedAt: s.timestamp()}
@@ -103,20 +106,19 @@ func (s *Store) AcceptNetworkPolicy(ctx context.Context, p NetworkPolicy) (out N
 	return
 }
 
-func selectedNetworkProfile(ctx context.Context, q queryer, profile Profile) (Profile, *NetworkPolicy, error) {
-	defaults, err := networkDefaults(ctx, q)
-	if errors.Is(err, ErrNotFound) {
-		return profile, nil, ErrArtifactUnavailable
-	}
+func selectedNetworkProfile(ctx context.Context, q queryer, actor string, profile Profile) (Profile, *NetworkPolicy, error) {
+	settings, err := userNetworkSettings(ctx, q, actor)
 	if err != nil {
 		return profile, nil, err
 	}
-	target := defaults.Apply(profile)
-	return target, &defaults.NetworkPolicy, target.Validate()
+	target := settings.Desired.Apply(profile)
+	return target, &settings.Desired, target.Validate()
 }
 
-func validateRetainedNetwork(ctx context.Context, q queryer, checked NetworkPolicy) error {
-	rows, err := q.QueryContext(ctx, `SELECT r.profile FROM project_resources r JOIN projects p ON p.id=r.project_id WHERE p.state<>'deleted'`)
+func validateRetainedNetwork(ctx context.Context, q queryer, checked NetworkPolicy, actor string) error {
+	rows, err := q.QueryContext(ctx, `SELECT r.profile FROM project_resources r JOIN projects p ON p.id=r.project_id
+ LEFT JOIN account_network_settings n ON n.account_id=p.owner_id
+ WHERE p.state<>'deleted' AND ((?='' AND n.policy IS NULL) OR p.owner_id=?)`, actor, actor)
 	if err != nil {
 		return err
 	}

@@ -151,7 +151,7 @@ operational identities. Documentation uses `/etc/agent-workbench`,
 Existing installations must keep their actual configured paths and template IDs;
 these example names do not require moving data or rebinding existing Projects.
 
-## Mutable network defaults
+## Network defaults and user overrides
 
 Direct/DNS policy is seeded once at account bootstrap and then owned by the
 product database. Startup does not rewrite it, and no config watcher or
@@ -165,8 +165,20 @@ Creation/resume selects the accepted content revision inside its product
 transaction. A paused binding is conditionally updated and its complete mount and
 network projection verified before admission reopens. Running placements retain
 their actual policy; an edit does not stop or rewrite them. Services and host
-mappings remain operator-owned. User inherit/override network settings and their
-admin UI are still separate unfinished integration.
+mappings remain operator-owned. Administration’s Network page edits the default;
+each account’s Network settings page chooses inheritance or a complete override.
+`GET/PATCH /api/admin/users/{id}/network` exposes the user configuration revision,
+current default configuration revision, default policy and desired policy. Saving
+requires `expected_revision`, `expected_default_revision`, `request_id` and
+`mode` (`inherit` or `override`). Override requires complete `direct` and
+`resolvers` arrays; inheritance omits both. Empty override arrays deny direct
+connections and DNS. Policies allow at most 256 direct rules and 16 resolvers.
+
+User edits validate against that user’s retained service bindings. Default edits
+validate inheriting Projects; existing overrides remain independent. Returning to
+inheritance revalidates current default bindings. The editor preserves unsaved
+edits on stale reload and resolves an uncertain response using the original
+request receipt. A save never performs an implicit apply-now operation.
 
 Resolvers authorize UDP/53. Deployments requiring TCP DNS fallback must declare
 an explicit TCP/53 direct rule. Direct permissions are IPv4 CIDR/port/protocol

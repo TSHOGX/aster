@@ -122,7 +122,7 @@ func resolveAllocationProfile(ctx context.Context, q queryer, actor string, bind
 		}
 		profile.Volumes = append(profile.Volumes, slot)
 	}
-	profile, _, err = selectedNetworkProfile(ctx, q, profile)
+	profile, _, err = selectedNetworkProfile(ctx, q, actor, profile)
 	if err != nil {
 		return Profile{}, err
 	}
