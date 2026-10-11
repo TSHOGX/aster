@@ -77,6 +77,15 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	if before.Occupied || before.Reference.SandboxID != "" || beforeUsage.Allocated != 64<<20 || beforeUsage.Reserved != 88<<20 {
 		t.Fatal("first upload did not reserve full plan without compute", before, beforeUsage)
 	}
+	account, err := store.Account(runctx, scope.Actor)
+	must(t, err)
+	_, token, err := store.Authenticate(runctx, account.Username, "fixture-password")
+	must(t, err)
+	projected, err := store.OwnUsage(runctx, token)
+	must(t, err)
+	if projected.Usage[ResourcePersistent] != (ResourceUsage{Used: 64 << 20, Reserved: 88 << 20}) || projected.Usage[ResourceRunningProjects] != (ResourceUsage{}) {
+		t.Fatal(projected)
+	}
 	deniedScope := Scope{Actor: scope.Actor, ProjectID: "quota-denied-project"}
 	_, err = store.CreateProject(runctx, deniedScope.Actor, deniedScope.ProjectID, "Over quota")
 	must(t, err)
@@ -145,6 +154,25 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	if usage.Allocated != 152<<20 || usage.Reserved != 0 {
 		t.Fatal("owned/shared accounting mismatch", usage)
 	}
+	projected, err = store.OwnUsage(runctx, token)
+	must(t, err)
+	if projected.Usage[ResourcePersistent] != (ResourceUsage{Used: 152 << 20}) || projected.Usage[ResourceRunningProjects].Used != 1 {
+		t.Fatal(projected)
+	}
+	fixtureResourceLimit(t, store, scope.Actor, ResourcePersistent, 128<<20)
+	fixtureResourceLimit(t, store, scope.Actor, ResourceMounts, 7)
+	projected, err = store.OwnUsage(runctx, token)
+	must(t, err)
+	if len(projected.Overages) != 1 || projected.Overages[0].Dimension != ResourcePersistent || projected.SavedPlans.Count != 1 {
+		t.Fatal(projected)
+	}
+	active, err := store.Project(runctx, scope)
+	must(t, err)
+	must(t, lifecycle.Pause(runctx, scope, active.Revision))
+	converge()
+	wantError(t, lifecycle.EnsureActive(runctx, scope, profile.Bindings()), ErrQuotaExceeded)
+	_, err = files.Upload(runctx, scope, "after-reduction", writeRequest("retained", "still writable"), strings.NewReader("still writable"))
+	must(t, err)
 	project, err := store.Project(runctx, scope)
 	must(t, err)
 	must(t, store.DeleteProject(runctx, scope, project.Revision))
@@ -153,6 +181,11 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	must(t, err)
 	if usage != (StorageUsage{}) {
 		t.Fatal("cleanup retained storage charge", usage)
+	}
+	projected, err = store.OwnUsage(runctx, token)
+	must(t, err)
+	if projected.Usage[ResourcePersistent] != (ResourceUsage{}) || projected.SavedPlans.Count != 0 || len(projected.Overages) != 0 {
+		t.Fatal(projected)
 	}
 	got, err := backend.ReadVolume(runctx, source.VolumeReference, "sample", 0, int64(len(data)))
 	must(t, err)
@@ -170,5 +203,5 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	}
 	must(t, backend.DeleteVolume(runctx, source.VolumeReference))
 	must(t, backend.DeleteVolume(runctx, staging.VolumeReference))
-	t.Logf("first upload: 64MiB allocated + 88MiB reserved, no compute; second full plan denied at 152MiB quota; observed %d mounts; independent native copies, read-only owned/shared mounts, 152MiB owned charge, zero after cleanup", len(mounts))
+	t.Logf("first upload: 64MiB allocated + 88MiB reserved, no compute; second full plan denied at 152MiB quota; observed %d mounts; independent native copies, read-only owned/shared mounts, 152MiB owned charge; own usage projects reservations and overage, reduced quotas block resume while paused upload works, zero after cleanup", len(mounts))
 }

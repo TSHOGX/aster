@@ -7,6 +7,7 @@ import { api, APIError, command } from "@/lib/project-api";
 import type { Accent, ThemeMode } from "@web/appearance";
 import { useT } from "@/lib/i18n";
 import { IconButton, trapDialogFocus, useDialog } from "./ui";
+import { AccountUsage } from "./account-usage";
 import type { AccountAppearance } from "./account-appearance";
 import "./account-settings.css";
 
@@ -21,6 +22,7 @@ export function AccountSettings({ identity, appearance, onIdentity, onProfile, o
 }) {
   const tr = useT(), ask = useDialog();
   const dialog = useRef<HTMLDialogElement>(null);
+  const [usageOpen, setUsageOpen] = useState(false);
   const [profile, setProfile] = useState<Profile>(identity);
   const [name, setName] = useState(identity.display_name);
   const [profileLoading, setProfileLoading] = useState(true);
@@ -83,6 +85,7 @@ export function AccountSettings({ identity, appearance, onIdentity, onProfile, o
           </div>
         </div>}
       </section>
+      <section><details onToggle={event => setUsageOpen(event.currentTarget.open)}><summary>{tr("Resources and usage")}</summary>{usageOpen && <AccountUsage />}</details></section>
       <section aria-labelledby="account-security-title">
         <h3 id="account-security-title">{tr("Account and security")}</h3>
         <form onSubmit={event => {

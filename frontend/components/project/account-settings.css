@@ -29,3 +29,5 @@
 .account-settings.app-dialog > header { margin: 0; flex-shrink: 0; }
 .account-settings-body { min-height: 0; }
 .account-settings input, .account-settings select { font-size: 1rem; }
+
+.account-usage { overflow-wrap: anywhere; }.account-usage details { border-top: 1px solid var(--border); padding: .8rem 0; }.account-usage summary { cursor: pointer; line-height: 1.5; }.account-usage dl { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; font-size: .85rem; }.account-usage dd { margin: 0; }.account-usage ul { padding-left: 1.3rem; font-size: .85rem; }

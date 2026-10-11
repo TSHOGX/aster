@@ -111,29 +111,17 @@ func computeUsage(ctx context.Context, q queryer, actor string) (map[ResourceDim
 	return out, rows.Err()
 }
 func planQuota(profile Profile, values map[ResourceDimension]EffectiveResource) error {
-	var owned, largest int64
-	for _, slot := range profile.Volumes {
-		if slot.Storage == "owned" {
-			var err error
-			owned, err = checkedSum(owned, slot.CapacityBytes)
-			if err != nil {
-				return err
-			}
-			largest = max(largest, slot.CapacityBytes)
-		}
+	issues, err := savedPlanResourceFit(profile, values, false)
+	if err != nil {
+		return err
 	}
-	for _, entry := range []struct {
-		dimension ResourceDimension
-		amount    int64
-	}{
-		{ResourceWorkspace, profile.CapacityForRole("workspace")}, {ResourceRuntime, profile.CapacityForRole("runtime")}, {ResourceVolume, largest}, {ResourceProjectVolumes, owned}, {ResourceMounts, int64(len(profile.Volumes))},
-	} {
-		if err := quotaCheck(entry.dimension, ResourceUsage{}, entry.amount, values[entry.dimension].Effective); err != nil {
-			return err
-		}
+	if len(issues) > 0 {
+		issue := issues[0]
+		return &QuotaError{Dimension: issue.Dimension, RequestedDelta: issue.Requested, Limit: issue.Limit}
 	}
 	return nil
 }
+
 func admitStoragePlan(ctx context.Context, q queryer, actor string, profile Profile) error {
 	values, err := quotaValues(ctx, q, actor)
 	if err != nil {

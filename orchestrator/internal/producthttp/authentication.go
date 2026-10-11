@@ -51,6 +51,7 @@ func (a *Authentication) Handler(next http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/me/password", a.password)
 	mux.HandleFunc("DELETE /api/me/sessions", a.logoutAll)
 	mux.HandleFunc("GET /api/users", a.listUsers)
+	a.resourceRoutes(mux)
 	mux.HandleFunc("GET /api/me/preferences", a.preferences)
 	mux.HandleFunc("PATCH /api/me/preferences", a.preferences)
 	mux.HandleFunc("GET /api/me/profile", a.profile)

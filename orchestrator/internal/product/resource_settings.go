@@ -15,7 +15,7 @@ type UserResourceSettings struct {
 	AccountID             string                                  `json:"account_id"`
 	Revision              int64                                   `json:"revision"`
 	AuthorizationRevision int64                                   `json:"authorization_revision"`
-	Overrides             map[ResourceDimension]*int64            `json:"overrides"`
+	Overrides             ResourceOverrides                       `json:"overrides"`
 	Effective             map[ResourceDimension]EffectiveResource `json:"effective"`
 }
 

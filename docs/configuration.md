@@ -193,3 +193,36 @@ does not add a service binding to an existing Project. A Project with no eligibl
 gateway continues to manage schedules through the browser. Enable runtime tools
 only after the gateway advertises platform protocol 1 and the measured current
 runtime contains the scheduling extension. See the [gateway contract](gateway-contract.md).
+
+## Resource entitlement editing
+
+Administration links each group to its Resource policy and each account to
+Resources and usage. Group dimensions are omitted or a complete default/ceiling
+pair. User dimensions inherit or carry an explicit requested value; zero is an
+explicit zero allowance. Effective values take maximum group grants, platform
+bounds and user requests, with source groups and capped requests shown together.
+The workbench Settings dialog exposes Resources and usage read-only, including
+the user's desired network selection. It provides no self-service quota edit.
+
+The transport uses decimal **strings** for all resource quantities to preserve
+integers above JavaScript's safe range. Values range from zero to signed 64-bit
+maximum, with existing platform/entitlement bounds enforced independently. Bytes
+are bytes, CPU is millis, and counts are integer counts. Fractional units, numeric
+JSON quantities and incomplete group entitlement pairs are rejected. Revisions
+remain numbers. A null user override clears it; a null group dimension removes
+that offer, while omission leaves the field unchanged.
+
+- `GET/PATCH /api/admin/groups/{id}/resource-policy`
+- `GET/PATCH /api/admin/users/{id}/resource-settings`
+- `POST /api/admin/changes/preview` with `kind`, `target_id`, `expected_revision`
+  and `dimensions` or `overrides`; `limit`/`cursor` paginate affected accounts.
+- `GET /api/admin/users/{id}/usage` and `GET /api/me/usage`
+
+Edits require preview's `expected_dependencies`, the target revision and a request
+ID. Scope is server-derived. Stale dependencies reject save; the editor retains
+changed fields for another review/preview. Unknown outcomes use the original
+request receipt. Previews distinguish current usage overages, default environment
+fit and conflicts in saved Project capacities. Reductions preserve data and
+allocations; they block incompatible provisioning/resume instead of resizing
+storage. Cleanup and already-admitted settlement remain available. Shared source
+artifacts are not charged repeatedly to user-owned storage.

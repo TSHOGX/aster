@@ -8,8 +8,8 @@ import (
 type ResourceFitIssue struct {
 	Code      string            `json:"code"`
 	Dimension ResourceDimension `json:"dimension,omitempty"`
-	Requested int64             `json:"requested"`
-	Limit     int64             `json:"limit"`
+	Requested int64             `json:"requested,string"`
+	Limit     int64             `json:"limit,string"`
 	Field     string            `json:"field,omitempty"`
 }
 

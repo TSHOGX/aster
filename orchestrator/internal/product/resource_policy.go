@@ -32,8 +32,8 @@ const (
 var resourceDimensions = []ResourceDimension{ResourceProjects, ResourceRunningProjects, ResourceCPU, ResourceMemory, ResourceOverlay, ResourceWorkspace, ResourceRuntime, ResourceAggregateCPU, ResourceAggregateMemory, ResourceVolume, ResourceProjectVolumes, ResourceMounts, ResourcePersistent, ResourceAgents, ResourceTerminals, ResourceSchedules, ResourceTransfer}
 
 type ResourceEntitlement struct {
-	Default int64 `json:"default"`
-	Ceiling int64 `json:"ceiling"`
+	Default int64 `json:"default,string"`
+	Ceiling int64 `json:"ceiling,string"`
 }
 type GroupResources struct {
 	ID         string                                    `json:"id"`
@@ -44,15 +44,15 @@ type GroupResources struct {
 type ResourceSource struct {
 	GroupID   string `json:"group_id"`
 	GroupName string `json:"group_name"`
-	Default   int64  `json:"default"`
-	Ceiling   int64  `json:"ceiling"`
+	Default   int64  `json:"default,string"`
+	Ceiling   int64  `json:"ceiling,string"`
 }
 type EffectiveResource struct {
-	Default       int64            `json:"default"`
-	Ceiling       int64            `json:"ceiling"`
-	PlatformLimit int64            `json:"platform_limit"`
-	Override      *int64           `json:"override"`
-	Effective     int64            `json:"effective"`
+	Default       int64            `json:"default,string"`
+	Ceiling       int64            `json:"ceiling,string"`
+	PlatformLimit int64            `json:"platform_limit,string"`
+	Override      *int64           `json:"override,string"`
+	Effective     int64            `json:"effective,string"`
 	Capped        bool             `json:"capped"`
 	Sources       []ResourceSource `json:"sources"`
 }

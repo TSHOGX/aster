@@ -206,3 +206,88 @@ test("real network editors preserve overrides, stale edits and lost-reply identi
   const audit = await (await page.request.get(`/api/admin/audit-events?target=${identity.id}`)).json();
   expect(JSON.stringify(audit)).toContain("network.user.update");
 });
+
+test("real resource editors preserve exact quantities and show retained usage to the owner", async ({ page, browser, baseURL }, info) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto("/admin/groups");
+  await page.getByLabel("Username", { exact: true }).fill("administrator");
+  await page.getByLabel("Password", { exact: true }).fill("web-test-permanent-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Groups", exact: true })).toBeVisible();
+  const groupResult = await page.request.post("/api/admin/groups", { data: { request_id: crypto.randomUUID(), name: "Resource grants", description: "Browser resource test" } });
+  expect(groupResult.status()).toBe(200); const group = (await groupResult.json()).group;
+  const created = await page.request.post("/api/admin/users", { data: { request_id: crypto.randomUUID(), username: "resource-reader", display_name: "Resource Reader", role: "user", group_ids: ["standard-users", group.id] } });
+  expect(created.status()).toBe(201); const result = await created.json(), user = result.user;
+  const ownerContext = await browser.newContext({ baseURL, locale: "en-US", viewport: { width: 390, height: 900 } });
+  try {
+    const owner = await ownerContext.newPage();
+    await owner.goto("/");
+    await owner.getByLabel("Username", { exact: true }).fill(user.username);
+    await owner.getByLabel("Password", { exact: true }).fill(result.temporary_password);
+    await owner.getByRole("button", { name: "Sign in", exact: true }).click();
+    await owner.getByLabel("New password", { exact: true }).fill("resource-reader-permanent-password");
+    await owner.getByRole("button", { name: "Save password", exact: true }).click();
+    await expect(owner.getByRole("button", { name: "Open navigation", exact: true })).toBeVisible();
+    for (let i = 0; i < 4; i++) expect((await owner.request.post("/api/projects", { data: { id: `resource-project-${i}`, title: `Resource ${i}` } })).status()).toBe(201);
+    await page.goto(`/admin/groups/${group.id}/resources`);
+    await page.getByLabel("Persistent storage mode", { exact: true }).selectOption("explicit");
+    await page.getByLabel("Persistent storage default", { exact: true }).fill("9007199254740993");
+    await page.getByLabel("Persistent storage ceiling", { exact: true }).fill("9007199254740994");
+    await page.getByRole("button", { name: "Preview resource changes", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Change preview", exact: true })).toBeVisible();
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Save resource settings", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("Resource settings saved");
+    await expect(page.getByLabel("Persistent storage default", { exact: true })).toHaveValue("9007199254740993");
+    const policy = await (await page.request.get(`/api/admin/groups/${group.id}/resource-policy`)).json();
+    expect(policy.dimensions.persistent_bytes).toEqual({ default: "9007199254740993", ceiling: "9007199254740994" });
+    const userPath = `/api/admin/users/${user.id}/resource-settings`;
+    await page.goto(`/admin/users/${user.id}/resources`);
+    await page.getByLabel("Projects mode", { exact: true }).selectOption("explicit");
+    await page.getByLabel("Projects requested", { exact: true }).fill("2");
+    await page.getByRole("button", { name: "Preview resource changes", exact: true }).click();
+    await expect(page.getByText("Usage overages: 0 → 1", { exact: true })).toBeVisible();
+    const changedGroup = await (await page.request.get(`/api/admin/groups/${group.id}`)).json();
+    expect((await page.request.patch(`/api/admin/groups/${group.id}`, { data: { request_id: crypto.randomUUID(), expected_revision: changedGroup.revision, description: "Changed after preview" } })).ok()).toBe(true);
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Save resource settings", exact: true }).click();
+    await expect(page.locator("main").getByRole("alert")).toContainText("Settings or dependencies changed");
+    await page.getByRole("button", { name: "Reload current settings", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("Your edits are retained");
+    await expect(page.getByLabel("Projects requested", { exact: true })).toHaveValue("2");
+    await page.getByRole("button", { name: "Preview resource changes", exact: true }).click();
+    await expect(page.getByText("Usage overages: 0 → 1", { exact: true })).toBeVisible();
+    let lost = false;
+    const requests: unknown[] = [];
+    await page.route(`**${userPath}`, async route => {
+      if (route.request().method() === "PATCH") {
+        requests.push(route.request().postDataJSON());
+        if (!lost) { lost = true; const response = await route.fetch(); expect(response.ok()).toBe(true); await response.dispose(); await route.abort("failed"); return; }
+      }
+      await route.continue();
+    });
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Save resource settings", exact: true }).click();
+    await page.getByRole("button", { name: "Check original request", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("Original resource change confirmed");
+    expect(requests).toHaveLength(2); expect(requests[0]).toEqual(requests[1]);
+    const usage = await (await owner.request.get("/api/me/usage")).json();
+    expect(usage.settings.effective.projects.effective).toBe("2"); expect(usage.usage.projects.used).toBe("4");
+    expect((await owner.request.patch(userPath, { data: requests[0] })).status()).toBe(403);
+    await owner.reload();
+    await owner.getByRole("button", { name: "Open navigation", exact: true }).click();
+    await owner.getByRole("button", { name: "Account", exact: true }).click();
+    await owner.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    const dialog = owner.getByRole("dialog", { name: "Settings", exact: true });
+    await dialog.getByText("Resources and usage", { exact: true }).click();
+    await expect(dialog.getByText("Projects: 2 count", { exact: true })).toBeVisible();
+    await dialog.getByText("Projects: 2 count", { exact: true }).click();
+    await expect(dialog.locator(".resource-allowance[open]").getByText("Requested override", { exact: true })).toBeVisible();
+    await dialog.getByText("Usage overages (1)", { exact: true }).click();
+    await expect(dialog.getByText("Projects: Requested 4; allowed 2", { exact: true })).toBeVisible();
+    expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await owner.screenshot({ path: info.outputPath("own-resource-usage-mobile.png") });
+    await page.screenshot({ path: info.outputPath("admin-resource-usage-mobile.png") });
+  } finally { await ownerContext.close(); }
+});

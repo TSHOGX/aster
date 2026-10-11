@@ -15,7 +15,7 @@ type ResourceChange struct {
 	TargetID         string                                     `json:"target_id"`
 	ExpectedRevision int64                                      `json:"expected_revision"`
 	Dimensions       map[ResourceDimension]*ResourceEntitlement `json:"dimensions,omitempty"`
-	Overrides        map[ResourceDimension]*int64               `json:"overrides,omitempty"`
+	Overrides        ResourceOverrides                          `json:"overrides,omitempty"`
 }
 type ResourceMutation struct {
 	ResourceChange
@@ -28,16 +28,21 @@ type ResourceChangeResult struct {
 	Replayed bool                  `json:"replayed"`
 }
 type ResourceImpact struct {
-	AccountID  string                                  `json:"account_id"`
-	Username   string                                  `json:"username"`
-	Before     map[ResourceDimension]EffectiveResource `json:"before"`
-	After      map[ResourceDimension]EffectiveResource `json:"after"`
-	BeforePlan []ResourceFitIssue                      `json:"before_plan_issues"`
-	AfterPlan  []ResourceFitIssue                      `json:"after_plan_issues"`
+	Usage            map[ResourceDimension]ResourceUsage     `json:"usage"`
+	BeforeOverages   []ResourceFitIssue                      `json:"before_overages"`
+	AfterOverages    []ResourceFitIssue                      `json:"after_overages"`
+	BeforeSavedPlans SavedPlanConflicts                      `json:"before_saved_plan_conflicts"`
+	AfterSavedPlans  SavedPlanConflicts                      `json:"after_saved_plan_conflicts"`
+	AccountID        string                                  `json:"account_id"`
+	Username         string                                  `json:"username"`
+	Before           map[ResourceDimension]EffectiveResource `json:"before"`
+	After            map[ResourceDimension]EffectiveResource `json:"after"`
+	BeforePlan       []ResourceFitIssue                      `json:"before_plan_issues"`
+	AfterPlan        []ResourceFitIssue                      `json:"after_plan_issues"`
 }
 type ResourceChangePreview struct {
 	ExpectedDependencies string           `json:"expected_dependencies"`
-	AffectedAccounts     int64            `json:"affected_accounts"`
+	AffectedAccounts     int64            `json:"affected_accounts,string"`
 	Users                []ResourceImpact `json:"users"`
 	NextCursor           string           `json:"next_cursor,omitempty"`
 }
@@ -261,6 +266,26 @@ func (s *Store) PreviewResourceChange(ctx context.Context, token string, input R
 		}
 		user.Before = before.Effective
 		user.After, err = proposedResources(ctx, tx, user.AccountID, input)
+		if err != nil {
+			return out, err
+		}
+		user.Usage, err = accountResourceUsage(ctx, tx, user.AccountID)
+		if err != nil {
+			return out, err
+		}
+		user.BeforeOverages, err = resourceOverages(user.Usage, user.Before)
+		if err != nil {
+			return out, err
+		}
+		user.AfterOverages, err = resourceOverages(user.Usage, user.After)
+		if err != nil {
+			return out, err
+		}
+		user.BeforeSavedPlans, err = savedPlanConflicts(ctx, tx, user.AccountID, user.Before)
+		if err != nil {
+			return out, err
+		}
+		user.AfterSavedPlans, err = savedPlanConflicts(ctx, tx, user.AccountID, user.After)
 		if err != nil {
 			return out, err
 		}

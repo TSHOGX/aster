@@ -189,10 +189,21 @@ after removal, and their dependency fingerprint includes override authority.
 
 The resource-change service computes bounded affected-account configuration and
 whole-environment fit previews, checks dependency revisions on commit, and reuses
-administrative receipts/audit. These configuration methods remain internal pending the complete usage/preview
-and administrative UI surface. Allocation now selects database environment and
+administrative receipts/audit. The admin resource-policy/resource-settings APIs
+expose these services; `/api/me/usage` resolves the current session's own account.
+Reads use one database snapshot. Quantity fields use decimal strings on the wire,
+including overrides, source defaults/ceilings, fit issues and usage; revisions
+remain revision numbers. User override null means inheritance.
+
+Usage projections share admission's counters: allocated and outstanding reserved
+storage, occupied compute, starting/running Agent and Terminal work, active
+schedules and non-deleted Project metadata. Preview reports current overages,
+current-default fit and retained-plan conflicts separately, including exact slot
+fields. Saved-plan summaries count all conflicting Projects and include the first
+20. A preview reserves no capacity. Allocation selects database environment and
 effective user requests inside the reservation transaction; product admission
-enforces those allowances against existing reservations and the complete plan. The slot ledger records full declared capacities, not
+enforces those allowances against existing reservations and the complete plan.
+The slot ledger records full declared capacities, not
 measured filesystem byte consumption or a promise of available engine capacity.
 
 Every saved Profile includes positive environment/resource revisions and an exact

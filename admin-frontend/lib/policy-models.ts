@@ -7,6 +7,6 @@ export type PolicyResult = { group?: GroupDetail; policy?: Policy; deleted_id?: 
 export type AccessSource = { group_id: string; group_name: string; policy_id: string; policy_name: string; effect: PolicyEffect };
 export type ExplainedAction = { allowed: boolean; sources: AccessSource[] };
 export type ExplainedAccess = Omit<EffectiveAccess, "actions"> & { actions: Record<ProductAction, ExplainedAction> };
-export type ResourceValue = { default: number; ceiling: number; effective: number; platform_limit: number };
+export type ResourceValue = { default: string; ceiling: string; effective: string; platform_limit: string };
 export type GroupImpact = { account_id: string; username: string; account_status: string; management_role: string; before_access: Record<ProductAction, ExplainedAction>; after_access: Record<ProductAction, ExplainedAction>; before_resources: Record<string, ResourceValue>; after_resources: Record<string, ResourceValue> };
 export type DeletionPreview = { group: GroupDetail; expected_dependencies: string; users: GroupImpact[]; next_cursor?: string };
