@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/testfixture"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -144,7 +145,7 @@ func lifecycleFixture(t *testing.T) (*Lifecycle, Scope, *fakeLifecycle) {
 	t.Helper()
 	s, a, _ := fixture(t)
 	f := fakeBackend()
-	return &Lifecycle{Store: s, Backend: f, MaxProjects: 1}, a, f
+	return &Lifecycle{VerifyRuntime: testfixture.VerifyRuntime, Store: s, Backend: f, MaxProjects: 1}, a, f
 }
 func drive(t *testing.T, l *Lifecycle, project string) {
 	t.Helper()
@@ -178,7 +179,7 @@ func TestConcurrentProjectFirstUseAndOriginalCreateKeys(t *testing.T) {
 	errs := make(chan error, 30)
 	for i := 0; i < 30; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); errs <- l.EnsureActive(ctx, a, testProfile()) }()
+		go func() { defer wg.Done(); errs <- l.EnsureActive(ctx, a, testProfile().Bindings()) }()
 	}
 	wg.Wait()
 	close(errs)
@@ -216,16 +217,16 @@ func TestConcurrentProjectFirstUseAndOriginalCreateKeys(t *testing.T) {
 		_, err = l.Store.CreateSession(ctx, a, fmt.Sprintf("s%d", i), "Agent")
 		must(t, err)
 	}
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	if len(f.creates) != 1 {
 		t.Fatal("Session reserved placement")
 	}
-	wantError(t, l.EnsureActive(ctx, Scope{"bob", "b"}, testProfile()), ErrCapacity)
+	wantError(t, l.EnsureActive(ctx, Scope{"bob", "b"}, testProfile().Bindings()), ErrCapacity)
 }
 
 func TestIdleRevisionsQueuedSessionsHeldAndRetainedTerminal(t *testing.T) {
 	l, a, _ := lifecycleFixture(t)
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	now := time.Now()
 	l.Store.now = func() time.Time { return now }
@@ -293,7 +294,7 @@ func TestIdleRevisionsQueuedSessionsHeldAndRetainedTerminal(t *testing.T) {
 
 func TestLostPauseResumeAndAdmissionDuringPause(t *testing.T) {
 	l, a, f := lifecycleFixture(t)
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	_, err := l.Store.CreateSession(ctx, a, "s", "Agent")
 	must(t, err)
@@ -317,10 +318,17 @@ func TestLostPauseResumeAndAdmissionDuringPause(t *testing.T) {
 	if r.Occupied {
 		t.Fatal("confirmed pause retains placement")
 	}
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	f.fail["resume"] = 1
-	if err = l.Reconcile(ctx, a.ProjectID); err == nil {
-		t.Fatal("lost resume reply missing")
+	before := f.calls["resume"]
+	for attempts := 0; attempts < 4 && f.calls["resume"] == before; attempts++ {
+		err = l.Reconcile(ctx, a.ProjectID)
+		if f.calls["resume"] == before {
+			must(t, err)
+		}
+	}
+	if err == nil || f.calls["resume"] != before+1 {
+		t.Fatal("lost resume reply missing", err)
 	}
 	drive(t, l, a.ProjectID)
 	r, err = l.ActiveResources(ctx, a)
@@ -340,11 +348,11 @@ func TestRestartRecoversDeadlineAndActivities(t *testing.T) {
 	s, err := openFixtureStore(ctx, path)
 	must(t, err)
 	f := fakeBackend()
-	l := &Lifecycle{Store: s, Backend: f, MaxProjects: 1}
+	l := &Lifecycle{VerifyRuntime: testfixture.VerifyRuntime, Store: s, Backend: f, MaxProjects: 1}
 	a := Scope{"alice", "a"}
 	_, err = s.CreateProject(ctx, a.Actor, a.ProjectID, "A")
 	must(t, err)
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	timer, err := s.ArmIdle(ctx, a, time.Second)
 	must(t, err)
@@ -352,11 +360,11 @@ func TestRestartRecoversDeadlineAndActivities(t *testing.T) {
 	s, err = openFixtureStore(ctx, path)
 	must(t, err)
 	defer s.Close()
-	l = &Lifecycle{Store: s, Backend: f, MaxProjects: 1}
+	l = &Lifecycle{VerifyRuntime: testfixture.VerifyRuntime, Store: s, Backend: f, MaxProjects: 1}
 	s.now = func() time.Time { return time.Now().Add(time.Minute) }
 	must(t, l.PauseIdle(ctx, a, timer))
 	drive(t, l, a.ProjectID)
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	must(t, s.BeginActivity(ctx, a, Activity{ID: "upload", Kind: "files", Detail: "large upload"}))
 	must(t, s.SettleActivity(ctx, a.ProjectID, "upload", "unknown"))
@@ -376,7 +384,7 @@ func TestRestartRecoversDeadlineAndActivities(t *testing.T) {
 
 func TestDeleteAfterUncertainProvisioningReclaimsOwnedResources(t *testing.T) {
 	l, a, f := lifecycleFixture(t)
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	must(t, l.Reconcile(ctx, a.ProjectID))
 	f.fail["volume"] = 1
 	if err := l.Reconcile(ctx, a.ProjectID); err == nil {
@@ -403,7 +411,7 @@ func TestDeleteAfterUncertainProvisioningReclaimsOwnedResources(t *testing.T) {
 	if r.Occupied {
 		t.Fatal(r)
 	}
-	wantError(t, l.EnsureActive(ctx, a, testProfile()), ErrDeleting)
+	wantError(t, l.EnsureActive(ctx, a, testProfile().Bindings()), ErrDeleting)
 	pending, err := l.Store.PendingProjects(ctx, 100)
 	must(t, err)
 	if len(pending) != 0 {
@@ -413,7 +421,7 @@ func TestDeleteAfterUncertainProvisioningReclaimsOwnedResources(t *testing.T) {
 
 func TestIdentityMismatchAndChangedConditionalReferenceStayFenced(t *testing.T) {
 	l, a, f := lifecycleFixture(t)
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	p, err := l.Store.Project(ctx, a)
 	must(t, err)

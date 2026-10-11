@@ -20,7 +20,7 @@ type Server struct {
 	Lifecycle *product.Lifecycle
 	Auth      Authenticator
 	Config    Config
-	Profile   product.Profile
+	Bindings  product.RuntimeBindings
 	hubsOnce  sync.Once
 	hubs      *resourceHubs
 }

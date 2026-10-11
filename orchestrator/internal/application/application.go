@@ -46,8 +46,6 @@ type Application struct {
 	controlServer   *http.Server
 	releaseIdentity ReleaseIdentity
 	retireOnce      sync.Once
-	networkReloadMu sync.Mutex
-	networkReload   NetworkReloadStatus
 }
 
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application, result error) {
@@ -85,13 +83,6 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	}); err != nil {
 		return app, err
 	}
-	policy, err := product.NewNetworkPolicy(cfg.Project.Reachability)
-	if err != nil {
-		return app, err
-	}
-	if _, err = store.InitializeNetworkPolicy(ctx, policy); err != nil {
-		return app, err
-	}
 	engineConfig, err := cfg.Engine.Build(cfg.base)
 	if err != nil {
 		return app, err
@@ -114,30 +105,33 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	if registered.Manifest.Platform != "" && registered.Manifest.Platform != cfg.Manifest.Platform {
 		return app, errors.New("engine template platform differs from runtime release")
 	}
-	if err = store.ValidateReleasedBindings(startup, cfg.Engine.StoreID, product.ReleasedTemplate{TemplateID: cfg.Template.ID, Digest: cfg.Template.Digest}); err != nil {
+	if err = store.ValidateReleasedBindings(startup, cfg.Engine.StoreID); err != nil {
 		return app, err
 	}
-	profile, err := app.publishPrepared(startup, prepared.publications)
+	if err = store.RegisterSandbox(startup, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: cfg.Template.ID, Version: cfg.Template.Version, Digest: cfg.Template.Digest}, StoreID: cfg.Engine.StoreID, TemplateID: cfg.Template.ID, Manifest: cfg.Manifest}); err != nil {
+		return app, err
+	}
+	bindings, err := app.publishPrepared(startup, prepared.publications)
 	if err != nil {
 		return app, err
 	}
 	lifecycle := &product.Lifecycle{Store: store, Backend: backend, MaxProjects: cfg.Limits.Projects, VerifyRuntime: backend.VerifyRuntime}
 	app.Lifecycle = lifecycle
-	agents := product.NewAgents(ctx, store, lifecycle, backend, profile, cfg.Limits.Agents)
+	agents := product.NewAgents(ctx, store, lifecycle, backend, bindings, cfg.Limits.Agents)
 	agents.MaxPerProject = cfg.Limits.AgentsPerProject
 	agents.ServiceAudience = cfg.AgentAudience
 	agents.PlatformEndpoint = func(ctx context.Context, scope product.Scope) string {
 		return app.platformEndpoint(ctx, scope)
 	}
 	app.Agents = agents
-	terminals := product.NewTerminals(ctx, store, lifecycle, backend, profile, cfg.Limits.Terminals)
+	terminals := product.NewTerminals(ctx, store, lifecycle, backend, bindings, cfg.Limits.Terminals)
 	terminals.MaxPerProject = cfg.Limits.TerminalsPerProject
 	app.Terminals = terminals
 	readDirectory := filepath.Join(cfg.StateDirectory, "read-captures")
 	if err := os.MkdirAll(readDirectory, 0700); err != nil {
 		return app, err
 	}
-	files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Profile: profile, CaptureDirectory: readDirectory}
+	files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Bindings: bindings, CaptureDirectory: readDirectory}
 	app.Files = files
 	shares := &product.Shares{Store: store, Files: files, Directory: filepath.Join(cfg.StateDirectory, "shares")}
 	app.Shares = shares
@@ -154,7 +148,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 		}
 	}
 	app.Auth = producthttp.NewAuthentication(store, transportConfig)
-	app.API = &producthttp.Server{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Profile: profile, Auth: app.Auth, Config: transportConfig}
+	app.API = &producthttp.Server{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Bindings: bindings, Auth: app.Auth, Config: transportConfig}
 	api := app.API.Handler()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
@@ -199,30 +193,32 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 func (a *Application) server(handler http.Handler) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Minute, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return a.ctx }}
 }
-func (a *Application) publish(ctx context.Context) (product.Profile, error) {
+func (a *Application) publish(ctx context.Context) (product.RuntimeBindings, error) {
 	sources, err := readPublications(a.Config)
 	if err != nil {
-		return a.Config.Profile(), err
+		return a.Config.RuntimeBindings(), err
 	}
 	return a.publishPrepared(ctx, sources)
 }
-func (a *Application) publishPrepared(ctx context.Context, sources []preparedPublication) (product.Profile, error) {
+func (a *Application) publishPrepared(ctx context.Context, sources []preparedPublication) (product.RuntimeBindings, error) {
 	a.publication.Lock()
 	defer a.publication.Unlock()
-	profile := a.Config.Profile()
+	bindings := a.Config.RuntimeBindings()
 	publisher := content.Publisher{Repository: a.Store, Backend: a.Backend}
 	for _, source := range sources {
-		volume, err := publisher.Publish(ctx, source.purpose, source.revision, a.Config.Content.VolumeBytes)
-		if err != nil {
-			return profile, err
+		if _, err := publisher.Publish(ctx, source.purpose, source.revision, a.Config.Content.VolumeBytes); err != nil {
+			return bindings, err
 		}
 		role := "shared_assets"
 		if source.purpose == "config" {
 			role = "agent_config"
 		}
-		profile.Volumes = append(profile.Volumes, product.VolumePlan{Key: role, Role: role, Destination: source.destination, Storage: "shared_readonly", Access: "read_only", CapacityBytes: a.Config.Content.VolumeBytes, Source: &product.VolumeSource{Reference: product.ArtifactReference{ID: role, Version: source.revision.Digest, Digest: source.revision.Digest}, VolumeID: volume, MinimumBytes: a.Config.Content.VolumeBytes}})
+		artifact := product.BuiltinVolume{Reference: product.ArtifactReference{ID: role, Version: source.revision.Digest, Digest: source.revision.Digest}, StoreID: bindings.StoreID, PublicationPurpose: source.purpose, MinimumBytes: a.Config.Content.VolumeBytes, Roles: []string{role}, Entries: source.revision.Entries}
+		if err := a.Store.RegisterBuiltinVolume(ctx, artifact); err != nil {
+			return bindings, err
+		}
 	}
-	return profile, profile.Validate()
+	return bindings, nil
 }
 
 func (a *Application) Run(ctx context.Context) error {
@@ -230,8 +226,6 @@ func (a *Application) Run(ctx context.Context) error {
 	go func() { defer a.group.Done(); a.Workers.Run(a.ctx) }()
 	a.group.Add(1)
 	go func() { defer a.group.Done(); a.collectAuthenticationLimits() }()
-	a.group.Add(1)
-	go func() { defer a.group.Done(); a.watchNetworkPolicy() }()
 	failures := make(chan error, len(a.servers))
 	for index, server := range a.servers {
 		index, server := index, server

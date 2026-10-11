@@ -22,7 +22,7 @@ func agentFixture(t *testing.T) (*Store, Scope, Incarnation, agentwire.Frame) {
 func agentFixtureWith(t *testing.T, profile Profile) (*Store, Scope, Incarnation, agentwire.Frame) {
 	t.Helper()
 	l, scope, _ := lifecycleFixture(t)
-	must(t, l.EnsureActive(ctx, scope, profile))
+	must(t, l.EnsureActive(ctx, scope, profile.Bindings()))
 	drive(t, l, scope.ProjectID)
 	_, err := l.Store.CreateSession(ctx, scope, "agent", "Agent")
 	must(t, err)

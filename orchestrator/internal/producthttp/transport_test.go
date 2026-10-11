@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"harness-platform/orchestrator/internal/producttest"
+	"harness-platform/orchestrator/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -213,13 +214,13 @@ func newHarness(t *testing.T) *harness {
 func harnessForStore(t *testing.T, store *product.Store) *harness {
 	t.Helper()
 	t.Cleanup(func() { store.Close() })
-	lifecycle := &product.Lifecycle{Store: store, Backend: &fakeLifecycleBackend{}, MaxProjects: 4}
+	lifecycle := &product.Lifecycle{VerifyRuntime: testfixture.VerifyRuntime, Store: store, Backend: &fakeLifecycleBackend{}, MaxProjects: 4}
 	backend := newPTYBackend()
-	terminals := product.NewTerminals(ctx, store, lifecycle, backend, testProfile(), 8)
+	terminals := product.NewTerminals(ctx, store, lifecycle, backend, testProfile().Bindings(), 8)
 	t.Cleanup(terminals.Close)
 	h := &harness{store: store, terminals: terminals, lifecycle: lifecycle, backend: backend, actor: "alice"}
 	s := &Server{
-		Store: store, Terminals: terminals, Lifecycle: lifecycle, Profile: testProfile(),
+		Store: store, Terminals: terminals, Lifecycle: lifecycle, Bindings: testProfile().Bindings(),
 		Auth: AuthenticatorFunc(func(*http.Request) (string, error) {
 			if actor := h.currentActor(); actor != "" {
 				return actor, nil

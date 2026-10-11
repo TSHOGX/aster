@@ -159,12 +159,12 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: profile.CPUMillis, Memory: profile.MemoryBytes, Overlay: profile.DiskBytes, Workspace: profile.CapacityForRole("workspace"), Runtime: profile.CapacityForRole("runtime"), MaxMounts: 8, ProjectSlots: 4, AgentSlots: 8, TerminalSlots: 8}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: "agent-runtime", Version: "v1", Digest: releaseDigest}, StoreID: identity.StoreID, TemplateID: profile.TemplateID, Manifest: manifest}, nil, network)
 	must(t, err)
 
-	lifecycle := &product.Lifecycle{Store: store, Backend: fixture, MaxProjects: 4}
-	agents := product.NewAgents(runctx, store, lifecycle, backend, profile, 8)
+	lifecycle := &product.Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: store, Backend: fixture, MaxProjects: 4}
+	agents := product.NewAgents(runctx, store, lifecycle, backend, profile.Bindings(), 8)
 	defer agents.Close()
-	terminals := product.NewTerminals(runctx, store, lifecycle, backend, profile, 8)
+	terminals := product.NewTerminals(runctx, store, lifecycle, backend, profile.Bindings(), 8)
 	defer terminals.Close()
-	files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Profile: profile}
+	files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Bindings: profile.Bindings()}
 	shares := &product.Shares{Store: store, Files: files, Directory: t.TempDir()}
 	captures := &product.Captures{Store: store, Backend: backend, Directory: t.TempDir()}
 	lifecycle.Artifacts = &product.Artifacts{Store: store, Captures: captures, Shares: shares}
@@ -178,7 +178,7 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	_, err = store.BootstrapAccount(runctx, "researcher", "isolated-browser-fixture", seed)
 	must(t, err)
 	authentication := NewAuthentication(store, Config{TrustForwardedHost: true})
-	app := httptest.NewServer(authentication.Handler((&Server{Store: store, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Lifecycle: lifecycle, Profile: profile, Auth: authentication, Config: Config{TrustForwardedHost: true}}).Handler()))
+	app := httptest.NewServer(authentication.Handler((&Server{Store: store, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Lifecycle: lifecycle, Bindings: profile.Bindings(), Auth: authentication, Config: Config{TrustForwardedHost: true}}).Handler()))
 	defer app.Close()
 	log, err := os.Create(filepath.Join(os.Getenv("PROJECT_TEST_BIN_DIR"), "S08-frontend.log"))
 	must(t, err)

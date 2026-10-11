@@ -57,5 +57,5 @@ func SeedIdentities(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 	}
-	return nil
+	return seedDefaultRuntime(ctx, tx)
 }

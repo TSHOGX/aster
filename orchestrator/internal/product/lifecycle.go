@@ -19,15 +19,18 @@ var ErrPending = errors.New("project operation pending")
 var ErrCapacity = errors.New("active Project capacity exhausted")
 
 type Profile struct {
-	NetworkPolicyRevision string       `json:"network_policy_revision,omitempty"`
-	ReleaseDigest         string       `json:"release_digest,omitempty"`
-	StoreID               string       `json:"store_id"`
-	TemplateID            string       `json:"template_id"`
-	CPUMillis             int64        `json:"cpu_millis"`
-	MemoryBytes           int64        `json:"memory_bytes"`
-	DiskBytes             int64        `json:"disk_bytes"`
-	Reachability          Reachability `json:"reachability"`
-	Volumes               []VolumePlan `json:"volumes"`
+	EnvironmentRevision   int64             `json:"environment_revision"`
+	ResourceRevision      int64             `json:"resource_revision"`
+	SandboxRelease        ArtifactReference `json:"sandbox_release"`
+	NetworkPolicyRevision string            `json:"network_policy_revision,omitempty"`
+	ReleaseDigest         string            `json:"release_digest,omitempty"`
+	StoreID               string            `json:"store_id"`
+	TemplateID            string            `json:"template_id"`
+	CPUMillis             int64             `json:"cpu_millis"`
+	MemoryBytes           int64             `json:"memory_bytes"`
+	DiskBytes             int64             `json:"disk_bytes"`
+	Reachability          Reachability      `json:"reachability"`
+	Volumes               []VolumePlan      `json:"volumes"`
 }
 
 func (p Profile) Validate() error {
@@ -177,18 +180,17 @@ func (l *Lifecycle) newOperation(ctx context.Context, tx *sql.Tx, project, kind,
 
 // EnsureActive records original provisioning/resume intent. It does not issue
 // remote work or tie its lifetime to an HTTP request. Workers call Reconcile.
-func (l *Lifecycle) EnsureActive(ctx context.Context, scope Scope, profile Profile) error {
-	return l.ensureActive(ctx, scope, profile, false, false)
+func (l *Lifecycle) EnsureActive(ctx context.Context, scope Scope, bindings RuntimeBindings) error {
+	return l.ensureActive(ctx, scope, bindings, false)
 }
 
 // Resume is the explicit owner operation. Internal action services admit their
 // own Agent/Terminal/file work before entering the shared lifecycle helper.
-func (l *Lifecycle) Resume(ctx context.Context, scope Scope, profile Profile) error {
-	return l.ensureActive(ctx, scope, profile, true, true)
+func (l *Lifecycle) Resume(ctx context.Context, scope Scope, bindings RuntimeBindings) error {
+	return l.ensureActive(ctx, scope, bindings, true)
 }
-func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, profile Profile, useSaved, requireManage bool) error {
-	profile = canonicalProfile(profile)
-	if err := profile.Validate(); err != nil {
+func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, bindings RuntimeBindings, requireManage bool) error {
+	if err := bindings.validate(); err != nil {
 		return err
 	}
 	return l.Store.write(ctx, func(tx *sql.Tx) error {
@@ -203,6 +205,10 @@ func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, profile Profi
 		}
 		r, err := resources(ctx, tx, p.ID)
 		if errors.Is(err, ErrNotFound) {
+			profile, err := resolveAllocationProfile(ctx, tx, scope.Actor, bindings)
+			if err != nil {
+				return err
+			}
 			if err = admitCompute(ctx, tx, scope.Actor, profile, false); err != nil {
 				return err
 			}
@@ -217,16 +223,11 @@ func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, profile Profi
 		if err != nil {
 			return err
 		}
-		raw, err := json.Marshal(profile)
-		if err != nil {
-			return err
+		if r.Reference.StoreID != bindings.StoreID {
+			return Admission("engine_store_mismatch", ErrConflict)
 		}
-		stored, err := json.Marshal(r.Profile)
-		if err != nil {
+		if _, err := registeredSandbox(ctx, tx, r.Profile.SandboxRelease, false); err != nil {
 			return err
-		}
-		if !useSaved && string(stored) != string(raw) {
-			return ErrConflict
 		}
 		if _, err := pendingOperation(ctx, tx, p.ID); err == nil {
 			return nil

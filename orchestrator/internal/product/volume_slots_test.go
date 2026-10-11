@@ -21,8 +21,9 @@ func TestFirstUploadReservesWholeSlotPlanAndResumeDoesNotDoubleCharge(t *testing
 	lifecycle, scope, backend := lifecycleFixture(t)
 	profile := testProfile()
 	profile.Volumes = append(profile.Volumes, VolumePlan{Key: "extra", Role: "data", Destination: "/data", Storage: "owned", Access: "read_only", CapacityBytes: 16 << 20})
+	fixtureEnvironment(t, lifecycle.Store, profile)
 	filesBackend := &localFileBackend{root: t.TempDir(), processes: map[string]*localFileProcess{}}
-	files := &Files{Store: lifecycle.Store, Lifecycle: lifecycle, Backend: filesBackend, Profile: profile}
+	files := &Files{Store: lifecycle.Store, Lifecycle: lifecycle, Backend: filesBackend, Bindings: profile.Bindings()}
 	defer files.Close()
 	_, err := files.Upload(ctx, scope, "first-upload", writeRequest("retained", "user bytes"), strings.NewReader("user bytes"))
 	must(t, err)
@@ -39,7 +40,7 @@ func TestFirstUploadReservesWholeSlotPlanAndResumeDoesNotDoubleCharge(t *testing
 	originalWorkspace := r.VolumeForRole("workspace")
 	reversed := profile
 	slices.Reverse(reversed.Volumes)
-	must(t, lifecycle.EnsureActive(ctx, scope, reversed))
+	must(t, lifecycle.EnsureActive(ctx, scope, reversed.Bindings()))
 	drive(t, lifecycle, scope.ProjectID)
 	r, err = lifecycle.Store.Resources(ctx, scope)
 	must(t, err)
@@ -71,7 +72,7 @@ func TestFirstUploadReservesWholeSlotPlanAndResumeDoesNotDoubleCharge(t *testing
 
 func TestUndispatchedSlotsReleaseWithoutAllocationAndLostCreatesRemainCharged(t *testing.T) {
 	lifecycle, scope, backend := lifecycleFixture(t)
-	must(t, lifecycle.EnsureActive(ctx, scope, testProfile()))
+	must(t, lifecycle.EnsureActive(ctx, scope, testProfile().Bindings()))
 	backend.fail["volume"] = 1
 	if err := lifecycle.Reconcile(ctx, scope.ProjectID); err == nil {
 		t.Fatal("missing injected lost reply")
@@ -161,7 +162,8 @@ func TestSeededSlotReadinessSeparatesAllocationAndPreservesUserChanges(t *testin
 	lifecycle.Backend = backend
 	profile := testProfile()
 	profile.Volumes = append(profile.Volumes, VolumePlan{Key: "copy", Role: "data", Destination: "/data", Storage: "owned", Access: "read_only", CapacityBytes: 4 << 20, Source: source}, VolumePlan{Key: "shared", Role: "data", Destination: "/reference", Storage: "shared_readonly", Access: "read_only", CapacityBytes: 1 << 20, Source: source})
-	must(t, lifecycle.EnsureActive(ctx, scope, profile))
+	fixtureEnvironment(t, lifecycle.Store, profile, map[string][]content.Entry{source.Reference.Digest: entries})
+	must(t, lifecycle.EnsureActive(ctx, scope, profile.Bindings()))
 	if err := lifecycle.Reconcile(ctx, scope.ProjectID); err == nil {
 		t.Fatal("verification outage did not block readiness")
 	}
@@ -207,7 +209,7 @@ func TestSeededSlotReadinessSeparatesAllocationAndPreservesUserChanges(t *testin
 	}
 	backend.trees[copied]["sample"] = []byte("user modification")
 	reads := backend.reads
-	must(t, lifecycle.EnsureConfiguredActive(ctx, scope, profile))
+	must(t, lifecycle.EnsureActive(ctx, scope, profile.Bindings()))
 	if _, err = lifecycle.materializeSlot(ctx, r, "copy"); err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +232,7 @@ func TestSeededSlotReadinessSeparatesAllocationAndPreservesUserChanges(t *testin
 
 func TestUncertainStorageOnlySlotBlocksReleaseReadiness(t *testing.T) {
 	lifecycle, scope, backend := lifecycleFixture(t)
-	files := &Files{Store: lifecycle.Store, Lifecycle: lifecycle, Backend: &localFileBackend{root: t.TempDir(), processes: map[string]*localFileProcess{}}, Profile: testProfile()}
+	files := &Files{Store: lifecycle.Store, Lifecycle: lifecycle, Backend: &localFileBackend{root: t.TempDir(), processes: map[string]*localFileProcess{}}, Bindings: testProfile().Bindings()}
 	defer files.Close()
 	backend.fail["volume"] = 1
 	_, err := files.Upload(ctx, scope, "upload", writeRequest("file", "bytes"), strings.NewReader("bytes"))
@@ -261,7 +263,7 @@ func TestUncertainStorageOnlySlotBlocksReleaseReadiness(t *testing.T) {
 
 func TestCleanupReleasesObservedAbsentOriginalVolume(t *testing.T) {
 	lifecycle, scope, backend := lifecycleFixture(t)
-	files := &Files{Store: lifecycle.Store, Lifecycle: lifecycle, Backend: &localFileBackend{root: t.TempDir(), processes: map[string]*localFileProcess{}}, Profile: testProfile()}
+	files := &Files{Store: lifecycle.Store, Lifecycle: lifecycle, Backend: &localFileBackend{root: t.TempDir(), processes: map[string]*localFileProcess{}}, Bindings: testProfile().Bindings()}
 	defer files.Close()
 	backend.fail["volume"] = 1
 	_, err := files.Upload(ctx, scope, "upload", writeRequest("file", "bytes"), strings.NewReader("bytes"))
@@ -284,7 +286,7 @@ func TestCleanupReleasesObservedAbsentOriginalVolume(t *testing.T) {
 
 func TestLostSlotDeletionRetainsChargeUntilConfirmedAbsence(t *testing.T) {
 	lifecycle, scope, backend := lifecycleFixture(t)
-	must(t, lifecycle.EnsureActive(ctx, scope, testProfile()))
+	must(t, lifecycle.EnsureActive(ctx, scope, testProfile().Bindings()))
 	drive(t, lifecycle, scope.ProjectID)
 	project, err := lifecycle.Store.Project(ctx, scope)
 	must(t, err)
@@ -325,7 +327,8 @@ func TestUnreadyWorkspaceSeedIsNotAnEmptyReadableDirectory(t *testing.T) {
 		}
 	}
 	filesBackend := &localFileBackend{root: t.TempDir(), processes: map[string]*localFileProcess{}}
-	files := &Files{Store: lifecycle.Store, Lifecycle: lifecycle, Backend: filesBackend, Profile: profile}
+	fixtureEnvironment(t, lifecycle.Store, profile, map[string][]content.Entry{content.Digest(entries): entries})
+	files := &Files{Store: lifecycle.Store, Lifecycle: lifecycle, Backend: filesBackend, Bindings: profile.Bindings()}
 	defer files.Close()
 	_, err := files.Upload(ctx, scope, "upload", writeRequest("new", "new bytes"), strings.NewReader("new bytes"))
 	if err == nil {

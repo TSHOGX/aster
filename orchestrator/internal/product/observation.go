@@ -9,12 +9,6 @@ import (
 	"time"
 )
 
-// EnsureConfiguredActive retains fixed Project configuration and selects mutable
-// network defaults in the transaction recording creation/resume intent.
-func (l *Lifecycle) EnsureConfiguredActive(ctx context.Context, scope Scope, fallback Profile) error {
-	return l.ensureActive(ctx, scope, fallback, true, false)
-}
-
 // Observe validates the original binding, including after engine events are lost.
 // It never resolves uncertainty by silently retargeting another engine store.
 func (l *Lifecycle) Observe(ctx context.Context, project string) error {

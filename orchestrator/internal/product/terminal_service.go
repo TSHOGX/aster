@@ -152,7 +152,7 @@ type Terminals struct {
 	Store     *Store
 	Lifecycle *Lifecycle
 	Backend   TerminalBackend
-	Profile   Profile
+	Bindings  RuntimeBindings
 	// Shell and its arguments are deployment configuration, not user input. A
 	// Terminal has no user-supplied command: that would be a way to ask the
 	// application to run something the Project policy never declared.
@@ -173,10 +173,10 @@ type Terminals struct {
 	wg          sync.WaitGroup
 }
 
-func NewTerminals(ctx context.Context, s *Store, l *Lifecycle, b TerminalBackend, profile Profile, max int) *Terminals {
+func NewTerminals(ctx context.Context, s *Store, l *Lifecycle, b TerminalBackend, bindings RuntimeBindings, max int) *Terminals {
 	ctx, cancel := context.WithCancel(ctx)
 	return &Terminals{
-		Store: s, Lifecycle: l, Backend: b, Profile: profile,
+		Store: s, Lifecycle: l, Backend: b, Bindings: bindings,
 		Shell: "/bin/bash", ShellArgs: []string{"-l"}, Directory: "/workspace",
 		Environment:  []string{"HOME=/root", "TERM=xterm-256color", "PATH=/opt/node-v24.15.0/bin:/usr/local/bin:/usr/bin:/bin"},
 		MaxTerminals: max, attachments: map[string]*terminalAttachment{}, ctx: ctx, cancel: cancel,
@@ -205,7 +205,7 @@ func (t *Terminals) Start(ctx context.Context, scope Scope, terminal string, row
 	if err != nil {
 		return TerminalIncarnation{}, err
 	}
-	if err = t.Lifecycle.EnsureConfiguredActive(ctx, scope, t.Profile); err != nil {
+	if err = t.Lifecycle.EnsureActive(ctx, scope, t.Bindings); err != nil {
 		return TerminalIncarnation{}, err
 	}
 	if _, err = t.Lifecycle.ActiveResources(ctx, scope); err != nil {

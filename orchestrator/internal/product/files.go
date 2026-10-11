@@ -188,7 +188,7 @@ type Files struct {
 	Store            *Store
 	Lifecycle        *Lifecycle
 	Backend          FileBackend
-	Profile          Profile
+	Bindings         RuntimeBindings
 	Helper           string
 	CaptureDirectory string
 	mu               sync.Mutex
@@ -237,7 +237,7 @@ func (f *Files) execute(ctx context.Context, scope Scope, id string, action Prod
 	} else if p.State == "paused" || p.State == "created" {
 		return f.executeVolume(ctx, scope, id, action, r, input)
 	}
-	if err := f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile); err != nil {
+	if err := f.Lifecycle.EnsureActive(ctx, scope, f.Bindings); err != nil {
 		return FileOperation{}, err
 	}
 	f.mu.Lock()

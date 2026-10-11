@@ -8,7 +8,7 @@ import (
 func TestProjectPauseAndRecoveryRetainOnlyActiveOwnerReduction(t *testing.T) {
 	l, scope, _ := lifecycleFixture(t)
 	s := l.Store
-	must(t, l.EnsureActive(ctx, scope, testProfile()))
+	must(t, l.EnsureActive(ctx, scope, testProfile().Bindings()))
 	drive(t, l, scope.ProjectID)
 	_, err := s.CreateSession(ctx, scope, "blocked", "Blocked")
 	must(t, err)
@@ -19,7 +19,7 @@ func TestProjectPauseAndRecoveryRetainOnlyActiveOwnerReduction(t *testing.T) {
 	p, err := s.Project(ctx, scope)
 	must(t, err)
 	fixtureFileGrants(t, s, map[ProductAction]PolicyEffect{ActionProjectsManage: PolicyDeny, ActionAgentsRun: PolicyDeny, ActionProjectsRead: PolicyDeny})
-	wantError(t, l.Resume(ctx, scope, testProfile()), ErrForbidden)
+	wantError(t, l.Resume(ctx, scope, testProfile().Bindings()), ErrForbidden)
 	wantError(t, l.Restart(ctx, scope, p.Revision), ErrForbidden)
 	wantError(t, l.ForceRestart(ctx, scope, p.Revision), ErrForbidden)
 	must(t, s.RetryRecovery(ctx, scope, child.ID, child.Revision))
@@ -49,14 +49,14 @@ func TestProjectPauseAndRecoveryRetainOnlyActiveOwnerReduction(t *testing.T) {
 func TestExplicitResumeChecksGrantBeforeProvisioning(t *testing.T) {
 	l, scope, _ := lifecycleFixture(t)
 	fixtureFileGrants(t, l.Store, map[ProductAction]PolicyEffect{ActionProjectsManage: PolicyDeny})
-	wantError(t, l.Resume(ctx, scope, testProfile()), ErrForbidden)
+	wantError(t, l.Resume(ctx, scope, testProfile().Bindings()), ErrForbidden)
 	var count int
 	must(t, l.Store.reader.QueryRow(`SELECT count(*) FROM project_resources`).Scan(&count))
 	if count != 0 {
 		t.Fatal("denied resume allocated resources", count)
 	}
 	fixtureFileGrants(t, l.Store, map[ProductAction]PolicyEffect{ActionProjectsManage: PolicyAllow})
-	must(t, l.Resume(ctx, scope, testProfile()))
+	must(t, l.Resume(ctx, scope, testProfile().Bindings()))
 }
 
 func TestNotificationScopeUsesCurrentCanonicalAccount(t *testing.T) {

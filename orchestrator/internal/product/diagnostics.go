@@ -3,41 +3,61 @@ package product
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
-type ReleasedTemplate struct {
-	TemplateID string
-	Digest     string
-}
-
-// Every saved Project must use the single current runtime and engine store.
-func (s *Store) ValidateReleasedBindings(ctx context.Context, engine string, current ReleasedTemplate) error {
+// Retained Projects are checked against their exact registered contract. A new
+// operator default never substitutes for their template or manifest identity.
+func (s *Store) ValidateReleasedBindings(ctx context.Context, engine string) error {
+	environment, _, err := currentEnvironment(ctx, s.reader)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ErrArtifactUnavailable
+		}
+		return err
+	}
+	selected, err := registeredSandbox(ctx, s.reader, environment.SandboxRelease, false)
+	if err != nil {
+		return err
+	}
+	if selected.StoreID != engine {
+		return Admission("engine_store_mismatch", ErrConflict)
+	}
 	rows, err := s.reader.QueryContext(ctx, `SELECT r.store_id,r.profile FROM project_resources r JOIN projects p ON p.id=r.project_id WHERE p.state<>'deleted'`)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	var profiles []Profile
 	for rows.Next() {
 		var store, raw string
 		if err = rows.Scan(&store, &raw); err != nil {
-			return err
+			break
+		}
+		if store != engine {
+			err = fmt.Errorf("existing Project belongs to another engine store")
+			break
 		}
 		var profile Profile
 		if err = json.Unmarshal([]byte(raw), &profile); err != nil {
+			break
+		}
+		profiles = append(profiles, profile)
+	}
+	err = errors.Join(err, rows.Err(), rows.Close())
+	if err != nil {
+		return err
+	}
+	for _, profile := range profiles {
+		release, err := registeredSandbox(ctx, s.reader, profile.SandboxRelease, false)
+		if err != nil {
 			return err
 		}
-		if store != engine {
-			return fmt.Errorf("existing Project belongs to another engine store; original resources must be reconciled before changing engines")
-		}
-		if profile.ReleaseDigest == "" {
-			return fmt.Errorf("existing Project lacks a released runtime identity; use a fresh development database")
-		}
-		if (ReleasedTemplate{TemplateID: profile.TemplateID, Digest: profile.ReleaseDigest}) != current {
-			return fmt.Errorf("existing Project runtime differs from the current release; use a fresh installation")
+		if release.StoreID != engine || release.TemplateID != profile.TemplateID || release.Reference.Digest != profile.ReleaseDigest {
+			return Admission("runtime_incompatible", ErrConflict)
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
 type DiagnosticCounts struct {

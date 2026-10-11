@@ -120,7 +120,7 @@ packaged frontend. Real Pi called create/list/get/update/cancel through the gues
 service route; automatic one-shot admission produced a durable result notice, and
 a new-Session bounded check finished through host-bound authority. The suites also
 passed owner handoff/outage, native retries and compaction, queued input, network
-reload, paused Files, real browsers, realtime invalidation and fault recovery.
+policy changes, paused Files, real browsers, realtime invalidation and fault recovery.
 
 A five-minute mixed workload completed 60 rounds with HTTP p95 approximately
 6.8 ms, completion-to-display p95 390 ms and maximum combined owner/gateway RSS

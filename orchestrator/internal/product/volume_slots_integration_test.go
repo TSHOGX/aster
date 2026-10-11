@@ -51,7 +51,7 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	scope := Scope{Actor: "owner", ProjectID: "slot-project"}
 	_, err = store.CreateProject(runctx, scope.Actor, scope.ProjectID, "Slot qualification")
 	must(t, err)
-	lifecycle := &Lifecycle{Store: store, Backend: backend, MaxProjects: 1}
+	lifecycle := &Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: store, Backend: backend, MaxProjects: 1}
 	profile := testProfile()
 	profile.StoreID = identity.StoreID
 	profile.TemplateID = "agent-runtime"
@@ -64,8 +64,9 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	for index := 0; index < 3; index++ {
 		profile.Volumes = append(profile.Volumes, VolumePlan{Key: fmt.Sprintf("extra-%d", index), Role: "data", Destination: fmt.Sprintf("/extra/%d", index), Storage: "owned", Access: "read_write", CapacityBytes: 8 << 20})
 	}
+	fixtureEnvironment(t, store, profile, map[string][]content.Entry{frozen.Reference.Digest: entries})
 	fixtureResourceLimit(t, store, scope.Actor, ResourcePersistent, 152<<20)
-	files := &Files{Store: store, Lifecycle: lifecycle, Backend: backend, Profile: profile}
+	files := &Files{Store: store, Lifecycle: lifecycle, Backend: backend, Bindings: profile.Bindings()}
 	defer files.Close()
 	_, err = files.Upload(runctx, scope, "before-compute", writeRequest("retained", "storage-only upload"), strings.NewReader("storage-only upload"))
 	must(t, err)
@@ -83,7 +84,7 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	wantError(t, err, ErrQuotaExceeded)
 	_, err = store.Resources(runctx, deniedScope)
 	wantError(t, err, ErrNotFound)
-	must(t, lifecycle.EnsureActive(runctx, scope, profile))
+	must(t, lifecycle.EnsureActive(runctx, scope, profile.Bindings()))
 	converge := func() {
 		t.Helper()
 		for n := 0; n < 40; n++ {

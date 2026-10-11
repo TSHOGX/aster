@@ -37,7 +37,7 @@ func TestProjectLifecycleOnKhora(t *testing.T) {
 	must(t, err)
 	s := testStore(t)
 	loss := &lostReplies{LifecycleBackend: backend, lost: map[string]bool{}}
-	l := &Lifecycle{Store: s, Backend: loss, MaxProjects: 1}
+	l := &Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: s, Backend: loss, MaxProjects: 1}
 	converge := func() {
 		t.Helper()
 		for i := 0; i < 20; i++ {
@@ -59,7 +59,8 @@ func TestProjectLifecycleOnKhora(t *testing.T) {
 	profile.TemplateID = "agent-runtime"
 	profile.MemoryBytes = 1 << 30
 	profile.DiskBytes = 256 << 20
-	must(t, l.EnsureActive(runctx, a, profile))
+	fixtureEnvironment(t, s, profile)
+	must(t, l.EnsureActive(runctx, a, profile.Bindings()))
 	converge()
 	r, err := l.ActiveResources(runctx, a)
 	must(t, err)
@@ -109,7 +110,7 @@ func TestProjectLifecycleOnKhora(t *testing.T) {
 	must(t, err)
 	must(t, l.Pause(runctx, a, p.Revision))
 	converge()
-	must(t, l.EnsureActive(runctx, a, profile))
+	must(t, l.EnsureActive(runctx, a, profile.Bindings()))
 	converge()
 	r, err = l.ActiveResources(runctx, a)
 	must(t, err)

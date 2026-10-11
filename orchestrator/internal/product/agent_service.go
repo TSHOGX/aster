@@ -48,7 +48,7 @@ type Agents struct {
 	Lifecycle        *Lifecycle
 	Backend          AgentBackend
 	RunnerBinary     string
-	Profile          Profile
+	Bindings         RuntimeBindings
 	MaxProcesses     int
 	MaxPerProject    int
 	mu               sync.Mutex
@@ -58,9 +58,9 @@ type Agents struct {
 	wg               sync.WaitGroup
 }
 
-func NewAgents(ctx context.Context, s *Store, l *Lifecycle, b AgentBackend, profile Profile, max int) *Agents {
+func NewAgents(ctx context.Context, s *Store, l *Lifecycle, b AgentBackend, bindings RuntimeBindings, max int) *Agents {
 	ctx, cancel := context.WithCancel(ctx)
-	return &Agents{Store: s, Lifecycle: l, Backend: b, RunnerBinary: "/usr/local/bin/agent-runner", Profile: profile, MaxProcesses: max, attachments: map[string]*agentAttachment{}, ctx: ctx, cancel: cancel}
+	return &Agents{Store: s, Lifecycle: l, Backend: b, RunnerBinary: "/usr/local/bin/agent-runner", Bindings: bindings, MaxProcesses: max, attachments: map[string]*agentAttachment{}, ctx: ctx, cancel: cancel}
 }
 func (a *Agents) Close() {
 	a.cancel()
@@ -79,7 +79,7 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 	if err := a.Store.agentAdmission(ctx, scope, session); err != nil {
 		return err
 	}
-	if err := a.Lifecycle.EnsureConfiguredActive(ctx, scope, a.Profile); err != nil {
+	if err := a.Lifecycle.EnsureActive(ctx, scope, a.Bindings); err != nil {
 		return err
 	}
 	if _, err := a.Lifecycle.ActiveResources(ctx, scope); err != nil {

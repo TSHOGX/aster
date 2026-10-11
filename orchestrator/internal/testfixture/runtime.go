@@ -3,7 +3,10 @@
 package testfixture
 
 import (
+	"context"
+	"fmt"
 	"harness-platform/orchestrator/internal/runtimerelease"
+	"harness-platform/orchestrator/internal/sandbox"
 	"strings"
 )
 
@@ -22,4 +25,16 @@ func RuntimeManifest() (runtimerelease.Manifest, string) {
 		panic(err)
 	}
 	return m, identity
+}
+
+// VerifyRuntime represents the synthetic current-protocol image used by ordinary
+// service tests. Privileged integration cases replace it with the real adapter.
+func VerifyRuntime(ctx context.Context, reference sandbox.Reference, digest string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if reference.StoreID == "" || reference.SandboxID == "" || reference.Epoch == 0 || !runtimerelease.ValidDigest(digest) {
+		return fmt.Errorf("invalid fixture runtime identity")
+	}
+	return nil
 }

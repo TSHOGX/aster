@@ -199,7 +199,7 @@ func (c Config) Validate() error {
 	if c.Template.Version == "" || len(c.Template.Version) > 128 || c.Template.ID == "" || strings.ContainsAny(c.Template.ID, "/\\\x00?# ") || !runtimerelease.ValidDigest(c.Template.Digest) || !filepath.IsAbs(c.Template.Manifest) {
 		return errors.New("template identity and pinned runtime manifest required")
 	}
-	p := c.Profile()
+	p := c.bootstrapProfile()
 	if err := p.Validate(); err != nil {
 		return fmt.Errorf("Project bootstrap configuration: %w", err)
 	}
@@ -256,7 +256,7 @@ func (c Config) titleGenerator() product.TitleGenerator {
 	return titler.New(titler.Config{BaseURL: c.Titles.BaseURL, Model: c.Titles.Model, APIKey: os.Getenv(c.Titles.APIKeyEnv)})
 }
 
-func (c Config) Profile() product.Profile {
+func (c Config) bootstrapProfile() product.Profile {
 	return product.Profile{StoreID: c.Engine.StoreID, TemplateID: c.Template.ID, ReleaseDigest: c.Template.Digest, CPUMillis: c.Project.CPUMillis, MemoryBytes: c.Project.MemoryBytes, DiskBytes: c.Project.DiskBytes, Reachability: c.Project.Reachability, Volumes: []product.VolumePlan{
 		{Key: "workspace", Role: "workspace", Destination: "/workspace", Storage: "owned", Access: "read_write", CapacityBytes: c.Project.WorkspaceBytes},
 		{Key: "runtime", Role: "runtime", Destination: "/runtime", Storage: "owned", Access: "read_write", CapacityBytes: c.Project.RuntimeBytes},
@@ -277,4 +277,8 @@ func gatewayFloorOrigin(origin string) bool {
 		return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 	}
 	return false
+}
+
+func (c Config) RuntimeBindings() product.RuntimeBindings {
+	return product.RuntimeBindings{StoreID: c.Engine.StoreID, Services: c.Project.Reachability.Services, Hosts: c.Project.Reachability.Hosts}
 }

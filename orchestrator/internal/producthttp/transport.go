@@ -94,6 +94,8 @@ func status(err error) (int, string) {
 		return http.StatusConflict, "project has admitted activity"
 	case errors.Is(err, product.ErrPending):
 		return http.StatusAccepted, "operation pending"
+	case errors.Is(err, product.ErrArtifactUnavailable):
+		return http.StatusServiceUnavailable, "registered runtime artifact unavailable"
 	case errors.Is(err, product.ErrQuotaExceeded):
 		return http.StatusTooManyRequests, "resource allowance exceeded"
 	case errors.Is(err, product.ErrCapacity):
@@ -114,6 +116,10 @@ func quotaFailure(w http.ResponseWriter, err error) bool {
 	return true
 }
 func fail(w http.ResponseWriter, err error) {
+	if errors.Is(err, product.ErrArtifactUnavailable) {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"code": "artifact_unavailable", "error": "registered runtime artifact unavailable"})
+		return
+	}
 	if quotaFailure(w, err) {
 		return
 	}

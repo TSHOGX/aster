@@ -34,15 +34,15 @@ func TestResourceHubOnKhora(t *testing.T) {
 	must(t, err)
 	identity, err := backend.Identity(runctx)
 	must(t, err)
-	store, err := producttest.Open(runctx, filepath.Join(t.TempDir(), "product.db"))
-	must(t, err)
-	defer store.Close()
 	profile := testProfile()
 	profile.StoreID = identity.StoreID
 	profile.TemplateID = "agent-runtime"
 	profile.DiskBytes = 256 << 20
+	store, err := producttest.OpenWithProfile(runctx, filepath.Join(t.TempDir(), "product.db"), profile, nil)
+	must(t, err)
+	defer store.Close()
 	scope := product.Scope{Actor: "owner", ProjectID: "watch-only"}
-	lifecycle := &product.Lifecycle{Store: store, Backend: backend, MaxProjects: 1}
+	lifecycle := &product.Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: store, Backend: backend, MaxProjects: 1}
 	workers := &product.Workers{Store: store, Lifecycle: lifecycle, Interval: 100 * time.Millisecond}
 	workerctx, stop := context.WithCancel(runctx)
 	done := make(chan struct{})
@@ -62,9 +62,9 @@ func TestResourceHubOnKhora(t *testing.T) {
 	observed := product.Scope{Actor: scope.Actor, ProjectID: "watch-only"}
 	_, err = store.CreateProject(runctx, observed.Actor, observed.ProjectID, "Watch only")
 	must(t, err)
-	must(t, lifecycle.EnsureActive(runctx, observed, profile))
+	must(t, lifecycle.EnsureActive(runctx, observed, profile.Bindings()))
 	await(t, "watch-only active", func() bool { p, e := store.Project(runctx, observed); return e == nil && p.State == "active" })
-	transport := &Server{Store: store, Files: &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Profile: profile}, Auth: AuthenticatorFunc(func(*http.Request) (string, error) { return scope.Actor, nil })}
+	transport := &Server{Store: store, Files: &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Bindings: profile.Bindings()}, Auth: AuthenticatorFunc(func(*http.Request) (string, error) { return scope.Actor, nil })}
 	defer transport.Close()
 	httpServer := httptest.NewServer(transport.Handler())
 	defer httpServer.Close()

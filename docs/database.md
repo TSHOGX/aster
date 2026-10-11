@@ -178,10 +178,16 @@ after removal, and their dependency fingerprint includes override authority.
 
 The resource-change service computes bounded affected-account configuration and
 whole-environment fit previews, checks dependency revisions on commit, and reuses
-administrative receipts/audit. These configuration methods are internal pending
-database-selected allocation and quota admission integration; they are not
-currently exposed as editable HTTP settings. Product admission enforces their
-resolved effective allowances against current reservations and requested plans;
-selecting allocation defaults from the database environment is still separate
-unfinished integration. The slot ledger records full declared capacities, not
+administrative receipts/audit. These configuration methods remain internal pending the complete usage/preview
+and administrative UI surface. Allocation now selects database environment and
+effective user requests inside the reservation transaction; product admission
+enforces those allowances against existing reservations and the complete plan. The slot ledger records full declared capacities, not
 measured filesystem byte consumption or a promise of available engine capacity.
+
+Every saved Profile includes positive environment/resource revisions and an exact
+sandbox release reference matching its digest. Canonical schema constraints reject
+profiles without that provenance. Operator registry additions are immutable,
+audited and release-fenced; they do not update default_environment. Direct/DNS
+defaults have a monotonic configuration revision plus a content digest. The admin
+edit transaction checks revision/receipt/retained service constraints and writes
+the audit with the new policy. No startup writer or file watcher replaces it.

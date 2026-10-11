@@ -28,7 +28,7 @@ import (
 // This gate exercises actual guest DNS, TLS/package bytes, denial, binding
 // replacement and retained model routing on the isolated disposable substrate.
 // It is deliberately independent of public Internet availability.
-func TestReleasedNetworkPolicyReload(t *testing.T) {
+func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 	t.Setenv("PROJECT_RELEASE_MODEL_MODE", "model-independent")
 	a := newReleasedApp(t)
 	socket := filepath.Join(a.root, "state/control.sock")
@@ -120,14 +120,15 @@ func TestReleasedNetworkPolicyReload(t *testing.T) {
 	reach := cfg["project"].(map[string]any)["reachability"].(map[string]any)
 	reach["resolvers"] = []string{"192.0.2.1"}
 	reach["direct"] = []any{map[string]any{"cidr": "192.0.2.1/32", "port": port, "protocol": "tcp"}}
-	write := func() {
+	change := 0
+	apply := func() any {
 		t.Helper()
-		raw, err := json.Marshal(cfg)
-		require(t, err)
-		require(t, os.WriteFile(a.config, raw, 0644))
+		change++
+		current := a.request("GET", "/api/admin/network/default", nil, 200)
+		result := a.request("PATCH", "/api/admin/network/default", map[string]any{"request_id": fmt.Sprintf("network-change-%d", change), "expected_revision": current["configuration_revision"], "direct": reach["direct"], "resolvers": reach["resolvers"]}, 200)
+		return result["revision"]
 	}
-	write()
-	accepted := a.cli("network-reload", "--socket", socket)["defaults"].(map[string]any)["revision"]
+	accepted := apply()
 	same, current := inspect()
 	if same != ref || current["network_policy_pending"] != true {
 		t.Fatal("running placement changed", same, current)
@@ -168,10 +169,18 @@ print('DNS TLS PACKAGE DENIAL OK')`, certificate, port, len(payload))
 	if !strings.Contains(shell(code), "DNS TLS PACKAGE DENIAL OK") {
 		t.Fatal("guest network check missing")
 	}
+	// The deployment file still contains the bootstrap deny-all policy. An
+	// ordinary owner restart must preserve the later database edit and binding.
+	a.stop()
+	a.start()
+	restarted, retained := inspect()
+	if restarted != ref || retained["default_network_policy_revision"] != accepted || retained["effective_network_policy_revision"] != accepted {
+		t.Fatal("restart replaced database network authority", retained)
+	}
+	shell(code)
 	reach["direct"] = []any{}
 	reach["resolvers"] = []string{}
-	write()
-	a.cli("network-reload", "--socket", socket)
+	apply()
 	// The live placement still has the previously selected permission.
 	shell(code)
 	pauseResume()

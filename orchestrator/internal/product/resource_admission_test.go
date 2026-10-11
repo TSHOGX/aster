@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"harness-platform/orchestrator/internal/sandbox"
+	"harness-platform/orchestrator/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,7 +73,7 @@ func TestConcurrentProjectQuotaHasOneWinnerAndReplayDoesNotCharge(t *testing.T) 
 	p, err := s.Project(ctx, scope)
 	must(t, err)
 	must(t, s.DeleteProject(ctx, scope, p.Revision))
-	lifecycle := &Lifecycle{Store: s, Backend: fakeBackend(), MaxProjects: 1}
+	lifecycle := &Lifecycle{VerifyRuntime: testfixture.VerifyRuntime, Store: s, Backend: fakeBackend(), MaxProjects: 1}
 	drive(t, lifecycle, scope.ProjectID)
 	usage, err = scalarUsage(ctx, s.reader, scope.Actor, ResourceProjects)
 	must(t, err)
@@ -92,7 +93,10 @@ func TestConcurrentComputeQuotaReservesBeforeAnyEngineCall(t *testing.T) {
 	results := make(chan error, 2)
 	for _, target := range []Scope{scope, other} {
 		group.Add(1)
-		go func(target Scope) { defer group.Done(); results <- lifecycle.EnsureActive(ctx, target, testProfile()) }(target)
+		go func(target Scope) {
+			defer group.Done()
+			results <- lifecycle.EnsureActive(ctx, target, testProfile().Bindings())
+		}(target)
 	}
 	group.Wait()
 	close(results)
@@ -120,9 +124,10 @@ func TestFullPlanPersistentQuotaAndReductionPreserveWorkspace(t *testing.T) {
 	s := lifecycle.Store
 	profile := testProfile()
 	profile.Volumes = append(profile.Volumes, VolumePlan{Key: "extra", Role: "data", Destination: "/data", Storage: "owned", Access: "read_only", CapacityBytes: 16 << 20})
+	fixtureEnvironment(t, s, profile)
 	fixtureResourceLimit(t, s, scope.Actor, ResourcePersistent, 112<<20)
 	local := &localFileBackend{root: t.TempDir(), processes: map[string]*localFileProcess{}}
-	files := &Files{Store: s, Lifecycle: lifecycle, Backend: local, Profile: profile}
+	files := &Files{Store: s, Lifecycle: lifecycle, Backend: local, Bindings: profile.Bindings()}
 	defer files.Close()
 	_, err := files.Upload(ctx, scope, "initial", writeRequest("retained", "original"), strings.NewReader("original"))
 	must(t, err)
@@ -139,7 +144,7 @@ func TestFullPlanPersistentQuotaAndReductionPreserveWorkspace(t *testing.T) {
 	_, err = s.Resources(ctx, other)
 	wantError(t, err, ErrNotFound)
 	fixtureResourceLimit(t, s, scope.Actor, ResourcePersistent, 64<<20)
-	wantError(t, lifecycle.Resume(ctx, scope, profile), ErrQuotaExceeded)
+	wantError(t, lifecycle.Resume(ctx, scope, profile.Bindings()), ErrQuotaExceeded)
 	_, err = files.Edit(ctx, scope, "edit-within-existing", writeRequest("retained", "preserved"), strings.NewReader("preserved"))
 	must(t, err)
 	actual, err := os.ReadFile(filepath.Join(local.root, "retained"))
@@ -163,7 +168,7 @@ func TestFullPlanPersistentQuotaAndReductionPreserveWorkspace(t *testing.T) {
 func TestPendingComputeRechecksQuotaWithoutPretendingRemoteUncertainty(t *testing.T) {
 	lifecycle, scope, backend := lifecycleFixture(t)
 	s := lifecycle.Store
-	must(t, lifecycle.EnsureActive(ctx, scope, testProfile()))
+	must(t, lifecycle.EnsureActive(ctx, scope, testProfile().Bindings()))
 	// Prepare all storage and advance to the not-yet-dispatched sandbox phase.
 	for i := 0; i < 3; i++ {
 		must(t, lifecycle.Reconcile(ctx, scope.ProjectID))
@@ -186,15 +191,15 @@ func TestPendingComputeRechecksQuotaWithoutPretendingRemoteUncertainty(t *testin
 		t.Fatal(p)
 	}
 	fixtureResourceLimit(t, s, scope.Actor, ResourceCPU, 0)
-	must(t, lifecycle.EnsureActive(ctx, scope, testProfile()))
+	must(t, lifecycle.EnsureActive(ctx, scope, testProfile().Bindings()))
 	must(t, lifecycle.Pause(ctx, scope, p.Revision))
 	drive(t, lifecycle, scope.ProjectID)
-	wantError(t, lifecycle.Resume(ctx, scope, testProfile()), ErrQuotaExceeded)
+	wantError(t, lifecycle.Resume(ctx, scope, testProfile().Bindings()), ErrQuotaExceeded)
 }
 func TestExecutionAndScheduleQuotasCountStartupIntent(t *testing.T) {
 	lifecycle, scope, _ := lifecycleFixture(t)
 	s := lifecycle.Store
-	must(t, lifecycle.EnsureActive(ctx, scope, testProfile()))
+	must(t, lifecycle.EnsureActive(ctx, scope, testProfile().Bindings()))
 	drive(t, lifecycle, scope.ProjectID)
 	fixtureResourceLimit(t, s, scope.Actor, ResourceAgents, 1)
 	fixtureResourceLimit(t, s, scope.Actor, ResourceTerminals, 1)
@@ -269,7 +274,7 @@ func TestConcurrentFirstUploadsCompeteForWholePersistentAllowance(t *testing.T) 
 	_, err := s.CreateProject(ctx, other.Actor, other.ProjectID, "Other")
 	must(t, err)
 	fixtureResourceLimit(t, s, scope.Actor, ResourcePersistent, 96<<20)
-	files := &Files{Store: s, Lifecycle: lifecycle, Backend: &localFileBackend{root: t.TempDir(), processes: map[string]*localFileProcess{}}, Profile: testProfile()}
+	files := &Files{Store: s, Lifecycle: lifecycle, Backend: &localFileBackend{root: t.TempDir(), processes: map[string]*localFileProcess{}}, Bindings: testProfile().Bindings()}
 	defer files.Close()
 	var group sync.WaitGroup
 	results := make(chan error, 2)
@@ -322,7 +327,7 @@ func TestConcurrentUploadAndComputeShareOneReservedPlan(t *testing.T) {
 	lifecycle.Backend = backend
 	fixtureResourceLimit(t, s, scope.Actor, ResourcePersistent, 96<<20)
 	local := &localFileBackend{root: t.TempDir(), processes: map[string]*localFileProcess{}}
-	files := &Files{Store: s, Lifecycle: lifecycle, Backend: local, Profile: testProfile()}
+	files := &Files{Store: s, Lifecycle: lifecycle, Backend: local, Bindings: testProfile().Bindings()}
 	defer files.Close()
 	finished := make(chan error, 1)
 	go func() {
@@ -341,7 +346,7 @@ func TestConcurrentUploadAndComputeShareOneReservedPlan(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("upload did not reach allocation barrier")
 	}
-	err := lifecycle.EnsureActive(ctx, scope, testProfile())
+	err := lifecycle.EnsureActive(ctx, scope, testProfile().Bindings())
 	close(backend.release)
 	must(t, err)
 	wantError(t, <-finished, ErrPending)

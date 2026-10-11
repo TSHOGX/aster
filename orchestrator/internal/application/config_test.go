@@ -43,7 +43,7 @@ func TestConfigurationHasOneStrictProjectSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !filepath.IsAbs(loaded.StateDirectory) || loaded.Profile().StoreID != "store" || loaded.Profile().ReleaseDigest != cfg.Template.Digest {
+	if !filepath.IsAbs(loaded.StateDirectory) || loaded.bootstrapProfile().StoreID != "store" || loaded.bootstrapProfile().ReleaseDigest != cfg.Template.Digest {
 		t.Fatal(loaded)
 	}
 	var document map[string]any

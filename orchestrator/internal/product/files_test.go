@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/testfixture"
 	"io"
 	"os"
 	"path/filepath"
@@ -124,12 +125,12 @@ func fileFixture(t *testing.T) (*Files, Scope, *localFileBackend) {
 	t.Helper()
 	s, a, _ := fixture(t)
 	backend := fakeBackend()
-	l := &Lifecycle{Store: s, Backend: backend, MaxProjects: 2}
+	l := &Lifecycle{VerifyRuntime: testfixture.VerifyRuntime, Store: s, Backend: backend, MaxProjects: 2}
 	profile := testProfile()
-	must(t, l.EnsureActive(ctx, a, profile))
+	must(t, l.EnsureActive(ctx, a, profile.Bindings()))
 	drive(t, l, a.ProjectID)
 	files := &localFileBackend{root: t.TempDir(), processes: map[string]*localFileProcess{}}
-	f := &Files{Store: s, Lifecycle: l, Backend: files, Profile: profile}
+	f := &Files{Store: s, Lifecycle: l, Backend: files, Bindings: profile.Bindings()}
 	t.Cleanup(func() { _ = f.Close() })
 	return f, a, files
 }

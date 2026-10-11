@@ -70,7 +70,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 	identity, err := backend.Identity(runctx)
 	must(t, err)
 	s := testStore(t)
-	l := &Lifecycle{Store: s, Backend: backend, MaxProjects: 1}
+	l := &Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: s, Backend: backend, MaxProjects: 1}
 	scope := Scope{"owner", "files"}
 	_, err = s.CreateProject(runctx, scope.Actor, scope.ProjectID, "Files")
 	must(t, err)
@@ -79,7 +79,8 @@ func TestProjectFilesOnKhora(t *testing.T) {
 	profile.TemplateID = "agent-runtime"
 	profile.MemoryBytes = 1 << 30
 	profile.DiskBytes = 256 << 20
-	must(t, l.EnsureActive(runctx, scope, profile))
+	fixtureEnvironment(t, s, profile)
+	must(t, l.EnsureActive(runctx, scope, profile.Bindings()))
 	drive(t, l, scope.ProjectID)
 	r, err := l.ActiveResources(runctx, scope)
 	must(t, err)
@@ -112,7 +113,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 	}
 	shell(t, "chmod +x /tmp/workspace-files /tmp/projectfiles.test")
 	wrapped := &loseFileReply{FileBackend: backend}
-	files := &Files{Store: s, Lifecycle: l, Backend: wrapped, Profile: profile, Helper: "/tmp/workspace-files"}
+	files := &Files{Store: s, Lifecycle: l, Backend: wrapped, Bindings: profile.Bindings(), Helper: "/tmp/workspace-files"}
 	defer files.Close()
 	t.Cleanup(func() {
 		c, done := context.WithTimeout(context.Background(), 25*time.Second)
@@ -261,7 +262,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		t.Logf("host immutable capture: cold=%s; 50 warm=%s; database writes=0; one helper binding", coldTime, time.Since(warm))
 	})
 	t.Run("large-stream-and-native-PTY-concurrency", func(t *testing.T) {
-		terminals := NewTerminals(runctx, s, l, backend, profile, 4)
+		terminals := NewTerminals(runctx, s, l, backend, profile.Bindings(), 4)
 		defer terminals.Close()
 		guest := &terminalGuest{ctx: runctx, store: s, lifecycle: l, terminals: terminals, backend: backend, resources: r, scope: scope}
 		_, view := guest.start(t, "files-pty", 24, 80)
@@ -407,7 +408,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		pausedCapture, e := files.Capture(runctx, scope, "contended")
 		must(t, e)
 		must(t, pausedCapture.Close())
-		must(t, l.EnsureConfiguredActive(runctx, scope, profile))
+		must(t, l.EnsureActive(runctx, scope, profile.Bindings()))
 		drive(t, l, scope.ProjectID)
 		r, err = l.ActiveResources(runctx, scope)
 		must(t, err)

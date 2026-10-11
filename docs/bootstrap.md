@@ -18,7 +18,7 @@ engine store or historical reset records.
 Keep the deployment's provider credentials, TLS material and
 reviewed configuration unless those are explicitly part of the reset. Install
 fresh artifacts, register the new immutable template, and update configuration to
-the new engine store ID and single current runtime manifest. Bootstrap the first database administrator before starting the owner. Start the engine/proxy, frontend, owner and gateway,
+the new engine store ID and initial registered runtime manifest. Bootstrap the first database administrator before starting the owner. Start the engine/proxy, frontend, owner and gateway,
 then verify readiness before reopening browser ingress.
 
 Validate the running executable and frontend build against the prepared artifacts.

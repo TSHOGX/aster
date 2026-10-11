@@ -112,7 +112,7 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 	identity, err := backend.Identity(runctx)
 	must(t, err)
 	s := testStore(t)
-	l := &Lifecycle{Store: s, Backend: backend, MaxProjects: 1}
+	l := &Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: s, Backend: backend, MaxProjects: 1}
 	scope := Scope{"owner", "agents"}
 	_, err = s.CreateProject(runctx, scope.Actor, scope.ProjectID, "Agents")
 	must(t, err)
@@ -121,7 +121,8 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 	profile.TemplateID = "agent-runtime"
 	profile.MemoryBytes = 2 << 30
 	profile.DiskBytes = 256 << 20
-	must(t, l.EnsureActive(runctx, scope, profile))
+	fixtureEnvironment(t, s, profile)
+	must(t, l.EnsureActive(runctx, scope, profile.Bindings()))
 	drive(t, l, scope.ProjectID)
 	r, err := l.ActiveResources(runctx, scope)
 	must(t, err)
@@ -271,7 +272,7 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 	}
 	t.Log("Session replacement loaded its retained native path without Project pause; runner subreaper settled ordinary and setsid descendants while sibling continued")
 	t.Run("application-admission-ingest-projection", func(t *testing.T) {
-		agents := NewAgents(runctx, s, l, backend, profile, 8)
+		agents := NewAgents(runctx, s, l, backend, profile.Bindings(), 8)
 		agents.RunnerBinary = "/tmp/agent-runner"
 		defer agents.Close()
 		for _, id := range []string{"c", "d"} {

@@ -89,7 +89,7 @@ func TestAgentRevocationBeforeProvisioningIsDurable(t *testing.T) {
 	prompt, err := s.AdmitTurn(ctx, scope, "waiting", "request", "do work", false)
 	must(t, err)
 	setFixtureAgentGrant(t, s, "deny")
-	agents := NewAgents(ctx, s, l, nil, testProfile(), 10)
+	agents := NewAgents(ctx, s, l, nil, testProfile().Bindings(), 10)
 	defer agents.Close()
 	wantError(t, agents.Step(ctx, scope, "waiting"), ErrForbidden)
 	var incarnations, resources int

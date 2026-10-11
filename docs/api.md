@@ -452,3 +452,12 @@ quantities are decimal strings so clients retain exact integer values. These are
 accounted counts/capacities, not sampled CPU or filesystem utilization. Quota denial
 is distinct from temporary platform/engine capacity pressure and is not retried by
 the file-read client. Platform schedule errors preserve the same quota details.
+
+`GET/PATCH /api/admin/network/default` reads or replaces the database direct/DNS
+policy. PATCH requires `request_id`, integer `expected_revision` matching
+`configuration_revision`, complete `direct` and `resolvers` arrays (empty arrays
+explicitly deny direct access/clear DNS). The returned `revision` is the content
+hash used by placements; `configuration_revision` fences administrative edits.
+Replays return the original outcome with `replayed: true`. Edits are audited and
+apply at future creation/resume; operator service routes/hosts are not editable
+through this endpoint. The former `network-reload` CLI/control path is removed.

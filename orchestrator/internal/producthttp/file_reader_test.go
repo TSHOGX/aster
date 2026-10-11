@@ -91,11 +91,11 @@ func TestFileReaderHTTPValidatorsRangesAndNoReadCommands(t *testing.T) {
 	scope := product.Scope{Actor: "alice", ProjectID: "files"}
 	_, err := h.store.CreateProject(ctx, scope.Actor, scope.ProjectID, "Files")
 	must(t, err)
-	must(t, h.lifecycle.EnsureActive(ctx, scope, testProfile()))
+	must(t, h.lifecycle.EnsureActive(ctx, scope, testProfile().Bindings()))
 	h.converge(t, "files")
 	backend := &readerHTTPBackend{root: t.TempDir(), processes: map[string]*readHTTPProcess{}}
 	must(t, os.WriteFile(filepath.Join(backend.root, "file"), []byte("abcdefghij"), 0600))
-	files := &product.Files{Store: h.store, Lifecycle: h.lifecycle, Backend: backend, Profile: testProfile()}
+	files := &product.Files{Store: h.store, Lifecycle: h.lifecycle, Backend: backend, Bindings: testProfile().Bindings()}
 	defer files.Close()
 	server := &Server{Store: h.store, Files: files, Auth: AuthenticatorFunc(func(*http.Request) (string, error) { return h.currentActor(), nil })}
 	defer server.Close()
@@ -183,11 +183,11 @@ func TestPreviewSnapshotHTTPImmutableRangesAndAuthority(t *testing.T) {
 	scope := product.Scope{Actor: "alice", ProjectID: "snapshots"}
 	_, err := h.store.CreateProject(ctx, scope.Actor, scope.ProjectID, "Snapshots")
 	must(t, err)
-	must(t, h.lifecycle.EnsureActive(ctx, scope, testProfile()))
+	must(t, h.lifecycle.EnsureActive(ctx, scope, testProfile().Bindings()))
 	h.converge(t, scope.ProjectID)
 	backend := &readerHTTPBackend{root: t.TempDir(), processes: map[string]*readHTTPProcess{}}
 	must(t, os.WriteFile(filepath.Join(backend.root, "file"), []byte("abcdefghij"), 0600))
-	files := &product.Files{Store: h.store, Lifecycle: h.lifecycle, Backend: backend, Profile: testProfile()}
+	files := &product.Files{Store: h.store, Lifecycle: h.lifecycle, Backend: backend, Bindings: testProfile().Bindings()}
 	defer files.Close()
 	server := &Server{Store: h.store, Files: files, Auth: AuthenticatorFunc(func(*http.Request) (string, error) { return h.currentActor(), nil })}
 	defer server.Close()

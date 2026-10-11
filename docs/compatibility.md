@@ -9,12 +9,12 @@ tracked in [queued-prompts-release.md](queued-prompts-release.md); reset is not
 implicit in application startup.
 
 `release-identity` reports the executable, exact schema fingerprint, fixed
-configuration, single current runtime and content digests. Its compatibility
+configuration, bootstrap publication/runtime inputs. Its compatibility
 field is a deployment-contract digest for guarded owner handoff, not a promise
 that older builds or persisted formats are supported.
 
 Direct/DNS defaults have a separate accepted policy revision. Owner handoff checks
-that revision before acquiring the writer, and reload cannot change it while
+that revision before acquiring the writer, and administrative edits cannot change it while
 release admission is fenced. A running Project retains its effective policy until
 creation/resume selects a new snapshot.
 
@@ -35,3 +35,7 @@ Release identity format 4 declares schema 4, runtime manifest 4, native protocol
 and schedule platform protocol 1. Conversational scheduling includes immutable
 mutation receipts, one-shot admission, bounded checks and an owner invalidation
 outbox. Old databases and runtime manifests are refused without conversion.
+
+Saved Project contracts are independently checked against their exact retained
+database registrations at startup; a different database default does not replace
+their template or runtime digest.

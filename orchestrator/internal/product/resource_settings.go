@@ -110,10 +110,12 @@ func (s *Store) UserResourceSettings(ctx context.Context, token, id string) (Use
 func currentEnvironment(ctx context.Context, q queryer) (DefaultEnvironment, []BuiltinVolume, error) {
 	var environment DefaultEnvironment
 	var raw string
-	if err := missing(q.QueryRowContext(ctx, `SELECT document FROM default_environment WHERE id=1`).Scan(&raw)); err != nil {
+	var revision int64
+	if err := missing(q.QueryRowContext(ctx, `SELECT document,revision FROM default_environment WHERE id=1`).Scan(&raw, &revision)); err != nil {
 		return environment, nil, err
 	}
-	if err := json.Unmarshal([]byte(raw), &environment); err != nil {
+	var err error
+	if environment, err = decodeEnvironment(raw, revision); err != nil {
 		return environment, nil, err
 	}
 	rows, err := q.QueryContext(ctx, `SELECT v.id,v.version,v.digest,v.store_id,v.publication_purpose,v.minimum_bytes,v.roles,v.clean_runtime,v.entries FROM builtin_volumes v WHERE EXISTS(SELECT 1 FROM default_environment e,json_each(e.document,'$.mounts') m WHERE json_extract(m.value,'$.source.artifact_id')=v.id AND json_extract(m.value,'$.source.version')=v.version)`)

@@ -67,14 +67,6 @@ func (a *Application) controlHandler() http.Handler {
 		}
 		writeControl(w, report)
 	})
-	mux.HandleFunc("POST /network/reload", func(w http.ResponseWriter, r *http.Request) {
-		report, err := a.ReloadNetworkPolicy(r.Context())
-		if err != nil {
-			http.Error(w, err.Error(), 409)
-			return
-		}
-		writeControl(w, report)
-	})
 	audiences := make(map[string]int, len(a.Config.Gateways))
 	for _, gateway := range a.Config.Gateways {
 		audiences[gateway.Audience] = gateway.MaxRequests
@@ -301,18 +293,11 @@ func (a *Application) controlHandler() http.Handler {
 	mux.HandleFunc("POST /publish", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 		defer cancel()
-		profile, err := a.publish(ctx)
-		if err != nil {
+		if _, err := a.publish(ctx); err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		published := []product.VolumePlan{}
-		for _, slot := range profile.Volumes {
-			if slot.Storage == "shared_readonly" {
-				published = append(published, slot)
-			}
-		}
-		writeControl(w, map[string]any{"published_volumes": published, "default_activation": "on application restart"})
+		writeControl(w, map[string]any{"status": "registered", "default_changed": false})
 	})
 	return mux
 }

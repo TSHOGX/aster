@@ -25,7 +25,7 @@ func TestProductPressure40And80MiB(t *testing.T) {
 			incarnations := []Incarnation{}
 			commands := []agentwire.Frame{}
 			for n, scope := range scopes {
-				must(t, l.EnsureActive(ctx, scope, testProfile()))
+				must(t, l.EnsureActive(ctx, scope, testProfile().Bindings()))
 				drive(t, l, scope.ProjectID)
 				id := fmt.Sprintf("pressure-%d", n)
 				_, err := s.CreateSession(ctx, scope, id, "Pressure")

@@ -17,7 +17,7 @@ func TestBootstrapSeedsRollbackAndSingleInitialization(t *testing.T) {
 	defer s.Close()
 	seed := bootstrapSeedFixture(t)
 	// A no-account owner can already have its explicitly declared network state.
-	if _, err = s.InitializeNetworkPolicy(ctx, seed.Network); err != nil {
+	if _, err = s.AcceptNetworkPolicy(ctx, seed.Network); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.db.ExecContext(ctx, `CREATE TEMP TRIGGER fail_bootstrap_audit BEFORE INSERT ON audit_events BEGIN SELECT RAISE(ABORT,'injected audit failure'); END`); err != nil {

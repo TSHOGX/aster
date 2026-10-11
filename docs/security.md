@@ -54,9 +54,10 @@ from live database authority. The dedicated host UID remains under Khora's
 second-hop network floor. Direct reachability is available to every Project
 process and must be reviewed as such.
 
-Only the protected owner control socket and the configured host file can reload
-direct/DNS defaults. Browser clients cannot supply a policy revision or mutate
-engine bindings. Invalid/unsupported edits preserve accepted defaults, and
+Current platform administrators can edit database direct/DNS defaults through a
+revisioned audited endpoint. No config-file reload path remains. Browser clients
+cannot mutate engine bindings or supply service routes. Invalid edits preserve
+accepted defaults, and
 running placements keep their existing permissions. Conditional paused updates
 verify original identity, resource limits, mounts and retained model routes before
 admission reopens. Candidate startup checks the accepted policy revision during

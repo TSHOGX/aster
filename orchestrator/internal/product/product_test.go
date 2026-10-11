@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/testfixture"
 	"os"
 	"path/filepath"
@@ -404,4 +406,25 @@ func openFixtureStore(ctx context.Context, path string) (*Store, error) {
 		}
 	}
 	return store, nil
+}
+
+func fixtureEnvironment(t *testing.T, store *Store, profile Profile, entries ...map[string][]content.Entry) {
+	t.Helper()
+	raw, err := json.Marshal(profile)
+	must(t, err)
+	manifest, _ := testfixture.RuntimeManifest()
+	if file := os.Getenv("PROJECT_TEST_MANIFEST"); file != "" {
+		raw, err := os.ReadFile(file)
+		must(t, err)
+		must(t, json.Unmarshal(raw, &manifest))
+	}
+	policy, err := NewNetworkPolicy(profile.Reachability)
+	must(t, err)
+	network, err := json.Marshal(policy)
+	must(t, err)
+	var sources map[string][]content.Entry
+	if len(entries) > 0 {
+		sources = entries[0]
+	}
+	must(t, store.write(ctx, func(tx *sql.Tx) error { return testfixture.SetRuntime(ctx, tx, raw, manifest, network, sources) }))
 }

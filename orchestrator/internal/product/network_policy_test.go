@@ -40,9 +40,9 @@ func TestNetworkPolicyResumeSnapshotSurvivesLostReplyAndRestart(t *testing.T) {
 	first := policyFixture(t, "192.0.2.0/24", "192.0.2.53")
 	second := policyFixture(t, "198.51.100.0/24", "198.51.100.53")
 	third := policyFixture(t, "", "")
-	_, err := l.Store.InitializeNetworkPolicy(ctx, first)
+	_, err := l.Store.AcceptNetworkPolicy(ctx, first)
 	must(t, err)
-	must(t, l.EnsureConfiguredActive(ctx, a, serviceProfile()))
+	must(t, l.EnsureActive(ctx, a, serviceProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	original, err := l.ActiveResources(ctx, a)
 	must(t, err)
@@ -51,14 +51,14 @@ func TestNetworkPolicyResumeSnapshotSurvivesLostReplyAndRestart(t *testing.T) {
 	}
 	_, err = l.Store.AcceptNetworkPolicy(ctx, second)
 	must(t, err)
-	must(t, l.EnsureConfiguredActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	running, err := l.ActiveResources(ctx, a)
 	must(t, err)
 	if !reflect.DeepEqual(running, original) || f.calls["network"] != 0 || f.projections[original.Reference.SandboxID]["/etc/resolv.conf"] != "nameserver 192.0.2.53\n" {
 		t.Fatal("reload touched running Project", running)
 	}
 	pausePolicyProject(t, l, a)
-	must(t, l.EnsureConfiguredActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	_, err = l.Store.AcceptNetworkPolicy(ctx, third)
 	must(t, err)
 	f.fail["network"] = 1
@@ -86,7 +86,7 @@ func TestNetworkPolicyResumeSnapshotSurvivesLostReplyAndRestart(t *testing.T) {
 		t.Fatal(f.projections)
 	}
 	pausePolicyProject(t, l, a)
-	must(t, l.EnsureConfiguredActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	resumed, err = l.ActiveResources(ctx, a)
 	must(t, err)
@@ -95,7 +95,7 @@ func TestNetworkPolicyResumeSnapshotSurvivesLostReplyAndRestart(t *testing.T) {
 	}
 	calls := f.calls["network"]
 	pausePolicyProject(t, l, a)
-	must(t, l.EnsureConfiguredActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	if f.calls["network"] != calls {
 		t.Fatal("unchanged policy mutated engine")
@@ -108,14 +108,14 @@ func TestNetworkPolicyConflictingBindingsNeverResume(t *testing.T) {
 			l, a, f := lifecycleFixture(t)
 			first := policyFixture(t, "", "")
 			second := policyFixture(t, "198.51.100.0/24", "")
-			_, err := l.Store.InitializeNetworkPolicy(ctx, first)
+			_, err := l.Store.AcceptNetworkPolicy(ctx, first)
 			must(t, err)
-			must(t, l.EnsureConfiguredActive(ctx, a, testProfile()))
+			must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 			drive(t, l, a.ProjectID)
 			pausePolicyProject(t, l, a)
 			_, err = l.Store.AcceptNetworkPolicy(ctx, second)
 			must(t, err)
-			must(t, l.EnsureConfiguredActive(ctx, a, testProfile()))
+			must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 			r, err := l.Store.Resources(ctx, a)
 			must(t, err)
 			id := r.Reference.SandboxID
@@ -148,13 +148,13 @@ func TestNetworkPolicyConflictingBindingsNeverResume(t *testing.T) {
 func TestNetworkPolicyConcurrentAdmissionAndProjectionFailure(t *testing.T) {
 	l, a, f := lifecycleFixture(t)
 	policy := policyFixture(t, "192.0.2.0/24", "192.0.2.53")
-	_, err := l.Store.InitializeNetworkPolicy(ctx, policy)
+	_, err := l.Store.AcceptNetworkPolicy(ctx, policy)
 	must(t, err)
 	var wg sync.WaitGroup
 	errs := make(chan error, 20)
 	for n := 0; n < 20; n++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); errs <- l.EnsureConfiguredActive(ctx, a, testProfile()) }()
+		go func() { defer wg.Done(); errs <- l.EnsureActive(ctx, a, testProfile().Bindings()) }()
 	}
 	wg.Wait()
 	close(errs)
@@ -163,7 +163,7 @@ func TestNetworkPolicyConcurrentAdmissionAndProjectionFailure(t *testing.T) {
 	}
 	drive(t, l, a.ProjectID)
 	pausePolicyProject(t, l, a)
-	must(t, l.EnsureConfiguredActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	must(t, l.Reconcile(ctx, a.ProjectID))
 	f.fail["projection"] = 1
 	if err = l.Reconcile(ctx, a.ProjectID); err == nil {
@@ -181,7 +181,7 @@ func TestNetworkPolicyFencedDuringHandoffAndCheckedBeforeWriter(t *testing.T) {
 	identity := ApplicationIdentity{ExecutableDigest: "sha256:" + strings.Repeat("a", 64), CompatibilityDigest: "sha256:" + strings.Repeat("c", 64), NetworkPolicyRevision: first.Revision}
 	s, err := OpenApplication(ctx, path, identity)
 	must(t, err)
-	_, err = s.InitializeNetworkPolicy(ctx, first)
+	_, err = s.AcceptNetworkPolicy(ctx, first)
 	must(t, err)
 	proof := func() GatewayObservation { return GatewayObservation{Started: time.Now()} }
 	target := "sha256:" + strings.Repeat("b", 64)
@@ -204,14 +204,14 @@ func TestNetworkPolicyFencedDuringHandoffAndCheckedBeforeWriter(t *testing.T) {
 	s, err = OpenApplication(ctx, path, identity)
 	must(t, err)
 	defer s.Close()
-	_, err = s.InitializeNetworkPolicy(ctx, first)
+	_, err = s.AcceptNetworkPolicy(ctx, first)
 	must(t, err)
 }
 
 func TestNetworkPolicySnapshotIsValidatedAndDetached(t *testing.T) {
 	p := policyFixture(t, "192.0.2.0/24", "192.0.2.53")
 	s, _, _ := fixture(t)
-	_, err := s.InitializeNetworkPolicy(context.Background(), p)
+	_, err := s.AcceptNetworkPolicy(context.Background(), p)
 	must(t, err)
 	p.Direct[0].Port = 80
 	_, err = s.AcceptNetworkPolicy(ctx, p)
@@ -231,14 +231,14 @@ func TestNetworkPolicyDeletionAfterLostPatchSettlesOriginalResources(t *testing.
 	l, a, f := lifecycleFixture(t)
 	first := policyFixture(t, "", "")
 	second := policyFixture(t, "192.0.2.0/24", "")
-	_, err := l.Store.InitializeNetworkPolicy(ctx, first)
+	_, err := l.Store.AcceptNetworkPolicy(ctx, first)
 	must(t, err)
-	must(t, l.EnsureConfiguredActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	pausePolicyProject(t, l, a)
 	_, err = l.Store.AcceptNetworkPolicy(ctx, second)
 	must(t, err)
-	must(t, l.EnsureConfiguredActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	f.fail["network"] = 1
 	if l.Reconcile(ctx, a.ProjectID) == nil {
 		t.Fatal("expected uncertain PATCH")
@@ -258,9 +258,9 @@ func TestNetworkPolicyRecoveryAndRestartSelectLatestDefaults(t *testing.T) {
 	l, a, f := lifecycleFixture(t)
 	first := policyFixture(t, "", "")
 	second := policyFixture(t, "192.0.2.0/24", "")
-	_, err := l.Store.InitializeNetworkPolicy(ctx, first)
+	_, err := l.Store.AcceptNetworkPolicy(ctx, first)
 	must(t, err)
-	must(t, l.EnsureConfiguredActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	original, err := l.ActiveResources(ctx, a)
 	must(t, err)
@@ -291,7 +291,7 @@ func TestNetworkPolicyReloadAndActivationNeverMixRevisions(t *testing.T) {
 	l, scope, _ := lifecycleFixture(t)
 	l.MaxProjects = 32
 	policies := []NetworkPolicy{policyFixture(t, "192.0.2.0/24", "192.0.2.53"), policyFixture(t, "198.51.100.0/24", "198.51.100.53")}
-	_, err := l.Store.InitializeNetworkPolicy(ctx, policies[0])
+	_, err := l.Store.AcceptNetworkPolicy(ctx, policies[0])
 	must(t, err)
 	var wg sync.WaitGroup
 	errs := make(chan error, 33)
@@ -310,7 +310,7 @@ func TestNetworkPolicyReloadAndActivationNeverMixRevisions(t *testing.T) {
 		_, err = l.Store.CreateProject(ctx, scope.Actor, id, "Concurrent policy")
 		must(t, err)
 		wg.Add(1)
-		go func() { defer wg.Done(); errs <- l.EnsureConfiguredActive(ctx, Scope{scope.Actor, id}, testProfile()) }()
+		go func() { defer wg.Done(); errs <- l.EnsureActive(ctx, Scope{scope.Actor, id}, testProfile().Bindings()) }()
 	}
 	wg.Wait()
 	close(errs)

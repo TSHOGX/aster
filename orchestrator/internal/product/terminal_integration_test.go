@@ -127,7 +127,7 @@ func TestProjectTerminalsOnKhora(t *testing.T) {
 	must(t, err)
 
 	s := testStore(t)
-	l := &Lifecycle{Store: s, Backend: backend, MaxProjects: 1}
+	l := &Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: s, Backend: backend, MaxProjects: 1}
 	scope := Scope{"owner", "terminals"}
 	_, err = s.CreateProject(runctx, scope.Actor, scope.ProjectID, "Terminals")
 	must(t, err)
@@ -136,7 +136,8 @@ func TestProjectTerminalsOnKhora(t *testing.T) {
 	profile.TemplateID = "agent-runtime"
 	profile.MemoryBytes = 2 << 30
 	profile.DiskBytes = 256 << 20
-	must(t, l.EnsureActive(runctx, scope, profile))
+	fixtureEnvironment(t, s, profile)
+	must(t, l.EnsureActive(runctx, scope, profile.Bindings()))
 	drive(t, l, scope.ProjectID)
 	r, err := l.ActiveResources(runctx, scope)
 	must(t, err)
@@ -153,7 +154,7 @@ func TestProjectTerminalsOnKhora(t *testing.T) {
 		}
 	})
 
-	terminals := NewTerminals(runctx, s, l, backend, profile, 8)
+	terminals := NewTerminals(runctx, s, l, backend, profile.Bindings(), 8)
 	defer terminals.Close()
 	g := &terminalGuest{ctx: runctx, store: s, lifecycle: l, terminals: terminals, backend: backend, resources: r, scope: scope}
 

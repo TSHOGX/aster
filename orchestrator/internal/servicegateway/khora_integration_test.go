@@ -159,13 +159,6 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 	must(t, err)
 	gatewayPort := uint16(gatewayListener.Addr().(*net.TCPAddr).Port)
 
-	store, err := producttest.Open(runctx, filepath.Join(t.TempDir(), "product.db"))
-	must(t, err)
-	t.Cleanup(func() { store.Close() })
-	lifecycle := &product.Lifecycle{Store: store, Backend: backend, MaxProjects: 1}
-	scope := product.Scope{Actor: "owner", ProjectID: "services"}
-	_, err = store.CreateProject(runctx, scope.Actor, scope.ProjectID, "Services")
-	must(t, err)
 	synthetic := netip.MustParseAddr("10.80.0.1")
 	profile := product.Profile{
 		StoreID: identity.StoreID, TemplateID: "agent-runtime",
@@ -176,7 +169,14 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 			Hosts:    map[string]string{"model.internal": "model"},
 		},
 	}
-	must(t, lifecycle.EnsureActive(runctx, scope, profile))
+	store, err := producttest.OpenWithProfile(runctx, filepath.Join(t.TempDir(), "product.db"), profile, nil)
+	must(t, err)
+	t.Cleanup(func() { store.Close() })
+	lifecycle := &product.Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: store, Backend: backend, MaxProjects: 1}
+	scope := product.Scope{Actor: "owner", ProjectID: "services"}
+	_, err = store.CreateProject(runctx, scope.Actor, scope.ProjectID, "Services")
+	must(t, err)
+	must(t, lifecycle.EnsureActive(runctx, scope, profile.Bindings()))
 	converge := func(t *testing.T) {
 		t.Helper()
 		for i := 0; i < 24; i++ {
@@ -271,7 +271,7 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 	}
 	t.Log("Project reachability was materialized once by the lifecycle, before any child started")
 
-	agents := product.NewAgents(runctx, store, lifecycle, backend, profile, 8)
+	agents := product.NewAgents(runctx, store, lifecycle, backend, profile.Bindings(), 8)
 	agents.RunnerBinary = "/tmp/agent-runner"
 	agents.ServiceAudience = "model"
 	closeAgents := sync.OnceFunc(agents.Close)

@@ -23,6 +23,8 @@ func adminFailure(w http.ResponseWriter, err error) {
 		status, code, message = 401, "login_required", "login required"
 	case errors.Is(err, product.ErrForbidden):
 		status, code, message = 403, "action_denied", "platform administrator role required"
+	case errors.Is(err, product.ErrArtifactUnavailable):
+		status, code, message = 503, "artifact_unavailable", "registered runtime artifact unavailable"
 	case errors.Is(err, product.ErrNotFound):
 		status, code, message = 404, "not_found", "resource not found"
 	case errors.Is(err, product.ErrInvalid):
@@ -53,6 +55,8 @@ func adminPageLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
 	return n, true
 }
 func (a *Authentication) adminRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/admin/network/default", a.adminNetworkDefaults)
+	mux.HandleFunc("PATCH /api/admin/network/default", a.editNetworkDefaults)
 	mux.HandleFunc("POST /api/admin/users/{id}/conversations/{session}/inspect", a.adminConversation)
 	mux.HandleFunc("GET /api/admin/users", a.adminUsers)
 	mux.HandleFunc("POST /api/admin/users", a.adminCreateUser)

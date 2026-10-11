@@ -3,6 +3,7 @@ package product
 import (
 	"encoding/json"
 	"fmt"
+	"harness-platform/orchestrator/internal/testfixture"
 	"strings"
 	"testing"
 )
@@ -57,8 +58,8 @@ func TestDisplayPagesAndAuthorization(t *testing.T) {
 func TestPlacementLossFencesOldAgentOwner(t *testing.T) {
 	s, a, _ := fixture(t)
 	backend := fakeBackend()
-	l := &Lifecycle{Store: s, Backend: backend, MaxProjects: 1}
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	l := &Lifecycle{VerifyRuntime: testfixture.VerifyRuntime, Store: s, Backend: backend, MaxProjects: 1}
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	_, err := s.CreateSession(ctx, a, "session", "Agent")
 	must(t, err)
@@ -77,7 +78,7 @@ func TestPlacementLossFencesOldAgentOwner(t *testing.T) {
 	if old.State != "exited" || old.Owner <= incarnation.Owner {
 		t.Fatal(old)
 	}
-	agents := NewAgents(ctx, s, l, nil, testProfile(), 4)
+	agents := NewAgents(ctx, s, l, nil, testProfile().Bindings(), 4)
 	defer agents.Close()
 	agents.recordExit(ctx, incarnation, 1)
 	child, err := s.Session(ctx, a, "session")

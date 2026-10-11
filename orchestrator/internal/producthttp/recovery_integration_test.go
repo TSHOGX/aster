@@ -53,11 +53,6 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 	fixture := &browserSubstrate{Backend: backend, api: api, binaries: os.Getenv("PROJECT_TEST_BIN_DIR"), initialized: map[string]bool{}, modelMode: "model-independent", loseDeleteReplies: true, destroyed: make(chan struct{}, 1)}
 	directory := t.TempDir()
 	dbPath := filepath.Join(directory, "product.db")
-	store, err := producttest.Open(runctx, dbPath)
-	must(t, err)
-	reader, err := sqlitex.OpenReader(runctx, dbPath, 1)
-	must(t, err)
-	defer reader.Close()
 	profile := testProfile()
 	profile.StoreID = identity.StoreID
 	profile.TemplateID = "agent-runtime"
@@ -70,6 +65,12 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 	must(t, err)
 	sharedEntries := []content.Entry{{Path: "sentinel", Size: int64(len("published-shared-asset")), Digest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("published-shared-asset")))}}
 	profile.Volumes = append(profile.Volumes, product.VolumePlan{Key: "shared", Role: "shared_assets", Destination: "/opt/shared-assets", Storage: "shared_readonly", Access: "read_only", CapacityBytes: 8 << 20, Source: &product.VolumeSource{Reference: product.ArtifactReference{ID: "shared", Version: "v1", Digest: content.Digest(sharedEntries)}, VolumeID: sharedVolume, MinimumBytes: 8 << 20}})
+
+	store, err := producttest.OpenWithProfile(runctx, dbPath, profile, map[string][]content.Entry{content.Digest(sharedEntries): sharedEntries})
+	must(t, err)
+	reader, err := sqlitex.OpenReader(runctx, dbPath, 1)
+	must(t, err)
+	defer reader.Close()
 
 	scope := product.Scope{Actor: "owner", ProjectID: "recovery"}
 	_, err = store.CreateProject(runctx, scope.Actor, scope.ProjectID, "Recovery")
@@ -85,10 +86,10 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 	var stop context.CancelFunc
 	var done chan struct{}
 	start := func() {
-		lifecycle = &product.Lifecycle{Store: store, Backend: fixture, MaxProjects: 2}
-		agents = product.NewAgents(runctx, store, lifecycle, backend, profile, 16)
-		terminals = product.NewTerminals(runctx, store, lifecycle, backend, profile, 16)
-		files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Profile: profile}
+		lifecycle = &product.Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: store, Backend: fixture, MaxProjects: 2}
+		agents = product.NewAgents(runctx, store, lifecycle, backend, profile.Bindings(), 16)
+		terminals = product.NewTerminals(runctx, store, lifecycle, backend, profile.Bindings(), 16)
+		files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Bindings: profile.Bindings()}
 		shares = &product.Shares{Store: store, Files: files, Directory: filepath.Join(directory, "shares")}
 		captures := &product.Captures{Store: store, Backend: backend, Directory: filepath.Join(directory, "captures")}
 		lifecycle.Artifacts = &product.Artifacts{Store: store, Captures: captures, Shares: shares}

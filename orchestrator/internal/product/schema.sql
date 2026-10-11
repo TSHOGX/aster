@@ -404,6 +404,7 @@ CREATE TABLE native_captures (
 );
 
 CREATE TABLE network_defaults (
+ configuration_revision INTEGER NOT NULL DEFAULT 1 CHECK(configuration_revision>0),
  id INTEGER PRIMARY KEY CHECK(id=1),
  revision TEXT NOT NULL,
  policy TEXT NOT NULL,
@@ -471,7 +472,13 @@ CREATE TABLE project_operations (
 CREATE TABLE project_resources (
  project_id TEXT PRIMARY KEY REFERENCES projects(id),
  store_id TEXT NOT NULL CHECK(store_id<>''),
- profile TEXT NOT NULL,
+ profile TEXT NOT NULL CHECK(json_valid(profile)
+  AND coalesce(json_type(profile,'$.environment_revision')='integer' AND json_extract(profile,'$.environment_revision')>0,0)
+  AND coalesce(json_type(profile,'$.resource_revision')='integer' AND json_extract(profile,'$.resource_revision')>0,0)
+  AND coalesce(json_type(profile,'$.sandbox_release.id')='text' AND length(json_extract(profile,'$.sandbox_release.id'))>0,0)
+  AND coalesce(json_type(profile,'$.sandbox_release.version')='text' AND length(json_extract(profile,'$.sandbox_release.version'))>0,0)
+  AND coalesce(json_extract(profile,'$.sandbox_release.digest')=json_extract(profile,'$.release_digest'),0)
+  AND coalesce(json_type(profile,'$.volumes')='array' AND json_array_length(profile,'$.volumes')>=2,0)),
  sandbox_id TEXT NOT NULL DEFAULT '',
  mutation_revision TEXT NOT NULL DEFAULT '',
  epoch INTEGER NOT NULL DEFAULT 0 CHECK(epoch>=0),

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"harness-platform/orchestrator/internal/producttest"
+	"harness-platform/orchestrator/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -51,8 +52,8 @@ func TestFileHTTPBoundaryAndUnknownOutcome(t *testing.T) {
 	scope := product.Scope{Actor: "alice", ProjectID: "files"}
 	_, err = store.CreateProject(ctx, scope.Actor, scope.ProjectID, "Files")
 	must(t, err)
-	lifecycle := &product.Lifecycle{Store: store, Backend: &fakeLifecycleBackend{}, MaxProjects: 2}
-	must(t, lifecycle.EnsureActive(ctx, scope, testProfile()))
+	lifecycle := &product.Lifecycle{VerifyRuntime: testfixture.VerifyRuntime, Store: store, Backend: &fakeLifecycleBackend{}, MaxProjects: 2}
+	must(t, lifecycle.EnsureActive(ctx, scope, testProfile().Bindings()))
 	for i := 0; i < 20; i++ {
 		err = lifecycle.Reconcile(ctx, scope.ProjectID)
 		if errors.Is(err, product.ErrNotFound) {
@@ -62,7 +63,7 @@ func TestFileHTTPBoundaryAndUnknownOutcome(t *testing.T) {
 	}
 	backend := &rejectFileBackend{}
 	actor := "alice"
-	server := (&Server{Store: store, Lifecycle: lifecycle, Files: &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Profile: testProfile()}, Auth: AuthenticatorFunc(func(*http.Request) (string, error) { return actor, nil })}).Handler()
+	server := (&Server{Store: store, Lifecycle: lifecycle, Files: &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Bindings: testProfile().Bindings()}, Auth: AuthenticatorFunc(func(*http.Request) (string, error) { return actor, nil })}).Handler()
 	request := func(method, path, body, origin string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(method, "http://app"+path, strings.NewReader(body))
@@ -129,7 +130,7 @@ func TestFileHTTPActionsIgnoreForgedHeaders(t *testing.T) {
 	_, err = store.SavePolicy(ctx, token, policy.ID, product.PolicyChange{RequestID: "deny-file-actions", ExpectedRevision: policy.Revision, Statements: &policy.Statements})
 	must(t, err)
 	backend := &rejectFileBackend{}
-	files := &product.Files{Store: store, Lifecycle: h.lifecycle, Backend: backend, Profile: testProfile()}
+	files := &product.Files{Store: store, Lifecycle: h.lifecycle, Backend: backend, Bindings: testProfile().Bindings()}
 	defer files.Close()
 	api := &Server{Store: store, Files: files, Lifecycle: h.lifecycle, Auth: AuthenticatorFunc(func(*http.Request) (string, error) { return owner.ID, nil })}
 	defer api.Close()

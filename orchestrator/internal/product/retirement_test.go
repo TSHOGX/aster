@@ -3,6 +3,7 @@ package product
 import (
 	"context"
 	"errors"
+	"harness-platform/orchestrator/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -89,7 +90,7 @@ func TestNeverProvisionedProjectStillReclaimsShares(t *testing.T) {
 	shares := &Shares{Store: s, Directory: t.TempDir()}
 	share, _, err := shares.Create(ctx, scope, "empty", nil, time.Now().Add(time.Hour))
 	must(t, err)
-	l := &Lifecycle{Store: s, Artifacts: &Artifacts{Store: s, Shares: shares}}
+	l := &Lifecycle{VerifyRuntime: testfixture.VerifyRuntime, Store: s, Artifacts: &Artifacts{Store: s, Shares: shares}}
 	p, err := s.Project(ctx, scope)
 	must(t, err)
 	must(t, s.DeleteProject(ctx, scope, p.Revision))
@@ -101,8 +102,8 @@ func TestNeverProvisionedProjectStillReclaimsShares(t *testing.T) {
 func TestObservedPlacementLossAndStoreChangeRemainScoped(t *testing.T) {
 	s, a, _ := fixture(t)
 	backend := fakeBackend()
-	l := &Lifecycle{Store: s, Backend: backend, MaxProjects: 1}
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	l := &Lifecycle{VerifyRuntime: testfixture.VerifyRuntime, Store: s, Backend: backend, MaxProjects: 1}
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	r, err := s.Resources(ctx, a)
 	must(t, err)
@@ -124,7 +125,7 @@ func TestObservedPlacementLossAndStoreChangeRemainScoped(t *testing.T) {
 	// Changed defaults cannot rewrite or strand a Project's saved profile.
 	changed := testProfile()
 	changed.MemoryBytes *= 2
-	must(t, l.EnsureConfiguredActive(ctx, a, changed))
+	must(t, l.EnsureActive(ctx, a, changed.Bindings()))
 	backend.mu.Lock()
 	backend.store = "different-store"
 	backend.mu.Unlock()

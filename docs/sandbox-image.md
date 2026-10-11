@@ -47,8 +47,8 @@ loads the current exported manifest and checks its engine template platform. Bef
 `/etc/project-runtime/manifest.json`, validates its pinned digest and current
 protocol requirements, then runs the image's `runtime-verify`. An older image
 cannot establish compatibility merely by passing its own older verifier. Saved
-Projects require an exact binding to the
-[current template](configuration.md).
+Projects require their exact [registered release](configuration.md), retained
+independently of later default selections.
 Verification is idempotent by sandbox/epoch/digest and can reconcile a lost reply.
 A component or native dependency mismatch refuses activation.
 

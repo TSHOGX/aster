@@ -162,7 +162,7 @@ func TestDatabaseSessionRevocationClosesLiveStreamsAndTerminal(t *testing.T) {
 			_, token, err := h.store.Authenticate(ctx, "owner", "owner-password-before")
 			must(t, err)
 			authentication := NewAuthentication(h.store, Config{})
-			api := &Server{Store: h.store, Terminals: h.terminals, Lifecycle: h.lifecycle, Profile: testProfile(), Auth: authentication}
+			api := &Server{Store: h.store, Terminals: h.terminals, Lifecycle: h.lifecycle, Bindings: testProfile().Bindings(), Auth: authentication}
 			server := httptest.NewServer(authentication.Handler(api.Handler()))
 			defer server.Close()
 			defer api.Close()
@@ -264,7 +264,7 @@ func TestTerminalSocketUsesCurrentTerminalGrant(t *testing.T) {
 	_, token, err := store.Authenticate(ctx, "owner", "owner-password-before")
 	must(t, err)
 	authentication := NewAuthentication(store, Config{})
-	api := &Server{Store: store, Terminals: h.terminals, Lifecycle: h.lifecycle, Profile: testProfile(), Auth: authentication}
+	api := &Server{Store: store, Terminals: h.terminals, Lifecycle: h.lifecycle, Bindings: testProfile().Bindings(), Auth: authentication}
 	server := httptest.NewServer(authentication.Handler(api.Handler()))
 	defer server.Close()
 	defer api.Close()

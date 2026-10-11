@@ -17,7 +17,7 @@ tracked example. The example denies guest egress until reachability is declared.
 | `application_socket`, `control_socket` | Distinct private Unix sockets; default below state directory |
 | `engine` | Explicit endpoint and persistent store ID; HTTPS requires CA and client certificate/key |
 | `template` | Engine template ID, immutable application version, exported Go runtime manifest and `sha256:` digest |
-| `project` | Positive CPU, memory, overlay-disk, workspace/runtime capacities and reachability |
+| `project` | One-time bootstrap CPU/memory/storage/direct/DNS declarations; operator-owned service routes and hosts |
 | `content` | Reviewed Agent configuration/shared-assets source paths and publication capacity |
 | `limits` | Global/per-Project capacities, explicit qualified `max_mounts_per_project`, idle deadlines and worker interval |
 | `notifications` | Per-source Inbox notification policy; changes apply after application restart |
@@ -25,19 +25,18 @@ tracked example. The example denies guest egress until reachability is declared.
 | `titles` | Optional host-side title model: `base_url`, `model`, `api_key_env` |
 | `tls_cert`, `tls_key` | Optional browser TLS certificate/key pair |
 
-The application derives Project store/template/release/publication bindings.
-Those fields, including `network_policy_revision`, cannot be supplied inside
-`project`. Existing Projects retain fixed template/resource/service settings;
-direct/DNS defaults apply at the next creation/resume boundary. Startup
-validates the single configured runtime against the current host protocols and
-checks its registered engine template platform. Every non-deleted Project,
-including paused Projects, must match that exact template ID and digest.
-Replacing the runtime requires a fresh installation; there is no retained-image
-catalog or compatibility adapter.
+First allocation selects the database environment, exact registered sandbox and
+built-in references, and effective user CPU/memory/storage requests in the same
+transaction as its complete storage reservation. Saved Profiles retain environment
+and resource revisions plus the release identity. Callers provide only engine
+identity and operator service routes/hosts, never allocation sizes or mount plans.
+Runtime binding fields cannot be supplied inside `project`.
 
-Startup rejects different runtime bindings and bindings to another engine store
-before publication or workers start. It never treats a fresh engine's IDs as
-authority over old resources.
+Existing Projects retain their exact registered template, capacities and mounts.
+Startup checks retained registrations against the current host protocol and engine
+store; a different selected default does not replace their identities. Missing or
+incompatible metadata fails closed without importing a caller profile. The current
+runtime contract still restricts workspace/runtime roots to its declared paths.
 
 `engine.endpoint` permits plain HTTP only on a loopback IP. HTTPS requires
 `ca_file`, `client_cert` and `client_key`; ambient proxy configuration is disabled.
@@ -83,8 +82,9 @@ Content publication hashes bounded reviewed source trees and records durable
 publication intent in the product database. Successful publication volumes mount
 read-only at `/opt/agent-config` and `/opt/shared-assets`. Sources are not watched
 for arbitrary live changes. `publish` prepares content through the running owner;
-restart the application to select current publications as new Project defaults.
-Existing Projects keep their original publication IDs.
+publication registers an immutable version without changing the database default.
+Existing Projects keep their original publication IDs. Selecting another environment
+is a separate configuration operation; restart is not a default-selection action.
 
 Accounts and hashed credentials live in the product database. There is no authentication
 configuration block. Before starting a fresh owner, use the protected offline
@@ -153,26 +153,20 @@ these example names do not require moving data or rebinding existing Projects.
 
 ## Mutable network defaults
 
-The running owner checks its original configuration file every two seconds. Only
-`project.reachability.direct` and `project.reachability.resolvers` are mutable.
-It validates the complete file and rejects unsupported field changes as a whole;
-malformed files retain the last accepted policy. Write the file atomically to
-avoid transient parse errors. The protected `network-reload` command invokes the
-same path immediately. Reload never pauses a Project or interrupts running work.
+Direct/DNS policy is seeded once at account bootstrap and then owned by the
+product database. Startup does not rewrite it, and no config watcher or
+`network-reload` command remains. Administrators use the revisioned
+`GET/PATCH /api/admin/network/default` API. Edits require the current administrator
+session, expected configuration revision and request ID; they are audited and
+fenced during release transitions. Unknown fields and malformed complete rules
+fail validation without changing the accepted policy.
 
-Accepted defaults are durable, immutable snapshots identified by a SHA-256
-revision. Resource initialization and creation/resume intent select a snapshot
-inside the product transaction. A paused binding is conditionally updated and
-verified before resume; its matching DNS/hosts files are projected before work
-is admitted. Later file edits cannot change an operation already in progress.
-Model service routes, hosts, Project identity and both volumes are retained. A
-running Project (even idle) retains its effective policy until a later resume.
-
-Invalid startup configuration still refuses startup; persisted defaults do not
-bypass the strict configuration contract. Correct the file to restart. Runtime
-reload is fenced during release transitions. Owner handoff must match
-the accepted policy revision before acquiring the database writer; the fixed
-release compatibility digest excludes only these two mutable fields.
+Creation/resume selects the accepted content revision inside its product
+transaction. A paused binding is conditionally updated and its complete mount and
+network projection verified before admission reopens. Running placements retain
+their actual policy; an edit does not stop or rewrite them. Services and host
+mappings remain operator-owned. User inherit/override network settings and their
+admin UI are still separate unfinished integration.
 
 Resolvers authorize UDP/53. Deployments requiring TCP DNS fallback must declare
 an explicit TCP/53 direct rule. Direct permissions are IPv4 CIDR/port/protocol

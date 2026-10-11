@@ -7,7 +7,7 @@ import (
 )
 
 func (s *Server) resumeProject(w http.ResponseWriter, r *http.Request) {
-	if err := s.Lifecycle.Resume(r.Context(), s.scope(r), s.Profile); err != nil {
+	if err := s.Lifecycle.Resume(r.Context(), s.scope(r), s.Bindings); err != nil {
 		fail(w, err)
 		return
 	}

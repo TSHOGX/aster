@@ -83,7 +83,7 @@ func (r *AgentRecovery) recover(ctx context.Context, id string) error {
 		return err
 	}
 	scope := Scope{actor, i.ProjectID}
-	if err = r.Lifecycle.EnsureConfiguredActive(ctx, scope, resources.Profile); err != nil {
+	if err = r.Lifecycle.EnsureActive(ctx, scope, resources.Profile.Bindings()); err != nil {
 		return err
 	}
 	resources, err = r.Lifecycle.ActiveResources(ctx, scope)

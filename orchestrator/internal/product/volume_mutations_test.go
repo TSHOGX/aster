@@ -81,7 +81,7 @@ func TestFreshProjectCanUploadAndBrowseBeforeFirstComputeStart(t *testing.T) {
 	}
 	workspace := r.VolumeForRole("workspace")
 	f.Lifecycle.MaxProjects = 4
-	must(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile))
+	must(t, f.Lifecycle.EnsureActive(ctx, scope, f.Bindings))
 	drive(t, f.Lifecycle, scope.ProjectID)
 	r, err = f.Store.Resources(ctx, scope)
 	must(t, err)
@@ -128,12 +128,12 @@ func TestPausedUploadFencesResumeAndPreservesUnknownOutcome(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("upload did not start")
 			}
-			wantError(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile), ErrBusy)
+			wantError(t, f.Lifecycle.EnsureActive(ctx, scope, f.Bindings), ErrBusy)
 			close(blocked.continueWrite)
 			err = <-result
 			if !uncertain {
 				must(t, err)
-				must(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile))
+				must(t, f.Lifecycle.EnsureActive(ctx, scope, f.Bindings))
 				return
 			}
 			wantError(t, err, ErrFileOutcomeUnknown)
@@ -143,7 +143,7 @@ func TestPausedUploadFencesResumeAndPreservesUnknownOutcome(t *testing.T) {
 			if op.State != "unknown" || op.Settled {
 				t.Fatal(op)
 			}
-			wantError(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile), ErrBusy)
+			wantError(t, f.Lifecycle.EnsureActive(ctx, scope, f.Bindings), ErrBusy)
 			_, err = f.Upload(ctx, scope, "pending", writeRequest("file", "bytes"), strings.NewReader("bytes"))
 			wantError(t, err, ErrFileOutcomeUnknown)
 		})
@@ -183,5 +183,5 @@ func TestPausedVolumeQuotaFailureKeepsTargetAndReclaimsStaging(t *testing.T) {
 	}
 	_, err = f.Manage(ctx, scope, "free-space", projectfiles.Request{Operation: "remove", Path: "target"})
 	must(t, err)
-	must(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile))
+	must(t, f.Lifecycle.EnsureActive(ctx, scope, f.Bindings))
 }

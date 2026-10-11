@@ -135,7 +135,7 @@ run() {
 }
 if [[ $suite == release || $suite == all ]]; then run application '^(TestReleasedNativeSchedules|TestReleasedExecutableOnKhora|TestReleasedActivationTarget|TestReleasedGatewaySurvivesOwnerOutage|TestReleasedOwnerHandoff|TestReleasedNativeRetrySettlement|TestReleasedNativeCompactionSettlement|TestReleasedQueuedSteerConsumption|TestReleasedQueuedSteerStopRemovesUnconsumedInput)$' release 5m;fi
 if [[ $suite == slots ]]; then run product '^TestProjectVolumeSlotsOnKhora$' slots 3m;fi
-if [[ $suite == network || $suite == all ]]; then run application '^TestReleasedNetworkPolicyReload$' network 4m;fi
+if [[ $suite == network || $suite == all ]]; then run application '^TestReleasedDatabaseNetworkPolicy$' network 4m;fi
 if [[ $suite == files || $suite == all ]]; then run application '^TestReleasedPausedVolumeFiles$' files 4m;fi
 if [[ $suite == gateway ]]; then run application '^(TestReleasedGatewaySurvivesOwnerOutage|TestReleasedOwnerHandoff)$' gateway 2m;fi
 if [[ $suite == native ]]; then run application '^(TestReleasedNativeRetrySettlement|TestReleasedNativeCompactionSettlement|TestReleasedQueuedSteerConsumption|TestReleasedQueuedSteerStopRemovesUnconsumedInput)$' native 4m;fi
