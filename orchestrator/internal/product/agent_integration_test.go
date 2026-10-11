@@ -390,6 +390,9 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 			t.Fatal("normal traffic consumed reserve", pressure)
 		}
 		evidence["pressure_at_ms"] = time.Since(started).Milliseconds()
+		// Dispatch has its own bound. Time spent creating pressure must not
+		// consume the control budget on a slower qualification filesystem.
+		deadline.Reset(5 * time.Second)
 		began := time.Now()
 		send(agentwire.Frame{Kind: "command", CommandID: "pressure-abort", TurnID: "pressure-turn", Payload: json.RawMessage(`{"type":"abort","run_id":"pressure-prompt"}`)})
 		dispatched := false
@@ -417,9 +420,16 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 		}
 		latency := time.Since(began)
 		evidence["dispatch_ms"] = latency.Milliseconds()
+		if latency >= 5*time.Second {
+			t.Fatal("full normal journal delayed control dispatch", latency)
+		}
 		evidence["first_ack_sequence"] = last
 		must(t, capture.Sync())
 		send(agentwire.Frame{Kind: "ack", Sequence: last})
+		// Already journaled native snapshots are large. Each acknowledged record
+		// is durably synced, so draining that backlog is distinct from dispatch
+		// latency and depends on the fixture filesystem's fsync throughput.
+		deadline.Reset(time.Minute)
 		completed := false
 		for !completed {
 			select {
@@ -452,6 +462,7 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 				t.Fatal("native interruption didn't settle")
 			}
 		}
+		evidence["settlement_after_dispatch_ms"] = time.Since(began).Milliseconds()
 		t.Logf("real native Stop under pressure: dispatch=%s journal=%d/%d reserved=%d window_peak=%d last_committed=%d", latency, pressure.JournalBytes, pressure.JournalLimit, pressure.ControlReserve, pressure.WindowPeak, last)
 		must(t, backend.SignalProcess(runctx, o.ref, 15))
 	})
