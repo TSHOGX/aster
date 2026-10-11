@@ -27,7 +27,9 @@ case "${1:-all}" in
     ;;
   race)
     command -v node >/dev/null
-    go -C orchestrator test -mod=readonly -race ./internal/product ./internal/agentrunner ./internal/runtimerelease
+    # Ordinary backend runs the full cancellation stress; race keeps all tests
+    # but uses its bounded iteration count and allows slow instrumented SQLite.
+    go -C orchestrator test -mod=readonly -race -short -timeout 30m ./internal/product ./internal/agentrunner ./internal/runtimerelease
     ;;
   frontend-lint)
     npm --prefix frontend run lint

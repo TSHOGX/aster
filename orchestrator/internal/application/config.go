@@ -105,7 +105,6 @@ type Config struct {
 	TLSCert           string                  `json:"tls_cert"`
 	TLSKey            string                  `json:"tls_key"`
 	base              string
-	source            string
 }
 
 func defaults() Config {
@@ -138,7 +137,6 @@ func LoadConfig(name string) (Config, error) {
 		return cfg, errors.New("trailing application configuration")
 	}
 	cfg.base = filepath.Dir(absolute)
-	cfg.source = absolute
 	resolve := func(value string) string {
 		if value == "" || filepath.IsAbs(value) {
 			return value

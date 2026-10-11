@@ -33,7 +33,7 @@ qualification is an explicit separate command.
 | --- | --- | --- |
 | Source | `scripts/check.sh source` | Documentation links/public boundary, lockfile registry, shell syntax and candidate integrity tests |
 | Backend | `scripts/check.sh backend` | Build, vet, all ordinary Go tests, Node RPC handler/full Session tests, compile all `khoraintegration` packages and execute their substrate-independent measurement tests |
-| Core races | `scripts/check.sh race` | Product, Agent runner and runtime release under the Go race detector |
+| Core races | `scripts/check.sh race` | Product, Agent runner and runtime release under the Go race detector; bounded cancellation-stress iterations and a 30-minute package timeout |
 | Frontend | `scripts/check.sh frontend` | Lint, types, Vitest, both production builds, deterministic Chromium UI tests and the real Go edge against those builds |
 | Browser edge | `scripts/check.sh frontend-edge` | Real Go/SQLite cookies, both standalone frontends, deep links/assets and a browser account-management journey with an injected lost reply; no engine required |
 | Cross-browser controls | `npm --prefix frontend run test:pickers` | Scheduling controls in Chromium, Firefox and WebKit; install those browsers first |
@@ -192,7 +192,10 @@ resume. Additional engine tests exercise native journal/capture behavior,
 workspace confinement/readers/watches/transfers, PTY working directories and
 storage cleanup at non-default roots. Fixture publications supply required system
 roles; tests use the image's immutable application helpers rather than replacing
-them with host builds. The separate fault/recovery suite continues to cover cold
+them with host builds. Registry disable/retirement checks preserve bound retries and refuse referenced
+versions. Fixtures explicitly publish system content, remove bootstrap manifest/
+source files, and retain exact database bindings through restart.
+The separate fault/recovery suite continues to cover cold
 restart, journal failure, forced process loss, Session retirement and cleanup.
 
 ### Account suspension under unavailable engine and owner replacement
@@ -200,10 +203,27 @@ restart, journal failure, forced process loss, Session retirement and cleanup.
 `dev/verify-khora.sh --suite suspension` creates running native work, a live PTY,
 queued prompts, a future schedule, sharing and a separate storage-only Project.
 It stops only the disposable engine process long enough to verify login/link/PTY
-revocation and an unknown suspension outcome. It then replaces the application
+and resource/conversation/schedule SSE revocation and an unknown suspension outcome. It then replaces the application
 owner, restores the engine and requires the original operation to confirm every
 Project target. Account enable must leave execution held, schedules paused and
 queues held. Explicit resume rechecks admission and preserves the exact saved
 release, mount/Volume identities and data; final deletion reclaims owned storage.
 The suite is included in `all`; the standalone run uses the same template,
 manifest and fresh-output arguments as other runtime gates.
+
+### Built-in publication and incomplete initialization
+
+`--suite publication` exercises protected source inspection/publication, exact
+replay and changed-capacity refusal, multi-MiB reviewed content, default selection,
+independent owned copies, preserved edits after owner restart and cleanup.
+`--suite slots` includes real engine clone faults: discard a successful reply,
+replace the writer, interrupt verification/readiness commit, refuse Files access
+to unready contents, suspend/enable and explicitly resume the retained intent.
+Native snapshot is the qualified atomic seed path; there is no streaming seed
+transfer fallback. Completed user data is never reverified against its old seed.
+
+Run timing-sensitive engine suites sequentially. Each invocation creates its
+own disposable namespace and sparse disk under `/var/cache`; output directories
+must be new. Keep candidate build temporaries on disk-backed storage when `/tmp`
+is a small tmpfs. The browser launcher preserves the invoking user's Playwright
+cache across the privileged namespace. No live store is used by these gates.
