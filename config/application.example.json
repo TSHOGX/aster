@@ -43,9 +43,5 @@
     "operator_directed": true,
     "operator_broadcast": true
   },
-  "admin_frontend": "http://127.0.0.1:3001",
-  "front_door": {
-    "public_origin": "https://example.com",
-    "peer_ip": "127.0.0.1"
-  }
+  "admin_frontend": "http://127.0.0.1:3001"
 }
