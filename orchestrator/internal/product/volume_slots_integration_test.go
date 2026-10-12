@@ -48,7 +48,7 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	source, err := backend.SnapshotVolume(runctx, staging.VolumeReference, "slot-seed-publication", 8<<20)
 	must(t, err)
 	entries := []content.Entry{{Path: "sample", Size: int64(len(data)), Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(data))}}
-	frozen := &VolumeSource{ContentProfile:"reviewed-v1",Reference: ArtifactReference{ID: "examples", Version: "v1", Digest: content.Digest(entries)}, VolumeID: source.VolumeID, MinimumBytes: 8 << 20}
+	frozen := &VolumeSource{ContentProfile: "reviewed-v1", Reference: ArtifactReference{ID: "examples", Version: "v1", Digest: content.Digest(entries)}, VolumeID: source.VolumeID, MinimumBytes: 8 << 20}
 	store := testStore(t)
 	must(t, store.write(runctx, func(tx *sql.Tx) error {
 		return testfixture.RecordRuntimePublications(runctx, tx, []content.Publication{{StoreID: identity.StoreID, Purpose: "assets", RevisionDigest: frozen.Reference.Digest, Capacity: 8 << 20, Entries: entries, StagingVolumeID: staging.VolumeID, DerivedVolumeID: source.VolumeID, PublishedVolumeID: source.VolumeID}})

@@ -27,6 +27,8 @@ no historical application adapters or shared business/storage dependencies remai
 - A disk-backed 10,000-entry freeze measured p95 about 84 ms across five runs;
   metadata heap was about 6 MiB at the sample point. This isolates freeze on the
   local host. Production contention and filesystem behavior can change timing.
+- Two concurrent 256 MiB uploads completed with about 17 MiB peak Go heap
+  above a sub-MiB baseline in the isolated authoring test; input chunks were 8 MiB.
 - Directory/API pages are at most 200 entries. Hash/readback buffers, chunks and
   API concurrency are bounded independently of file size. One-over file/tree/entry
   cases are refused before registration; unsupported profiles fail closed.

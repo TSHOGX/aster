@@ -102,7 +102,7 @@ func TestVolumeRetirementChecksOwnedSeedAndSharedReferences(t *testing.T) {
 			entries := []content.Entry{{Path: "seed", Directory: true}}
 			reference := ArtifactReference{ID: "dataset", Version: "v1", Digest: content.Digest(entries)}
 			profile := testProfile()
-			profile.Volumes = append(profile.Volumes, VolumePlan{Key: "data", Role: "data", Destination: "/dataset", Storage: storage, Access: "read_only", CapacityBytes: 1 << 20, Source: &VolumeSource{ContentProfile:"reviewed-v1",Reference: reference, VolumeID: "source-volume", MinimumBytes: 1 << 20}})
+			profile.Volumes = append(profile.Volumes, VolumePlan{Key: "data", Role: "data", Destination: "/dataset", Storage: storage, Access: "read_only", CapacityBytes: 1 << 20, Source: &VolumeSource{ContentProfile: "reviewed-v1", Reference: reference, VolumeID: "source-volume", MinimumBytes: 1 << 20}})
 			fixtureEnvironment(t, s, profile, map[string][]content.Entry{reference.Digest: entries})
 			must(t, l.EnsureActive(ctx, scope, profile.Bindings()))
 			state, err := s.OperatorRegistryState(ctx, "volume", reference)

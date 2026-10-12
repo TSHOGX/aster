@@ -226,3 +226,22 @@ own disposable namespace and sparse disk under `/var/cache`; output directories
 must be new. Keep candidate build temporaries on disk-backed storage when `/tmp`
 is a small tmpfs. The browser launcher preserves the invoking user's Playwright
 cache across the privileged namespace. No live store is used by these gates.
+
+## Independent Volume Studio
+
+Install `volumes-studio/frontend` dependencies separately. `scripts/check.sh studio`
+builds/vets/race-tests its Go module and cross-language protocol vectors;
+`studio-frontend` lints, tests, builds and typechecks the standalone editor;
+`studio-browser` runs the real central identity adapter plus Studio backend, packaged
+frontend and TLS front door. `STUDIO_TEST_MAX_SIZE=1 go -C volumes-studio/backend
+test ./internal/authoring -run TestConcurrentMaximum -v` measures concurrent
+256 MiB upload memory. The ordinary authoring suite includes 10,000-entry freeze
+measurement and one-over rejection.
+
+For real engine qualification, build `volumes-studio/backend/cmd/studio` and the
+`orchestrator/internal/application` integration test executable, then run
+`TestStudioImportOnRealKhora` inside `dev/project-substrate.sh` with
+`STUDIO_TEST_BINARY` pointing to the Studio executable. `STUDIO_TEST_MAX_SIZE=1`
+selects a 1 GiB tree of four 256 MiB files. The test uses disposable identity,
+source and consumer state, stops Studio after acquisition, and verifies local
+materialization/readback, copy isolation and descendant-aware cleanup.

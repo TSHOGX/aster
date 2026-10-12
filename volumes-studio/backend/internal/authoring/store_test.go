@@ -386,3 +386,28 @@ func TestRevokedPublisherPausesWithoutStarvingOtherLibrary(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSourceContentReaderCannotBeCollectedByRepeatedClose(t *testing.T) {
+	s, _ := testStore(t)
+	l := library(t, s)
+	ctx := context.Background()
+	mutate(t, s, l.ID, Mutation{RequestID: "file", ExpectedRevision: 1, Action: "text", Path: "file", Text: "same"})
+	first, _, err := s.Content(ctx, l.ID, "file", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := s.Content(ctx, l.ID, "file", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutate(t, s, l.ID, Mutation{RequestID: "remove", ExpectedRevision: 2, Action: "remove", Path: "file"})
+	first.Close()
+	first.Close()
+	if n, err := s.Collect(ctx); err != nil || n != 0 {
+		t.Fatal("double close released another reader", n, err)
+	}
+	second.Close()
+	if n, err := s.Collect(ctx); err != nil || n != 1 {
+		t.Fatal(n, err)
+	}
+}
