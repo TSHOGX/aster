@@ -232,6 +232,9 @@ func networkDeclaration(network sandbox.Network) (sdk.Network, error) {
 		return sdk.Tuple{CIDR: rule.CIDR.Masked().String(), Port: rule.Port, Proto: rule.Protocol}, nil
 	}
 	for _, rule := range network.Allow {
+		if rule.CIDR.IsValid() && rule.CIDR.Bits() == 0 {
+			return result, failure("network", sandbox.Invalid, fmt.Errorf("egress allow requires a destination narrower than /0"))
+		}
 		value, err := tuple(rule)
 		if err != nil {
 			return result, err

@@ -13,6 +13,13 @@ import (
 	"testing"
 )
 
+func TestNetworkDeclarationRejectsUncompiledWildcardAllow(t *testing.T) {
+	_, err := networkDeclaration(sandbox.Network{Allow: []sandbox.Tuple{{CIDR: netip.MustParsePrefix("0.0.0.0/0"), Port: 443, Protocol: "tcp"}}})
+	if !sandbox.Is(err, sandbox.Invalid) {
+		t.Fatal("wildcard destination reached the engine", err)
+	}
+}
+
 func TestNetworkPatchUsesObservedRevisionAndCompleteDeclaration(t *testing.T) {
 	ctx := context.Background()
 	revision := strings.Repeat("a", 64)

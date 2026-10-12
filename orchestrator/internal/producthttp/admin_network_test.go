@@ -83,6 +83,18 @@ func TestAdminNetworkHTTPUsesOwnerSettingsAndRejectsForgedAuthority(t *testing.T
 		t.Fatal(response.Code)
 	}
 	body["expected_revision"] = 1
+	body["request_id"] = "internet"
+	body["direct"] = []any{map[string]any{"cidr": "0.0.0.0/0", "port": 443, "protocol": "tcp"}}
+	response = perform("PATCH", path, token, "https://app", body)
+	if response.Code != 200 {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	must(t, json.Unmarshal(response.Body.Bytes(), &after))
+	if len(after.Desired.Direct) != 1 || after.Desired.Direct[0].CIDR.String() != "0.0.0.0/0" {
+		t.Fatal("saved Internet policy was rewritten", after)
+	}
+	body["expected_revision"] = 2
+	body["request_id"] = "invalid-resolver"
 	body["resolvers"] = []string{"::1"}
 	if response = perform("PATCH", path, token, "https://app", body); response.Code != 422 {
 		t.Fatal(response.Code)

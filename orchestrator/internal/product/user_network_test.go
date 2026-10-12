@@ -4,6 +4,8 @@ import (
 	"net/netip"
 	"reflect"
 	"testing"
+
+	"harness-platform/orchestrator/internal/sandbox"
 )
 
 func TestUserNetworkRevisionInheritanceAndAtomicAudit(t *testing.T) {
@@ -97,6 +99,7 @@ func TestUserNetworkCreationResumeRetainsEnvironmentAndRunningPolicy(t *testing.
 	input.ExpectedRevision = first.ConfigurationRevision
 	input.RequestID = "user-second"
 	input.Resolvers = []netip.Addr{}
+	input.Direct = []DirectRule{{CIDR: netip.MustParsePrefix("0.0.0.0/0"), Port: 443, Protocol: "tcp"}}
 	second, err := l.Store.EditUserNetwork(ctx, token, a.Actor, input)
 	must(t, err)
 	must(t, l.EnsureActive(ctx, a, serviceProfile().Bindings()))
@@ -112,6 +115,11 @@ func TestUserNetworkCreationResumeRetainsEnvironmentAndRunningPolicy(t *testing.
 	must(t, err)
 	if resumed.Profile.NetworkPolicyRevision != second.Desired.Revision || !reflect.DeepEqual(resumed.Profile.Volumes, original.Profile.Volumes) || resumed.Profile.SandboxRelease != original.Profile.SandboxRelease {
 		t.Fatal(resumed)
+	}
+	observed, err := f.InspectConfiguration(ctx, resumed.Reference)
+	must(t, err)
+	if len(observed.Network.Allow) != len(internetIPv4) || !sandbox.SameConfiguration(observed, resumed.Profile.Reachability.Declaration(), observed.Mounts) {
+		t.Fatal("resume did not apply expanded Internet permissions", observed.Network)
 	}
 	// A global policy conflicting with this Project's service route is allowed
 	// while its owner overrides; switching back to inheritance must reject it.

@@ -185,7 +185,15 @@ request receipt. A save never performs an implicit apply-now operation.
 
 Resolvers authorize UDP/53. Deployments requiring TCP DNS fallback must declare
 an explicit TCP/53 direct rule. Direct permissions are IPv4 CIDR/port/protocol
-tuples, not domain or HTTP filters. DNS permission alone does not grant HTTPS
+tuples, not domain or HTTP filters. A direct rule with `0.0.0.0/0` grants public
+IPv4 access on its selected port and protocol. The owner expands it into explicit
+CIDRs before sending it to Khora, which rejects wildcard allow destinations.
+The expansion excludes unspecified (`0.0.0.0/8`), private (RFC1918), shared
+(`100.64.0.0/10`), loopback, link-local, multicast and reserved (`224.0.0.0/3`)
+address ranges. Explicit direct rules, resolvers and model gateway routes remain
+independent; engine restrictions still apply. For general web access, use two
+`0.0.0.0/0` TCP rules for ports 80 and 443 and configure DNS resolvers. This does
+not authorize IPv6 or additional ports. DNS permission alone does not grant HTTPS
 egress. Public downloads also require the deployment's forwarding/NAT/upstream
 path; the isolated runtime gate does not qualify that external path. Python
 package installation still requires a suitable virtual environment under PEP 668.

@@ -345,6 +345,17 @@ print('DNS TLS PACKAGE DENIAL OK')`, certificate, port, len(payload))
 	identity := a.request("GET", "/api/auth/session", nil, 200)
 	userPath := "/api/admin/users/" + identity["id"].(string) + "/network"
 	userNetwork := a.request("GET", userPath, nil, 200)
+	userNetwork = a.request("PATCH", userPath, map[string]any{"request_id": "override-internet", "expected_revision": userNetwork["configuration_revision"], "expected_default_revision": userNetwork["default_configuration_revision"], "mode": "override", "direct": []any{map[string]any{"cidr": "0.0.0.0/0", "port": port, "protocol": "tcp"}}, "resolvers": []string{"192.0.2.1"}}, 200)
+	pauseResume()
+	shell(code)
+	internetRef, _ := inspect()
+	internetBinding, err := backend.InspectConfiguration(a.ctx, internetRef)
+	require(t, err)
+	for _, tuple := range internetBinding.Network.Allow {
+		if tuple.CIDR.Bits() == 0 {
+			t.Fatal("wildcard allow reached Khora", tuple)
+		}
+	}
 	userNetwork = a.request("PATCH", userPath, map[string]any{"request_id": "override-deny", "expected_revision": userNetwork["configuration_revision"], "expected_default_revision": userNetwork["default_configuration_revision"], "mode": "override", "direct": []any{}, "resolvers": []string{}}, 200)
 	_, pending := inspect()
 	if pending["network_policy_pending"] != true || pending["network_policy_mode"] != "override" {

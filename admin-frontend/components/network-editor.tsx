@@ -80,7 +80,7 @@ export function NetworkEditor({ id, onDirty }: { id?: string; onDirty: (dirty: b
             {!shown.resolvers.length && <p>No DNS resolvers.</p>}
             <button type="button" disabled={shown.resolvers.length >= 16} onClick={() => setDraft(value => ({ ...value, resolvers: [...value.resolvers, ""] }))}>Add resolver</button>
           </fieldset>
-          <p className="hint">Use canonical IPv4 CIDRs, ports 1–65535 and TCP or UDP. Resolver order is preserved. Resolvers allow UDP/53; TCP DNS requires a direct rule.</p>
+          <p className="hint">Use canonical IPv4 CIDRs, ports 1–65535 and TCP or UDP. Use 0.0.0.0/0 for public IPv4 access on the selected port; private, loopback, link-local and shared address ranges require separate rules where supported. For web access, add TCP rules for ports 80 and 443 and configure DNS resolvers. Resolver order is preserved. Resolvers allow UDP/53; TCP DNS requires a direct rule.</p>
           <button className="primary" disabled={!edited}>Save network settings</button>
         </fieldset>
       </form>
