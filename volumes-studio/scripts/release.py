@@ -7,6 +7,11 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import socket
+import time
+import re
+import urllib.request
+import urllib.error
 import subprocess
 import tarfile
 import tempfile
@@ -60,6 +65,50 @@ def verify(root):
     return doc
 
 
+def smoke(root):
+    verify(root)
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+    env = dict(os.environ, HOSTNAME='127.0.0.1', PORT=str(port), NEXT_TELEMETRY_DISABLED='1')
+    with tempfile.TemporaryDirectory(prefix='studio-smoke-') as temporary, tempfile.TemporaryFile() as log:
+        runtime = Path(temporary) / 'bundle'
+        shutil.copytree(root, runtime, symlinks=True)
+        process = subprocess.Popen(['node', 'frontend/server.js'], cwd=runtime, env=env, stdout=log, stderr=log)
+        try:
+            origin = f'http://127.0.0.1:{port}'
+            for _ in range(100):
+                if process.poll() is not None:
+                    raise ValueError('packaged frontend exited')
+                try:
+                    with urllib.request.urlopen(origin + '/volumes-studio/', timeout=1) as response:
+                        html = response.read().decode()
+                    break
+                except (OSError, urllib.error.URLError):
+                    time.sleep(.1)
+            else:
+                raise ValueError('packaged frontend did not become ready')
+            assets = set(re.findall(r'(?:src|href)="(/volumes-studio/_next/[^" ]+)"', html))
+            if not assets:
+                raise ValueError('packaged page has no prefix-safe assets')
+            for asset in assets:
+                with urllib.request.urlopen(origin + asset, timeout=5) as response:
+                    if response.status != 200 or not response.read():
+                        raise ValueError(f'packaged asset unavailable: {asset}')
+            with urllib.request.urlopen(origin + '/volumes-studio/libraries/smoke/?view=tree', timeout=5) as response:
+                if response.status != 200:
+                    raise ValueError('packaged deep link unavailable')
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+    verify(root)
+    print('Packaged Studio root, assets and deep link smoke passed.')
+
+
 def build(target, offline=False):
     target = target.resolve()
     if target.exists() or target.is_relative_to(ROOT):
@@ -102,17 +151,19 @@ def build(target, offline=False):
         verify(staged)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(staged, target, symlinks=True)
-    verify(target)
+    smoke(target)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['build', 'verify'])
+    parser.add_argument('action', choices=['build', 'verify', 'smoke'])
     parser.add_argument('directory', type=Path)
     parser.add_argument('--offline', action='store_true', help='use preinstalled npm cache without network')
     args = parser.parse_args()
     if args.action == 'build':
         build(args.directory, args.offline)
+    elif args.action == 'smoke':
+        smoke(args.directory.resolve())
     else:
         verify(args.directory)
 

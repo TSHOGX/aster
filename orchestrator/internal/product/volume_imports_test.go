@@ -182,11 +182,15 @@ func TestImportedSavedProjectBindingAndRetirementBlocker(t *testing.T) {
 		}
 	}
 	selected := saveTemplateReviewed(t, s, token, "environment", "", TemplateEdit{RequestID: "imported-environment", Name: "Imported workspace", Enabled: true, Environment: &env})
-	policy, err := s.Policy(ctx, token, standardUsersPolicy)
+	name := "Imported environment grant"
+	grants := []PolicyResourceBinding{{Kind: "environment_template", ID: selected.ID, Access: "read_only"}}
+	policy, err := s.SavePolicy(ctx, token, "", PolicyChange{RequestID: "import-policy", Name: &name, Resources: &grants})
 	must(t, err)
-	bindings, err := s.PolicyResources(ctx, token, policy.ID)
+	group, err := s.Group(ctx, token, StandardUsersGroup)
 	must(t, err)
-	saveGrantsReviewed(t, s, token, policy.ID, append(bindings, PolicyResourceBinding{Kind: "environment_template", ID: selected.ID, Access: "read_only"}))
+	_, err = s.BindGroupPolicies(ctx, token, group.ID, GroupBindings{RequestID: "import-group", ExpectedRevision: group.Revision, PolicyIDs: append(group.PolicyIDs, policy.Policy.ID)})
+	must(t, err)
+
 	_, err = s.SaveConfigurationPreferences(ctx, token, ConfigurationEdit{RequestID: "select-imported", EnvironmentTemplateID: selected.ID, ShowSharedVolumes: true})
 	must(t, err)
 	_, err = s.CreateProject(ctx, admin.ID, "saved-import", "Saved import before allocation")
@@ -200,7 +204,7 @@ func TestImportedSavedProjectBindingAndRetirementBlocker(t *testing.T) {
 		t.Fatal("saved unallocated project reference ignored", err)
 	}
 	// Updating preferences for future projects cannot rebind the saved import.
-	_, err = s.SaveConfigurationPreferences(ctx, token, ConfigurationEdit{RequestID: "select-default", EnvironmentTemplateID: "environment-default", ShowSharedVolumes: true})
+	_, err = s.SaveConfigurationPreferences(ctx, token, ConfigurationEdit{RequestID: "select-default", ExpectedRevision: 1, EnvironmentTemplateID: "environment-default", ShowSharedVolumes: true})
 	must(t, err)
 	again, err := projectConfiguration(ctx, s.reader, "saved-import")
 	must(t, err)
