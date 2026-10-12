@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"harness-platform/orchestrator/internal/edge"
 	"harness-platform/orchestrator/internal/engineconfig"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/titler"
@@ -85,6 +86,7 @@ type ProjectDefaults struct {
 	Reachability   product.Reachability `json:"reachability"`
 }
 type Config struct {
+	FrontDoor         *edge.FrontDoor         `json:"front_door,omitempty"`
 	HTTPMetrics       bool                    `json:"http_metrics"`
 	Version           int                     `json:"version"`
 	Listen            string                  `json:"listen"`
@@ -167,6 +169,9 @@ func LoadConfig(name string) (Config, error) {
 	return cfg, nil
 }
 func (c Config) Validate() error {
+	if err := c.FrontDoor.Validate(); err != nil {
+		return err
+	}
 
 	if c.Version != 1 || !filepath.IsAbs(c.StateDirectory) || !filepath.IsAbs(c.ControlSocket) || c.StateDirectory == "/" || c.ControlSocket == "/" {
 		return errors.New("version 1 and explicit state/control paths required")

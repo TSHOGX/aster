@@ -21,6 +21,8 @@ import (
 // Config names the two upstreams. Both are deployment configuration; neither is
 // ever derived from a request.
 type Config struct {
+	// FrontDoor fixes public HTTPS authority behind an independent trusted proxy.
+	FrontDoor *FrontDoor
 	// Application serves the product API, events and terminal sockets.
 	Application *url.URL
 	// ApplicationSocket confines the local API hop to an owner-only Unix socket.
@@ -52,6 +54,9 @@ func (c Config) prefixes() []string {
 // cannot address: a half-configured origin would serve the frontend for API
 // paths and look like a mysterious 404 in the browser.
 func New(config Config) (http.Handler, error) {
+	if err := config.FrontDoor.Validate(); err != nil {
+		return nil, err
+	}
 	if config.Application == nil || config.Frontend == nil || config.AdminFrontend == nil {
 		return nil, errors.New("edge requires application, workbench and admin frontend upstreams")
 	}
@@ -84,11 +89,15 @@ func New(config Config) (http.Handler, error) {
 			return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "unix", config.ApplicationSocket)
 		}
 	}
-	application := reverseProxy(config.Application, applicationTransport)
-	frontend := reverseProxy(config.Frontend, transport)
-	admin := reverseProxy(config.AdminFrontend, transport)
+	application := reverseProxy(config.Application, applicationTransport, config.FrontDoor)
+	frontend := reverseProxy(config.Frontend, transport, config.FrontDoor)
+	admin := reverseProxy(config.AdminFrontend, transport, config.FrontDoor)
 	prefixes := config.prefixes()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !config.FrontDoor.accepts(r) {
+			http.Error(w, "untrusted front door request", http.StatusForbidden)
+			return
+		}
 		r.Header.Del(PageAccountHeader)
 		for _, prefix := range prefixes {
 			if strings.HasPrefix(r.URL.Path, prefix) {
@@ -114,7 +123,7 @@ func New(config Config) (http.Handler, error) {
 	}), nil
 }
 
-func reverseProxy(upstream *url.URL, transport http.RoundTripper) *httputil.ReverseProxy {
+func reverseProxy(upstream *url.URL, transport http.RoundTripper, frontDoor *FrontDoor) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Transport: transport,
 		// FlushInterval -1 flushes every write immediately. Without it the event
@@ -133,6 +142,14 @@ func reverseProxy(upstream *url.URL, transport http.RoundTripper) *httputil.Reve
 			p.SetXForwarded()
 			if host, _, err := net.SplitHostPort(p.In.RemoteAddr); err == nil {
 				p.Out.Header.Set("X-Real-IP", host)
+			}
+			if frontDoor != nil {
+				public, _ := url.Parse(frontDoor.PublicOrigin)
+				p.Out.Host = public.Host
+				p.Out.Header.Set("X-Forwarded-Host", public.Host)
+				p.Out.Header.Set("X-Forwarded-Proto", public.Scheme)
+				p.Out.Header.Set("X-Forwarded-For", p.In.Header.Get("X-Real-IP"))
+				p.Out.Header.Set("X-Real-IP", p.In.Header.Get("X-Real-IP"))
 			}
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {

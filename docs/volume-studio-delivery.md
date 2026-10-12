@@ -10,8 +10,8 @@ publication and locally registered runtime artifacts have separate lifecycles.
 | Stage | Status | Deliverable / exit evidence |
 | --- | --- | --- |
 | 1. Portable content contract | Implemented | Independent Go module; strict producer/consumer decoders; canonical Go/Node vectors; path, identity, digest and profile boundary tests |
-| 2. Shared identity and independent shell | Pending | Registered code exchange, PKCE, introspection, revocation/logout; exact-prefix gateway and cookie filtering; independently built frontend/backend |
-| 3. Durable authoring | Pending | Immutable blobs, SQLite transactions, receipts, drafts, mutations, upload recovery, quota and GC interlocks |
+| 2. Shared identity and independent shell | In progress | Exact-prefix gateway, cookie filtering and forwarding trust policy implemented; central provider exchange, PKCE client and independently built frontend remain |
+| 3. Durable authoring | Pending | SQLite WAL/FULL metadata, digest-addressed fsync blobs, revision conflicts, freeze isolation, resumable chunks, quotas and GC |
 | 4. Publication and distribution | Pending | Frozen versions, durable validation, export grants, range reads, reader/backup pins and source retirement |
 | 5. Authoring interface | Pending | Library/tree/editor, uploads, conflicts, history/diff, restore and publish review/progress |
 | 6. Consumer import and engine adaptation | Pending | Trusted sources, checkpointed acquisition, streamed verification, persisted profiles, recovery, accounting and local provenance |
