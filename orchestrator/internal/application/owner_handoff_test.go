@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"harness-platform/orchestrator/internal/producttest"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -18,7 +19,7 @@ func TestCompletedOwnerHandoffRetryDoesNotDependOnCurrentGateway(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "product.db")
 	identity := product.ApplicationIdentity{ExecutableDigest: "sha256:" + strings.Repeat("a", 64), CompatibilityDigest: "sha256:" + strings.Repeat("c", 64)}
-	store, err := product.OpenApplication(ctx, path, identity)
+	store, err := producttest.OpenApplication(ctx, path, identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +39,7 @@ func TestCompletedOwnerHandoffRetryDoesNotDependOnCurrentGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity.ExecutableDigest = target
-	store, err = product.OpenApplication(ctx, path, identity)
+	store, err = producttest.OpenApplication(ctx, path, identity)
 	if err != nil {
 		t.Fatal(err)
 	}

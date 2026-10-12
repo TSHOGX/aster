@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/producttest"
 	"net"
 	"net/http"
 	"net/netip"
@@ -158,24 +159,24 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 	must(t, err)
 	gatewayPort := uint16(gatewayListener.Addr().(*net.TCPAddr).Port)
 
-	store, err := product.Open(runctx, filepath.Join(t.TempDir(), "product.db"))
-	must(t, err)
-	t.Cleanup(func() { store.Close() })
-	lifecycle := &product.Lifecycle{Store: store, Backend: backend, MaxProjects: 1}
-	scope := product.Scope{Actor: "owner", ProjectID: "services"}
-	_, err = store.CreateProject(runctx, scope.Actor, scope.ProjectID, "Services")
-	must(t, err)
 	synthetic := netip.MustParseAddr("10.80.0.1")
 	profile := product.Profile{
 		StoreID: identity.StoreID, TemplateID: "agent-runtime",
 		CPUMillis: 2000, MemoryBytes: 2 << 30, DiskBytes: 256 << 20,
-		WorkspaceBytes: 64 << 20, RuntimeBytes: 64 << 20,
+		Volumes: []product.VolumePlan{{Key: "workspace", Role: "workspace", Destination: "/workspace", Storage: "owned", Access: "read_write", CapacityBytes: 64 << 20}, {Key: "runtime", Role: "runtime", Destination: "/runtime", Storage: "owned", Access: "read_write", CapacityBytes: 64 << 20}},
 		Reachability: product.Reachability{
 			Services: []product.ServiceRule{{Audience: "model", Destination: synthetic, Port: 443, Gateway: netip.AddrPortFrom(host, gatewayPort)}},
 			Hosts:    map[string]string{"model.internal": "model"},
 		},
 	}
-	must(t, lifecycle.EnsureActive(runctx, scope, profile))
+	store, profile, err := producttest.OpenWithRuntime(runctx, filepath.Join(t.TempDir(), "product.db"), profile, backend, nil)
+	must(t, err)
+	t.Cleanup(func() { store.Close() })
+	lifecycle := &product.Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: store, Backend: backend, MaxProjects: 1}
+	scope := product.Scope{Actor: "owner", ProjectID: "services"}
+	_, err = store.CreateProject(runctx, scope.Actor, scope.ProjectID, "Services")
+	must(t, err)
+	must(t, lifecycle.EnsureActive(runctx, scope, profile.Bindings()))
 	converge := func(t *testing.T) {
 		t.Helper()
 		for i := 0; i < 24; i++ {
@@ -270,22 +271,18 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 	}
 	t.Log("Project reachability was materialized once by the lifecycle, before any child started")
 
-	agents := product.NewAgents(runctx, store, lifecycle, backend, profile, 8)
-	agents.RunnerBinary = "/tmp/agent-runner"
+	agents := product.NewAgents(runctx, store, lifecycle, backend, profile.Bindings(), 8)
 	agents.ServiceAudience = "model"
 	closeAgents := sync.OnceFunc(agents.Close)
 	defer closeAgents()
-	file, err := os.Open(filepath.Join(binaries, "agent-runner"))
-	must(t, err)
-	must(t, api.WriteFile(runctx, resources.Reference.SandboxID, "/tmp/agent-runner", file))
-	file.Close()
-	shell(t, "chmod 755 /tmp/agent-runner")
+
 	session := func(t *testing.T, id string) {
 		t.Helper()
 		_, err := store.CreateSession(runctx, scope, id, "Agent")
 		must(t, err)
 		shell(t, "mkdir -p /runtime/sessions/"+id)
 		must(t, api.WriteFile(runctx, resources.Reference.SandboxID, "/runtime/sessions/"+id+"/models.json", strings.NewReader(guestModels)))
+		must(t, api.WriteFile(runctx, resources.Reference.SandboxID, "/runtime/sessions/"+id+"/authored-models.json", strings.NewReader(guestModels)))
 		must(t, api.WriteFile(runctx, resources.Reference.SandboxID, "/runtime/sessions/"+id+"/settings.json", strings.NewReader(`{"defaultProvider":"gateway","defaultModel":"local-model","compaction":{"enabled":false}}`)))
 	}
 	// step drives the application's own worker path. It returns when each named

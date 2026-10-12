@@ -12,13 +12,13 @@ normal build user (the script invokes `sudo -n` for the substrate):
 dev/verify-khora.sh --template /srv/build/agent-runtime --manifest /srv/build/agent-runtime.manifest.json --output /srv/qualification/run --suite release
 ```
 
-Suites are `release`, `files`, `network`, `gateway`, `native`, `provider`, `mixed`, `combined`, `browser`, `realtime`, `faults` and `all`. The default is the
+Suites are `release`, `slots`, `files`, `network`, `gateway`, `native`, `provider`, `mixed`, `combined`, `browser`, `realtime`, `faults` and `all`. The default is the
 actual executable/image release gate. `gateway` isolates native streaming across
 a temporary owner outage, gated gateway replacement and explicit owner handoff.
 The harness builds a second executable with distinct version metadata to exercise
 target identity. Its deterministic model does not qualify an external provider. `native` isolates real Pi retry, cancellation and post-run/preflight compaction
 settlement using deterministic provider responses. `mixed` runs over five minutes. `browser`
-requires `npm run build` in the frontend and an installed Playwright Chromium.
+requires `scripts/check.sh frontend-build` for both frontends and an installed Playwright Chromium.
 Provide `PLAYWRIGHT_BROWSERS_PATH` when the build user owns the browser cache;
 the isolated substrate runs as root and otherwise searches its own cache.
 `realtime` qualifies empty-workspace watch continuity over two real rotations
@@ -95,7 +95,7 @@ with this metadata; source hashes alone cannot recreate an uncommitted build.
 
 For [candidate qualification](../docs/delivery.md), add `--candidate DIR`.
 The bundle inventory must verify and its commit must match the clean checkout.
-The actual packaged owner and standalone frontend are used; the candidate manifest
+The actual packaged owner and both standalone frontends are used; the candidate manifest
 hash enters `fingerprint.json`. The source checkout still supplies Playwright and
 test/alternate-owner fixtures. A development run without this option does not
 certify a separately built candidate bundle.
@@ -116,3 +116,10 @@ workspace/runtime volumes survive, undeclared destinations remain denied, remova
 applies at the next resume, and the retained model gateway completes a native
 turn. `network-policy.json` distinguishes this local substrate evidence from
 public Internet/package-index reachability, which it does not test.
+
+The `slots` suite runs `TestProjectVolumeSlotsOnKhora` against a fresh isolated
+engine/store. It verifies eight explicit mount bindings, independent native volume
+copies, guest read-only enforcement, reservation-to-allocation accounting and
+observed cleanup. The `faults`/`all` product suite includes the same case. It is a
+mechanism test; registered multi-version releases and non-default required-role
+paths still require their separate runtime qualification.

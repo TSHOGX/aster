@@ -1,6 +1,7 @@
 "use client";
+import { Select } from "@web/select";
 import { useT } from "@/lib/i18n";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   command,
@@ -12,6 +13,8 @@ import {
   type SearchResult,
   type Share,
 } from "@/lib/project-api";
+import { useCapabilities } from "./capability-provider";
+type ReaderAccount = { id: string; username: string; display_name: string; status: string; suspended?: boolean };
 export function SharePanel({
   project,
   sessions,
@@ -25,28 +28,44 @@ export function SharePanel({
   const [session, setSession] = useState(
     initialSession || sessions[0]?.id || "",
   );
+  const can = useCapabilities();
+  const canShare = can("conversations.share"), canPublish = can("shares.public.create");
   const [reader, setReader] = useState("");
+  const [query, setQuery] = useState("");
+  const [candidates, setCandidates] = useState<ReaderAccount[]>([]);
+  const [readers, setReaders] = useState<ReaderAccount[]>([]);
+  const [readerAfter, setReaderAfter] = useState("");
   const [paths, setPaths] = useState("");
   const [shares, setShares] = useState<Share[]>([]);
+ const reactivationRequests = useRef(new Map<string,string>());
   const [link, setLink] = useState("");
   const [error, setError] = useState("");
   const refresh = useCallback(async () => {
     if (!session) return;
     try {
-      setShares(
-        (
-          await api<{
-            shares: Share[];
-          }>(`${sessionURL(project, session)}/shares`)
-        ).shares,
-      );
+      const [snapshots, granted] = await Promise.all([
+        api<{ shares: Share[] }>(`${sessionURL(project, session)}/shares`),
+        api<{ readers: ReaderAccount[] }>(`${sessionURL(project, session)}/readers?after=${encode(readerAfter)}&limit=50`),
+      ]);
+      setShares(snapshots.shares);
+      setReaders(granted.readers);
     } catch (e) {
       setError(String(e));
     }
-  }, [project, session]);
+  }, [project, session, readerAfter]);
   useEffect(() => {
     void Promise.resolve().then(refresh);
   }, [refresh]);
+  useEffect(() => {
+    let gone = false;
+    const timer = setTimeout(() => {
+      if (!session || !canShare) { setCandidates([]); return; }
+      void api<{readers:ReaderAccount[]}>(`${sessionURL(project, session)}/reader-candidates?q=${encode(query)}&limit=50`)
+        .then(result => { if (!gone) setCandidates(result.readers); })
+        .catch(error => { if (!gone) { setCandidates([]); setError(String(error)); } });
+    }, 200);
+    return () => { gone = true; clearTimeout(timer); };
+  }, [project, session, query, canShare]);
   const act = async (fn: () => Promise<unknown>) => {
     setError("");
     try {
@@ -71,50 +90,46 @@ export function SharePanel({
       )}
       <label>
         {tr("Agent Session")}
-        <select value={session} onChange={(e) => setSession(e.target.value)}>
+        <Select aria-label={tr("Agent Session")} value={session} onChange={(e) => { setSession(e.target.value); setReader(""); setReaderAfter(""); setLink(""); }}>
           <option value="">{tr("Choose a Session")}</option>
           {sessions.map((s) => (
             <option key={s.id} value={s.id}>
               {s.title}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void act(() =>
-            command(`${sessionURL(project, session)}/readers`, { reader }),
-          );
-        }}
-      >
-        <label>
-          {tr("Read-only reader username")}
-          <input
-            value={reader}
-            onChange={(e) => setReader(e.target.value)}
-            required
-          />
+      <form onSubmit={event => {
+        event.preventDefault();
+        if (!canShare || !candidates.some(account => account.id === reader)) return;
+        void act(() => command(`${sessionURL(project, session)}/readers`, { reader_id: reader }));
+      }}>
+        <label>{tr("Find a reader")}
+          <input value={query} maxLength={128} disabled={!canShare} onChange={event => { setQuery(event.target.value); setReader(""); }} />
         </label>
-        <div className="row-actions">
-          <button disabled={!session}>{tr("Grant conversation access")}</button>
-          <button
-            type="button"
-            disabled={!session || !reader}
-            onClick={() =>
-              void act(() =>
-                command(
-                  `${sessionURL(project, session)}/readers/${encode(reader)}`,
-                  undefined,
-                  "DELETE",
-                ),
-              )
-            }
-          >
-            {tr("Revoke reader")}
-          </button>
-        </div>
+        <label>{tr("Reader account")}
+          <Select aria-label={tr("Reader account")} value={reader} required disabled={!canShare} onChange={event => setReader(event.target.value)}>
+            <option value="">{tr("Choose an account")}</option>
+            {candidates.map(account => <option key={account.id} value={account.id}>{account.display_name} (@{account.username})</option>)}
+          </Select>
+        </label>
+        <button disabled={!session || !canShare || !reader}>{tr("Grant conversation access")}</button>
       </form>
+      {readers.map(account => <article className="schedule-card" key={account.id}>
+        <strong>{account.display_name}</strong><small>@{account.username} · {account.status}{account.suspended && ` · ${tr("Access suspended")}`}</small>
+        {account.suspended && <button type="button" disabled={!canShare} onClick={() => void act(async () => {
+          const key=`reader/${session}/${account.id}`;
+          let requestID=reactivationRequests.current.get(key);
+          if(!requestID) {requestID=crypto.randomUUID();reactivationRequests.current.set(key,requestID);}
+          await command(`${sessionURL(project,session)}/readers/${encode(account.id)}/reactivate`,{request_id:requestID});
+          reactivationRequests.current.delete(key);
+        })}>{tr("Reactivate reader")}</button>}
+        <button type="button" onClick={() => void act(() => command(`${sessionURL(project, session)}/readers/${encode(account.id)}`, undefined, "DELETE"))}>{tr("Revoke reader")}</button>
+      </article>)}
+      <div className="row-actions">
+        {readerAfter && <button onClick={() => setReaderAfter("")}>{tr("Latest")}</button>}
+        {readers.length === 50 && <button onClick={() => setReaderAfter(readers.at(-1)!.id)}>{tr("More readers")}</button>}
+      </div>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -124,7 +139,7 @@ export function SharePanel({
             }>(`${sessionURL(project, session)}/shares`, {
               paths: paths
                 .split("\n")
-                .map((p) => p.trim().replace(/^\/workspace\//, ""))
+                .map((p) => p.trim())
                 .filter(Boolean),
             });
             setLink(`${location.origin}/s/${result.token}`);
@@ -139,7 +154,7 @@ export function SharePanel({
             placeholder="results/report.md"
           />
         </label>
-        <button disabled={!session} className="primary">
+        <button disabled={!session || !canPublish} className="primary">
           {tr("Create public snapshot \u00B7 7 days")}
         </button>
       </form>
@@ -155,14 +170,20 @@ export function SharePanel({
       )}
       {shares.map((share) => (
         <article className="schedule-card" key={share.id}>
-          <strong>{share.title}</strong> · {share.state}
+          <strong>{share.title}</strong> · {share.state}{share.suspended && ` · ${tr("Access suspended")}`}
           <small>
             {tr("Expires")}
             {new Date(share.expires_at).toLocaleString()}
           </small>
           <div className="row-actions">
+            {share.state === "published" && share.suspended && <button disabled={!canPublish} onClick={() => void act(async () => {
+              let requestID=reactivationRequests.current.get(share.id);
+              if(!requestID) {requestID=crypto.randomUUID();reactivationRequests.current.set(share.id,requestID);}
+              await command(`${projectURL(project)}/shares/${encode(share.id)}/reactivate`,{request_id:requestID});
+              reactivationRequests.current.delete(share.id);
+            })}>{tr("Reactivate public link")}</button>}
             {share.state === "published" && (
-              <button
+              <button disabled={!canPublish}
                 onClick={() =>
                   void act(async () => {
                     const result = await command<{

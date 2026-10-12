@@ -17,6 +17,9 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@web/*": [
+        "../web/*"
       ]
     },
     "resolveJsonModule": true,
@@ -27,6 +30,9 @@
       {
         "name": "next"
       }
+    ],
+    "typeRoots": [
+      "./node_modules/@types"
     ]
   },
   "include": [

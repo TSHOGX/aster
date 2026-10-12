@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/producttest"
+	"harness-platform/orchestrator/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -200,21 +202,25 @@ func (h *harness) currentActor() string {
 }
 
 func testProfile() product.Profile {
-	return product.Profile{StoreID: "engine", TemplateID: "agent-runtime", CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 1 << 30, WorkspaceBytes: 1 << 30, RuntimeBytes: 1 << 29}
+	return product.Profile{StoreID: "engine", TemplateID: "agent-runtime", CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, Volumes: []product.VolumePlan{{Key: "workspace", Role: "workspace", Destination: "/workspace", Storage: "owned", Access: "read_write", CapacityBytes: 1 << 30}, {Key: "runtime", Role: "runtime", Destination: "/runtime", Storage: "owned", Access: "read_write", CapacityBytes: 1 << 29}}}
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	store, err := producttest.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
 	must(t, err)
+	return harnessForStore(t, store)
+}
+func harnessForStore(t *testing.T, store *product.Store) *harness {
+	t.Helper()
 	t.Cleanup(func() { store.Close() })
-	lifecycle := &product.Lifecycle{Store: store, Backend: &fakeLifecycleBackend{}, MaxProjects: 4}
+	lifecycle := &product.Lifecycle{VerifyRuntime: testfixture.VerifyRuntime, Store: store, Backend: &fakeLifecycleBackend{}, MaxProjects: 4}
 	backend := newPTYBackend()
-	terminals := product.NewTerminals(ctx, store, lifecycle, backend, testProfile(), 8)
+	terminals := product.NewTerminals(ctx, store, lifecycle, backend, testProfile().Bindings(), 8)
 	t.Cleanup(terminals.Close)
 	h := &harness{store: store, terminals: terminals, lifecycle: lifecycle, backend: backend, actor: "alice"}
 	s := &Server{
-		Store: store, Terminals: terminals, Lifecycle: lifecycle, Profile: testProfile(),
+		Store: store, Terminals: terminals, Lifecycle: lifecycle, Bindings: testProfile().Bindings(),
 		Auth: AuthenticatorFunc(func(*http.Request) (string, error) {
 			if actor := h.currentActor(); actor != "" {
 				return actor, nil
@@ -628,6 +634,6 @@ func (f *ptyBackend) InspectProcess(_ context.Context, ref sandbox.ProcessRefere
 func (f *fakeLifecycleBackend) InspectConfiguration(context.Context, sandbox.Reference) (sandbox.Configuration, error) {
 	return sandbox.Configuration{}, errors.New("network configuration is outside this HTTP fixture")
 }
-func (f *fakeLifecycleBackend) UpdateNetwork(context.Context, sandbox.Reference, sandbox.Network) (sandbox.Configuration, error) {
+func (f *fakeLifecycleBackend) UpdateConfiguration(context.Context, sandbox.Reference, sandbox.Network, []sandbox.Mount) (sandbox.Configuration, error) {
 	return sandbox.Configuration{}, errors.New("network update is outside this HTTP fixture")
 }

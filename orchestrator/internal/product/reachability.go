@@ -31,6 +31,7 @@ type Reachability struct {
 }
 
 type DirectRule struct {
+	// 0.0.0.0/0 selects public IPv4 destinations, retaining Port and Protocol.
 	CIDR     netip.Prefix `json:"cidr"`
 	Port     uint16       `json:"port"`
 	Protocol string       `json:"protocol"`
@@ -120,7 +121,13 @@ func (r Reachability) Audience(name string) (ServiceRule, bool) {
 func (r Reachability) Declaration() sandbox.Network {
 	out := sandbox.Network{}
 	for _, rule := range r.Direct {
-		out.Allow = append(out.Allow, sandbox.Tuple{CIDR: rule.CIDR, Port: rule.Port, Protocol: rule.Protocol})
+		prefixes := []netip.Prefix{rule.CIDR}
+		if rule.CIDR.IsValid() && rule.CIDR.Bits() == 0 {
+			prefixes = internetIPv4
+		}
+		for _, prefix := range prefixes {
+			out.Allow = append(out.Allow, sandbox.Tuple{CIDR: prefix, Port: rule.Port, Protocol: rule.Protocol})
+		}
 	}
 	for _, resolver := range r.Resolvers {
 		out.Allow = append(out.Allow, sandbox.Tuple{CIDR: netip.PrefixFrom(resolver, 32), Port: 53, Protocol: "udp"})

@@ -1,0 +1,51 @@
+/* Shared custom form pickers: the portal uses the same tokens as the shell. */
+.selection-picker { display: grid; gap: 8px; min-width: 0; }
+.selection-picker-label { font-size: 14px; }
+.selection-picker > .selection-picker-trigger {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 42px;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--foreground); text-align: left;
+}
+.selection-picker-trigger > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selection-picker-trigger > svg { flex-shrink: 0; color: var(--foreground-muted); pointer-events: none; }
+.selection-picker > .selection-picker-trigger:hover:not(:disabled), .selection-picker > .selection-picker-trigger[aria-expanded="true"] { background: var(--surface-muted); }
+.selection-picker-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.selection-picker-trigger[aria-invalid="true"] { border-color: var(--danger); }
+.selection-picker-popover {
+  position: fixed; z-index: 125; display: flex; flex-direction: column; min-height: 0;
+  padding: 5px; border: 1px solid var(--border); border-radius: 12px;
+  color: var(--foreground); background: var(--surface);
+  box-shadow: 0 8px 30px #00000020, 0 2px 6px #0000000a;
+  font: inherit; font-size: 14px; line-height: 1.45; overflow: hidden;
+}
+.selection-picker-search { display: flex; align-items: center; gap: 9px; padding: 8px 10px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+.selection-picker-search svg { flex-shrink: 0; color: var(--foreground-muted); }
+.selection-picker-search input {
+  flex: 1; min-width: 0; width: 100%; min-height: 32px; padding: 3px 0; border: 0;
+  outline: 0; background: transparent; color: var(--foreground); font: inherit;
+}
+.selection-picker-search:focus-within { outline: 2px solid var(--accent); outline-offset: -2px; }
+.selection-picker-options { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 3px 0; }
+.selection-picker-options:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 8px; }
+.selection-picker-option { display: flex; align-items: center; gap: 12px; min-height: 40px; margin: 1px 0; padding: 9px 11px; border-radius: 7px; cursor: pointer; }
+.selection-picker-option > span { display: grid; flex: 1; min-width: 0; gap: 2px; }
+.selection-picker-option > span > span { overflow-wrap: anywhere; }
+.selection-picker-option small { font-size: 12px; color: var(--foreground-muted); overflow-wrap: anywhere; }
+.selection-picker-option[data-active="true"] { background: var(--surface-muted); }
+.selection-picker-option[aria-selected="true"] { color: var(--accent); }
+.selection-picker-option > svg { flex-shrink: 0; color: var(--accent); }
+.selection-picker-empty { margin: 0; padding: 18px 12px; color: var(--foreground-muted); }
+
+.form-select { min-width: 0; position: relative; width: 100%; }
+.form-select-native, .selection-picker-label--hidden { position: absolute !important; width: 1px !important; height: 1px !important; min-height: 0 !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip-path: inset(50%); white-space: nowrap; border: 0 !important; pointer-events: none; }
+.selection-picker > .selection-picker-trigger { font: inherit; font-size: 14px; line-height: 1.4; text-decoration: none; box-shadow: none; }
+.selection-picker > .selection-picker-trigger:disabled { opacity: .5; cursor: default; }
+.selection-picker-option[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.selection-picker-popover { box-sizing: border-box; text-align: start; }
+.selection-picker-popover *, .selection-picker > * { box-sizing: border-box; }
+.selection-picker-popover small { margin: 0; }
+.selection-picker-popover :is(p,span,small) { font-family: inherit; }
+@media (forced-colors: active) {
+  .selection-picker-option[data-active="true"] { outline: 1px solid Highlight; outline-offset: -1px; }
+  .selection-picker-option[aria-selected="true"] { color: Highlight; }
+}

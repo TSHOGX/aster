@@ -41,6 +41,8 @@ type TerminalFrame struct {
 // stalled observer is disconnected with a gap rather than allowed to stall the
 // engine reader, a sibling observer, or Agent ingest.
 type TerminalObserver struct {
+	scope  Scope
+	done   chan struct{}
 	frames chan TerminalFrame
 	// send guards the frame channel so closing it can never race a delivery. It is
 	// held only for a nonblocking send, never across engine or database work.
@@ -66,6 +68,9 @@ func (o *TerminalObserver) HoldsInput() bool { return o.input.Load() }
 // not closing a terminal.
 func (o *TerminalObserver) Close() {
 	o.once.Do(func() {
+		if o.done != nil {
+			close(o.done)
+		}
 		if o.pty != nil {
 			o.pty.detach(o)
 		}
@@ -147,13 +152,12 @@ type Terminals struct {
 	Store     *Store
 	Lifecycle *Lifecycle
 	Backend   TerminalBackend
-	Profile   Profile
+	Bindings  RuntimeBindings
 	// Shell and its arguments are deployment configuration, not user input. A
 	// Terminal has no user-supplied command: that would be a way to ask the
 	// application to run something the Project policy never declared.
 	Shell         string
 	ShellArgs     []string
-	Directory     string
 	Environment   []string
 	MaxTerminals  int
 	MaxPerProject int
@@ -168,11 +172,11 @@ type Terminals struct {
 	wg          sync.WaitGroup
 }
 
-func NewTerminals(ctx context.Context, s *Store, l *Lifecycle, b TerminalBackend, profile Profile, max int) *Terminals {
+func NewTerminals(ctx context.Context, s *Store, l *Lifecycle, b TerminalBackend, bindings RuntimeBindings, max int) *Terminals {
 	ctx, cancel := context.WithCancel(ctx)
 	return &Terminals{
-		Store: s, Lifecycle: l, Backend: b, Profile: profile,
-		Shell: "/bin/bash", ShellArgs: []string{"-l"}, Directory: "/workspace",
+		Store: s, Lifecycle: l, Backend: b, Bindings: bindings,
+		Shell: "/bin/bash", ShellArgs: []string{"-l"},
 		Environment:  []string{"HOME=/root", "TERM=xterm-256color", "PATH=/opt/node-v24.15.0/bin:/usr/local/bin:/usr/bin:/bin"},
 		MaxTerminals: max, attachments: map[string]*terminalAttachment{}, ctx: ctx, cancel: cancel,
 	}
@@ -196,17 +200,11 @@ func (t *Terminals) Close() {
 // rather than starting a second one. It reports ErrPending while the Project
 // placement or the process start is still converging.
 func (t *Terminals) Start(ctx context.Context, scope Scope, terminal string, rows, cols int) (TerminalIncarnation, error) {
-	child, err := t.Store.Terminal(ctx, scope, terminal)
+	err := t.Store.CanUseTerminal(ctx, scope, terminal)
 	if err != nil {
 		return TerminalIncarnation{}, err
 	}
-	// Deletion closes admission here, not only in reserveTerminal: a Terminal that
-	// already has an attachment would otherwise keep answering Start after the user
-	// asked for it to go away.
-	if child.Deletion != Live {
-		return TerminalIncarnation{}, ErrDeleting
-	}
-	if err = t.Lifecycle.EnsureConfiguredActive(ctx, scope, t.Profile); err != nil {
+	if err = t.Lifecycle.EnsureActive(ctx, scope, t.Bindings); err != nil {
 		return TerminalIncarnation{}, err
 	}
 	if _, err = t.Lifecycle.ActiveResources(ctx, scope); err != nil {
@@ -312,12 +310,9 @@ func (t *Terminals) ensure(ctx context.Context, scope Scope, terminal string, ro
 // input claim; when another observer already holds it, the attachment succeeds
 // read-only rather than stealing the keyboard.
 func (t *Terminals) Attach(ctx context.Context, scope Scope, terminal string, input bool) (*TerminalObserver, error) {
-	child, err := t.Store.Terminal(ctx, scope, terminal)
+	err := t.Store.CanUseTerminal(ctx, scope, terminal)
 	if err != nil {
 		return nil, err
-	}
-	if child.Deletion != Live {
-		return nil, ErrDeleting
 	}
 	t.mu.Lock()
 	a := t.attachments[terminal]
@@ -333,7 +328,7 @@ func (t *Terminals) Attach(ctx context.Context, scope Scope, terminal string, in
 	if len(a.observers) >= 8 {
 		return nil, ErrCapacity
 	}
-	o := &TerminalObserver{frames: make(chan TerminalFrame, terminalObserverQueue), pty: a}
+	o := &TerminalObserver{frames: make(chan TerminalFrame, terminalObserverQueue), pty: a, scope: scope, done: make(chan struct{})}
 	if input && a.owner == nil {
 		a.owner = o
 		o.input.Store(true)
@@ -349,6 +344,8 @@ func (t *Terminals) Attach(ctx context.Context, scope Scope, terminal string, in
 		o.deliver(TerminalFrame{Kind: "data", Data: append([]byte(nil), a.replay...)})
 	}
 	o.deliver(TerminalFrame{Kind: "status", Rows: a.incarnation.Rows, Cols: a.incarnation.Cols, Input: o.input.Load()})
+	t.wg.Add(1)
+	go func() { defer t.wg.Done(); t.watchObserver(o, terminal) }()
 	return o, nil
 }
 
@@ -378,9 +375,15 @@ func (a *terminalAttachment) detach(o *TerminalObserver) {
 // ClaimInput gives one observer the input claim when no live observer holds it.
 // There is no takeover: two views must not drive one keyboard, and stealing it
 // silently would make lost keystrokes look like a terminal fault.
-func (t *Terminals) ClaimInput(o *TerminalObserver) error {
+func (t *Terminals) ClaimInput(ctx context.Context, o *TerminalObserver) error {
 	if o == nil || o.pty == nil {
 		return ErrInvalid
+	}
+	if _, err := t.observerIdentity(ctx, o, false); err != nil {
+		return err
+	}
+	if err := authorizeExecution(ctx, t.Store.reader, o.scope, ActionTerminalsUse); err != nil {
+		return err
 	}
 	a := o.pty
 	a.mu.Lock()
@@ -423,7 +426,10 @@ func (t *Terminals) Input(ctx context.Context, o *TerminalObserver, data []byte)
 	if !ready {
 		return ErrPending
 	}
-	if err = t.Store.terminalAuthority(ctx, i); err != nil {
+	if _, err = t.observerIdentity(ctx, o, true); err != nil {
+		return err
+	}
+	if err = authorizeExecution(ctx, t.Store.reader, o.scope, ActionTerminalsUse); err != nil {
 		return err
 	}
 	kind := runtimeInput
@@ -440,7 +446,10 @@ func (t *Terminals) Input(ctx context.Context, o *TerminalObserver, data []byte)
 	if !o.input.Load() {
 		return ErrConflict
 	}
-	if err = t.Store.terminalAuthority(ctx, i); err != nil {
+	if _, err = t.observerIdentity(ctx, o, true); err != nil {
+		return err
+	}
+	if err = authorizeExecution(ctx, t.Store.reader, o.scope, ActionTerminalsUse); err != nil {
 		return err
 	}
 	return t.Backend.SendPTYInput(ctx, i.Reference, data)
@@ -500,9 +509,18 @@ func (t *Terminals) Interrupt(ctx context.Context, o *TerminalObserver) error {
 // Signal delivers a directed signal to the PTY's process group. It is the
 // termination path, not the interrupt path: use Interrupt for Ctrl-C.
 func (t *Terminals) Signal(ctx context.Context, scope Scope, terminal string, signal int32) error {
-	i, err := t.Store.LiveTerminal(ctx, scope, terminal)
+	if _, err := terminalIn(ctx, t.Store.reader, scope, terminal); err != nil {
+		return err
+	}
+	if err := activeAccount(ctx, t.Store.reader, scope.Actor); err != nil {
+		return err
+	}
+	i, err := liveTerminalIncarnation(ctx, t.Store.reader, terminal)
 	if err != nil {
 		return err
+	}
+	if signal != 15 && signal != 9 {
+		return ErrInvalid
 	}
 	release, err := t.Store.beginRuntimeWork(ctx, runtimeSignal)
 	if err != nil {
@@ -515,7 +533,13 @@ func (t *Terminals) Signal(ctx context.Context, scope Scope, terminal string, si
 // EOF closes the PTY's input, which a shell sees as Ctrl-D. It is a request: the
 // shell decides whether to exit, and only its exit frame settles the incarnation.
 func (t *Terminals) EOF(ctx context.Context, scope Scope, terminal string) error {
-	i, err := t.Store.LiveTerminal(ctx, scope, terminal)
+	if _, err := terminalIn(ctx, t.Store.reader, scope, terminal); err != nil {
+		return err
+	}
+	if err := activeAccount(ctx, t.Store.reader, scope.Actor); err != nil {
+		return err
+	}
+	i, err := liveTerminalIncarnation(ctx, t.Store.reader, terminal)
 	if err != nil {
 		return err
 	}
@@ -525,6 +549,18 @@ func (t *Terminals) EOF(ctx context.Context, scope Scope, terminal string) error
 	}
 	defer release()
 	return t.Backend.CloseProcessInput(ctx, i.Reference)
+}
+
+// StopOwned is the explicit active-owner reduction boundary. Functional read/use
+// grants are irrelevant to terminating an already-owned Terminal.
+func (t *Terminals) StopOwned(ctx context.Context, scope Scope, terminal string) error {
+	if _, err := terminalIn(ctx, t.Store.reader, scope, terminal); err != nil {
+		return err
+	}
+	if err := activeAccount(ctx, t.Store.reader, scope.Actor); err != nil {
+		return err
+	}
+	return t.Stop(ctx, scope.ProjectID, terminal)
 }
 
 // Stop requests termination of a Terminal's PTY. It is what an explicit close and
@@ -621,9 +657,13 @@ func (t *Terminals) attach(ctx context.Context, a *terminalAttachment) error {
 	var stream sandbox.ProcessStream
 	var err error
 	if i.State == "starting" {
+		resources, e := t.Store.resourcesFor(ctx, i.ProjectID)
+		if e != nil {
+			return e
+		}
 		stream, err = t.Backend.StartPTY(ctx, sandbox.StartProcessRequest{
 			ProcessReference: i.Reference, IdempotencyKey: i.ID,
-			Command: t.Shell, Arguments: t.ShellArgs, Directory: t.Directory, Environment: t.Environment,
+			Command: t.Shell, Arguments: t.ShellArgs, Directory: resources.Profile.RolePath("workspace"), Environment: t.Environment,
 		}, i.Rows, i.Cols)
 	} else {
 		observation, e := t.Backend.InspectProcess(ctx, i.Reference)
@@ -804,6 +844,9 @@ func (t *Terminals) observerIdentity(ctx context.Context, o *TerminalObserver, i
 	o.pty.mu.Unlock()
 	if !attached {
 		return i, ErrConflict
+	}
+	if err := activeAccount(ctx, t.Store.reader, o.scope.Actor); err != nil {
+		return i, err
 	}
 	return i, t.Store.terminalAuthority(ctx, i)
 }

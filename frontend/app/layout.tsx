@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import "./globals.css";
-import { themeInitScript } from "@/lib/theme";
+import { themeInitScript } from "@web/appearance";
 import { localeInitScript } from "@/lib/i18n/locale";
-import { displayName } from "@/lib/ui-config";
+import { displayName } from "@web/brand";
 
 export const metadata: Metadata = {
   title: displayName,
@@ -15,17 +16,18 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const account = (await headers()).get("x-project-account-id") || undefined;
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" data-account-id={account} suppressHydrationWarning>
       <head>
         {/* Mobile browser chrome. The init script sets the correct value before
-            first paint (stored choice → OS fallback) and setTheme() updates it
-            on every toggle, so it always tracks the in-app theme. */}
+            first paint (identified account cache → OS fallback), then account
+            preferences and live system-theme changes keep it synchronized. */}
         <meta name="theme-color" content="#f6f8fb" />
         {/* Set data-theme before first paint to avoid a light-mode flash. */}
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />

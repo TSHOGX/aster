@@ -90,7 +90,7 @@ func (s *Store) MutateSchedule(ctx context.Context, scope Scope, input ScheduleM
 // live gateway authority inside this same transaction.
 func (s *Store) mutateSchedule(ctx context.Context, tx *sql.Tx, scope Scope, input ScheduleMutation, origin ScheduleOrigin) (ScheduleReceipt, error) {
 	var out ScheduleReceipt
-	if _, err := writableProject(ctx, tx, scope); err != nil {
+	if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 		return out, err
 	}
 	if !validText(input.RequestID, 128) || !validID(input.ID) {
@@ -101,6 +101,22 @@ func (s *Store) mutateSchedule(ctx context.Context, tx *sql.Tx, scope Scope, inp
 	}
 	if (input.Operation == "cancel" || input.Operation == "delete" || input.Operation == "finish") && input.Patch != (SchedulePatch{}) {
 		return out, ErrInvalid
+	}
+	var parent string
+	found := tx.QueryRowContext(ctx, `SELECT project_id FROM schedules WHERE id=?`, input.ID).Scan(&parent)
+	if found == nil && parent != scope.ProjectID {
+		return out, ErrNotFound
+	}
+	if found != nil && !errors.Is(found, sql.ErrNoRows) {
+		return out, found
+	}
+	if err := activeAccount(ctx, tx, scope.Actor); err != nil {
+		return out, err
+	}
+	if !scheduleReduction(input) {
+		if err := authorizeAction(ctx, tx, scope.Actor, ActionSchedulesManage); err != nil {
+			return out, err
+		}
 	}
 	for _, field := range []**string{&input.Patch.RunAt, &input.Patch.ExpiresAt, &input.Patch.StartsAt} {
 		if *field != nil && **field != "" {

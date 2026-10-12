@@ -13,13 +13,18 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/projectfiles"
 )
 
+// Bound an in-flight write and a closing frame below the five-second
+// authority-revocation target, including when a client stops reading.
+const authorityWriteWait = 2 * time.Second
+
 // Authenticator resolves the actor for a request. The composed deployment
-// supplies the existing cookie session lookup; a request with no valid identity
+// supplies the database session lookup; a request with no valid identity
 // yields an empty actor and is refused before any store call.
 type Authenticator interface {
 	Actor(*http.Request) (string, error)
@@ -63,12 +68,16 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 // status maps application errors onto HTTP without inventing detail. A missing,
-// foreign and unauthorized resource are all 404: a client must not be able to
+// foreign resource are both 404: a client must not be able to
 // probe for the existence of another Project's children.
 func status(err error) (int, string) {
 	switch {
 	case err == nil:
 		return http.StatusOK, ""
+	case errors.Is(err, product.ErrUnauthorized):
+		return http.StatusUnauthorized, "login required"
+	case errors.Is(err, product.ErrForbidden):
+		return http.StatusForbidden, "action denied"
 	case errors.Is(err, product.ErrNotFound):
 		return http.StatusNotFound, "not found"
 	case errors.Is(err, product.ErrInvalid):
@@ -85,6 +94,10 @@ func status(err error) (int, string) {
 		return http.StatusConflict, "project has admitted activity"
 	case errors.Is(err, product.ErrPending):
 		return http.StatusAccepted, "operation pending"
+	case errors.Is(err, product.ErrArtifactUnavailable):
+		return http.StatusServiceUnavailable, "registered runtime artifact unavailable"
+	case errors.Is(err, product.ErrQuotaExceeded):
+		return http.StatusTooManyRequests, "resource allowance exceeded"
 	case errors.Is(err, product.ErrCapacity):
 		return http.StatusServiceUnavailable, "capacity exhausted"
 	case errors.Is(err, product.ErrDraining):
@@ -94,7 +107,22 @@ func status(err error) (int, string) {
 	}
 }
 
+func quotaFailure(w http.ResponseWriter, err error) bool {
+	var quota *product.QuotaError
+	if !errors.As(err, &quota) {
+		return false
+	}
+	writeJSON(w, http.StatusTooManyRequests, map[string]any{"code": "quota_exceeded", "error": "resource allowance exceeded", "quota": quota})
+	return true
+}
 func fail(w http.ResponseWriter, err error) {
+	if errors.Is(err, product.ErrArtifactUnavailable) {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"code": "artifact_unavailable", "error": "registered runtime artifact unavailable"})
+		return
+	}
+	if quotaFailure(w, err) {
+		return
+	}
 	if errors.Is(err, product.ErrSnapshotExpired) {
 		writeJSON(w, http.StatusGone, map[string]string{"code": "snapshot_expired", "error": "preview snapshot expired"})
 		return
@@ -208,4 +236,11 @@ func int64Param(values map[string][]string, key string) int64 {
 		return 0
 	}
 	return n
+}
+
+func identityInvalidations(auth Authenticator) <-chan struct{} {
+	if source, ok := auth.(interface{ IdentityInvalidations() <-chan struct{} }); ok {
+		return source.IdentityInvalidations()
+	}
+	return nil
 }

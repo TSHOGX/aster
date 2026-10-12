@@ -5,9 +5,37 @@ actor; body fields never supply an owner. State-changing requests and WebSocket
 handshakes check Origin. Unknown request fields and trailing JSON are rejected.
 Resource paths below use stored Project and child identities.
 
+Identity responses contain `id`, canonical `username`, `display_name`, `status`,
+`role`, `revision`, `session_revision` and `must_change_password`; never hashes or
+session tokens. Temporary login permits only session inspection, password setup
+and logout. Setup submits `new_password`. Self-change submits `current_password`
+and `new_password`; both password endpoints replace the cookie only after the
+transaction commits. Other devices must sign in again after password changes.
+
+Preferences contain only `revision`, `theme_mode` (`system`, `light`, `dark`) and
+`accent` (`neutral`, `blue`, `green`, `violet`). Before first initialization, GET
+returns revision 0 and system/neutral. PATCH requires `expected_revision` and at
+least one changed appearance field. A simultaneous initializer or stale edit
+returns 409. Profile PATCH requires `expected_revision` and `display_name`
+(1–128 Unicode characters); its read projection contains only ID, username,
+display name and revision. Unknown privilege/resource fields are rejected.
+Restricted password-setup sessions cannot call either settings API. Invalid
+settings and an incorrect current password return 422; an expired login returns
+401. A profile update preserves the current session.
+
 | Scope | Operations |
 | --- | --- |
-| `/api/auth/login`, `/logout`, `/me` | Sign in, sign out and inspect current identity |
+| `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/session` | Sign in, sign out and inspect current database identity |
+| `POST /api/auth/password/setup` | Exchange a restricted temporary-login session for a permanent password and normal session |
+| `POST /api/me/password`, `DELETE /api/me/sessions` | Change the current password or revoke all account sessions |
+| `GET/PATCH /api/me/preferences` | Revisioned theme mode and accent for the signed-in account |
+| `GET/PATCH /api/me/profile` | Immutable ID/username and revisioned display name |
+| `GET /api/users` | Authenticated sharing directory containing immutable IDs and display labels |
+| `GET/POST /api/admin/users`, `GET/PATCH /api/admin/users/{id}` | Administrator account list/detail/create and display-name/role edits |
+| `POST /api/admin/users/{id}/password-reset` | Issue a one-time temporary credential and revoke that account's sessions |
+| `GET /api/admin/groups` | Bounded group choices for account creation |
+| `GET /api/admin/audit-events` | Bounded actor/target/action/time-filtered administrative/security audit |
+| `POST /api/admin/users/{id}/suspend`, `/enable`; `GET /api/admin/operations/{id}` | Durable account-state intent and observed operation state |
 | `/api/projects` | List and create Projects |
 | `/api/schedules`, `/api/schedules/events` | Owner-scoped schedule overview and metadata invalidation SSE across Projects |
 | `/api/projects/{project}` | Inspect, rename and request deletion |
@@ -20,7 +48,7 @@ Resource paths below use stored Project and child identities.
 | `…/sessions/{session}/view/*` | Bounded durable conversation views, changes, details and control head |
 | `…/terminals` and `…/terminals/{terminal}` | Retained PTY metadata and retirement |
 | `…/terminals/{terminal}/start`, `/stop`, `/attach` | Start, stop and WebSocket observation |
-| `…/files`, `/files/content`, `/files/operations/{operation}` | Directory pages, mutations, streaming content and outcome inspection |
+| `…/files`, `/files/content`, `/files/editor-content`, `/files/download`, `/files/operations/{operation}` | Directory pages, mutations, preview bytes, explicit export and outcome inspection |
 | `…/files/snapshots`, `/files/snapshots/{snapshot}/content`, `/files/snapshots/{snapshot}` | Acquire an immutable source lease, read/range its bytes, and release it |
 | `…/schedules`, `/schedules/{schedule}`, `/run`, `/runs` | Project schedules and their run ledger |
 | `…/sessions/{session}/readers` | Grant/revoke conversation readers |
@@ -69,9 +97,12 @@ and lifecycle behavior.
 Office visual previews use the existing authorized content endpoint. No Office
 job, window or copy API is required. See the [preview contract](file-preview/README.md).
 
-File content writes use `PUT …/files/content?path=RELATIVE_PATH`, a bounded
-Content-Length, `Idempotency-Key` and `X-Content-SHA256` containing **64 lowercase
-hexadecimal characters**. File-operation responses include `id`, `state`,
+File upload uses `PUT …/files/content?path=RELATIVE_PATH` with `files.upload`;
+editor saves use `PUT …/files/editor-content?path=RELATIVE_PATH` with `files.edit`.
+Both require a bounded Content-Length, `Idempotency-Key` and `X-Content-SHA256` containing **64 lowercase
+hexadecimal characters**. Directory mkdir/move/remove requires `files.manage`.
+The server selects the action from the route; headers cannot override it. Durable
+mutation IDs bind both payload and action. File-operation responses include `id`, `action`, `state`,
 `settled` and any error. Directory queries return frozen, bounded metadata pages. Their opaque `next`
 cursor binds Project, path and placement; expired/evicted cursors return 409
 `resync_required`. The browser rebuilds the loaded window on that response. Paths never select private
@@ -302,3 +333,162 @@ exhaustion posts one `schedule/<id>` attention notice once admitted work settles
 a still-live final check can complete without a premature exhaustion notice.
 `notify: false` suppresses the task's notices. Finish does not emit success until
 native execution settles; failure after finish remains stopped and notifies.
+
+## Administration
+
+Every admin service checks a current normal session and platform-admin role.
+Writes recheck that authority inside the same transaction as mutation, audit and
+receipt. Origin protection applies to every admin mutation. List endpoints accept
+`limit` (1–100, default 50) and opaque `cursor`. User filtering by `search`, `status`
+and `role` happens before pagination; audit supports `actor`, `target`, `action`,
+`after` and `before` (RFC3339 times). Cursors cannot be reused with other filters.
+
+Create sends `request_id`, `username`, `display_name`, `role` and optional
+`group_ids`. Omission selects the standard group; an explicit empty array selects
+none. At most 256 distinct current groups may be selected. Edits send
+`request_id`, `expected_revision` and the changed `display_name` and/or `role`.
+Username is immutable. Reset/suspend/enable send request ID and expected revision.
+Role changes revoke affected sessions; the last active admin cannot be removed.
+
+A mutation result contains `user`, `replayed` and, on the first successful create
+or reset response only, `temporary_password`. A same-ID/body replay returns its
+recorded non-secret result before stale revision checks; another action, target or
+body conflicts. Results are snapshots of that mutation; use detail/operation GET
+for current state. Requests still require current authority to read their outcome.
+An uncertain credential response is resolved by checking the original request,
+then explicitly resetting with a new request ID if a new password is needed.
+
+Account suspension commits disabled status, revocation and durable operation/
+project targets before returning 202. This development stage records the intent;
+resource stop/pause reconciliation is not yet implemented. The operation remains
+`accepted`, never falsely `succeeded`. Enable restores identity only and leaves
+resource/share/schedule reactivation separate. The admin UI currently exposes
+account metadata/security and audit; suspension controls await that reconciler.
+
+## Group and policy management
+
+`GET/POST /api/admin/groups`, `GET/PATCH/DELETE /api/admin/groups/{id}` and
+`GET/POST /api/admin/policies`, `GET/PATCH/DELETE /api/admin/policies/{id}` manage
+named groups and reusable policies. Mutations carry `request_id`; existing objects
+also require `expected_revision`. Group metadata is name/description; policies
+add a `statements` map using the closed product action set and allow/deny/unset.
+Unknown actions and wildcards are rejected. A bound policy must be detached before
+deleting it.
+
+`GET/PATCH /api/admin/groups/{id}/members` lists members or applies bounded
+`add_user_ids`/`remove_user_ids` deltas (up to 100 each). Accounts may belong to at
+most 256 groups. `PUT .../policies` replaces the complete `policy_ids` list (up to
+256); an explicit empty list clears bindings. Omission does not silently clear it.
+Membership/policy mutations advance affected authorization revisions and commit
+audit plus replay receipt atomically.
+
+`GET /api/me/capabilities` returns the current account status, management role,
+authorization revision, effective actions and allow/deny provenance. Administrative
+inspection uses `GET /api/admin/users/{id}/effective-access`. These projections
+never grant resource ownership; service admission still checks stored scope.
+
+Before deleting a populated group, read `GET .../deletion-preview`. Its bounded
+user pages show before/after grants and current numeric entitlements. Delete sends
+the preview's `expected_dependencies`; a changed contributing configuration
+conflicts. Zero-member groups need only revision validation. Deletion detaches
+memberships/bindings without assigning another group or removing admin roles.
+The numeric preview currently covers group/platform values; per-user numeric
+overrides are integrated with the resource-settings implementation.
+
+Queued prompt responses expose `dispatch_error` when current Agent authority
+rejects pending work. `permission_revoked` holds the prompt until an explicit
+release under a current `agents.run` grant or cancellation. Control outcome reads
+also expose this error, separately from the immutable acceptance receipt. Enqueue,
+release and steer require the current grant even on replay; hold, cancel and stop
+retain active-owner reduction authority.
+
+Terminal start/attach/input/keyboard-claim/resize require `terminals.use` independently
+of `projects.read`. Revocation closes an existing attachment within the five-second
+connection target. It leaves the retained PTY alive; explicit owned termination,
+delete and exit settlement remain available through their reduction authority.
+
+Workspace listing requires `files.list`; preview/content and cached preview ranges
+require `files.read`. `GET …/files/download?path=RELATIVE_PATH` requires both
+`files.read` and `files.export`, with the same confinement, captures, byte ranges
+and transfer bounds as preview. Preview bytes remain copyable when export is
+denied. Frozen public shares retain their separate resource grant. Releasing an
+owned preview lease and inspecting a file-operation outcome remain available to
+an active owner after functional grants disappear.
+
+Conversation reader grants use immutable account IDs: POST
+`…/sessions/{session}/readers` accepts `{ "reader_id": "ACCOUNT_ID" }` and requires
+`conversations.share`. GET `…/reader-candidates?q=QUERY&after=ID&limit=50` provides
+bounded active-account choices under that same grant. GET `…/readers?after=ID&limit=50`
+lists current recipients so the active owner can revoke them even after losing the
+grant. Self-grants and nonexistent/disabled recipients are refused. Account names
+are display/search labels, never authorization identifiers.
+
+Public snapshot creation and link rotation require `shares.public.create`.
+Removing that grant leaves existing frozen links valid; explicit revoke remains
+available to the active owner. Disabled owner status denies public content access
+immediately, independently of later suspension reconciliation.
+
+Schedule create/edit/resume and their retries require `schedules.manage`; Run now
+also requires `agents.run`. A pure `{ "state": "paused" }` patch, cancel and delete
+retain active-owner reduction authority. Definition/outcome inspection remains
+available for those controls. Automatic dispatch rechecks both grants and pauses
+a denied due task with `last_error: "permission_revoked"`; no occurrence is created.
+Platform schedule context omits denied create/update operations, and mutations
+reauthorize even through an already-open gateway request.
+
+`POST /api/admin/users/{id}/conversations/{session}/inspect` is explicit private
+conversation inspection. It requires a current normal administrator session plus
+`admin.content.read`; the supplied account must own the stored conversation. Body:
+`{ "purpose": "Case reference and reason", "after_sequence": 0, "limit": 20 }`.
+Purpose is required (up to 512 characters); limit is 1–50. Each successful page
+returns an audit ID and commits its target/purpose/bounds audit before exposing
+content. Native records, credentials, live workspace and arbitrary paths are not
+part of this API. Messages are limited to 16,384 characters each and 256 KiB per
+page, with explicit truncation and continuation. Audit failure returns no content.
+
+Quota admission returns HTTP 429 with `code: "quota_exceeded"` and a `quota` object
+containing `dimension`, `used`, `reserved`, `requested_delta`, and `limit`. Numeric
+quantities are decimal strings so clients retain exact integer values. These are
+accounted counts/capacities, not sampled CPU or filesystem utilization. Quota denial
+is distinct from temporary platform/engine capacity pressure and is not retried by
+the file-read client. Platform schedule errors preserve the same quota details.
+
+## Resource catalog and configuration
+
+| Route | Purpose |
+| --- | --- |
+| `GET/POST /api/admin/resource-templates/{kind}` | List/create `network` or `environment` templates |
+| `PATCH/DELETE /api/admin/resource-templates/{kind}/{id}` | Update/delete a non-built-in template |
+| `GET/POST /api/admin/shared-volumes` | List/provision shared directories |
+| `PATCH/DELETE /api/admin/shared-volumes/{id}` | Edit metadata/availability or request asynchronous deletion |
+| `GET/PUT /api/admin/policies/{id}/resources` | Complete resource grant set, at most one template of each kind |
+| `PUT /api/admin/groups/{id}/configuration-defaults` | Defaults authorized by the group's policies |
+| `GET /api/admin/users/{id}/configuration` | Effective authority, selected defaults and preferences |
+| `PUT /api/admin/users/{id}/configuration-defaults` | Set or clear administrator overrides |
+| `GET/PATCH /api/me/configuration` | Read configuration/save preferences for future projects |
+| `GET /api/me/project-configurations` | Owned projects and their retained configuration |
+| `PATCH /api/me/project-configurations/{id}` | Explicitly change an owned project's authorized network |
+| `GET /api/projects/{project}/mounts` | Mounted shared-directory keys and effective access |
+
+Admin catalog/default/grant mutations accept `preview: true`, `request_id` and
+`expected_revision`. The preview rolls back all proposed changes and returns
+`expected_dependencies`, `proposed`, `users`, and `projects`. Confirm with the
+same payload without `preview`, adding `expected_dependencies`. A stale review
+returns conflict and requires a new preview. Built-in templates are immutable;
+duplicate them to customize. Referenced resources cannot be deleted. Shared
+capacity is a decimal string and cannot change after creation.
+
+Configuration responses distinguish effective `default_network` and
+`default_environment` from the saved `administrator_defaults` IDs. Empty IDs mean
+inheritance; unavailable saved IDs remain visible for repair. `default_revision`
+fences administrator changes. `preferences.revision` fences user preferences.
+Both template ID fields and `show_shared_volumes` form the complete preference
+payload. User preference and project-network writes require `request_id` and
+`expected_revision` but do not use the admin catalog preview. Replay an uncertain
+write with its original ID and unchanged payload.
+
+File routes accept `mount=<declared-key>` for shared-directory operations. The
+server derives storage identity and read/write authority from the owned project;
+a caller cannot submit a volume ID or host path. Omit `mount` for the workspace.
+Downloads, reads, editor writes, uploads, mutations and preview snapshots preserve
+this scope. File action permissions still apply in addition to mount access.

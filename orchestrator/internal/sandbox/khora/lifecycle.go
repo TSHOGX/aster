@@ -187,7 +187,17 @@ func (b *Backend) CreateVolume(ctx context.Context, key string, capacity int64) 
 	}
 	volume, err := b.client.Volume(ctx, created.VolumeID)
 	if err != nil {
-		return sandbox.Volume{}, mapError("inspect volume", err)
+		mapped := mapError("inspect volume", err)
+		if sandbox.Is(mapped, sandbox.NotFound) {
+			// Preserve the exact identity returned by the original idempotent
+			// operation. Cleanup can distinguish observed absence from a source
+			// error or an ambiguous failure that did not identify an allocation.
+			if _, identityErr := b.Identity(ctx); identityErr != nil {
+				return sandbox.Volume{}, identityErr
+			}
+			return sandbox.Volume{VolumeReference: sandbox.VolumeReference{StoreID: b.identity.StoreID, VolumeID: created.VolumeID}, Capacity: capacity}, mapped
+		}
+		return sandbox.Volume{}, mapped
 	}
 	if _, err := b.Identity(ctx); err != nil {
 		return sandbox.Volume{}, err
@@ -222,6 +232,9 @@ func networkDeclaration(network sandbox.Network) (sdk.Network, error) {
 		return sdk.Tuple{CIDR: rule.CIDR.Masked().String(), Port: rule.Port, Proto: rule.Protocol}, nil
 	}
 	for _, rule := range network.Allow {
+		if rule.CIDR.IsValid() && rule.CIDR.Bits() == 0 {
+			return result, failure("network", sandbox.Invalid, fmt.Errorf("egress allow requires a destination narrower than /0"))
+		}
 		value, err := tuple(rule)
 		if err != nil {
 			return result, err

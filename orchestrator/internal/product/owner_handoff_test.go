@@ -105,7 +105,7 @@ func TestOwnerHandoffTransfersOnlyAppliedNativeWorkAcrossVerifiedReplacement(t *
 			t.Fatal("rejected handoff candidate changed Store")
 		}
 	}
-	if unmeasured, e := Open(ctx, path); e == nil {
+	if unmeasured, e := openFixtureStore(ctx, path); e == nil {
 		unmeasured.Close()
 		t.Fatal("unmeasured Store bypassed handoff compatibility")
 	}

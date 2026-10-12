@@ -59,6 +59,22 @@ func TestReleasedPausedVolumeFiles(t *testing.T) {
 	a.writeFile(base+"/files/content?path=initial.txt", "initial bytes", "initial-upload")
 	read("initial.txt", "initial bytes")
 	assertCold("created")
+	metadata := a.request("GET", "/api/admin/projects/paused-volume", nil, 200)
+	if metadata["allocated_bytes"] != "134217728" || metadata["reserved_bytes"] != "134217728" || metadata["observation"].(map[string]any)["status"] != "not_materialized" {
+		t.Fatal(metadata)
+	}
+	binding := metadata["binding"].(map[string]any)
+	if binding["occupied"] != false || len(binding["slots"].([]any)) != 4 {
+		t.Fatal(binding)
+	}
+	for _, item := range binding["slots"].([]any) {
+		slot := item.(map[string]any)
+		if slot["role"] == "runtime" && (slot["state"] != "reserved" || slot["observation"] != "not_materialized") {
+			t.Fatal(slot)
+		}
+	}
+	assertCold("created")
+
 	session := base + "/sessions/native"
 	a.request("POST", base+"/sessions", map[string]string{"id": "paused-native", "title": "Native history"}, 201)
 	session = base + "/sessions/paused-native"
@@ -68,8 +84,18 @@ func TestReleasedPausedVolumeFiles(t *testing.T) {
 		turns, _ := v["turns"].([]any)
 		return len(turns) == 1 && turns[0].(map[string]any)["state"] == "completed"
 	})
+	active := a.request("GET", "/api/admin/projects/paused-volume", nil, 200)
+	observed := active["observation"].(map[string]any)
+	if observed["status"] != "observed" || observed["matches_saved_binding"] != true || observed["network_revision"] != active["saved_network_revision"] {
+		t.Fatal(active)
+	}
 	// The fixture's normal idle policy releases compute without discarding storage.
 	a.await(25*time.Second, "idle pause", func() bool { return a.request("GET", base, nil, 200)["state"] == "paused" })
+	paused := a.request("GET", "/api/admin/projects/paused-volume", nil, 200)
+	if paused["binding"].(map[string]any)["occupied"] != false || paused["observation"].(map[string]any)["state"] != "paused" {
+		t.Fatal(paused)
+	}
+	assertCold("paused")
 	history := a.request("GET", session+"/view/pages", nil, 200)
 	raw, _ := json.Marshal(history)
 	if !bytes.Contains(raw, []byte("deterministic-local-reply")) {

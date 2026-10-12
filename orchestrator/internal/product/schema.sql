@@ -56,18 +56,259 @@ CREATE TABLE application_release (
  deadline TEXT NOT NULL DEFAULT '',
  reason TEXT NOT NULL DEFAULT '',
  updated_at TEXT NOT NULL DEFAULT ''
-, current_instance TEXT NOT NULL DEFAULT '', activation_instance TEXT NOT NULL DEFAULT '', target_digest TEXT NOT NULL DEFAULT '', finished_digest TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT 'quiescent' CHECK(mode IN ('quiescent','owner')), compatibility_digest TEXT NOT NULL DEFAULT '', schema_digest TEXT NOT NULL DEFAULT '', gateway_snapshot TEXT NOT NULL DEFAULT '');
+, current_instance TEXT NOT NULL DEFAULT '', activation_instance TEXT NOT NULL DEFAULT '', target_digest TEXT NOT NULL DEFAULT '', finished_digest TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT 'quiescent' CHECK(mode IN ('quiescent','owner')), compatibility_digest TEXT NOT NULL DEFAULT '', schema_digest TEXT NOT NULL DEFAULT '', runtime_configuration_digest TEXT NOT NULL DEFAULT '', gateway_snapshot TEXT NOT NULL DEFAULT '');
+
+CREATE TABLE accounts (
+ id TEXT PRIMARY KEY,
+ username TEXT NOT NULL UNIQUE,
+ display_name TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','disabled')),
+ role TEXT NOT NULL CHECK(role IN ('user','admin')),
+ password_hash TEXT NOT NULL,
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ session_revision INTEGER NOT NULL DEFAULT 1 CHECK(session_revision>0),
+ authorization_revision INTEGER NOT NULL DEFAULT 1 CHECK(authorization_revision>0),
+ must_change_password INTEGER NOT NULL DEFAULT 0 CHECK(must_change_password IN (0,1)),
+ temporary_expires_at TEXT NOT NULL DEFAULT '',
+ temporary_consumed INTEGER NOT NULL DEFAULT 0 CHECK(temporary_consumed IN (0,1)),
+ last_login_at TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+
+CREATE TABLE account_preferences (
+ account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ theme_mode TEXT NOT NULL CHECK(theme_mode IN ('system','light','dark')),
+ accent TEXT NOT NULL CHECK(accent IN ('neutral','blue','green','violet'))
+);
 
 CREATE TABLE auth_sessions (
  token_digest TEXT PRIMARY KEY,
- actor TEXT NOT NULL,
- credential_digest TEXT NOT NULL,
+ account_id TEXT NOT NULL REFERENCES accounts(id),
+ session_revision INTEGER NOT NULL,
+ restricted INTEGER NOT NULL CHECK(restricted IN (0,1)),
  expires_at TEXT NOT NULL
 );
+CREATE INDEX auth_sessions_account ON auth_sessions(account_id);
+
+CREATE TABLE audit_events (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ actor_id TEXT NOT NULL,
+ action TEXT NOT NULL,
+ target_kind TEXT NOT NULL,
+ target_id TEXT NOT NULL,
+ request_id TEXT NOT NULL DEFAULT '',
+ revision INTEGER NOT NULL,
+ details TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(details)),
+ created_at TEXT NOT NULL
+);
+CREATE INDEX audit_events_actor ON audit_events(actor_id,id);
+CREATE INDEX audit_events_target ON audit_events(target_kind,target_id,id);
+CREATE INDEX audit_events_action ON audit_events(action,id);
+CREATE INDEX audit_events_time ON audit_events(created_at,id);
+
+CREATE TABLE admin_receipts (
+ actor_id TEXT NOT NULL REFERENCES accounts(id),
+ request_id TEXT NOT NULL,
+ action TEXT NOT NULL,
+ target_id TEXT NOT NULL,
+ body_digest TEXT NOT NULL CHECK(length(body_digest)=64),
+ result TEXT NOT NULL CHECK(json_valid(result)),
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(actor_id,request_id)
+);
+CREATE TABLE admin_operations (
+ id TEXT PRIMARY KEY,
+ actor_id TEXT NOT NULL REFERENCES accounts(id),
+ action TEXT NOT NULL,
+ target_kind TEXT NOT NULL,
+ target_id TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('accepted','running','succeeded','failed','unknown')),
+ error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE INDEX admin_suspension_pending ON admin_operations(action,updated_at,id) WHERE state<>'succeeded';
+
+CREATE TABLE admin_operation_targets (
+ phase TEXT NOT NULL DEFAULT '',
+ lifecycle_id TEXT NOT NULL DEFAULT '',
+ network_revision TEXT NOT NULL DEFAULT '',
+ operation_id TEXT NOT NULL REFERENCES admin_operations(id),
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ state TEXT NOT NULL DEFAULT 'accepted' CHECK(state IN ('accepted','running','succeeded','failed','unknown')),
+ error TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(operation_id,project_id)
+);
+
+CREATE INDEX admin_target_project ON admin_operation_targets(project_id,operation_id,state);
+
+CREATE TABLE account_groups (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL UNIQUE,
+ description TEXT NOT NULL DEFAULT '',
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE permission_policies (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL UNIQUE,
+ description TEXT NOT NULL DEFAULT '',
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ statements TEXT NOT NULL CHECK(json_valid(statements)),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+
+-- Reusable administrator-managed capability templates.
+CREATE TABLE network_templates (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL UNIQUE,
+ description TEXT NOT NULL DEFAULT '',
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ policy TEXT NOT NULL CHECK(json_valid(policy)),
+ builtin INTEGER NOT NULL DEFAULT 0 CHECK(builtin IN (0,1)),
+ enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE environment_templates (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL UNIQUE,
+ description TEXT NOT NULL DEFAULT '',
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ document TEXT NOT NULL CHECK(json_valid(document)),
+ builtin INTEGER NOT NULL DEFAULT 0 CHECK(builtin IN (0,1)),
+ enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE shared_volumes (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL UNIQUE,
+ description TEXT NOT NULL DEFAULT '',
+ volume_id TEXT NOT NULL DEFAULT '',
+ store_id TEXT NOT NULL DEFAULT '',
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','ready','deleting','deleted')),
+ error TEXT NOT NULL DEFAULT '',
+ capacity INTEGER NOT NULL CHECK(capacity>0),
+ enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE policy_resource_bindings (
+ policy_id TEXT NOT NULL REFERENCES permission_policies(id) ON DELETE CASCADE,
+ resource_kind TEXT NOT NULL CHECK(resource_kind IN ('network_template','environment_template','shared_volume')),
+ resource_id TEXT NOT NULL,
+ access TEXT NOT NULL DEFAULT 'read_only' CHECK(access IN ('read_only','read_write')),
+ PRIMARY KEY(policy_id,resource_kind,resource_id)
+);
+CREATE TABLE group_configuration_defaults (
+ group_id TEXT PRIMARY KEY REFERENCES account_groups(id) ON DELETE CASCADE,
+ network_template_id TEXT,
+ environment_template_id TEXT
+);
+CREATE TABLE account_configuration_preferences (
+ account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ network_template_id TEXT,
+ environment_template_id TEXT,
+ show_shared_volumes INTEGER NOT NULL DEFAULT 0 CHECK(show_shared_volumes IN (0,1)),
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE account_configuration_defaults (
+ account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ network_template_id TEXT,
+ environment_template_id TEXT,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE project_configuration (
+ project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+ network_template_id TEXT NOT NULL REFERENCES network_templates(id),
+ environment_template_id TEXT NOT NULL REFERENCES environment_templates(id),
+ network TEXT NOT NULL CHECK(json_valid(network)),
+ environment TEXT NOT NULL CHECK(json_valid(environment)),
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0)
+);
+CREATE TABLE group_policy_bindings (
+ group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
+ policy_id TEXT NOT NULL REFERENCES permission_policies(id) ON DELETE CASCADE,
+ PRIMARY KEY(group_id,policy_id)
+);
+CREATE TABLE account_memberships (
+ account_id TEXT NOT NULL REFERENCES accounts(id),
+ group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
+ PRIMARY KEY(account_id,group_id)
+);
+CREATE TABLE group_resource_policy (
+ group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
+ dimension TEXT NOT NULL,
+ default_value INTEGER NOT NULL CHECK(default_value>=0),
+ ceiling INTEGER NOT NULL CHECK(ceiling>=default_value),
+ PRIMARY KEY(group_id,dimension)
+);
+CREATE TABLE account_resource_settings (
+ account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE account_resource_overrides (
+ account_id TEXT NOT NULL REFERENCES account_resource_settings(account_id) ON DELETE CASCADE,
+ dimension TEXT NOT NULL,
+ requested INTEGER NOT NULL CHECK(requested>=0),
+ PRIMARY KEY(account_id,dimension)
+);
+CREATE TABLE platform_resource_limits (
+ dimension TEXT PRIMARY KEY,
+ maximum INTEGER NOT NULL CHECK(maximum>=0),
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0)
+);
+CREATE TABLE registered_sandboxes (
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ retired_at TEXT NOT NULL DEFAULT '',
+ id TEXT NOT NULL,
+ version TEXT NOT NULL,
+ digest TEXT NOT NULL,
+ store_id TEXT NOT NULL,
+ template_id TEXT NOT NULL,
+ manifest TEXT NOT NULL CHECK(json_valid(manifest)),
+ enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(id,version)
+);
+CREATE TABLE builtin_volumes (
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ retired_at TEXT NOT NULL DEFAULT '',
+ id TEXT NOT NULL,
+ version TEXT NOT NULL,
+ digest TEXT NOT NULL,
+ store_id TEXT NOT NULL,
+ publication_purpose TEXT NOT NULL,
+ minimum_bytes INTEGER NOT NULL CHECK(minimum_bytes>0),
+ roles TEXT NOT NULL CHECK(json_valid(roles)),
+ clean_runtime INTEGER NOT NULL CHECK(clean_runtime IN (0,1)),
+ entries TEXT NOT NULL CHECK(json_valid(entries)),
+ enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(id,version)
+);
+CREATE TABLE operator_receipts (
+ request_id TEXT PRIMARY KEY,
+ action TEXT NOT NULL,
+ target_id TEXT NOT NULL,
+ body_digest TEXT NOT NULL CHECK(length(body_digest)=64),
+ result TEXT NOT NULL CHECK(json_valid(result)),
+ created_at TEXT NOT NULL
+);
+
 
 CREATE TABLE content_publications (
  store_id TEXT NOT NULL,
- purpose TEXT NOT NULL CHECK(purpose IN ('assets','config')),
+ purpose TEXT NOT NULL CHECK(purpose IN ('assets','config','builtin')),
  revision_digest TEXT NOT NULL CHECK(revision_digest LIKE 'sha256:%'),
  capacity INTEGER NOT NULL CHECK(capacity>0),
  entries TEXT NOT NULL,
@@ -131,8 +372,9 @@ CREATE TABLE conversation_dirty_turns (
 );
 
 CREATE TABLE conversation_grants (
+ suspended INTEGER NOT NULL DEFAULT 0 CHECK(suspended IN (0,1)),
  session_id TEXT NOT NULL REFERENCES sessions(id),
- reader_id TEXT NOT NULL CHECK(reader_id<>''),
+ reader_id TEXT NOT NULL REFERENCES accounts(id) CHECK(reader_id<>''),
  revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1)),
  PRIMARY KEY(session_id,reader_id)
 );
@@ -203,6 +445,8 @@ CREATE TABLE events (
 );
 
 CREATE TABLE file_operations (
+ mount_key TEXT NOT NULL DEFAULT '',
+ action TEXT NOT NULL CHECK(action IN ('files.upload','files.edit','files.manage')),
  id TEXT PRIMARY KEY,
  project_id TEXT NOT NULL REFERENCES projects(id),
  request TEXT NOT NULL,
@@ -248,16 +492,11 @@ CREATE TABLE native_captures (
  state TEXT NOT NULL DEFAULT 'guest' CHECK(state IN ('guest','exported','archived'))
 );
 
-CREATE TABLE network_defaults (
- id INTEGER PRIMARY KEY CHECK(id=1),
- revision TEXT NOT NULL,
- policy TEXT NOT NULL,
- accepted_at TEXT NOT NULL
-);
+
 
 CREATE TABLE notification_reads (
  notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
- actor TEXT NOT NULL,
+ actor TEXT NOT NULL REFERENCES accounts(id),
  PRIMARY KEY(notification_id,actor)
 );
 
@@ -273,7 +512,7 @@ INSERT INTO notification_policy(id,agent_run_outcome,conversation_shared,operato
 
 CREATE TABLE notifications (
  id TEXT PRIMARY KEY,
- audience TEXT,
+ audience TEXT REFERENCES accounts(id),
  project_id TEXT REFERENCES projects(id),
  session_id TEXT REFERENCES sessions(id),
  title TEXT NOT NULL,
@@ -305,7 +544,7 @@ CREATE TABLE project_operations (
  id TEXT PRIMARY KEY,
  project_id TEXT NOT NULL REFERENCES projects(id),
  kind TEXT NOT NULL CHECK(kind IN ('create','pause','resume','delete')),
- state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','issued','unknown','succeeded')),
+ state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','issued','unknown','succeeded','canceled')),
  phase TEXT NOT NULL,
  request TEXT NOT NULL,
  error TEXT NOT NULL DEFAULT '',
@@ -316,19 +555,50 @@ CREATE TABLE project_operations (
 CREATE TABLE project_resources (
  project_id TEXT PRIMARY KEY REFERENCES projects(id),
  store_id TEXT NOT NULL CHECK(store_id<>''),
- profile TEXT NOT NULL,
- workspace_volume TEXT NOT NULL DEFAULT '',
- runtime_volume TEXT NOT NULL DEFAULT '',
+ profile TEXT NOT NULL CHECK(json_valid(profile)
+  AND coalesce(json_type(profile,'$.environment_revision')='integer' AND json_extract(profile,'$.environment_revision')>0,0)
+  AND coalesce(json_type(profile,'$.resource_revision')='integer' AND json_extract(profile,'$.resource_revision')>0,0)
+  AND coalesce(json_type(profile,'$.sandbox_release.id')='text' AND length(json_extract(profile,'$.sandbox_release.id'))>0,0)
+  AND coalesce(json_type(profile,'$.sandbox_release.version')='text' AND length(json_extract(profile,'$.sandbox_release.version'))>0,0)
+  AND coalesce(json_extract(profile,'$.sandbox_release.digest')=json_extract(profile,'$.release_digest'),0)
+  AND coalesce(json_type(profile,'$.volumes')='array' AND json_array_length(profile,'$.volumes')>=2,0)),
  sandbox_id TEXT NOT NULL DEFAULT '',
  mutation_revision TEXT NOT NULL DEFAULT '',
  epoch INTEGER NOT NULL DEFAULT 0 CHECK(epoch>=0),
  observed_at TEXT NOT NULL DEFAULT '',
  occupied INTEGER NOT NULL CHECK(occupied IN (0,1))
-, storage_key TEXT NOT NULL DEFAULT '');
+);
 
+CREATE TABLE project_volume_slots (
+ project_id TEXT NOT NULL REFERENCES project_resources(project_id),
+ slot_key TEXT NOT NULL,
+ store_id TEXT NOT NULL,
+ storage TEXT NOT NULL CHECK(storage IN ('owned','shared_readonly','shared')),
+ intent_key TEXT NOT NULL UNIQUE,
+ volume_id TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL CHECK(state IN ('reserved','creating','initializing','ready','deleting','deleted')),
+ error TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(project_id,slot_key),
+ CHECK(state NOT IN ('initializing','ready') OR volume_id<>'')
+);
+CREATE UNIQUE INDEX project_owned_volume_unique ON project_volume_slots(store_id,volume_id) WHERE storage='owned' AND volume_id<>'';
+CREATE TABLE storage_reservations (
+ project_id TEXT NOT NULL,
+ slot_key TEXT NOT NULL,
+ capacity INTEGER NOT NULL CHECK(capacity>0),
+ state TEXT NOT NULL CHECK(state IN ('reserved','allocated','released')),
+ PRIMARY KEY(project_id,slot_key),
+ FOREIGN KEY(project_id,slot_key) REFERENCES project_volume_slots(project_id,slot_key)
+);
+CREATE TRIGGER storage_reservation_capacity_immutable BEFORE UPDATE OF capacity ON storage_reservations
+WHEN NEW.capacity<>OLD.capacity BEGIN SELECT RAISE(ABORT,'immutable storage reservation'); END;
+CREATE TRIGGER volume_slot_identity_immutable BEFORE UPDATE OF intent_key,slot_key,project_id,store_id,storage ON project_volume_slots
+BEGIN SELECT RAISE(ABORT,'immutable volume slot identity'); END;
 CREATE TABLE projects (
+ execution_suspended INTEGER NOT NULL DEFAULT 0 CHECK(execution_suspended IN (0,1)),
+ execution_hold_reason TEXT NOT NULL DEFAULT '',
  id TEXT PRIMARY KEY CHECK(id<>''),
- owner_id TEXT NOT NULL CHECK(owner_id<>''),
+ owner_id TEXT NOT NULL REFERENCES accounts(id) CHECK(owner_id<>''),
  title TEXT NOT NULL,
  creation_digest TEXT NOT NULL,
  state TEXT NOT NULL DEFAULT 'created' CHECK(state IN ('created','provisioning','active','pausing','paused','resuming','blocked','deleting','deleted')),
@@ -489,6 +759,7 @@ CREATE TABLE share_files (
 );
 
 CREATE TABLE shares (
+ suspended INTEGER NOT NULL DEFAULT 0 CHECK(suspended IN (0,1)),
  id TEXT PRIMARY KEY,
  project_id TEXT NOT NULL,
  session_id TEXT NOT NULL,
@@ -551,6 +822,7 @@ CREATE TABLE turns (
  prompt_revision INTEGER NOT NULL DEFAULT 1 CHECK(prompt_revision>0),
  queue_policy TEXT NOT NULL DEFAULT 'released' CHECK(queue_policy IN ('held','released')),
  disposition TEXT NOT NULL DEFAULT 'pending' CHECK(disposition IN ('pending','claimed','consumed','handled','canceled')),
+ dispatch_error TEXT NOT NULL DEFAULT '',
  sequence INTEGER NOT NULL CHECK(sequence>0),
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
@@ -683,15 +955,13 @@ CREATE INDEX project_activity_pending ON project_activity(project_id,state);
 
 CREATE INDEX project_event_pressure ON project_event_frontiers(event_count,project_id);
 
-CREATE UNIQUE INDEX project_operation_lane ON project_operations(project_id) WHERE state<>'succeeded';
+CREATE UNIQUE INDEX project_operation_lane ON project_operations(project_id) WHERE state NOT IN ('succeeded','canceled');
 
 CREATE INDEX project_operations_pending ON project_operations(state,attempted_at,project_id);
 
-CREATE UNIQUE INDEX project_runtime_unique ON project_resources(store_id,runtime_volume) WHERE runtime_volume<>'';
 
 CREATE UNIQUE INDEX project_sandbox_unique ON project_resources(store_id,sandbox_id) WHERE sandbox_id<>'';
 
-CREATE UNIQUE INDEX project_workspace_unique ON project_resources(store_id,workspace_volume) WHERE workspace_volume<>'';
 
 CREATE INDEX projects_owner ON projects(owner_id,created_at,id);
 
@@ -703,13 +973,15 @@ CREATE INDEX release_command_pending ON agent_commands(id) WHERE state IN ('pend
 
 CREATE INDEX release_content_publication_pending ON content_publications(revision_digest) WHERE stage NOT IN ('published','failed');
 
+CREATE INDEX release_volume_slot_pending ON project_volume_slots(project_id,slot_key) WHERE state IN ('creating','initializing','deleting');
+
 CREATE INDEX release_file_write_pending ON file_operations(id) WHERE settled=0;
 
 CREATE INDEX release_model_request_pending ON service_request_slots(audience,slot) WHERE closed=0;
 
 CREATE INDEX release_native_capture_pending ON native_captures(path) WHERE state='guest';
 
-CREATE INDEX release_project_operation_pending ON project_operations(id) WHERE state<>'succeeded';
+CREATE INDEX release_project_operation_pending ON project_operations(id) WHERE state NOT IN ('succeeded','canceled');
 
 CREATE INDEX release_project_transition_pending ON projects(id) WHERE state IN ('provisioning','resuming','pausing','deleting');
 
@@ -769,6 +1041,7 @@ JOIN agent_commands c ON c.id=r.id AND c.state='applied'
 JOIN agent_incarnations i ON i.id=r.incarnation_id AND i.session_id=r.session_id AND i.state='running'
 JOIN sessions s ON s.id=r.session_id AND s.deletion_intent=0 AND s.state='running'
 JOIN projects p ON p.id=r.project_id AND p.state='active'
+JOIN accounts a ON a.id=p.owner_id AND a.status='active'
 WHERE r.state='running';
 
 CREATE VIEW release_blockers AS
@@ -787,8 +1060,10 @@ WHERE (state IN ('starting','stopping','unknown') OR recovery_state IN ('pending
  SELECT 1 FROM execution_runs r WHERE r.incarnation_id=agent_incarnations.id AND r.state='unknown' AND r.acknowledged=0
 ))
 UNION ALL SELECT 'terminal_start' AS kind,id AS id FROM terminal_incarnations INDEXED BY release_terminal_start_pending WHERE state='starting'
-UNION ALL SELECT 'project_operation' AS kind,id AS id FROM project_operations INDEXED BY release_project_operation_pending WHERE state<>'succeeded'
+UNION ALL SELECT 'admin_runtime_control',id FROM admin_operations WHERE action IN ('account.suspend','project.pause','project.stop','project.restart','project.apply_network') AND state NOT IN ('succeeded','failed')
+UNION ALL SELECT 'project_operation' AS kind,id AS id FROM project_operations INDEXED BY release_project_operation_pending WHERE state NOT IN ('succeeded','canceled')
 UNION ALL SELECT 'project_transition' AS kind,id AS id FROM projects INDEXED BY release_project_transition_pending WHERE state IN ('provisioning','resuming','pausing','deleting')
+UNION ALL SELECT 'volume_slot',project_id||':'||slot_key FROM project_volume_slots INDEXED BY release_volume_slot_pending WHERE state IN ('creating','initializing','deleting')
 UNION ALL SELECT 'file_write' AS kind,id AS id FROM file_operations INDEXED BY release_file_write_pending WHERE settled=0
 UNION ALL SELECT 'session_cleanup' AS kind,id AS id FROM sessions INDEXED BY release_session_cleanup_pending WHERE deletion_intent=1
 UNION ALL SELECT 'terminal_cleanup' AS kind,id AS id FROM terminals INDEXED BY release_terminal_cleanup_pending WHERE deletion_intent=1
@@ -1055,12 +1330,19 @@ CREATE TRIGGER release_ready_native_capture_update AFTER UPDATE OF state ON nati
 WHEN (NEW.state='guest') AND (SELECT phase FROM application_release WHERE id=1)='ready'
 BEGIN UPDATE application_release SET phase='draining',reason='work_resumed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
 
+CREATE TRIGGER release_ready_volume_slot_insert AFTER INSERT ON project_volume_slots
+WHEN NEW.state IN ('creating','initializing','deleting') AND (SELECT phase FROM application_release WHERE id=1)='ready'
+BEGIN UPDATE application_release SET phase='draining',reason='work_resumed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
+CREATE TRIGGER release_ready_volume_slot_update AFTER UPDATE OF state ON project_volume_slots
+WHEN NEW.state IN ('creating','initializing','deleting') AND (SELECT phase FROM application_release WHERE id=1)='ready'
+BEGIN UPDATE application_release SET phase='draining',reason='work_resumed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
+
 CREATE TRIGGER release_ready_project_operation_insert AFTER INSERT ON project_operations
-WHEN (NEW.state<>'succeeded') AND (SELECT phase FROM application_release WHERE id=1)='ready'
+WHEN (NEW.state NOT IN ('succeeded','canceled')) AND (SELECT phase FROM application_release WHERE id=1)='ready'
 BEGIN UPDATE application_release SET phase='draining',reason='work_resumed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
 
 CREATE TRIGGER release_ready_project_operation_update AFTER UPDATE OF state ON project_operations
-WHEN (NEW.state<>'succeeded') AND (SELECT phase FROM application_release WHERE id=1)='ready'
+WHEN (NEW.state NOT IN ('succeeded','canceled')) AND (SELECT phase FROM application_release WHERE id=1)='ready'
 BEGIN UPDATE application_release SET phase='draining',reason='work_resumed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
 
 CREATE TRIGGER release_ready_project_transition_insert AFTER INSERT ON projects
@@ -1372,3 +1654,5 @@ WHEN NEW.disposition IN ('handled','canceled') BEGIN
  INSERT OR IGNORE INTO notifications(id,audience,project_id,session_id,title,body,created_at)
  SELECT * FROM schedule_check_attention WHERE id IN (SELECT 'schedule/'||schedule_id FROM schedule_runs WHERE turn_id=NEW.id);
 END;
+
+CREATE TABLE runtime_store (id INTEGER PRIMARY KEY CHECK(id=1), store_id TEXT NOT NULL CHECK(length(store_id)>0));

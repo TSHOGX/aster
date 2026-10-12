@@ -4,7 +4,7 @@
 - `check-lockfile-registry.sh`: portable frontend dependency URLs.
 - `check-public-docs.py`: English references, local links and private boundaries.
 - `fetch-go-dependencies.sh`: explicit pinned private-module access for CI.
-- `candidate.py build|verify|inspect`: source-only host/standalone frontend
+- `candidate.py build|verify|inspect`: source-only host/standalone workbench and admin
   bundles, artifact integrity and read-only deployment identity inspection.
 - `tests/`: candidate corruption, missing/extra file, mode and symlink rejection.
 

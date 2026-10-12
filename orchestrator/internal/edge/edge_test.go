@@ -41,7 +41,7 @@ func TestEdgeRoutesAPIAndFrontendSeparately(t *testing.T) {
 	}))
 	defer frontend.Close()
 
-	handler, err := New(Config{Application: mustURL(t, application.URL), Frontend: mustURL(t, frontend.URL)})
+	handler, err := New(Config{Application: mustURL(t, application.URL), Frontend: mustURL(t, frontend.URL), AdminFrontend: mustURL(t, frontend.URL)})
 	must(t, err)
 	origin := httptest.NewServer(handler)
 	defer origin.Close()
@@ -79,7 +79,7 @@ func TestEdgePreservesOriginAndForwardedHost(t *testing.T) {
 	frontend := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer frontend.Close()
 
-	handler, err := New(Config{Application: mustURL(t, application.URL), Frontend: mustURL(t, frontend.URL)})
+	handler, err := New(Config{Application: mustURL(t, application.URL), Frontend: mustURL(t, frontend.URL), AdminFrontend: mustURL(t, frontend.URL)})
 	must(t, err)
 	origin := httptest.NewServer(handler)
 	defer origin.Close()
@@ -136,7 +136,7 @@ func TestEdgeCarriesWebSocketUpgrade(t *testing.T) {
 	frontend := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer frontend.Close()
 
-	handler, err := New(Config{Application: mustURL(t, application.URL), Frontend: mustURL(t, frontend.URL)})
+	handler, err := New(Config{Application: mustURL(t, application.URL), Frontend: mustURL(t, frontend.URL), AdminFrontend: mustURL(t, frontend.URL)})
 	must(t, err)
 	origin := httptest.NewServer(handler)
 	defer origin.Close()
@@ -182,7 +182,7 @@ func TestEdgeStreamsWithoutBuffering(t *testing.T) {
 	frontend := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer frontend.Close()
 
-	handler, err := New(Config{Application: mustURL(t, application.URL), Frontend: mustURL(t, frontend.URL)})
+	handler, err := New(Config{Application: mustURL(t, application.URL), Frontend: mustURL(t, frontend.URL), AdminFrontend: mustURL(t, frontend.URL)})
 	must(t, err)
 	origin := httptest.NewServer(handler)
 	defer origin.Close()
@@ -222,8 +222,8 @@ func TestEdgeRefusesIncompleteConfigurationAndReportsBadGateway(t *testing.T) {
 	for _, config := range []Config{
 		{},
 		{Application: mustURL(t, "http://127.0.0.1:1")},
-		{Application: mustURL(t, "ftp://host"), Frontend: mustURL(t, frontend.URL)},
-		{Application: mustURL(t, "http://"), Frontend: mustURL(t, frontend.URL)},
+		{Application: mustURL(t, "ftp://host"), Frontend: mustURL(t, frontend.URL), AdminFrontend: mustURL(t, frontend.URL)},
+		{Application: mustURL(t, "http://"), Frontend: mustURL(t, frontend.URL), AdminFrontend: mustURL(t, frontend.URL)},
 	} {
 		if _, err := New(config); err == nil {
 			t.Fatalf("a half-configured origin must be refused: %+v", config)
@@ -231,7 +231,7 @@ func TestEdgeRefusesIncompleteConfigurationAndReportsBadGateway(t *testing.T) {
 	}
 	// An unreachable upstream is a gateway error, never a frontend page that looks
 	// like a missing route.
-	handler, err := New(Config{Application: mustURL(t, "http://127.0.0.1:1"), Frontend: mustURL(t, frontend.URL)})
+	handler, err := New(Config{Application: mustURL(t, "http://127.0.0.1:1"), Frontend: mustURL(t, frontend.URL), AdminFrontend: mustURL(t, frontend.URL)})
 	must(t, err)
 	origin := httptest.NewServer(handler)
 	defer origin.Close()
@@ -240,5 +240,43 @@ func TestEdgeRefusesIncompleteConfigurationAndReportsBadGateway(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusBadGateway {
 		t.Fatal(response.StatusCode)
+	}
+}
+
+func TestEdgeStripsPageIdentityFromAPIRequests(t *testing.T) {
+	application := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, r.Header.Get(PageAccountHeader)) }))
+	defer application.Close()
+	frontend := httptest.NewServer(http.NotFoundHandler())
+	defer frontend.Close()
+	handler, err := New(Config{Application: mustURL(t, application.URL), Frontend: mustURL(t, frontend.URL), AdminFrontend: mustURL(t, frontend.URL), PageAccount: func(*http.Request) (string, error) {
+		t.Error("API request resolved page identity")
+		return "verified", nil
+	}})
+	must(t, err)
+	request := httptest.NewRequest("GET", "http://app/api/projects", nil)
+	request.Header.Set(PageAccountHeader, "forged")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Body.String() != "" {
+		t.Fatal("page metadata entered API authority")
+	}
+}
+
+func TestAdminRoutingPreservesBasePathAndDoesNotMatchAdministrator(t *testing.T) {
+	upstream := func(name string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, name+":"+r.URL.Path) }))
+	}
+	application, workbench, admin := upstream("api"), upstream("workbench"), upstream("admin")
+	defer application.Close()
+	defer workbench.Close()
+	defer admin.Close()
+	handler, err := New(Config{Application: mustURL(t, application.URL), Frontend: mustURL(t, workbench.URL), AdminFrontend: mustURL(t, admin.URL)})
+	must(t, err)
+	for path, want := range map[string]string{"/": "workbench:/", "/admin": "admin:/admin", "/admin/users/id": "admin:/admin/users/id", "/admin/_next/static/app.js": "admin:/admin/_next/static/app.js", "/administrator": "workbench:/administrator", "/api/admin/users": "api:/api/admin/users"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest("GET", "http://app"+path, nil))
+		if response.Body.String() != want {
+			t.Fatal(path, response.Body.String(), want)
+		}
 	}
 }

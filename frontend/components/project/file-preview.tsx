@@ -28,6 +28,7 @@ import { OFFICE_LIMITS, officeKind } from "@/office/protocol";
 export function FilePreview({
   path,
   href,
+  downloadHref,
   project,
   validation = 0,
   mode = "preview",
@@ -35,6 +36,7 @@ export function FilePreview({
 }: {
   path: string;
   href: string;
+  downloadHref: string | undefined;
   project: string;
   validation?: number;
   mode?: "preview" | "source";
@@ -168,7 +170,7 @@ export function FilePreview({
             current.current = null;
             setLoaded(null);
           }
-          setRetryable(e instanceof PreviewFailure ? e.retryable : e instanceof TypeError || e instanceof APIError && [202, 429, 500, 502, 503, 504].includes(e.status));
+          setRetryable(e instanceof PreviewFailure ? e.retryable : e instanceof TypeError || e instanceof APIError && e.outcome?.code !== "quota_exceeded" && [202, 429, 500, 502, 503, 504].includes(e.status));
           setErrorTitle(tr(e instanceof PreviewFailure && e.code === "source_too_large" ? "File too large to preview" : "Preview unavailable"));
           if (e instanceof PreviewFailure && e.code === "source_too_large") setProgress({ received: 0, total: e.actual });
           setError(
@@ -193,9 +195,9 @@ export function FilePreview({
     setRetry(n => n + 1);
   };
   if (error && !loaded)
-    return <PreviewStatus maxBytes={maxBytes} path={path} href={href} title={errorTitle} description={error} size={progress.total} onRetry={retryable ? restart : undefined} />;
+    return <PreviewStatus maxBytes={maxBytes} path={path} href={downloadHref} title={errorTitle} description={error} size={progress.total} onRetry={retryable ? restart : undefined} />;
   if (!loaded)
-    return <PreviewStatus maxBytes={maxBytes} path={path} href={href}
+    return <PreviewStatus maxBytes={maxBytes} path={path} href={downloadHref}
       title={tr(phase === "canceled" ? "Preview canceled." : phase === "preparing" ? "Preparing preview…" : "Loading preview…")}
       description={tr(phase === "canceled" ? "You can try again or download the original file." : "Larger files may take a moment. You can keep working while the preview loads.")}
       loading={phase !== "canceled"} size={progress.total} progress={phase === "loading" ? progress : undefined}
@@ -209,12 +211,12 @@ export function FilePreview({
         <p className="notice error" role="alert">
           {error}{" "}
           {retryable && <button onClick={() => { setError(""); setRetry(n => n + 1); }}>{tr("Retry")}</button>}
-          <a href={href} download>
+          {downloadHref && <a href={downloadHref} download>
             {tr("Download")}
-          </a>
+          </a>}
         </p>
       )}
-      <PreviewContent loaded={loaded} path={path} href={href} mode={mode} sourcePositionRef={sourcePositionRef} />
+      <PreviewContent loaded={loaded} path={path} href={downloadHref} mode={mode} sourcePositionRef={sourcePositionRef} />
     </>
   );
 }
@@ -243,7 +245,7 @@ function PreviewContent({
 }: {
   loaded: PreviewRepresentation;
   path: string;
-  href: string;
+  href?: string;
   mode: "preview" | "source";
   sourcePositionRef: { current: number };
 }) {
@@ -289,7 +291,7 @@ function PreviewContent({
     description={tr("This format is not supported for preview. Download the file to open it in another app.")} size={loaded.blob.size} />;
 }
 
-function PDFPreview({ loaded, path, href }: { loaded: PreviewRepresentation; path: string; href: string }) {
+function PDFPreview({ loaded, path, href }: { loaded: PreviewRepresentation; path: string; href?: string }) {
   const tr = useT();
   if (typeof navigator !== "undefined" && navigator.pdfViewerEnabled === false)
     return <PreviewStatus path={path} href={href} title={tr("Preview unavailable")}
@@ -297,7 +299,7 @@ function PDFPreview({ loaded, path, href }: { loaded: PreviewRepresentation; pat
   return <div className="pdf-preview">
     <div className="preview-reading-bar">
       <span>PDF <span aria-hidden="true">·</span> {previewSize(loaded.blob.size)}</span>
-      <a href={href} download>{tr("Download file")}</a>
+      {href && <a href={href} download>{tr("Download file")}</a>}
     </div>
     <iframe className="document-frame" src={`${loaded.url}#view=FitH&navpanes=0`} title={`${tr("Preview")} ${path}`} referrerPolicy="no-referrer" />
   </div>;

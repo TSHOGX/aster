@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { isChineseTag, resolveLocale } from "./locale";
 import { format, translate } from "./index";
-import { defaultDisplayName } from "../ui-config";
+import { defaultDisplayName } from "../../../web/brand";
 import { EN, type MessageKey } from "./messages-en";
 import { ZH } from "./messages-zh";
 

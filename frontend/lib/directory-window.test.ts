@@ -5,6 +5,7 @@ import {
   replaceDirectoryWindow,
   retainDirectoryWindows,
   MAX_DIRECTORY_TREE_BYTES,
+  flattenDirectoryTree,
   type DirectoryTree,
 } from "./directory-window";
 
@@ -94,4 +95,15 @@ it("keeps a deep-link selection centered until a real scroll anchor is recorded"
   expect(directoryReadingAnchor(page, "reports", "reports/entry-90000.txt", "entry-89950.txt")).toBe("entry-89950.txt");
   expect(directoryReadingAnchor(page, "reports", "other/entry-90000.txt")).toBe("entry-89950.txt");
   expect(directoryReadingAnchor(undefined, "reports", "reports/entry-90000.txt")).toBeUndefined();
+});
+
+
+it("refreshing a populated directory never shifts a later sibling's click target", () => {
+  const entry = (name: string, kind = "file") => ({name,kind,size:0,modified:0});
+  const tree: DirectoryTree = {"":{entries:[entry("reports","directory"),entry("README.md")]},reports:{entries:[entry("summary.md")]}};
+  const before = flattenDirectoryTree(tree,["reports"]);
+  const refreshing = flattenDirectoryTree({...tree,reports:{...tree.reports,loading:true}},["reports"]);
+  expect(refreshing.map(row=>row.id)).toEqual(before.map(row=>row.id));
+  const initial = flattenDirectoryTree({...tree,reports:{entries:[],loading:true}},["reports"]);
+  expect(initial.some(row=>row.directory==="reports"&&row.kind==="status"&&row.message==="loading")).toBe(true);
 });

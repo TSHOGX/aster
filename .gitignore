@@ -35,6 +35,7 @@ orchestrator/bin/
 orchestrator/authhash
 # Development source is tracked; local outputs and environments are not.
 dev/logs/
+/dev/measurements/
 dev/orchestrator
 dev/local.env
 .scratch/
@@ -97,3 +98,12 @@ sandbox-image/files/usr/local/share/shared-assets/data/*/
 
 # Product context is versioned; other AGENTS.md files remain local instructions.
 !sandbox-image/files/usr/local/share/shared-assets/AGENTS.md
+
+# Generated admin frontend checks and framework instructions.
+admin-frontend/test-results/
+admin-frontend/playwright-report/
+!admin-frontend/AGENTS.md
+
+# Generated TypeScript/Next declarations and incremental state.
+next-env.d.ts
+*.tsbuildinfo

@@ -3,27 +3,24 @@ package product
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/netip"
 	"sort"
 )
 
-// NetworkPolicy contains only mutable defaults. A snapshot is selected inside
+// NetworkPolicy contains only administrator-managed direct/DNS settings. A snapshot is selected inside
 // the transaction recording creation/resume intent, never from child copies.
 type NetworkPolicy struct {
 	Revision  string       `json:"revision"`
 	Direct    []DirectRule `json:"direct"`
 	Resolvers []netip.Addr `json:"resolvers"`
 }
-type NetworkDefaults struct {
-	NetworkPolicy
-	AcceptedAt string `json:"accepted_at"`
-}
 
 func NewNetworkPolicy(r Reachability) (NetworkPolicy, error) {
+	if len(r.Direct) > 256 || len(r.Resolvers) > 16 {
+		return NetworkPolicy{}, fmt.Errorf("%w: at most 256 direct rules and 16 resolvers", ErrInvalid)
+	}
 	p := NetworkPolicy{Direct: append([]DirectRule{}, r.Direct...), Resolvers: append([]netip.Addr{}, r.Resolvers...)}
 	if err := (Reachability{Direct: p.Direct, Resolvers: p.Resolvers}).validate(); err != nil {
 		return p, err
@@ -43,96 +40,11 @@ func (p NetworkPolicy) Apply(profile Profile) Profile {
 	profile.NetworkPolicyRevision = p.Revision
 	return profile
 }
-func networkDefaults(ctx context.Context, q queryer) (out NetworkDefaults, err error) {
-	var raw string
-	err = missing(q.QueryRowContext(ctx, `SELECT revision,policy,accepted_at FROM network_defaults WHERE id=1`).Scan(&out.Revision, &raw, &out.AcceptedAt))
-	if err != nil {
-		return
-	}
-	var policy NetworkPolicy
-	if err = json.Unmarshal([]byte(raw), &policy); err != nil {
-		return
-	}
-	checked, e := NewNetworkPolicy(Reachability{Direct: policy.Direct, Resolvers: policy.Resolvers})
-	if e != nil || checked.Revision != out.Revision || policy.Revision != out.Revision {
-		return out, ErrConflict
-	}
-	out.NetworkPolicy = checked
-	return
-}
-func (s *Store) NetworkDefaults(ctx context.Context) (NetworkDefaults, error) {
-	return networkDefaults(ctx, s.reader)
-}
-func (s *Store) AcceptNetworkPolicy(ctx context.Context, p NetworkPolicy) (NetworkDefaults, error) {
-	return s.acceptNetworkPolicy(ctx, p, false)
-}
-func (s *Store) InitializeNetworkPolicy(ctx context.Context, p NetworkPolicy) (NetworkDefaults, error) {
-	return s.acceptNetworkPolicy(ctx, p, true)
-}
-func (s *Store) acceptNetworkPolicy(ctx context.Context, p NetworkPolicy, startup bool) (out NetworkDefaults, err error) {
-	checked, err := NewNetworkPolicy(Reachability{Direct: p.Direct, Resolvers: p.Resolvers})
-	if err != nil {
-		return out, err
-	}
-	if p.Revision != checked.Revision {
-		return out, ErrInvalid
-	}
-	raw, _ := json.Marshal(checked)
-	err = s.write(ctx, func(tx *sql.Tx) error {
-		current, e := networkDefaults(ctx, tx)
-		if e != nil && !errors.Is(e, ErrNotFound) {
-			return e
-		}
-		if e == nil && current.Revision == p.Revision {
-			out = current
-			return nil
-		}
-		var phase, mode string
-		if e = tx.QueryRowContext(ctx, `SELECT phase,mode FROM application_release WHERE id=1`).Scan(&phase, &mode); e != nil {
-			return e
-		}
-		if phase != "open" && !(startup && mode != "owner" && phase == "activating") {
-			return ErrDraining
-		}
-		// A valid default must also compose with every retained model route.
-		rows, e := tx.QueryContext(ctx, `SELECT profile FROM project_resources`)
-		if e != nil {
-			return e
-		}
-		for rows.Next() {
-			var saved string
-			var profile Profile
-			if e = rows.Scan(&saved); e == nil {
-				e = json.Unmarshal([]byte(saved), &profile)
-			}
-			if e == nil {
-				e = checked.Apply(profile).Validate()
-			}
-			if e != nil {
-				rows.Close()
-				return fmt.Errorf("network policy conflicts with a retained Project profile: %w", e)
-			}
-		}
-		e = rows.Err()
-		rows.Close()
-		if e != nil {
-			return e
-		}
-		out = NetworkDefaults{NetworkPolicy: checked, AcceptedAt: s.timestamp()}
-		_, e = tx.ExecContext(ctx, `INSERT INTO network_defaults(id,revision,policy,accepted_at) VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,policy=excluded.policy,accepted_at=excluded.accepted_at`, p.Revision, string(raw), out.AcceptedAt)
-		return e
-	})
-	return
-}
-
-func selectedNetworkProfile(ctx context.Context, q queryer, profile Profile) (Profile, *NetworkPolicy, error) {
-	defaults, err := networkDefaults(ctx, q)
-	if errors.Is(err, ErrNotFound) {
-		return profile, nil, nil
-	}
+func selectedNetworkProfile(ctx context.Context, q queryer, actor string, profile Profile, project string) (Profile, *NetworkPolicy, error) {
+	config, err := authorizeProjectConfiguration(ctx, q, actor, project)
 	if err != nil {
 		return profile, nil, err
 	}
-	target := defaults.Apply(profile)
-	return target, &defaults.NetworkPolicy, target.Validate()
+	target := config.Network.Apply(profile)
+	return target, &config.Network, target.Validate()
 }

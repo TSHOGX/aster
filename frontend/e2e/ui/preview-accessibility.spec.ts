@@ -129,10 +129,7 @@ for (const locale of ["en-US", "zh-CN"])
             }),
           ).toBeFocused();
           const changed = theme === "light" ? "dark" : "light";
-          await page.evaluate((theme) => {
-            localStorage.setItem("project-theme", theme);
-            document.documentElement.dataset.theme = theme;
-          }, changed);
+          await page.emulateMedia({ colorScheme: changed });
           await expect(frame.locator("html")).toHaveAttribute(
             "data-theme",
             changed,

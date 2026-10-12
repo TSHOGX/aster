@@ -127,7 +127,7 @@ func TestWorkspaceReaderScopedSnapshotAndLifecycle(t *testing.T) {
 	if p.State != "paused" {
 		t.Fatal("capture woke compute")
 	}
-	must(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile))
+	must(t, f.Lifecycle.EnsureActive(ctx, scope, f.Bindings))
 	drive(t, f.Lifecycle, scope.ProjectID)
 	_, err = f.List(ctx, scope, projectfiles.DirectoryQuery{Path: "", Cursor: page.Next, Limit: 2})
 	wantError(t, err, ErrResync)
@@ -218,7 +218,7 @@ func TestPausedFilesUseVolumeWithoutComputeAndRetainCapturesAcrossResume(t *test
 	if p.State != "paused" || r.Occupied || backend.starts != starts {
 		t.Fatal("file access consumed compute", p, r, backend.starts)
 	}
-	must(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile))
+	must(t, f.Lifecycle.EnsureActive(ctx, scope, f.Bindings))
 	drive(t, f.Lifecycle, scope.ProjectID)
 	must(t, os.WriteFile(filepath.Join(backend.root, "file"), []byte("new live content"), 0600))
 	data, err := io.ReadAll(capture)

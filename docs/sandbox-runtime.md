@@ -53,7 +53,9 @@ volume APIs. They can list, preview, download, upload, edit, rename, create fold
 and remove entries without reserving CPU or starting a guest. A new Project can
 create just its workspace volume before its first Agent/Terminal. Saved profiles
 and volume creation keys survive owner loss; first compute startup attaches that
-same workspace and creates the remaining runtime/placement resources.
+same workspace and materializes the remaining saved owned slots before creating
+the placement. Full-plan reservations are retained between these steps; changing
+caller defaults cannot rebind a saved slot.
 
 Direct access holds the Project's existing lifecycle execution lane while
 checking paths and performing volume I/O. Every path component is checked for
@@ -174,3 +176,12 @@ can finish. Pause/cancel/edits fence late finish. Automatic count/deadline exhau
 preserves the admitted definition revision so its live final check may still
 finish. Finish stops admission, records the execution Run, and awaits its real
 outcome for delivery.
+
+Slot initialization uses the public idempotent Volume snapshot operation for a
+built-in source, then the same bounded content verifier used by publication. A
+created but unverified copy is allocated and inaccessible. Retrying verification
+uses that isolated copy; ready user data is never reseeded or compared to its
+original source. The same slot projection supplies sandbox create, full mount
+observation, network transition and cleanup. The `slots` isolated runtime suite
+measures eight declared mounts, native-copy independence, read-only owned/shared
+access, owned-byte accounting and cleanup without deleting the shared source.

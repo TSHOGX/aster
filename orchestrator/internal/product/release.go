@@ -22,11 +22,12 @@ func releaseFenceError(err error) error {
 }
 
 type ReleaseState struct {
-	Mode                string `json:"mode"`
-	CompatibilityDigest string `json:"compatibility_digest,omitempty"`
-	SchemaDigest        string `json:"schema_digest,omitempty"`
-	GatewayIdentity     string `json:"gateway_identity,omitempty"`
-	gatewaySnapshot     string
+	RuntimeConfigurationDigest string `json:"runtime_configuration_digest,omitempty"`
+	Mode                       string `json:"mode"`
+	CompatibilityDigest        string `json:"compatibility_digest,omitempty"`
+	SchemaDigest               string `json:"schema_digest,omitempty"`
+	GatewayIdentity            string `json:"gateway_identity,omitempty"`
+	gatewaySnapshot            string
 
 	Generation         int64  `json:"generation"`
 	Owner              string `json:"owner"`
@@ -40,7 +41,7 @@ type ReleaseState struct {
 }
 
 func releaseState(ctx context.Context, q queryer) (out ReleaseState, err error) {
-	err = q.QueryRowContext(ctx, `SELECT generation,owner,phase,deadline,reason,updated_at,activation_instance,target_digest,finished_digest,mode,compatibility_digest,schema_digest,gateway_snapshot FROM application_release WHERE id=1`).Scan(&out.Generation, &out.Owner, &out.Phase, &out.Deadline, &out.Reason, &out.UpdatedAt, &out.ActivationInstance, &out.TargetDigest, &out.FinishedDigest, &out.Mode, &out.CompatibilityDigest, &out.SchemaDigest, &out.gatewaySnapshot)
+	err = q.QueryRowContext(ctx, `SELECT generation,owner,phase,deadline,reason,updated_at,activation_instance,target_digest,finished_digest,mode,compatibility_digest,schema_digest,gateway_snapshot,runtime_configuration_digest FROM application_release WHERE id=1`).Scan(&out.Generation, &out.Owner, &out.Phase, &out.Deadline, &out.Reason, &out.UpdatedAt, &out.ActivationInstance, &out.TargetDigest, &out.FinishedDigest, &out.Mode, &out.CompatibilityDigest, &out.SchemaDigest, &out.gatewaySnapshot, &out.RuntimeConfigurationDigest)
 	out.GatewayIdentity = snapshotDigest(out.gatewaySnapshot)
 	return
 }
@@ -64,12 +65,16 @@ func (s *Store) beginReleaseDrain(ctx context.Context, owner string, timeout tim
 		if e != nil {
 			return e
 		}
-		snapshot, schema := "", ""
+		snapshot, schema, configuration := "", "", ""
 		if mode == "owner" {
 			if proof == nil {
 				return ErrInvalid
 			}
 			snapshot, e = checkGatewayObservation(ctx, tx, *proof)
+			if e != nil {
+				return e
+			}
+			configuration, e = runtimeConfigurationDigest(ctx, tx)
 			if e != nil {
 				return e
 			}
@@ -79,7 +84,7 @@ func (s *Store) beginReleaseDrain(ctx context.Context, owner string, timeout tim
 			}
 		}
 		if current.Phase != "open" {
-			if current.Owner == owner && current.Phase == "draining" && current.Mode == mode && (mode != "owner" || (current.TargetDigest == target && current.CompatibilityDigest == compatibility && current.gatewaySnapshot == snapshot)) {
+			if current.Owner == owner && current.Phase == "draining" && current.Mode == mode && (mode != "owner" || (current.TargetDigest == target && current.CompatibilityDigest == compatibility && current.gatewaySnapshot == snapshot && current.RuntimeConfigurationDigest == configuration)) {
 				out = current
 				return nil
 			}
@@ -95,7 +100,7 @@ func (s *Store) beginReleaseDrain(ctx context.Context, owner string, timeout tim
 		if _, e = tx.ExecContext(ctx, `INSERT INTO release_coordinators(owner,generation) VALUES(?,?)`, owner, current.Generation+1); e != nil {
 			return e
 		}
-		_, e = tx.ExecContext(ctx, `UPDATE application_release SET generation=generation+1,owner=?,phase='draining',deadline=?,reason='',activation_instance='',target_digest=?,finished_digest='',mode=?,compatibility_digest=?,schema_digest=?,gateway_snapshot=?,updated_at=? WHERE id=1`, owner, sqlitex.FormatTime(s.now().Add(timeout)), target, mode, compatibility, schema, snapshot, s.timestamp())
+		_, e = tx.ExecContext(ctx, `UPDATE application_release SET generation=generation+1,owner=?,phase='draining',deadline=?,reason='',activation_instance='',target_digest=?,finished_digest='',mode=?,compatibility_digest=?,schema_digest=?,gateway_snapshot=?,runtime_configuration_digest=?,updated_at=? WHERE id=1`, owner, sqlitex.FormatTime(s.now().Add(timeout)), target, mode, compatibility, schema, snapshot, configuration, s.timestamp())
 		if e != nil {
 			return e
 		}

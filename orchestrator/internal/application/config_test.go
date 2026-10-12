@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/runtimerelease"
 )
 
@@ -15,7 +14,9 @@ func configurationFixture(t *testing.T) (Config, string) {
 	t.Helper()
 	directory := t.TempDir()
 	digest := "sha256:" + strings.Repeat("0", 64)
-	manifest := runtimerelease.Manifest{Version: 4, ScheduleProtocol: runtimerelease.ScheduleProtocol, NativeProtocol: runtimerelease.NativeProtocol, ReaderProtocol: runtimerelease.ReaderProtocol, Platform: "linux/amd64", EngineModule: runtimerelease.EngineModule, EngineRevision: runtimerelease.EngineRevision, AgentProtocol: 2, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: runtimerelease.PiPackage, PiVersion: runtimerelease.PiVersion, PiIntegrity: runtimerelease.PiIntegrity, NodeVersion: runtimerelease.NodeVersion, NativeTree: digest, Files: map[string]string{}}
+	mounts := runtimerelease.DefaultMountContract()
+	mounts.RequiredPublications = []runtimerelease.RequiredPublication{}
+	manifest := runtimerelease.Manifest{Version: 5, Mounts: mounts, ScheduleProtocol: runtimerelease.ScheduleProtocol, NativeProtocol: runtimerelease.NativeProtocol, ReaderProtocol: runtimerelease.ReaderProtocol, Platform: "linux/amd64", EngineModule: runtimerelease.EngineModule, EngineRevision: runtimerelease.EngineRevision, AgentProtocol: 2, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: runtimerelease.PiPackage, PiVersion: runtimerelease.PiVersion, PiIntegrity: runtimerelease.PiIntegrity, NodeVersion: runtimerelease.NodeVersion, NativeTree: digest, Files: map[string]string{}}
 	for _, component := range runtimerelease.Components {
 		manifest.Files[component] = digest
 	}
@@ -26,12 +27,12 @@ func configurationFixture(t *testing.T) (Config, string) {
 	}
 	cfg := defaults()
 	cfg.Version = 1
+	cfg.Limits.MaxMountsPerProject = 8
 	cfg.StateDirectory = "state"
-	cfg.Template = Template{ID: "test", Manifest: "runtime.json", Digest: digest}
+	cfg.Template = Template{Version: "v1", ID: "test", Manifest: "runtime.json", Digest: digest}
 	cfg.Engine.Endpoint = "http://127.0.0.1:18191"
 	cfg.Engine.StoreID = "store"
-	cfg.Auth.DevelopmentActor = "local"
-	cfg.Project = product.Profile{CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 1 << 30, RuntimeBytes: 1 << 29}
+	cfg.Project = ProjectDefaults{CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 1 << 30, RuntimeBytes: 1 << 29}
 	return cfg, filepath.Join(directory, "application.json")
 }
 func TestConfigurationHasOneStrictProjectSurface(t *testing.T) {
@@ -44,7 +45,7 @@ func TestConfigurationHasOneStrictProjectSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !filepath.IsAbs(loaded.StateDirectory) || loaded.Profile().StoreID != "store" || loaded.Profile().ReleaseDigest != cfg.Template.Digest {
+	if !filepath.IsAbs(loaded.StateDirectory) || loaded.Engine.StoreID != "store" || loaded.Template.Digest != cfg.Template.Digest {
 		t.Fatal(loaded)
 	}
 	var document map[string]any
@@ -56,15 +57,29 @@ func TestConfigurationHasOneStrictProjectSurface(t *testing.T) {
 		t.Fatal("retired driver-plan configuration accepted")
 	}
 }
-func TestConfigurationRefusesImplicitAuthAndUserSelectedBindings(t *testing.T) {
-	for _, change := range []func(*Config){func(c *Config) { c.Auth.DevelopmentActor = "" }, func(c *Config) { c.Listen = "0.0.0.0:8080" }, func(c *Config) { c.Project.StoreID = "another" }, func(c *Config) { c.Project.TemplateID = "another" }, func(c *Config) { c.Limits.AgentsPerProject = 1000 }} {
+func TestConfigurationRefusesUserSelectedBindings(t *testing.T) {
+	for _, field := range []string{"store_id", "template_id", "volumes", "release_digest", "network_policy_revision"} {
 		cfg, path := configurationFixture(t)
-		change(&cfg)
 		raw, _ := json.Marshal(cfg)
-		os.WriteFile(path, raw, 0600)
-		if _, err := LoadConfig(path); err == nil {
-			t.Fatal("invalid configuration accepted", cfg)
+		var document map[string]any
+		if err := json.Unmarshal(raw, &document); err != nil {
+			t.Fatal(err)
 		}
+		document["project"].(map[string]any)[field] = "forged"
+		raw, _ = json.Marshal(document)
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadConfig(path); err == nil {
+			t.Fatal("user-selected runtime binding accepted", field)
+		}
+	}
+	cfg, path := configurationFixture(t)
+	cfg.Limits.AgentsPerProject = 1000
+	raw, _ := json.Marshal(cfg)
+	os.WriteFile(path, raw, 0600)
+	if _, err := LoadConfig(path); err == nil {
+		t.Fatal("invalid capacity accepted")
 	}
 }
 
@@ -171,6 +186,23 @@ func TestNotificationConfigurationRejectsUnknownFieldsAndNonBooleans(t *testing.
 		}
 		if _, err = LoadConfig(path); err == nil {
 			t.Fatal("invalid notification configuration accepted", setting)
+		}
+	}
+}
+
+func TestConfigurationRejectsRetiredAuthentication(t *testing.T) {
+	for _, old := range []string{`{"users_file":"users.yaml"}`, `{"development_actor":"local"}`} {
+		cfg, path := configurationFixture(t)
+		raw, _ := json.Marshal(cfg)
+		var document map[string]any
+		json.Unmarshal(raw, &document)
+		document["auth"] = json.RawMessage(old)
+		raw, _ = json.Marshal(document)
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadConfig(path); err == nil {
+			t.Fatal("retired authentication accepted")
 		}
 	}
 }

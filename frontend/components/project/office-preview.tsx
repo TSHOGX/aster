@@ -28,7 +28,7 @@ export function OfficePreview({
   representation: PreviewRepresentation;
   kind: OfficeKind;
   path: string;
-  href: string;
+  href?: string;
 }) {
   const tr = useT();
   const host = useRef<HTMLDivElement>(null);

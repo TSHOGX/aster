@@ -34,6 +34,7 @@ type previewCapture struct {
 	refs   int
 }
 type previewLease struct {
+	mount string
 	PreviewSnapshot
 	scope   Scope
 	capture *previewCapture
@@ -67,12 +68,20 @@ func (f *Files) PreviewSnapshots() *PreviewSnapshots {
 	return f.previews
 }
 func (s *PreviewSnapshots) authorize(ctx context.Context, scope Scope) error {
-	p, err := s.files.Store.Project(ctx, scope)
+	p, err := projectAction(ctx, s.files.Store.reader, scope, ActionFilesRead)
 	if err != nil {
 		return err
 	}
 	if p.State == "deleting" || p.State == "deleted" {
 		return ErrDeleting
+	}
+	if fileMount(ctx) != "" {
+		r, e := s.files.Store.Resources(ctx, scope)
+		if e != nil {
+			return e
+		}
+		_, e = fileResourceView(ctx, s.files.Store.reader, scope, r, false)
+		return e
 	}
 	return nil
 }
@@ -83,7 +92,7 @@ func (s *PreviewSnapshots) Open(ctx context.Context, scope Scope, path string, m
 	if err := s.authorize(ctx, scope); err != nil {
 		return PreviewSnapshot{}, err
 	}
-	key := scope.Actor + "\x00" + scope.ProjectID + "\x00" + path + "\x00" + fmt.Sprint(maxBytes)
+	key := scope.Actor + "\x00" + scope.ProjectID + "\x00" + fileMount(ctx) + "\x00" + path + "\x00" + fmt.Sprint(maxBytes)
 	s.mu.Lock()
 	if s.closed || len(s.leases) >= MaxPreviewLeases {
 		s.mu.Unlock()
@@ -95,7 +104,7 @@ func (s *PreviewSnapshots) Open(ctx context.Context, scope Scope, path string, m
 			s.mu.Unlock()
 			return PreviewSnapshot{}, ErrCapacity
 		}
-		captureCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		captureCtx, cancel := context.WithTimeout(WithFileMount(context.Background(), fileMount(ctx)), time.Minute)
 		pending = &previewPending{ready: make(chan struct{}), cancel: cancel}
 		s.pending[key] = pending
 		s.group.Add(1)
@@ -127,7 +136,7 @@ func (s *PreviewSnapshots) Open(ctx context.Context, scope Scope, path string, m
 		return PreviewSnapshot{}, ErrPreviewSourceTooLarge
 	}
 	descriptor := PreviewSnapshot{ID: uuid.NewString(), Digest: pending.capture.digest, Size: pending.capture.size, Expires: time.Now().Add(PreviewSnapshotLifetime)}
-	lease := &previewLease{PreviewSnapshot: descriptor, scope: scope, capture: pending.capture}
+	lease := &previewLease{mount: fileMount(ctx), PreviewSnapshot: descriptor, scope: scope, capture: pending.capture}
 	pending.capture.refs++
 	s.leases[descriptor.ID] = lease
 	lease.timer = time.AfterFunc(PreviewSnapshotLifetime, func() { s.expire(descriptor.ID) })
@@ -207,6 +216,13 @@ func (s *PreviewSnapshots) expire(id string) {
 // Acquire returns a request-local cursor over one immutable inode. Concurrent
 // ranges never share offsets. A request must release its reference, even on abort.
 func (s *PreviewSnapshots) Acquire(ctx context.Context, scope Scope, id string) (PreviewSnapshot, *io.SectionReader, func(), error) {
+	s.mu.Lock()
+	foreign := s.leases[id] != nil && (s.leases[id].scope != scope || s.leases[id].mount != fileMount(ctx))
+	s.mu.Unlock()
+	if foreign {
+		return PreviewSnapshot{}, nil, nil, ErrNotFound
+	}
+
 	if err := s.authorize(ctx, scope); err != nil {
 		return PreviewSnapshot{}, nil, nil, err
 	}
@@ -216,25 +232,28 @@ func (s *PreviewSnapshots) Acquire(ctx context.Context, scope Scope, id string) 
 	if lease == nil {
 		return PreviewSnapshot{}, nil, nil, ErrSnapshotExpired
 	}
-	if lease.scope != scope {
+	if lease.scope != scope || lease.mount != fileMount(ctx) {
 		return PreviewSnapshot{}, nil, nil, ErrNotFound
 	}
 	if time.Now().After(lease.Expires) {
 		return PreviewSnapshot{}, nil, nil, ErrSnapshotExpired
 	}
 	c := lease.capture
+	if err := admitTransfer(ctx, s.files.Store.reader, scope.Actor, c.size); err != nil {
+		return PreviewSnapshot{}, nil, nil, err
+	}
 	c.refs++
 	var once sync.Once
 	release := func() { once.Do(func() { s.mu.Lock(); s.drop(c); s.mu.Unlock() }) }
 	return lease.PreviewSnapshot, io.NewSectionReader(c.file, 0, c.size), release, nil
 }
 func (s *PreviewSnapshots) Release(ctx context.Context, scope Scope, id string) error {
-	if err := s.authorize(ctx, scope); err != nil {
+	if _, err := activeOwnedProject(ctx, s.files.Store.reader, scope); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	lease := s.leases[id]
-	if lease != nil && lease.scope != scope {
+	if lease != nil && (lease.scope != scope || lease.mount != fileMount(ctx)) {
 		s.mu.Unlock()
 		return ErrNotFound
 	}

@@ -56,6 +56,9 @@ func (s *Store) ScheduleOverviewPage(ctx context.Context, actor string, f Schedu
 	if actor == "" {
 		return out, ErrNotFound
 	}
+	if err := activeAccount(ctx, s.reader, actor); err != nil {
+		return out, err
+	}
 	f.Query = strings.TrimSpace(f.Query)
 	if (f.After != "" && f.Before != "") || (f.Anchor != "" && (f.After != "" || f.Before != "")) || len(f.Anchor) > 128 || len(f.Before) > 2048 || len(f.Query) > 256 || (f.Status != "" && f.Status != "active" && f.Status != "paused" && f.Status != "exhausted" && f.Status != "canceled" && f.Status != "deleted") || len(f.After) > 2048 {
 		return out, ErrInvalid
@@ -180,6 +183,9 @@ var scheduleOverviewColumns = `s.id,s.project_id,coalesce(s.session_id,''),s.tit
 // ScheduleMetadata is the bounded authorized projection used by visible native
 // task cards. It never reads the task's prompt or immutable receipt body.
 func (s *Store) ScheduleMetadata(ctx context.Context, scope Scope, id string) (item ScheduleOverview, err error) {
+	if _, err = activeOwnedProject(ctx, s.reader, scope); err != nil {
+		return
+	}
 	err = missing(s.reader.QueryRowContext(ctx, `SELECT `+scheduleOverviewColumns+` FROM schedules s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND s.project_id=? AND p.owner_id=? AND p.state NOT IN ('deleting','deleted')`, id, scope.ProjectID, scope.Actor).Scan(&item.ID, &item.ProjectID, &item.SessionID, &item.Title, &item.Cron, &item.Timezone, &item.State, &item.TriggerKind, &item.RunAt, &item.EndReason, &item.OriginSessionID, &item.LastError, &item.NextAt, &item.Revision, &item.ProjectTitle, &item.LastState, &item.LastSessionID, &item.LastTurnID))
 	return
 }
@@ -193,7 +199,7 @@ func (s *Store) ScheduleList(ctx context.Context, scope Scope, after string, lim
 }
 func scheduleList(ctx context.Context, q queryer, scope Scope, after string, limit int) (out SchedulePage, err error) {
 	out.Schedules = []ScheduleOverview{}
-	if _, err = authorizedProject(ctx, q, scope); err != nil {
+	if _, err = activeOwnedProject(ctx, q, scope); err != nil {
 		return
 	}
 	if len(after) > 128 || limit < 0 || limit > 50 {

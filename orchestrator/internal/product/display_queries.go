@@ -42,14 +42,21 @@ type ViewHead struct {
 }
 
 func liveDisplaySession(ctx context.Context, q queryer, scope Scope, id string) (Session, error) {
-	p, err := authorizedProject(ctx, q, scope)
+	p, err := ownedProject(ctx, q, scope)
 	if err != nil {
 		return Session{}, err
 	}
 	if p.State == "deleting" || p.State == "deleted" {
 		return Session{}, ErrNotFound
 	}
-	return scanSession(q.QueryRowContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE project_id=? AND id=? AND deletion_intent=0`, scope.ProjectID, id))
+	child, err := scanSession(q.QueryRowContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE project_id=? AND id=? AND deletion_intent=0`, scope.ProjectID, id))
+	if err != nil {
+		return child, err
+	}
+	if err = authorizeAction(ctx, q, scope.Actor, ActionProjectsRead); err != nil {
+		return Session{}, err
+	}
+	return child, nil
 }
 
 type ViewPage struct {

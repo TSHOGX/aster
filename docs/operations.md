@@ -41,39 +41,74 @@ Protect the engine API and its TLS termination independently of browser access.
 The application user needs its state directory and reviewed configuration files,
 not engine database or volume-directory access.
 
-Manage credentials without a second product writer:
+Bootstrap the first administrator while the owner is stopped:
 
 ```sh
-orchestrator user add --file /etc/agent-workbench/users.yaml --username researcher --role user --password-stdin
-orchestrator user password --file /etc/agent-workbench/users.yaml --username researcher --password-stdin
-orchestrator user role --file /etc/agent-workbench/users.yaml --username researcher --role admin
-orchestrator user list --file /etc/agent-workbench/users.yaml
-orchestrator user remove --file /etc/agent-workbench/users.yaml --username researcher
+orchestrator account bootstrap --config /etc/agent-workbench/application.json --username administrator --password-stdin
 ```
 
-Password commands read from stdin, never an argument. Feed input using an
-appropriate secret mechanism. Output lists identity/role, not password hashes.
-Credential edits are atomic and the live owner reloads the registry.
+Bootstrap requires the template manifest, initial numeric declarations and
+reviewed system-content inputs in its explicit config. Start the owner, then run
+`publish --socket PATH --config FILE` with those reviewed sources. Publication
+verifies and registers immutable content without changing the database default.
+Serving configuration may subsequently omit `template`, `content`, initial
+Project sizes and `max_mounts_per_project`; keep engine/service/host settings.
+
+The exclusive database lock prevents a second writer. Bootstrap refuses an existing
+account database. Passwords contain 12–128 Unicode characters and at most 512 UTF-8
+bytes. Read passwords from stdin through an appropriate secret mechanism; never
+put them in command arguments. Output contains identity fields, never hashes.
+
+Recover an existing administrator through the running owner's mode-0600 socket:
+
+```sh
+orchestrator account recover-admin --socket /var/lib/agent-workbench/control.sock --username administrator --password-stdin
+```
+
+With the owner stopped, replace `--socket PATH` with `--config FILE` for offline
+recovery under the same writer lock. Recovery restores the account's active admin
+role and installs the supplied password as a single-use temporary credential. It
+expires after 24 hours; login issues a 15-minute session that permits only password
+setup, session inspection and logout. Setup installs a permanent password and
+revokes the temporary session. Lost or expired setup sessions require another reset.
+
+Use `/admin/users` for user creation, role/display-name editing and password
+reset. Temporary passwords are displayed once and are absent from retries and
+audit records. If a response is lost, retry the original request to determine its
+outcome; explicitly issue another reset if a password must be reissued. Usernames
+remain reserved when disabled. `/admin/audit` exposes bounded security/change
+history, and operation links show accepted versus observed completion.
 
 Use the protected control socket for live operations:
 
 ```sh
 orchestrator diagnostics --socket /var/lib/agent-workbench/control.sock
 orchestrator diagnostics --socket /var/lib/agent-workbench/control.sock --project PROJECT_ID
-orchestrator publish --socket /var/lib/agent-workbench/control.sock
-orchestrator network-reload --socket /var/lib/agent-workbench/control.sock
-orchestrator notify --socket /var/lib/agent-workbench/control.sock --audience researcher --title Notice --body 'Maintenance is scheduled.'
+orchestrator publish --socket /var/lib/agent-workbench/control.sock --config /srv/reviewed/bootstrap.json
+orchestrator notify --socket /var/lib/agent-workbench/control.sock --audience ACCOUNT_ID --title Notice --body 'Maintenance is scheduled.'
 ```
+
+Diagnostics include `state.storage`: declared Project-owned allocated/reserved
+capacity, publication allocated/reserved capacity, the published subset, and total
+Volume capacity. Publication staging and immutable derivative are separate
+objects. The published pointer aliases the derivative and is never a third
+charge; registrations and shared Project mounts add no storage charge. Unknown
+creates and failed publication preparation retain the original reservation or
+allocation. These are logical capacities, not measured filesystem block usage;
+copy-on-write savings do not increase entitlement. Compute overlay accounting
+remains separate from persistent Volumes. Publication retirement is an explicit
+operator lifecycle concern; diagnostics do not garbage-collect sources.
 
 Diagnostics report resource counts, occupied Projects, pending work and database
 bytes. Preview diagnostics expose snapshot leases/bytes without source paths/tokens.
-Network diagnostics distinguish accepted defaults and the last reload
-result from each Project’s effective policy revision and pending change. Reload
-errors leave accepted defaults intact. Network edits are also detected every two
-seconds; they take effect only at creation/resume, without stopping live work.
-Project diagnostics compare declared mounts/network to public engine
-observations and expose blockers. Publication selects new defaults on the next
-application restart. Omit notification audience only for an intentional broadcast.
+Network diagnostics show accepted database defaults, the owner’s inherit/override
+mode and desired revision, and each Project’s effective policy revision/pending
+change. Pending compares the owner’s desired policy with the retained placement,
+so a deliberate override does not appear perpetually pending against the default. Administrative network edits take effect on the
+next creation/resume, without stopping live work. Project diagnostics compare the
+complete saved mount/network projection to public engine observations. Publication
+registers immutable versions and does not change the selected environment on
+restart. Omit notification audience only for an intentional broadcast.
 
 Closing a browser tab is not termination. Stop a Terminal, retire a Session or
 request Project pause/delete through its scoped application action. Pause refuses
@@ -220,22 +255,24 @@ Inspect a replacement using that executable itself and the intended configuratio
 /path/to/candidate/orchestrator release-identity --config /etc/agent-workbench/application.json
 ```
 
-This command reads the pinned guest manifest and reviewed content trees, hashes
-its running executable inode, and reports schema version/digest, configuration
-and content digests, gateway protocol and a compatibility digest. It does not
-open the product Store, acquire its lock, contact the engine/provider or create
-application state. It can run while the current owner is serving. Raw configuration,
-content and credential values are not returned. `diagnostics.release_identity`
-reports the running owner's corresponding startup identity.
+This command measures the executable inode and fixed host configuration, and
+reports schema version/digest, host protocols and compatibility digest. It reads
+no bootstrap manifest or content tree, opens no product Store, and contacts no
+engine/provider. It can run while the owner serves. Raw configuration and secrets
+are omitted. Live `diagnostics.release_identity` adds the accepted database network
+revision. The owner separately fences and checks exact persisted registry/default/
+Project contracts during startup and handoff.
 
-The compatibility digest excludes executable bytes, so separately built candidates
-can describe the same inputs. Configuration, configuration base directory, reviewed
-content, guest release or schema changes alter it. Startup publishes the exact
-measured content revisions; files that change before upload are refused by the
-publisher. A matching digest describes compatibility inputs and does not grant
-permission to bypass admission/drain or prove arbitrary binary compatibility.
-The owner-only workflow below applies an additional transfer predicate and live
-gateway checks. Full updates continue to require quiescence.
+The compatibility digest excludes executable bytes and bootstrap publication/
+runtime inputs. Host configuration, its base directory, schema and host protocols
+alter it. Bootstrap seeds registry/default metadata once; explicitly publish its
+reviewed system content through the owner before allocating Projects. Later
+startup uses retained registry/publication records and does not register templates,
+read source files, or initialize storage. Removing original authoring paths is
+safe after verified publication. Operator publication still verifies exact digests.
+A matching digest never bypasses admission/drain or proves arbitrary binary
+compatibility. Owner handoff adds its transfer predicate and live gateway checks;
+full updates require quiescence.
 
 ## Compatible owner handoff
 
@@ -244,6 +281,14 @@ candidate and running-owner compatibility digests. The contract includes the
 owner handoff protocol, exact schema, configuration/base directory, guest release,
 reviewed content and gateway protocol. Schema, template, engine, configuration or
 gateway changes require the default full drain. Keep the gateway process running.
+
+Beginning an owner handoff captures `runtime_configuration_digest` from persisted
+registry, environment, network and account-policy/resource settings. The same
+transaction closes configuration admission. Every checkpoint and replacement
+startup verifies the digest; accepted DB network edits made before the drain do
+not require changing bootstrap config. Credential/preference traffic and usage
+settlement are excluded. A changed digest refuses activation or writer acquisition
+rather than adopting a different configuration silently.
 
 ```sh
 orchestrator drain --socket /var/lib/agent-workbench/control.sock --owner UPDATE_ID --mode owner --target TARGET_DIGEST --compatibility COMPATIBILITY_DIGEST --timeout-seconds 120
@@ -324,3 +369,202 @@ mutation replies. Counts reset on process restart; task/receipt state remains
 durable. No prompts, credentials or private receipt bodies appear in diagnostics.
 Use these alongside writer control/ingest wait and rejection metrics. Due time
 means eligibility, not a hard real-time start guarantee.
+
+## Register a compatible runtime version
+
+After publishing an immutable engine template, register its current-contract
+manifest through the protected owner socket:
+
+```sh
+orchestrator runtime register --socket /var/lib/agent-workbench/control.sock \
+  --id agent-runtime --version v2 --template agent-runtime-v2 \
+  --manifest /srv/build/agent-runtime-v2.manifest.json --digest sha256:EXACT_DIGEST
+```
+
+The CLI validates the exact manifest; the owner checks engine identity and template
+availability, binds its own store identity, and records immutable audited metadata
+under the existing writer/release fence. Registration is idempotent and returns
+`default_changed: false`. It grants no browser raw-template handle. Select the
+application release reference separately through the admin default preview/edit
+API. Retained Projects continue using their exact registrations and complete
+saved mount plans when defaults change. Both versions must satisfy the current
+manifest/protocol contract; there is no historical runtime adapter.
+
+Inspect and change registry selection eligibility through the same protected
+socket. Use `--kind volume` for a built-in Volume artifact. Every mutation requires
+the revision returned by inspect and a unique request ID; retry an uncertain reply
+with the identical command and request ID to recover its committed receipt.
+
+```sh
+orchestrator runtime inspect --socket /var/lib/agent-workbench/control.sock \
+  --kind sandbox --id agent-runtime --version v2 --digest sha256:EXACT_DIGEST
+orchestrator runtime disable --socket /var/lib/agent-workbench/control.sock \
+  --kind sandbox --id agent-runtime --version v2 --digest sha256:EXACT_DIGEST \
+  --expected-revision 1 --request-id disable-runtime-v2
+```
+
+`disable` prevents new selections and allocations; already bound Projects retain
+their exact release and source versions, including interrupted provisioning and
+resume. `enable` restores selection eligibility. Neither changes the database
+default. Select an enabled default before expecting new allocations to succeed.
+
+`retire` permanently tombstones an already disabled registration. It rejects
+references from the default, live or deleting Projects, and pending lifecycle/file
+operations. Owned seed provenance and shared mounts both retain their sources.
+Cleanup must finish before retirement; a deletion request alone is insufficient.
+The original ID/version cannot be reused or revived by registration replay.
+Registry retirement does not delete engine templates or publication Volumes and
+does not release publication storage accounting.
+
+## Publish a built-in Volume artifact
+
+An operator can publish a reviewed directory as an immutable built-in Volume
+through the protected owner socket. First inspect the source to obtain its exact
+content digest, then publish with an explicit physical capacity, copy minimum,
+permitted roles, and (for runtime seeds) the clean-runtime declaration:
+
+```sh
+digest=$(orchestrator volume inspect-source --source /srv/reviewed/examples \
+  | jq -r .digest)
+orchestrator volume publish --socket /var/lib/agent-workbench/control.sock \
+  --source /srv/reviewed/examples --id examples --version v1 --digest "$digest" \
+  --capacity-bytes 8388608 --minimum-bytes 1048576 --roles data,workspace
+```
+
+The source must be an absolute regular directory containing bounded, non-
+executable files. The digest is checked again while publishing; changed bytes,
+invalid paths, duplicate roles, insufficient capacity, and role-incompatible
+runtime declarations are refused. Publication uses the existing durable staging,
+verification, and derivative path. Staging and derivative capacity remains
+charged through an uncertain outcome until observed. Repeating the same request
+is idempotent; a different capacity or content declaration conflicts with the
+existing immutable revision. Successful publication only registers inventory and
+does not select or edit an environment template. `--clean-runtime-seed` requires
+the explicit operator assertion that the source has no user identity, journals,
+live handles, or secrets.
+
+## Project and Volume metadata
+
+The operator can inspect and change the finite per-user platform caps through
+the owner socket. Group ceilings and saved user requests remain distinct; this
+command changes only the platform cap used by their effective-value resolver:
+
+```sh
+orchestrator limits inspect --socket /var/lib/agent-workbench/control.sock
+orchestrator limits set --socket /var/lib/agent-workbench/control.sock \
+  --dimension workspace_bytes --maximum 1073741824 \
+  --expected-revision 1 --request-id workspace-platform-cap
+```
+
+Use the closed dimension names returned by inspect and a nonnegative integer.
+The `mount_count` maximum is a qualified operator declaration from 2 through 128;
+the transfer cap cannot exceed the existing 256 MiB hard bound. Other zero caps
+disable new allocation authority. Lowering a cap preserves saved override requests
+and allocations, marks requests capped, and blocks increases/resume that no longer
+fit. Raising it can restore retained requests without rewriting them. Every
+change checks its dimension revision and release fence and commits audit/receipt
+and affected effective revisions atomically. Retry an uncertain result with the
+identical request ID/body. No engine resource is resized or deleted.
+
+Administration’s Projects page lists cross-account ownership, recorded state,
+saved environment/release, mount count and allocated/reserved owned bytes. Filter
+by owner account ID, Project title/ID or state. User details link to that owner's
+Projects. `GET /api/admin/projects` is bounded by `limit` and a filter-scoped cursor;
+`GET /api/admin/projects/{id}` returns the full saved mount metadata and lifecycle
+progress. Both require current platform-admin authority in the product service.
+
+Detail views show immutable role paths, access, source versions/digests, requested
+capacity, readiness/initialization state and allocation versus reservation.
+Read-only engine identities are diagnostics, never mutation inputs. Files,
+conversation payloads, service credentials, routes and host mappings are omitted;
+private-content inspection retains its separate authorization and audit path.
+
+Live engine/Volume observations have timestamps and a ten-second request budget,
+performed after the metadata snapshot transaction. Unavailable, absent and
+unchecked observations remain distinct. Unknown observations do not prove a stop
+or release any capacity. The active observed network revision is shown only when
+the complete live binding matches the saved profile and lifecycle readiness has
+settled. Desired changes remain pending while the old running policy is retained.
+Opening or refreshing metadata never initializes a Volume, resumes compute,
+retries a mutation or changes resource charges. Unbound Projects remain unbound;
+paused Projects remain paused. Latest lifecycle progress and recent administrative
+operation links provide the route to recorded action/outcome evidence.
+
+## Suspension access fences and explicit reactivation
+
+Suspension commits disabled account status, session revocation and an accepted
+administrative operation together with logical resource fences. Active schedules
+are paused with `account_suspended`; unstarted prompts remain held with that
+specific outcome. Already-sent work retains its dispatch and settlement evidence.
+Service grants are revoked. Public snapshots and internal reader grants gain a
+separate suspended flag: frozen bytes and grant records are preserved, and
+ordinary revocation remains distinct.
+
+Enabling an account restores login and current policy authority. It does not
+reactivate schedules, release held prompts or restore suspended sharing. Schedule
+resume and prompt release use their existing explicit controls. In the Share
+panel, Reactivate reader explicitly grants access again; Reactivate public link
+restores only a still-published, unexpired snapshot and never recaptures files.
+Sharing reactivation uses a request ID and durable receipt, so retrying an old
+successful request cannot undo a later suspension. Both sharing reactivations are
+audited and require the owner's current named sharing grant. Expired/revoked links
+cannot be reactivated through this operation.
+
+The same transaction sets a durable execution hold on every owned Project.
+The existing bounded worker requests graceful Agent/Terminal stops, then reconciles
+placement pause through the Project lane. A timeout produces an unknown target,
+never a stopped claim or early compute release. A dispatched create with a lost
+reply settles its original idempotency key and complete request solely to pause
+that placement, without advancing guest projection or child execution. Undispatched
+compute intent is canceled explicitly. Slot initialization/reservations and owned
+files are retained; suspension never creates another storage slot or deletes it.
+
+Operation and per-Project target reads expose accepted/running/unknown/succeeded
+progress and errors. Worker recovery after owner replacement continues the same
+operation. Completion and its audit require every mandatory stop/pause target to
+settle; an empty target set can complete without engine effects. Account status
+alone is not a runtime completion signal.
+
+Enable does not clear Project execution holds. After suspension completion, an
+explicit owner Resume Project rechecks current management authority and all
+applicable quotas, then clears the hold and records normal creation/resume intent
+in the same transaction. Automatic Agent/Terminal starts, recovery and ordinary
+EnsureActive calls cannot clear it. Ready existing workspace files remain readable
+and writable while paused, within capacity; initialized files are never reseeded.
+Pending native outcomes retain their original journal/unknown evidence for recovery
+after explicit resume. Project deletion remains an independent authorized cleanup
+path, including for held or partially initialized plans.
+
+## Administrative Project runtime controls
+
+The Project detail view offers Pause Project, Stop Project work, Restart saved
+environment and Apply desired network now after an explicit interruption review.
+These actions are also available at `POST /api/admin/projects/{id}/pause|stop|restart|apply-network`.
+Submit `request_id`, `expected_revision` and `interruption_acknowledged: true`;
+apply-network additionally requires the displayed `expected_network_revision`.
+All four require current platform-admin authority in the product service and
+return 202 with a durable operation ID, not a remote-completion claim.
+
+Pause and stop both stop active child work and retain the paused placement and
+Volumes under an execution hold. Restart and apply-network-now stop first, then
+use the normal lifecycle admission to resume the complete saved environment.
+They recheck the administrator, owner account, quotas, current registered
+artifacts and platform compute admission. Apply-network refuses to resume if its
+reviewed desired policy changed while stopping. No control swaps the saved
+release, drops a mount, resizes a Volume, reseeds ready data or deletes a Project.
+Unstarted prompts are held with an action-specific administrative outcome;
+schedules skip held/in-progress control targets without changing their definitions.
+
+Per-Project progress records stopping and resuming phases and the exact lifecycle
+intent ID. Engine timeouts remain unknown and retry the original intent. New user
+execution and competing controls cannot race that administrative continuation.
+If authority or quota is withdrawn after resume admission, the operation stops its
+admitted effects before failing. Account suspension supersedes an earlier admin
+restart; re-enable cannot resurrect it. Explicit Project deletion supersedes a
+control and continues through normal cleanup.
+
+Request replay returns the original operation, even if its input revision is now
+stale. Read current status at `GET /api/admin/operations/{id}` and bounded target
+progress at `/targets?limit=25&cursor=...`. Intent and terminal outcome are audited.
+A denied resume leaves data and the execution hold intact for a new authorized
+control or explicit owner resume after the blocking condition is resolved.

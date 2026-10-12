@@ -14,11 +14,11 @@ class CandidateIntegrityTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        for name in ("bin/orchestrator", "bin/edge-proxy", "frontend/server.js", "frontend/.next/BUILD_ID", "frontend/public/favicon.svg", "frontend/public/office/fixture/document.html", "frontend/public/office/fixture/document.js", "frontend/public/office/fixture/document.css", "frontend/public/office/fixture/spreadsheet.html", "frontend/public/office/fixture/spreadsheet.js", "frontend/public/office/fixture/spreadsheet.css", "frontend/public/office/fixture/presentation.html", "frontend/public/office/fixture/presentation.js", "frontend/public/office/fixture/presentation.css"):
+        for name in ("bin/orchestrator", "bin/edge-proxy", "admin-frontend/server.js", "admin-frontend/.next/BUILD_ID", "admin-frontend/public/favicon.svg", "frontend/server.js", "frontend/.next/BUILD_ID", "frontend/public/favicon.svg", "frontend/public/office/fixture/document.html", "frontend/public/office/fixture/document.js", "frontend/public/office/fixture/document.css", "frontend/public/office/fixture/spreadsheet.html", "frontend/public/office/fixture/spreadsheet.js", "frontend/public/office/fixture/spreadsheet.css", "frontend/public/office/fixture/presentation.html", "frontend/public/office/fixture/presentation.js", "frontend/public/office/fixture/presentation.css"):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("fixture")
-        self.report = {"format": 1, "commit": "a" * 40, "frontend_build_id": "fixture", "files": candidate.inventory(self.root)}
+        self.report = {"format": 2, "commit": "a" * 40, "frontends": {name: {"build_id": "fixture", "base_path": base} for name, base in candidate.FRONTENDS.items()}, "files": candidate.inventory(self.root)}
         (self.root / candidate.MANIFEST).write_text(json.dumps(self.report))
 
     def test_detects_changed_missing_and_added_files(self):
@@ -62,6 +62,18 @@ class CandidateIntegrityTest(unittest.TestCase):
 
     def test_missing_required_file_cannot_be_hidden_by_inventory(self):
         (self.root / "bin/orchestrator").unlink()
+        self.report["files"] = candidate.inventory(self.root)
+        (self.root / candidate.MANIFEST).write_text(json.dumps(self.report))
+        with self.assertRaisesRegex(ValueError, "missing required"):
+            candidate.verify(self.root)
+
+    def test_admin_identity_and_required_assets_cannot_be_omitted(self):
+        del self.report["frontends"]["admin-frontend"]
+        (self.root / candidate.MANIFEST).write_text(json.dumps(self.report))
+        with self.assertRaisesRegex(ValueError, "both frontend identities"):
+            candidate.verify(self.root)
+        self.report["frontends"]["admin-frontend"] = {"build_id": "fixture", "base_path": "/admin"}
+        (self.root / "admin-frontend/.next/BUILD_ID").unlink()
         self.report["files"] = candidate.inventory(self.root)
         (self.root / candidate.MANIFEST).write_text(json.dumps(self.report))
         with self.assertRaisesRegex(ValueError, "missing required"):

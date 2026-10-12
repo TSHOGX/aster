@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"harness-platform/orchestrator/internal/producttest"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,7 +18,7 @@ import (
 func TestGatewayStopRequiresCurrentQuiescenceAndLocalSettlement(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
-	store, err := product.Open(ctx, filepath.Join(directory, "product.db"))
+	store, err := producttest.Open(ctx, filepath.Join(directory, "product.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func TestGatewayStopRejectsOwnerModeEvenBetweenModelRequests(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
 	identity := product.ApplicationIdentity{ExecutableDigest: "sha256:" + strings.Repeat("a", 64), CompatibilityDigest: "sha256:" + strings.Repeat("c", 64)}
-	store, err := product.OpenApplication(ctx, filepath.Join(directory, "product.db"), identity)
+	store, err := producttest.OpenApplication(ctx, filepath.Join(directory, "product.db"), identity)
 	if err != nil {
 		t.Fatal(err)
 	}

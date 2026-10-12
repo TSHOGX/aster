@@ -42,7 +42,7 @@ jobs:
 
   backend:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 40
     env:
       GOPRIVATE: github.com/TSHOGX/khora
     steps:
@@ -68,22 +68,38 @@ jobs:
   frontend:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      GOPRIVATE: github.com/TSHOGX/khora
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: orchestrator/go.mod
+          cache-dependency-path: orchestrator/go.sum
+      - name: Fetch private engine dependency for real edge qualification
+        env:
+          KHORA_READ_TOKEN: ${{ secrets.KHORA_READ_TOKEN }}
+        run: scripts/fetch-go-dependencies.sh
       - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            admin-frontend/package-lock.json
       - name: Restore frontend check cache
         uses: actions/cache@v6
         with:
-          path: frontend/.next/cache
-          key: ${{ runner.os }}-${{ runner.arch }}-frontend-${{ hashFiles('.node-version', 'frontend/package-lock.json', 'frontend/next.config.mjs', 'frontend/tsconfig.json', 'frontend/eslint.config.mjs') }}-${{ github.sha }}
+          path: |
+            frontend/.next/cache
+            admin-frontend/.next/cache
+          key: ${{ runner.os }}-${{ runner.arch }}-frontend-${{ hashFiles('.node-version', 'frontend/package-lock.json', 'frontend/next.config.mjs', 'frontend/tsconfig.json', 'frontend/eslint.config.mjs', 'admin-frontend/package-lock.json', 'admin-frontend/next.config.mjs', 'admin-frontend/tsconfig.json', 'admin-frontend/eslint.config.mjs') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-frontend-${{ hashFiles('.node-version', 'frontend/package-lock.json', 'frontend/next.config.mjs', 'frontend/tsconfig.json', 'frontend/eslint.config.mjs') }}-
+            ${{ runner.os }}-${{ runner.arch }}-frontend-${{ hashFiles('.node-version', 'frontend/package-lock.json', 'frontend/next.config.mjs', 'frontend/tsconfig.json', 'frontend/eslint.config.mjs', 'admin-frontend/package-lock.json', 'admin-frontend/next.config.mjs', 'admin-frontend/tsconfig.json', 'admin-frontend/eslint.config.mjs') }}-
       - run: npm ci
         working-directory: frontend
+      - run: npm ci
+        working-directory: admin-frontend
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
@@ -100,6 +116,8 @@ jobs:
         run: scripts/check.sh frontend-build
       - name: Frontend browser tests
         run: scripts/check.sh frontend-ui
+      - name: Real Go edge and both standalone frontends
+        run: scripts/check.sh frontend-edge
       - name: Install additional release browsers
         if: inputs.cross_browser
         run: npx --no-install playwright install --with-deps firefox webkit
@@ -119,6 +137,8 @@ jobs:
           name: ui-failure-${{ github.run_attempt }}
           path: |
             frontend/test-results/ui
+            admin-frontend/test-results/ui
+            admin-frontend/test-results/live
             frontend/test-results/pickers
             frontend/test-results/office-browsers
           retention-days: 7
@@ -130,6 +150,8 @@ jobs:
           name: browser-timings-${{ github.run_attempt }}
           path: |
             frontend/test-results/ui-report.json
+            admin-frontend/test-results/ui-report.json
+            admin-frontend/test-results/live-report.json
             frontend/test-results/pickers-report.json
             frontend/test-results/office-report.json
           retention-days: 7

@@ -33,7 +33,7 @@ func liveIncarnation(ctx context.Context, q queryer, session string) (Incarnatio
 }
 func (s *Store) reserveAgent(ctx context.Context, scope Scope, session string) (i Incarnation, err error) {
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		p, err := writableProject(ctx, tx, scope)
+		p, err := mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
@@ -64,6 +64,12 @@ func (s *Store) reserveAgent(ctx context.Context, scope Scope, session string) (
 		if !errors.Is(err, ErrNotFound) {
 			return err
 		}
+		if err := authorizeExecution(ctx, tx, scope, ActionAgentsRun); err != nil {
+			return err
+		}
+		if err := admitCount(ctx, tx, scope.Actor, ResourceAgents, 1); err != nil {
+			return err
+		}
 		r, err := resources(ctx, tx, scope.ProjectID)
 		if err != nil {
 			return err
@@ -86,10 +92,11 @@ func (s *Store) reserveAgent(ctx context.Context, scope Scope, session string) (
 }
 func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Frame, error) {
 	var f agentwire.Frame
+	var denied error
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		var projectState, sessionState string
+		var projectState, sessionState, actor string
 		var deletion Deletion
-		if err := tx.QueryRowContext(ctx, `SELECT p.state,s.state,s.deletion_intent FROM projects p JOIN sessions s ON s.project_id=p.id WHERE p.id=? AND s.id=?`, i.ProjectID, i.SessionID).Scan(&projectState, &sessionState, &deletion); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT p.state,s.state,s.deletion_intent,p.owner_id FROM projects p JOIN sessions s ON s.project_id=p.id WHERE p.id=? AND s.id=?`, i.ProjectID, i.SessionID).Scan(&projectState, &sessionState, &deletion, &actor); err != nil {
 			return err
 		}
 		if projectState != "active" || deletion != Live {
@@ -124,6 +131,15 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 		if current.ID != i.ID || current.Owner != i.Owner || current.State != "running" {
 			return ErrConflict
 		}
+		denied = authorizeExecution(ctx, tx, Scope{Actor: actor, ProjectID: i.ProjectID}, ActionAgentsRun)
+		if denied != nil {
+			if !errors.Is(denied, ErrForbidden) && !errors.Is(denied, ErrUnauthorized) {
+				return denied
+			}
+			if err := s.rejectAgentQueue(ctx, tx, i.ProjectID, i.SessionID); err != nil {
+				return err
+			}
+		}
 		var unknown int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM agent_commands WHERE incarnation_id=? AND state='unknown'`, i.ID).Scan(&unknown); err != nil {
 			return err
@@ -132,6 +148,9 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 		var payload []byte
 		err = tx.QueryRowContext(ctx, `SELECT id,coalesce(turn_id,''),kind,payload FROM agent_commands WHERE incarnation_id=? AND state='pending' ORDER BY CASE kind WHEN 'abort' THEN 0 WHEN 'get_state' THEN 1 ELSE 2 END,coalesce((SELECT acceptance_sequence FROM input_deliveries d WHERE d.command_id=agent_commands.id),0),created_at,id LIMIT 1`, i.ID).Scan(&id, &turn, &kind, &payload)
 		if errors.Is(err, sql.ErrNoRows) {
+			if denied != nil {
+				return nil
+			}
 			if unknown > 0 {
 				return ErrPending
 			}
@@ -186,6 +205,9 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 		f = agentwire.Frame{Kind: "command", Session: i.SessionID, Incarnation: i.ID, Owner: i.Owner, CommandID: id, TurnID: turn, Payload: payload}
 		return s.bumpSession(ctx, tx, i.ProjectID, i.SessionID, "command.sending")
 	})
+	if err == nil && f.CommandID == "" && denied != nil {
+		err = denied
+	}
 	return f, err
 }
 
@@ -512,7 +534,11 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 		if err := json.Unmarshal(f.Payload, &capture); err != nil {
 			return err
 		}
-		expectedPrefix := "/runtime/sessions/" + i.SessionID + "/native/captures/"
+		retained, err := resources(ctx, tx, i.ProjectID)
+		if err != nil {
+			return err
+		}
+		expectedPrefix := retained.Profile.RolePath("runtime") + "/sessions/" + i.SessionID + "/native/captures/"
 		if capture.Path != expectedPrefix+f.CommandID+".jsonl" || len(capture.Digest) != len("sha256:")+sha256.Size*2 || capture.Size < 0 {
 			return ErrInvalid
 		}
@@ -555,7 +581,7 @@ type Message struct {
 }
 
 func (s *Store) Messages(ctx context.Context, scope Scope, session string, after int64, limit int) ([]Message, error) {
-	if _, err := sessionIn(ctx, s.reader, scope, session); err != nil {
+	if _, err := readableSession(ctx, s.reader, scope, session); err != nil {
 		return nil, err
 	}
 	return s.messages(ctx, scope.ProjectID, session, after, limit)

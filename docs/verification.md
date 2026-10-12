@@ -1,9 +1,11 @@
 # Verification
 
-Install Go from `orchestrator/go.mod`, Node from `.node-version`, Python 3 and the
+Install the Go toolchain pinned in `orchestrator/go.mod` (currently Go 1.24.13), Node from `.node-version`, Python 3 and the
 locked frontend dependencies. Node is also required by the Go native RPC tests. Their isolated npm package and
 lockfile live in `orchestrator/internal/runtimerelease`; no local guest rootfs
-or privileged image build is needed. Installation scripts are disabled because
+or privileged image build is needed.
+The SQLite driver pin includes cancellation cleanup required for current login and
+revocation visibility in pooled readers; do not downgrade it. Installation scripts are disabled because
 these tests use controlled model streams, not the optional native tools.
 
 ```sh
@@ -11,6 +13,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r frontend/e2e/requirements.txt
 npm --prefix frontend ci
+npm --prefix admin-frontend ci
 npm ci --ignore-scripts --prefix orchestrator/internal/runtimerelease
 cd frontend
 npx --no-install playwright install chromium
@@ -30,8 +33,9 @@ qualification is an explicit separate command.
 | --- | --- | --- |
 | Source | `scripts/check.sh source` | Documentation links/public boundary, lockfile registry, shell syntax and candidate integrity tests |
 | Backend | `scripts/check.sh backend` | Build, vet, all ordinary Go tests, Node RPC handler/full Session tests, compile all `khoraintegration` packages and execute their substrate-independent measurement tests |
-| Core races | `scripts/check.sh race` | Product, Agent runner and runtime release under the Go race detector |
-| Frontend | `scripts/check.sh frontend` | Lint, types, Vitest, one production build and deterministic Chromium UI tests against that build |
+| Core races | `scripts/check.sh race` | Product, Agent runner and runtime release under the Go race detector; bounded cancellation-stress iterations and a 30-minute package timeout |
+| Frontend | `scripts/check.sh frontend` | Lint, types, Vitest, both production builds, deterministic Chromium UI tests and the real Go edge against those builds |
+| Browser edge | `scripts/check.sh frontend-edge` | Real Go/SQLite cookies, both standalone frontends, deep links/assets and a browser account-management journey with an injected lost reply; no engine required |
 | Cross-browser controls | `npm --prefix frontend run test:pickers` | Scheduling controls in Chromium, Firefox and WebKit; install those browsers first |
 | Runtime | `dev/verify-khora.sh ... --suite all` | Actual owner, immutable guest image, native Pi, Khora, network/files, browser, faults, realtime and sustained mixed workload |
 | Extended workload | `dev/verify-khora.sh ... --suite combined` | Explicit two-tab workload, network profiles and active-owner update |
@@ -44,8 +48,8 @@ the isolated runtime harness, not a standalone test against an arbitrary URL.
 produced in the same checkout, matching the candidate layout; `test:ui` and
 `test:pickers` build first for direct developer use.
 
-The frontend gate composes `frontend-lint`, `frontend-unit`, `frontend-build`
-and `frontend-ui`; CI calls these same stages separately so their timings and
+The frontend gate composes `frontend-lint`, `frontend-unit`, `frontend-build`,
+`frontend-ui` and `frontend-edge`; CI calls these same stages separately so their timings and
 failures are visible. The production build runs Next's TypeScript check, followed
 by `typecheck:built` using the same incremental cache. This second full check is
 required because Next suppresses diagnostics in spec/test files. It reuses the
@@ -147,7 +151,78 @@ claim these privileged gates passed.
 - Page, delta, reconnect, rebuild, share and export chronology agree.
 - Exact schema/protocol, executable and runtime identities remain mandatory.
 
-After a separately authorized live activation, record the actual installed
-identities and smoke results. Historical deployment evidence only describes its
-recorded commit. Reset-specific acceptance belongs in [bootstrap](bootstrap.md);
-ordinary current-format updates use [operations](operations.md).
+After a separately authorized activation, keep installed identities and smoke
+results outside the publishable repository. Use [bootstrap](bootstrap.md) for
+reset procedures and [operations](operations.md) for current-format updates.
+
+The admin build uses `/admin` as its Next base path. Workbench and admin assets
+are separate; `/administrator` remains a workbench path. Shared appearance,
+branding and identity types live in `web/`, without workbench runtime state.
+Both builds use the repository as their tracing root; the exact standalone
+project subdirectory is packaged, with its own dependencies and static assets.
+The real-edge gate requires Go and the pinned module dependencies in addition to
+Node; CI provisions both toolchains for this gate.
+
+Service fixtures create explicit current-model account/group/policy rows with
+supported credential hashes. Fixture IDs are distinct from login names, and the
+fixture policy enumerates the operations under test, including explicit public
+sharing where needed. There is no production missing-account/permission fallback.
+External package fixtures author data offline under the same exclusive store lock;
+reopening never rewrites fixture identities or grants. Test helper packages are
+absent from the application executable dependency graph.
+
+### Configurable role paths and retained runtime versions
+
+The `paths` suite requires two independently built, compatible immutable images
+with distinct manifests:
+
+```sh
+dev/verify-khora.sh --suite paths \
+  --template /srv/build/runtime-v1 --manifest /srv/build/runtime-v1.manifest.json \
+  --secondary-template /srv/build/runtime-v2 --secondary-manifest /srv/build/runtime-v2.manifest.json \
+  --output /tmp/runtime-path-qualification-new
+```
+
+The disposable engine namespace mounts both templates read-only. The real owner
+registers v2 without selecting it, edits the default through the admin preview/save
+API, and runs native work on both releases. Existing Projects retain their saved
+release and non-default role paths across default/network edits, restart and
+resume. Additional engine tests exercise native journal/capture behavior,
+workspace confinement/readers/watches/transfers, PTY working directories and
+storage cleanup at non-default roots. Fixture publications supply required system
+roles; tests use the image's immutable application helpers rather than replacing
+them with host builds. Registry disable/retirement checks preserve bound retries and refuse referenced
+versions. Fixtures explicitly publish system content, remove bootstrap manifest/
+source files, and retain exact database bindings through restart.
+The separate fault/recovery suite continues to cover cold
+restart, journal failure, forced process loss, Session retirement and cleanup.
+
+### Account suspension under unavailable engine and owner replacement
+
+`dev/verify-khora.sh --suite suspension` creates running native work, a live PTY,
+queued prompts, a future schedule, sharing and a separate storage-only Project.
+It stops only the disposable engine process long enough to verify login/link/PTY
+and resource/conversation/schedule SSE revocation and an unknown suspension outcome. It then replaces the application
+owner, restores the engine and requires the original operation to confirm every
+Project target. Account enable must leave execution held, schedules paused and
+queues held. Explicit resume rechecks admission and preserves the exact saved
+release, mount/Volume identities and data; final deletion reclaims owned storage.
+The suite is included in `all`; the standalone run uses the same template,
+manifest and fresh-output arguments as other runtime gates.
+
+### Built-in publication and incomplete initialization
+
+`--suite publication` exercises protected source inspection/publication, exact
+replay and changed-capacity refusal, multi-MiB reviewed content, default selection,
+independent owned copies, preserved edits after owner restart and cleanup.
+`--suite slots` includes real engine clone faults: discard a successful reply,
+replace the writer, interrupt verification/readiness commit, refuse Files access
+to unready contents, suspend/enable and explicitly resume the retained intent.
+Native snapshot is the qualified atomic seed path; there is no streaming seed
+transfer fallback. Completed user data is never reverified against its old seed.
+
+Run timing-sensitive engine suites sequentially. Each invocation creates its
+own disposable namespace and sparse disk under `/var/cache`; output directories
+must be new. Keep candidate build temporaries on disk-backed storage when `/tmp`
+is a small tmpfs. The browser launcher preserves the invoking user's Playwright
+cache across the privileged namespace. No live store is used by these gates.

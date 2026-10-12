@@ -4,25 +4,34 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"harness-platform/orchestrator/internal/projectfiles"
 	"os"
+	"path/filepath"
 )
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "--reader" {
-		if err := projectfiles.ServeReader(context.Background(), "/workspace", os.Stdin, os.Stdout, 0); err != nil {
+	root := flag.String("root", "", "saved Project workspace root")
+	reader := flag.Bool("reader", false, "serve read-only workspace protocol")
+	flag.Parse()
+	if !filepath.IsAbs(*root) || filepath.Clean(*root) != *root || *root == "/" {
+		fmt.Fprintln(os.Stderr, "canonical workspace --root required")
+		os.Exit(2)
+	}
+	if *reader && flag.NArg() == 0 {
+		if err := projectfiles.ServeReader(context.Background(), *root, os.Stdin, os.Stdout, 0); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
 	}
 	var request projectfiles.Request
-	if len(os.Args) != 2 || json.Unmarshal([]byte(os.Args[1]), &request) != nil {
+	if *reader || flag.NArg() != 1 || json.Unmarshal([]byte(flag.Arg(0)), &request) != nil {
 		fmt.Fprintln(os.Stderr, "one operation document required")
 		os.Exit(2)
 	}
-	if err := projectfiles.Execute("/workspace", request, os.Stdin); err != nil {
+	if err := projectfiles.Execute(*root, request, os.Stdin); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		if errors.Is(err, projectfiles.ErrUncertain) {
 			os.Exit(3)

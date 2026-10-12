@@ -1,9 +1,17 @@
 import { type Page } from "@playwright/test";
+import { productActions, type ProductAction } from "../../../web/capabilities";
 import { ConversationFixture } from "./conversation-fixture";
 export async function workspaceFixture(
   page: Page,
-  options: { lostFirstReply?: boolean; many?: boolean; projectState?: string } = {},
+  options: { lostFirstReply?: boolean; many?: boolean; projectState?: string; deniedActions?: ProductAction[] } = {},
 ) {
+  // The standalone UI fixture supplies the metadata normally set by the Go edge.
+  await page.setExtraHTTPHeaders({ "X-Project-Account-ID": "researcher" });
+  const identity = { id: "researcher", username: "researcher", display_name: "researcher", status: "active", role: "user", revision: 1, session_revision: 1, must_change_password: false };
+  let preferences = { revision: 1, theme_mode: "system", accent: "neutral" };
+  let signedIn = true;
+  const recipient = {id:"account-bob",username:"bob",display_name:"Bob Reader",status:"active"};
+  const conversationReaders = new Map<string, typeof recipient[]>();
   const views = new Map<string, ConversationFixture>();
   await page.addInitScript(() => {
     let offline = false;
@@ -215,8 +223,28 @@ export async function workspaceFixture(
         contentType: "application/json",
         body: JSON.stringify(data),
       });
+    if (path === "/api/me/capabilities") return json({account_id:identity.id, account_status:"active", management_role:identity.role, revision:1, actions:Object.fromEntries(productActions.map(action => [action, {allowed:!options.deniedActions?.includes(action)}]))});
     if (path === "/api/auth/session")
-      return json({ username: "researcher", role: "user", development: false });
+      return signedIn ? json(identity) : json({ error: "login required" }, 401);
+    if (path === "/api/auth/logout" || path === "/api/me/sessions") { signedIn = false; return route.fulfill({status:204}); }
+    if (path === "/api/me/preferences") {
+      if (method === "PATCH") {
+        if (body?.expected_revision !== preferences.revision) return json({ error: "revision conflict" }, 409);
+        preferences = { revision: preferences.revision + 1, theme_mode: String(body?.theme_mode ?? preferences.theme_mode), accent: String(body?.accent ?? preferences.accent) };
+      }
+      return json(preferences);
+    }
+    if (path === "/api/me/profile") {
+      if (method === "PATCH") {
+        if (body?.expected_revision !== identity.revision) return json({ error: "revision conflict" }, 409);
+        identity.display_name = String(body?.display_name); identity.revision++;
+      }
+      return json({ id: identity.id, username: identity.username, display_name: identity.display_name, revision: identity.revision });
+    }
+    if (path === "/api/me/password") {
+      if (body?.current_password !== "current-password") return json({ error: "current password is incorrect" }, 422);
+      identity.revision++; identity.session_revision++; return json(identity);
+    }
     if (path.endsWith("/events") || path.endsWith("/watch"))
       return route.fulfill({
         contentType: "text/event-stream",
@@ -281,6 +309,13 @@ export async function workspaceFixture(
       const s = sessions.find((s) => s.id === id && s.project_id === project);
       if (!s) return json({ error: "Not found" }, 404);
       if (!action) return json(s);
+      if (action === "reader-candidates") return json({readers:[recipient]});
+      if (action === "readers") {
+        if (method === "POST") conversationReaders.set(id, body?.reader_id === recipient.id ? [recipient] : []);
+        if (method === "DELETE") conversationReaders.set(id, []);
+        return json({readers:conversationReaders.get(id) || []});
+      }
+      if (action === "shares") return json({shares:[]});
       if (action === "view") {
         let view = views.get(id);
         if (!view) {
@@ -344,7 +379,7 @@ export async function workspaceFixture(
     }
     if (kind === "files") {
       const p = url.searchParams.get("path") || "";
-      if (id === "content") {
+      if (id === "content" || id === "editor-content" || id === "download") {
         if (method === "PUT") {
           files[p] = req.postData() || "";
           return json({ state: "succeeded" });

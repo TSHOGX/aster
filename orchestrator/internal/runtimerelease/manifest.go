@@ -35,6 +35,7 @@ const ManifestPath = "/etc/project-runtime/manifest.json"
 const NativeRoot = "/usr/local/lib/node_modules"
 
 type Manifest struct {
+	Mounts           MountContract     `json:"mounts"`
 	ScheduleProtocol int               `json:"schedule_protocol"`
 	Version          int               `json:"version"`
 	NativeProtocol   int               `json:"native_protocol"`
@@ -96,8 +97,20 @@ func Load(reader io.Reader, expected string) (Manifest, error) {
 	if err != nil || !ValidDigest(expected) || digest != expected {
 		return manifest, errors.New("runtime manifest does not match its release digest")
 	}
-	if manifest.Version != 4 || manifest.ScheduleProtocol != ScheduleProtocol || manifest.NativeProtocol != NativeProtocol || manifest.ReaderProtocol != ReaderProtocol || manifest.EngineModule != EngineModule || manifest.EngineRevision != EngineRevision || manifest.AgentProtocol != agentwire.Version || manifest.Workspace != "/workspace" || manifest.RuntimeState != "/runtime" || manifest.PiPackage != PiPackage || manifest.PiVersion != PiVersion || manifest.PiIntegrity != PiIntegrity || manifest.NodeVersion != NodeVersion || !ValidDigest(manifest.NativeTree) {
+	if manifest.Version != 5 || manifest.ScheduleProtocol != ScheduleProtocol || manifest.NativeProtocol != NativeProtocol || manifest.ReaderProtocol != ReaderProtocol || manifest.EngineModule != EngineModule || manifest.EngineRevision != EngineRevision || manifest.AgentProtocol != agentwire.Version || manifest.PiPackage != PiPackage || manifest.PiVersion != PiVersion || manifest.PiIntegrity != PiIntegrity || manifest.NodeVersion != NodeVersion || !ValidDigest(manifest.NativeTree) {
 		return manifest, errors.New("incompatible Project runtime release")
+	}
+	if err = manifest.Mounts.Validate(); err != nil {
+		return manifest, err
+	}
+	if err = manifest.Mounts.ValidateDestination("workspace", manifest.Workspace); err != nil {
+		return manifest, err
+	}
+	if err = manifest.Mounts.ValidateDestination("runtime", manifest.RuntimeState); err != nil {
+		return manifest, err
+	}
+	if mountPathsOverlap(manifest.Workspace, manifest.RuntimeState) {
+		return manifest, errors.New("runtime default role paths overlap")
 	}
 	if manifest.Platform != "linux/amd64" && manifest.Platform != "linux/arm64" {
 		return manifest, errors.New("unsupported runtime platform")
@@ -246,7 +259,17 @@ func Generate(root string) (Manifest, error) {
 	if err := cleanRoot(root); err != nil {
 		return Manifest{}, err
 	}
-	manifest := Manifest{Version: 4, ScheduleProtocol: ScheduleProtocol, NativeProtocol: NativeProtocol, ReaderProtocol: ReaderProtocol, EngineModule: EngineModule, EngineRevision: EngineRevision, AgentProtocol: agentwire.Version, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: PiPackage, PiVersion: PiVersion, PiIntegrity: PiIntegrity, NodeVersion: NodeVersion, Files: map[string]string{}}
+	mounts, err := generateMountContract(root)
+	if err != nil {
+		return Manifest{}, err
+	}
+	if err = mounts.ValidateDestination("workspace", "/workspace"); err != nil {
+		return Manifest{}, err
+	}
+	if err = mounts.ValidateDestination("runtime", "/runtime"); err != nil {
+		return Manifest{}, err
+	}
+	manifest := Manifest{Version: 5, Mounts: mounts, ScheduleProtocol: ScheduleProtocol, NativeProtocol: NativeProtocol, ReaderProtocol: ReaderProtocol, EngineModule: EngineModule, EngineRevision: EngineRevision, AgentProtocol: agentwire.Version, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: PiPackage, PiVersion: PiVersion, PiIntegrity: PiIntegrity, NodeVersion: NodeVersion, Files: map[string]string{}}
 	packagePath, err := resolve(root, NativeRoot+"/"+PiPackage+"/package.json")
 	if err != nil {
 		return manifest, err
@@ -385,6 +408,11 @@ func cleanRoot(root string) error {
 		}
 	}
 	for _, name := range []string{"workspace", "runtime"} {
+		if info, err := os.Lstat(filepath.Join(root, name)); err == nil && !info.IsDir() {
+			return fmt.Errorf("runtime role root is not a directory: %s", name)
+		} else if err != nil && !os.IsNotExist(err) {
+			return err
+		}
 		entries, err := os.ReadDir(filepath.Join(root, name))
 		if err != nil && !os.IsNotExist(err) {
 			return err

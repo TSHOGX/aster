@@ -43,3 +43,10 @@ it("canceling a view cancels its delayed retry", async () => {
   await vi.runAllTimersAsync();
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+it("returns an explicit quota denial without retrying it as temporary pressure", async()=>{
+  const fetch=vi.fn(async()=>new Response(JSON.stringify({code:"quota_exceeded",quota:{dimension:"transfer_bytes",used:"0",reserved:"0",requested_delta:"10",limit:"3"}}),{status:429}));
+  vi.stubGlobal("fetch",fetch);
+  expect((await fetchFileRead("/files")).status).toBe(429);
+  expect(fetch).toHaveBeenCalledTimes(1);
+});

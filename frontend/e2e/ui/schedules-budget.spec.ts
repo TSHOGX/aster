@@ -355,6 +355,55 @@ test("disconnected views fall back, hidden tabs stop reads and return automatica
   await expect(page.locator(".schedule-sync")).toContainText("Live");
 });
 
+test("a recovered stream prevents a fallback read before React effect cleanup", async ({ page }) => {
+  const f = await historyFixture(page);
+  await page.addInitScript(() => {
+    let first = true;
+    window.EventSource = class extends EventTarget {
+      onerror: (() => void) | null = null;
+      private ready = () => this.dispatchEvent(new MessageEvent("resource", {
+        data: JSON.stringify({ protocol_version: 1, cursor: "ready", resource_kind: "ready" }),
+      }));
+      private fail = () => this.onerror?.();
+      constructor() {
+        super();
+        window.addEventListener("test-stream-recovery", this.ready);
+        window.addEventListener("test-stream-failure", this.fail);
+        if (first) { first = false; queueMicrotask(this.ready); }
+      }
+      close() {
+        window.removeEventListener("test-stream-recovery", this.ready);
+        window.removeEventListener("test-stream-failure", this.fail);
+      }
+    } as unknown as typeof EventSource;
+  });
+  await page.clock.install();
+  await page.goto("/?view=schedules&schedule=task-1&schedule_project=battery");
+  await expect(page.locator(".schedule-reading h2")).toHaveText("Version 1");
+  await page.clock.runFor(1000);
+  await expect(page.locator(".schedule-sync-live")).toContainText(/^Live/);
+  // Deliver recovery immediately before the queued fallback callback. React
+  // cannot clean up its previous effect between these synchronous operations.
+  await page.evaluate(() => {
+    const schedule = window.setTimeout.bind(window);
+    window.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
+      if (delay !== 5000 || typeof handler !== "function") return schedule(handler, delay, ...args);
+      return schedule(() => {
+        window.dispatchEvent(new Event("test-stream-recovery"));
+        handler(...args);
+      }, delay);
+    }) as typeof window.setTimeout;
+    window.dispatchEvent(new Event("test-stream-failure"));
+  });
+  await expect(page.locator(".schedule-sync")).toContainText("Reconnecting…");
+  const reads = f.reads();
+  f.change();
+  await page.clock.runFor(6000);
+  await expect(page.locator(".schedule-sync-live")).toContainText(/^Live/);
+  expect(f.reads()).toBe(reads);
+  await expect(page.locator(".schedule-reading h2")).toHaveText("Version 1");
+});
+
 test("automatic configuration updates cannot silently change an editing baseline", async ({
   page,
 }) => {

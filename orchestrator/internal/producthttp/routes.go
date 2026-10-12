@@ -20,7 +20,7 @@ type Server struct {
 	Lifecycle *product.Lifecycle
 	Auth      Authenticator
 	Config    Config
-	Profile   product.Profile
+	Bindings  product.RuntimeBindings
 	hubsOnce  sync.Once
 	hubs      *resourceHubs
 }
@@ -58,19 +58,33 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/conversations/{session}/head", s.sharedConversationHead)
 	mux.HandleFunc("GET /api/conversations/{session}/events", s.conversationEvents)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/readers", s.grantConversation)
+	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/readers", s.conversationReaders)
+	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/reader-candidates", s.conversationRecipients)
+	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/readers/{reader}/reactivate", s.reactivateConversation)
 	mux.HandleFunc("DELETE /api/projects/{project}/sessions/{session}/readers/{reader}", s.revokeConversation)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/shares", s.createShare)
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/shares", s.listShares)
 	mux.HandleFunc("DELETE /api/projects/{project}/shares/{share}", s.revokeShare)
+	mux.HandleFunc("POST /api/projects/{project}/shares/{share}/reactivate", s.reactivateShare)
 	mux.HandleFunc("POST /api/projects/{project}/shares/{share}/rotate", s.rotateShare)
-	mux.HandleFunc("GET /api/projects/{project}/files", s.listFiles)
-	mux.HandleFunc("GET /api/projects/{project}/files/snapshots", s.openPreviewSnapshot)
-	mux.HandleFunc("GET /api/projects/{project}/files/snapshots/{snapshot}/content", s.readPreviewSnapshot)
-	mux.HandleFunc("DELETE /api/projects/{project}/files/snapshots/{snapshot}", s.releasePreviewSnapshot)
-	mux.HandleFunc("GET /api/projects/{project}/files/content", s.readFile)
-	mux.HandleFunc("PUT /api/projects/{project}/files/content", s.writeFile)
-	mux.HandleFunc("POST /api/projects/{project}/files", s.mutateFile)
-	mux.HandleFunc("GET /api/projects/{project}/files/operations/{operation}", s.fileOperation)
+	mux.HandleFunc("GET /api/projects/{project}/mounts", func(w http.ResponseWriter, r *http.Request) {
+		out, err := s.Store.FileMounts(r.Context(), s.scope(r))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"mounts": out})
+	})
+	mux.HandleFunc("GET /api/projects/{project}/files", fileMountHandler(s.listFiles))
+	mux.HandleFunc("GET /api/projects/{project}/files/snapshots", fileMountHandler(s.openPreviewSnapshot))
+	mux.HandleFunc("GET /api/projects/{project}/files/snapshots/{snapshot}/content", fileMountHandler(s.readPreviewSnapshot))
+	mux.HandleFunc("DELETE /api/projects/{project}/files/snapshots/{snapshot}", fileMountHandler(s.releasePreviewSnapshot))
+	mux.HandleFunc("GET /api/projects/{project}/files/content", fileMountHandler(s.readFile))
+	mux.HandleFunc("PUT /api/projects/{project}/files/content", fileMountHandler(s.writeFile))
+	mux.HandleFunc("PUT /api/projects/{project}/files/editor-content", fileMountHandler(s.editFile))
+	mux.HandleFunc("GET /api/projects/{project}/files/download", fileMountHandler(s.downloadFile))
+	mux.HandleFunc("POST /api/projects/{project}/files", fileMountHandler(s.mutateFile))
+	mux.HandleFunc("GET /api/projects/{project}/files/operations/{operation}", fileMountHandler(s.fileOperation))
 	mux.HandleFunc("GET /api/projects", s.listProjects)
 	mux.HandleFunc("POST /api/projects", s.createProject)
 	mux.HandleFunc("GET /api/projects/{project}", s.getProject)
@@ -434,11 +448,7 @@ func (s *Server) startTerminal(w http.ResponseWriter, r *http.Request) {
 // process's exit frame establishes that it ended, and with what code.
 func (s *Server) stopTerminal(w http.ResponseWriter, r *http.Request) {
 	scope := s.scope(r)
-	if _, err := s.Store.Terminal(r.Context(), scope, r.PathValue("terminal")); err != nil {
-		fail(w, err)
-		return
-	}
-	if err := s.Terminals.Stop(r.Context(), scope.ProjectID, r.PathValue("terminal")); err != nil {
+	if err := s.Terminals.StopOwned(r.Context(), scope, r.PathValue("terminal")); err != nil {
 		fail(w, err)
 		return
 	}

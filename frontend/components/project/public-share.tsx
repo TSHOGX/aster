@@ -1,5 +1,5 @@
 "use client";
-import { displayName } from "@/lib/ui-config";
+import { displayName } from "@web/brand";
 import { useT } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import { api, encode, type Message, type Share } from "@/lib/project-api";
@@ -95,7 +95,7 @@ function ShareContent({ token }: { token: string }) {
             </a>
             <button onClick={() => setSelected("")}>{tr("Close file")}</button>
           </header>
-          <FilePreview key={selected} project={`shared:${token}`} path={selected} href={url} />
+          <FilePreview key={selected} project={`shared:${token}`} path={selected} href={url} downloadHref={url} />
         </section>
       )}
     </main>

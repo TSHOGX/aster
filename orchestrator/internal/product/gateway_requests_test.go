@@ -28,7 +28,7 @@ func TestGatewayRequestSurvivesOwnerRestartAndBlocksReadyUntilAcknowledged(t *te
 	var name, path string
 	must(t, s.reader.QueryRow(`PRAGMA database_list`).Scan(&number, &name, &path))
 	must(t, s.Close())
-	s, err = Open(ctx, path)
+	s, err = openFixtureStore(ctx, path)
 	must(t, err)
 	defer s.Close()
 	must(t, s.CheckGatewayRequest(ctx, r))

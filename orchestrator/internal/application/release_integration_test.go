@@ -20,7 +20,6 @@ import (
 	"time"
 
 	sdk "github.com/TSHOGX/khora/pkg/khora"
-	"harness-platform/orchestrator/internal/auth"
 	"harness-platform/orchestrator/internal/runtimerelease"
 	"harness-platform/orchestrator/internal/sandbox/khora"
 )
@@ -188,9 +187,6 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	digest, err := runtimerelease.Digest(raw)
 	require(t, err)
 	require(t, os.WriteFile(filepath.Join(root, "manifest.json"), raw, 0644))
-	hash, err := auth.HashPasswordWithIterations("isolated-browser-fixture", 1000)
-	require(t, err)
-	require(t, os.WriteFile(filepath.Join(root, "users.yaml"), []byte("users:\n  - username: researcher\n    password_hash: "+hash+"\n    role: admin\n"), 0644))
 	models := `{"providers":{"gateway":{"baseUrl":"http://model.internal:443","api":"anthropic-messages","apiKey":"project-service-token","models":[{"id":"local-model","name":"Local model","reasoning":false,"input":["text"],"contextWindow":8192,"maxTokens":256,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]}}}`
 	if os.Getenv("PROJECT_PROVIDER_SOCKET") != "" {
 		raw, _ := json.Marshal(map[string]any{"providers": map[string]any{"gateway": map[string]any{"baseUrl": "http://model.internal:443/v1", "api": "openai-completions", "apiKey": "project-service-token", "models": []any{map[string]any{"id": os.Getenv("PROJECT_PROVIDER_MODEL"), "name": "Qualified provider", "reasoning": false, "input": []string{"text"}, "contextWindow": 32768, "maxTokens": 4096, "compat": map[string]any{"supportsDeveloperRole": false, "maxTokensField": "max_tokens"}, "cost": map[string]int{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}}}}}})
@@ -234,13 +230,13 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	engine := engineTLS(t, root, endpoint)
 	engine["store_id"] = identity.StoreID
 	cfg := map[string]any{
-		"version": 1, "listen": "127.0.0.1:18192", "frontend": "http://192.0.2.1:18193", "state_directory": "state",
+		"version": 1, "listen": "127.0.0.1:18192", "frontend": "http://192.0.2.1:18193", "admin_frontend": "http://192.0.2.1:18194", "state_directory": "state",
 		"engine":   engine,
-		"template": map[string]any{"id": "agent-runtime", "manifest": "manifest.json", "digest": digest},
-		"auth":     map[string]any{"users_file": "users.yaml"}, "content": map[string]any{"agent_config": "content", "shared_assets": "assets"},
+		"template": map[string]any{"version": "v1", "id": "agent-runtime", "manifest": "manifest.json", "digest": digest},
+		"content":  map[string]any{"agent_config": "content", "shared_assets": "assets"},
 		"project":  map[string]any{"cpu_millis": 2000, "memory_bytes": 2 << 30, "disk_bytes": 256 << 20, "workspace_bytes": 128 << 20, "runtime_bytes": 128 << 20, "reachability": map[string]any{"services": []any{map[string]any{"audience": "model", "destination": "10.80.0.1", "port": 443, "gateway": "192.0.2.1:18891"}}, "hosts": map[string]string{"model.internal": "model"}}},
 		"gateways": []any{map[string]any{"audience": "model", "listen": "192.0.2.1:18891", "upstream": "http://192.0.2.1:18890", "api_key_env": "PROJECT_RELEASE_SECRET", "max_requests": 8, "schedule_tools": os.Getenv("PROJECT_RELEASE_SCHEDULE_TOOLS") == "1"}}, "agent_audience": "model",
-		"limits": map[string]any{"idle_after": "10s", "idle_agent_after": "5s", "interval": "100ms"},
+		"limits": map[string]any{"max_mounts_per_project": 8, "idle_after": "10s", "idle_agent_after": "5s", "interval": "100ms"},
 	}
 	raw, err = json.Marshal(cfg)
 	require(t, err)
@@ -254,8 +250,16 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	if _, err = os.Stat(filepath.Join(root, "state/product.db")); !os.IsNotExist(err) {
 		t.Fatal("candidate inspection opened application state", err)
 	}
+	bootstrap := exec.CommandContext(ctx, a.binary, "account", "bootstrap", "--config", a.config, "--username", "researcher", "--password-stdin")
+	bootstrap.Stdin = strings.NewReader("isolated-browser-fixture\n")
+	bootstrap.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: a.uid, Gid: a.gid}}
+	bootstrapOutput, err := bootstrap.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bootstrap failed: %v: %s", err, bootstrapOutput)
+	}
 	a.start()
-	current := a.cli("diagnostics", "--socket", filepath.Join(root, "state/control.sock"))["release_identity"]
+	current := a.cli("diagnostics", "--socket", filepath.Join(root, "state/control.sock"))["release_identity"].(map[string]any)
+	// Catalog state is separate from the executable deployment identity.
 	candidateJSON, _ := json.Marshal(candidate)
 	currentJSON, _ := json.Marshal(current)
 	liveCandidate := a.cli("release-identity", "--config", a.config)
@@ -266,6 +270,18 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	if !bytes.Equal(candidateJSON, currentJSON) {
 		t.Fatal("startup identity differs from inspected candidate", candidate, current)
 	}
+	a.cli("publish", "--socket", filepath.Join(root, "state/control.sock"), "--config", a.config)
+	// Serving and candidate inspection need no original manifest, source tree,
+	// template, or initial allocation declarations once the database is seeded.
+	delete(cfg, "template")
+	delete(cfg, "content")
+	cfg["project"] = map[string]any{"reachability": cfg["project"].(map[string]any)["reachability"]}
+	raw, err = json.Marshal(cfg)
+	require(t, err)
+	require(t, os.WriteFile(a.config, raw, 0644))
+	require(t, os.Remove(filepath.Join(root, "manifest.json")))
+	require(t, os.RemoveAll(filepath.Join(root, "content")))
+	require(t, os.RemoveAll(filepath.Join(root, "assets")))
 	a.startGateway()
 	a.request("POST", "/api/auth/login", map[string]string{"username": "researcher", "password": "isolated-browser-fixture"}, 200)
 	return a
@@ -276,10 +292,9 @@ func TestReleasedExecutableOnKhora(t *testing.T) {
 	a := newReleasedApp(t)
 	socket := filepath.Join(a.root, "state/control.sock")
 	status := a.cli("diagnostics", "--socket", socket)
-	if status["runtime_digest"] == "" {
+	if status["application_digest"] == "" {
 		t.Fatal("release identity absent")
 	}
-	a.cli("publish", "--socket", socket)
 	var paths []string
 	for p := 0; p < 2; p++ {
 		id := fmt.Sprintf("release-%d", p)
@@ -469,4 +484,25 @@ func TestReleasedActivationTarget(t *testing.T) {
 	if len(rows) != 1 || rows[0].(map[string]any)["id"] != original["id"] || rows[0].(map[string]any)["state"] != "held" {
 		t.Fatal(rows)
 	}
+}
+
+func (a *releaseApp) resourceTemplate(kind, id string) map[string]any {
+	a.t.Helper()
+	for _, value := range a.request("GET", "/api/admin/resource-templates/"+kind, nil, 200)["templates"].([]any) {
+		item := value.(map[string]any)
+		if item["id"] == id {
+			return item
+		}
+	}
+	a.t.Fatalf("missing %s template %s", kind, id)
+	return nil
+}
+func (a *releaseApp) saveResourceTemplate(kind string, before, document map[string]any, requestID string) map[string]any {
+	a.t.Helper()
+	path := "/api/admin/resource-templates/" + kind + "/" + before["id"].(string)
+	body := map[string]any{"preview": true, "request_id": requestID, "expected_revision": before["revision"], "name": before["name"], "description": before["description"], "enabled": before["enabled"], kind: document}
+	preview := a.request("PATCH", path, body, 200)
+	delete(body, "preview")
+	body["expected_dependencies"] = preview["expected_dependencies"]
+	return a.request("PATCH", path, body, 200)
 }

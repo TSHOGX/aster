@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/sandbox"
 
 	sdk "github.com/TSHOGX/khora/pkg/khora"
@@ -12,7 +13,7 @@ import (
 // maxWriteChunk bounds one direct volume write. The engine holds its write-regime
 // marker for the whole request, so a single unbounded body would park cold starts
 // on that volume for as long as the transfer takes.
-const maxWriteChunk = 1 << 20
+const maxWriteChunk = content.MaxFileBytes
 
 // MkdirVolume creates one directory, tolerating an existing one.
 //
@@ -85,7 +86,17 @@ func (b *Backend) SnapshotVolume(ctx context.Context, source sandbox.VolumeRefer
 	}
 	volume, err := b.client.Volume(ctx, id)
 	if err != nil {
-		return sandbox.Volume{}, mapError("inspect volume", err)
+		mapped := mapError("inspect volume", err)
+		if sandbox.Is(mapped, sandbox.NotFound) {
+			// Preserve the exact identity returned by the original idempotent
+			// operation. Cleanup can distinguish observed absence from a source
+			// error or an ambiguous failure that did not identify an allocation.
+			if _, identityErr := b.Identity(ctx); identityErr != nil {
+				return sandbox.Volume{}, identityErr
+			}
+			return sandbox.Volume{VolumeReference: sandbox.VolumeReference{StoreID: b.identity.StoreID, VolumeID: id}, Capacity: capacity}, mapped
+		}
+		return sandbox.Volume{}, mapped
 	}
 	if volume.VolumeID != id || volume.Size != capacity {
 		return sandbox.Volume{}, failure("inspect volume", sandbox.Uncertain, fmt.Errorf("derived volume observation does not match intent"))

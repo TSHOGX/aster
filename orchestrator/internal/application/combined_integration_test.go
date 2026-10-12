@@ -90,11 +90,13 @@ func startMixedCompanion(a *releaseApp) *mixedCompanion {
 	repo, output := os.Getenv("PROJECT_TEST_REPO"), os.Getenv("PROJECT_TEST_OUTPUT")
 	log, err := os.Create(filepath.Join(output, "frontend.log"))
 	require(a.t, err)
-	frontend := releasedFrontend(a.ctx, repo)
-	frontend.Stdout, frontend.Stderr = log, log
-	require(a.t, frontend.Start())
+	for _, spec := range []struct{ name, port string }{{"frontend", "18193"}, {"admin-frontend", "18194"}} {
+		frontend := releasedFrontend(a.ctx, repo, spec.name, spec.port)
+		frontend.Stdout, frontend.Stderr = log, log
+		require(a.t, frontend.Start())
+		a.t.Cleanup(func() { _ = frontend.Process.Kill(); _ = frontend.Wait() })
+	}
 	require(a.t, log.Close())
-	a.t.Cleanup(func() { _ = frontend.Process.Kill(); _ = frontend.Wait() })
 	a.await(15*time.Second, "combined frontend", func() bool {
 		r, e := a.client.Get(a.origin + "/")
 		if e != nil {

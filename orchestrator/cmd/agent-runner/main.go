@@ -15,8 +15,10 @@ func main() {
 	var c agentrunner.Config
 	flag.StringVar(&c.Session, "session", "", "Agent Session identity")
 	flag.StringVar(&c.Incarnation, "incarnation", "", "process incarnation identity")
-	flag.StringVar(&c.StateRoot, "state-root", "/runtime", "Project retained runtime root")
-	flag.StringVar(&c.Workspace, "workspace", "/workspace", "Project shared workspace")
+	flag.StringVar(&c.StateRoot, "state-root", "", "Project retained runtime root")
+	flag.StringVar(&c.Workspace, "workspace", "", "Project shared workspace")
+	flag.StringVar(&c.ConfigRoot, "config-root", "", "Project immutable agent configuration root")
+	flag.StringVar(&c.SharedRoot, "shared-root", "", "Project immutable shared assets root")
 	flag.StringVar(&c.PiBinary, "pi", "/usr/local/bin/pi", "native Pi executable")
 	flag.Int64Var(&c.JournalBytes, "journal-bytes", 64<<20, "durable journal byte budget")
 	worker := flag.Bool("worker", false, "internal supervised worker")

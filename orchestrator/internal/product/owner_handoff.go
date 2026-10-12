@@ -13,7 +13,7 @@ import (
 
 // OwnerHandoffProtocol changes whenever retained native work cannot safely move
 // between owner builds even with identical schema, runtime and configuration.
-const OwnerHandoffProtocol = 2
+const OwnerHandoffProtocol = 3
 
 // GatewayObservation is collected by the host from its protected gateway socket,
 // never decoded from a release coordinator's request. Started retains monotonic
@@ -92,6 +92,13 @@ func (s *Store) releaseEligible(ctx context.Context, tx *sql.Tx, state ReleaseSt
 		return err
 	}
 	if schema != state.SchemaDigest {
+		return ErrConflict
+	}
+	configuration, err := runtimeConfigurationDigest(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if !content.ValidDigest(state.RuntimeConfigurationDigest) || configuration != state.RuntimeConfigurationDigest {
 		return ErrConflict
 	}
 	snapshot, err := checkGatewayObservation(ctx, tx, proofs[0])

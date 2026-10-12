@@ -53,6 +53,12 @@ func (s *Store) Notify(ctx context.Context, audience, title, body string) error 
 		if !enabled {
 			return ErrNotificationDisabled
 		}
+		if audience != "" {
+			var recipient string
+			if err := missing(tx.QueryRowContext(ctx, `SELECT id FROM accounts WHERE id=?`, audience).Scan(&recipient)); err != nil {
+				return err
+			}
+		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO notifications(id,audience,title,body,created_at) VALUES(?,nullif(?,''),?,?,?)`, uuid.NewString(), audience, title, body, s.timestamp())
 		return err
 	})
@@ -60,6 +66,9 @@ func (s *Store) Notify(ctx context.Context, audience, title, body string) error 
 func (s *Store) Notifications(ctx context.Context, actor, after string, limit int) ([]Notification, error) {
 	if actor == "" {
 		return nil, ErrNotFound
+	}
+	if err := activeAccount(ctx, s.reader, actor); err != nil {
+		return nil, err
 	}
 	rows, err := s.reader.QueryContext(ctx, `SELECT n.id,coalesce(n.project_id,''),coalesce(n.session_id,''),coalesce((SELECT m.id FROM messages m WHERE substr(n.id,1,5)='turn/' AND m.turn_id=substr(n.id,6) AND m.role='user' ORDER BY m.sequence LIMIT 1),''),n.title,n.body,n.created_at,EXISTS(SELECT 1 FROM notification_reads r WHERE r.notification_id=n.id AND r.actor=?) FROM notifications n WHERE (n.audience IS NULL OR n.audience=?) AND (?='' OR (n.created_at,n.id)<(SELECT created_at,id FROM notifications WHERE id=? AND (audience IS NULL OR audience=?))) ORDER BY n.created_at DESC,n.id DESC LIMIT ?`, actor, actor, after, after, actor, pageSize(limit))
 	if err != nil {
@@ -88,6 +97,9 @@ func (s *Store) ReadNotification(ctx context.Context, actor, id string) error {
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM notifications WHERE id=? AND (audience IS NULL OR audience=?)`, id, actor).Scan(&found); err != nil {
 			return missing(err)
 		}
+		if err := activeAccount(ctx, tx, actor); err != nil {
+			return err
+		}
 		_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO notification_reads(notification_id,actor) VALUES(?,?)`, id, actor)
 		return err
 	})
@@ -107,6 +119,16 @@ func (s *Store) Search(ctx context.Context, actor, query, after string, limit in
 	if actor == "" {
 		return nil, ErrNotFound
 	}
+	if err := activeAccount(ctx, s.reader, actor); err != nil {
+		return nil, err
+	}
+	canReadOwn := true
+	if err := authorizeAction(ctx, s.reader, actor, ActionProjectsRead); err != nil {
+		if !errors.Is(err, ErrForbidden) {
+			return nil, err
+		}
+		canReadOwn = false
+	}
 	if !validText(query, 256) {
 		return nil, ErrInvalid
 	}
@@ -117,11 +139,11 @@ func (s *Store) Search(ctx context.Context, actor, query, after string, limit in
 	phrase := `"` + strings.ReplaceAll(query, `"`, `""`) + `"`
 	rows, err := s.reader.QueryContext(ctx, `SELECT * FROM (
  SELECT p.id,s.id,m.id,s.title,substr(m.content,1,240),'message/'||m.id AS key FROM message_search f JOIN messages m ON m.rowid=f.rowid JOIN sessions s ON s.id=m.session_id JOIN projects p ON p.id=s.project_id
- WHERE message_search MATCH ? AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND (p.owner_id=? OR EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0))
+ WHERE message_search MATCH ? AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND ((p.owner_id=? AND ?) OR EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0 AND g.suspended=0 AND p.owner_id<>g.reader_id))
  UNION ALL
  SELECT p.id,s.id,'',s.title,'','session/'||s.id AS key FROM sessions s JOIN projects p ON p.id=s.project_id
- WHERE instr(lower(s.title),lower(?))>0 AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND (p.owner_id=? OR EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0))
- ) WHERE key>? ORDER BY key LIMIT ?`, phrase, actor, actor, query, actor, actor, after, limit)
+ WHERE instr(lower(s.title),lower(?))>0 AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND ((p.owner_id=? AND ?) OR EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0 AND g.suspended=0 AND p.owner_id<>g.reader_id))
+ ) WHERE key>? ORDER BY key LIMIT ?`, phrase, actor, canReadOwn, actor, query, actor, canReadOwn, actor, after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +172,10 @@ func (s *Store) SharedConversation(ctx context.Context, actor, session string) (
 	if actor == "" {
 		return c, ErrNotFound
 	}
-	err = missing(s.reader.QueryRowContext(ctx, `SELECT s.project_id,s.id,s.title,s.revision FROM conversation_grants g JOIN sessions s ON s.id=g.session_id JOIN projects p ON p.id=s.project_id WHERE g.reader_id=? AND g.session_id=? AND g.revoked=0 AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted')`, actor, session).Scan(&c.ProjectID, &c.SessionID, &c.Title, &c.Revision))
+	if err = activeAccount(ctx, s.reader, actor); err != nil {
+		return c, err
+	}
+	err = missing(s.reader.QueryRowContext(ctx, `SELECT s.project_id,s.id,s.title,s.revision FROM conversation_grants g JOIN sessions s ON s.id=g.session_id JOIN projects p ON p.id=s.project_id WHERE p.owner_id<>g.reader_id AND g.reader_id=? AND g.session_id=? AND g.revoked=0 AND g.suspended=0 AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted')`, actor, session).Scan(&c.ProjectID, &c.SessionID, &c.Title, &c.Revision))
 	return
 }
 
@@ -158,7 +183,10 @@ func (s *Store) SharedConversations(ctx context.Context, actor, after string, li
 	if actor == "" {
 		return nil, ErrNotFound
 	}
-	rows, err := s.reader.QueryContext(ctx, `SELECT s.project_id,s.id,s.title,s.revision FROM conversation_grants g JOIN sessions s ON s.id=g.session_id JOIN projects p ON p.id=s.project_id WHERE g.reader_id=? AND g.revoked=0 AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND s.id>? ORDER BY s.id LIMIT ?`, actor, after, pageSize(limit))
+	if err := activeAccount(ctx, s.reader, actor); err != nil {
+		return nil, err
+	}
+	rows, err := s.reader.QueryContext(ctx, `SELECT s.project_id,s.id,s.title,s.revision FROM conversation_grants g JOIN sessions s ON s.id=g.session_id JOIN projects p ON p.id=s.project_id WHERE p.owner_id<>g.reader_id AND g.reader_id=? AND g.revoked=0 AND g.suspended=0 AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND s.id>? ORDER BY s.id LIMIT ?`, actor, after, pageSize(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -267,6 +295,9 @@ func (s *Store) GenerateTitles(ctx context.Context, generator TitleGenerator, li
 func (s *Store) UnreadNotifications(ctx context.Context, actor string) (int, error) {
 	if actor == "" {
 		return 0, ErrNotFound
+	}
+	if err := activeAccount(ctx, s.reader, actor); err != nil {
+		return 0, err
 	}
 	var count int
 	err := s.reader.QueryRowContext(ctx, `SELECT count(*) FROM notifications n WHERE (n.audience IS NULL OR n.audience=?) AND NOT EXISTS(SELECT 1 FROM notification_reads r WHERE r.notification_id=n.id AND r.actor=?)`, actor, actor).Scan(&count)

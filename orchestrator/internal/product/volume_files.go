@@ -34,11 +34,11 @@ type volumePage struct {
 // No reader starts compute or adds a durable activity row. The lane is released
 // once a capture is complete, independently of its HTTP consumer's lifetime.
 func (w *WorkspaceReader) pausedVolume(ctx context.Context, scope Scope) (Resources, context.Context, func(), func(), bool, error) {
-	p, err := w.Store.Project(ctx, scope)
+	p, err := ownedProject(ctx, w.Store.reader, scope)
 	if err != nil {
 		return Resources{}, nil, nil, nil, true, err
 	}
-	if p.State != "paused" && p.State != "created" {
+	if p.State != "paused" && p.State != "created" && fileMount(ctx) == "" {
 		return Resources{}, nil, nil, nil, false, nil
 	}
 	releaseWork, err := w.Store.beginRuntimeWork(ctx, runtimeRead)
@@ -68,11 +68,11 @@ func (w *WorkspaceReader) pausedVolume(ctx context.Context, scope Scope) (Resour
 		releaseWork()
 		return Resources{}, nil, nil, nil, true, err
 	}
-	p, err = w.Store.Project(ctx, scope)
+	p, err = ownedProject(ctx, w.Store.reader, scope)
 	if err != nil {
 		return fail(err)
 	}
-	if p.State != "paused" && p.State != "created" {
+	if p.State != "paused" && p.State != "created" && fileMount(ctx) == "" {
 		return fail(ErrPending)
 	}
 	r, err := w.Store.Resources(ctx, scope)
@@ -83,7 +83,11 @@ func (w *WorkspaceReader) pausedVolume(ctx context.Context, scope Scope) (Resour
 	if err != nil {
 		return fail(err)
 	}
-	if r.Reference.SandboxID != "" {
+	r, err = fileResourceView(ctx, w.Store.reader, scope, r, false)
+	if err != nil {
+		return fail(err)
+	}
+	if r.Reference.SandboxID != "" && fileMount(ctx) == "" {
 		observed, e := w.Lifecycle.Backend.Inspect(ctx, r.Reference)
 		if e != nil {
 			return fail(e)
@@ -123,7 +127,7 @@ func (w *WorkspaceReader) pausedVolume(ctx context.Context, scope Scope) (Resour
 }
 
 func volumeReference(r Resources) sandbox.VolumeReference {
-	return sandbox.VolumeReference{StoreID: r.Reference.StoreID, VolumeID: r.WorkspaceVolume}
+	return sandbox.VolumeReference{StoreID: r.Reference.StoreID, VolumeID: r.VolumeForRole("workspace")}
 }
 
 // Direct APIs are confined by Khora. While the lifecycle lane holds the guest
@@ -167,7 +171,7 @@ func volumeFileError(err error) error {
 	return err
 }
 func (w *WorkspaceReader) validateVolume(ctx context.Context, scope Scope, r Resources) error {
-	p, err := w.Store.Project(ctx, scope)
+	p, err := ownedProject(ctx, w.Store.reader, scope)
 	if err != nil {
 		return err
 	}
@@ -178,14 +182,24 @@ func (w *WorkspaceReader) validateVolume(ctx context.Context, scope Scope, r Res
 	if err != nil {
 		return err
 	}
-	if current.Reference.StoreID != r.Reference.StoreID || current.WorkspaceVolume != r.WorkspaceVolume {
+	current, err = fileResourceView(ctx, w.Store.reader, scope, current, false)
+	if err != nil {
+		return err
+	}
+	if current.Reference.StoreID != r.Reference.StoreID || current.VolumeForRole("workspace") != r.VolumeForRole("workspace") {
 		return ErrConflict
 	}
 	return nil
 }
 func (w *WorkspaceReader) listPaused(ctx context.Context, scope Scope, r Resources, query projectfiles.DirectoryQuery) (projectfiles.Page, error) {
+	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesList); err != nil {
+		return projectfiles.Page{}, err
+	}
 	path, cursor, limit := query.Path, query.Cursor, query.Limit
-	if r.WorkspaceVolume == "" {
+	if r.VolumeForRole("workspace") == "" {
+		if _, bound := r.Profile.VolumeForRole("workspace"); bound {
+			return projectfiles.Page{}, ErrPending
+		}
 		if path == "" && cursor == "" {
 			return projectfiles.Page{Entries: []projectfiles.Entry{}}, nil
 		}
@@ -210,7 +224,7 @@ func (w *WorkspaceReader) listPaused(ctx context.Context, scope Scope, r Resourc
 		if snapshot == nil || time.Now().After(snapshot.expires) || snapshot.epoch != r.Reference.Epoch {
 			return projectfiles.Page{}, ErrResync
 		}
-		if snapshot.project != scope.ProjectID || snapshot.path != path || snapshot.volume != r.WorkspaceVolume {
+		if snapshot.project != scope.ProjectID || snapshot.path != path || snapshot.volume != r.VolumeForRole("workspace") {
 			return projectfiles.Page{}, ErrInvalid
 		}
 	} else {
@@ -221,7 +235,7 @@ func (w *WorkspaceReader) listPaused(ctx context.Context, scope Scope, r Resourc
 		if e != nil {
 			return projectfiles.Page{}, volumeFileError(e)
 		}
-		snapshot = &volumePage{project: scope.ProjectID, path: path, volume: r.WorkspaceVolume, epoch: r.Reference.Epoch, expires: time.Now().Add(projectfiles.SnapshotLifetime)}
+		snapshot = &volumePage{project: scope.ProjectID, path: path, volume: r.VolumeForRole("workspace"), epoch: r.Reference.Epoch, expires: time.Now().Add(projectfiles.SnapshotLifetime)}
 		for _, entry := range entries {
 			if entry.Name == "" || strings.ContainsAny(entry.Name, "/\\\x00") || entry.Name == "." || entry.Name == ".." {
 				return projectfiles.Page{}, ErrInvalid
@@ -290,6 +304,9 @@ func (w *WorkspaceReader) listPaused(ctx context.Context, scope Scope, r Resourc
 	if err = w.validateVolume(ctx, scope, r); err != nil {
 		return projectfiles.Page{}, err
 	}
+	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesList); err != nil {
+		return projectfiles.Page{}, err
+	}
 	return page, nil
 }
 func (w *WorkspaceReader) capturePaused(ctx context.Context, scope Scope, r Resources, path string, maxBytes int64, unlock, release func()) (out *CapturedFile, result error) {
@@ -300,7 +317,13 @@ func (w *WorkspaceReader) capturePaused(ctx context.Context, scope Scope, r Reso
 			free()
 		}
 	}()
-	if r.WorkspaceVolume == "" {
+	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesRead); err != nil {
+		return nil, err
+	}
+	if r.VolumeForRole("workspace") == "" {
+		if _, bound := r.Profile.VolumeForRole("workspace"); bound {
+			return nil, ErrPending
+		}
 		return nil, ErrNotFound
 	}
 	backend := w.Backend
@@ -311,6 +334,9 @@ func (w *WorkspaceReader) capturePaused(ctx context.Context, scope Scope, r Reso
 	}
 	if before.Size < 0 || before.Size > projectfiles.MaxTransfer {
 		return nil, ErrCapacity
+	}
+	if err := admitTransfer(ctx, w.Store.reader, scope.Actor, before.Size); err != nil {
+		return nil, err
 	}
 	if before.Size > maxBytes {
 		return nil, ErrPreviewSourceTooLarge
@@ -355,6 +381,9 @@ func (w *WorkspaceReader) capturePaused(ctx context.Context, scope Scope, r Reso
 		return nil, projectfiles.ErrChangedDuringRead
 	}
 	if err = w.validateVolume(ctx, scope, r); err != nil {
+		return nil, err
+	}
+	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesRead); err != nil {
 		return nil, err
 	}
 	captured, err := os.Open(fmt.Sprintf("/proc/self/fd/%d", file.Fd()))

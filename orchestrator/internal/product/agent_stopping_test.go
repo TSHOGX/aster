@@ -22,7 +22,7 @@ func TestUndeliveredAbortEscalatesOnlyItsGuardianAfterGrace(t *testing.T) {
 	sibling.Handle = "sibling-terminal"
 	_, err = backend.StartPTY(ctx, sandbox.StartProcessRequest{ProcessReference: sibling, IdempotencyKey: "sibling", Command: "bash"}, 24, 80)
 	must(t, err)
-	a := NewAgents(ctx, s, nil, backend, testProfile(), 8)
+	a := NewAgents(ctx, s, nil, backend, testProfile().Bindings(), 8)
 	defer a.Close()
 	a.attachments[i.SessionID] = &agentAttachment{projectID: scope.ProjectID, incarnation: i, cancel: func() {}}
 	must(t, controlErr(s, scope, i.SessionID, stopControl(i, c, "stop")))
@@ -105,7 +105,7 @@ func TestReattachedQuietRunnerReceivesDurablePrefixACK(t *testing.T) {
 	backend := &quietACKBackend{fakePTY: newFakePTY(), ack: make(chan agentwire.Frame, 2)}
 	_, err = backend.StartPTY(ctx, sandbox.StartProcessRequest{ProcessReference: i.Reference, IdempotencyKey: i.ID, Command: "runner"}, 24, 80)
 	must(t, err)
-	a := NewAgents(ctx, s, nil, backend, testProfile(), 8)
+	a := NewAgents(ctx, s, nil, backend, testProfile().Bindings(), 8)
 	defer a.Close()
 	runctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -137,7 +137,7 @@ func TestFailedInitialSyncRecoversMissingGuardianWithoutSuccess(t *testing.T) {
 	backend := missingSyncBackend{newFakePTY()}
 	_, err = backend.StartPTY(ctx, sandbox.StartProcessRequest{ProcessReference: i.Reference, IdempotencyKey: i.ID, Command: "runner"}, 24, 80)
 	must(t, err)
-	a := NewAgents(ctx, s, nil, backend, testProfile(), 8)
+	a := NewAgents(ctx, s, nil, backend, testProfile().Bindings(), 8)
 	defer a.Close()
 	err = a.attach(ctx, &agentAttachment{projectID: scope.ProjectID, incarnation: i})
 	if !sandbox.Is(err, sandbox.Precondition) {
@@ -199,7 +199,7 @@ func TestSlowAcknowledgementDoesNotBlockDurableIngestion(t *testing.T) {
 	backend := &delayedAckBackend{fakePTY: newFakePTY(), ackStarted: make(chan uint64, 10), ackRelease: make(chan struct{})}
 	_, err := backend.StartPTY(ctx, sandbox.StartProcessRequest{ProcessReference: i.Reference, IdempotencyKey: i.ID, Command: "runner"}, 24, 80)
 	must(t, err)
-	a := NewAgents(ctx, s, nil, backend, testProfile(), 8)
+	a := NewAgents(ctx, s, nil, backend, testProfile().Bindings(), 8)
 	defer a.Close()
 	attachment := &agentAttachment{projectID: scope.ProjectID, incarnation: i}
 	runctx, cancel := context.WithCancel(ctx)

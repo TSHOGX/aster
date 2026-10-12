@@ -45,18 +45,24 @@ func listenControl(name string) (net.Listener, error) {
 }
 func (a *Application) controlHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /account/recover-admin", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if !decodeControl(w, r, &body) {
+			return
+		}
+		if err := a.Store.RecoverAdmin(r.Context(), body.Username, body.Password); err != nil {
+			http.Error(w, "account recovery refused", 409)
+			return
+		}
+		writeControl(w, map[string]string{"status": "recovered"})
+	})
 	mux.HandleFunc("GET /network", func(w http.ResponseWriter, r *http.Request) {
 		report, err := a.networkReport(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), 500)
-			return
-		}
-		writeControl(w, report)
-	})
-	mux.HandleFunc("POST /network/reload", func(w http.ResponseWriter, r *http.Request) {
-		report, err := a.ReloadNetworkPolicy(r.Context())
-		if err != nil {
-			http.Error(w, err.Error(), 409)
 			return
 		}
 		writeControl(w, report)
@@ -210,12 +216,11 @@ func (a *Application) controlHandler() http.Handler {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		out := map[string]any{"browser": a.BrowserAddress, "runtime_digest": a.Config.Template.Digest, "state": report}
+		out := map[string]any{"browser": a.BrowserAddress, "state": report}
 		out["application_digest"] = a.releaseIdentity.ExecutableDigest
 		identity := a.releaseIdentity
 		if network, err := a.networkReport(r.Context()); err == nil {
 			out["network"] = network
-			identity.NetworkPolicyRevision = network.Defaults.Revision
 		}
 		out["release_identity"] = identity
 		release, err := a.Store.ReleaseState(r.Context())
@@ -257,18 +262,18 @@ func (a *Application) controlHandler() http.Handler {
 		report := map[string]any{"project": project, "blockers": blockers}
 		if resourceErr == nil {
 			report["resources"] = resources
-			if network, err := a.Store.NetworkDefaults(r.Context()); err == nil {
-				report["default_network_policy_revision"] = network.Revision
+			if network, err := a.Store.OperatorProjectNetwork(r.Context(), project.ID); err == nil {
+				report["desired_network_policy_revision"] = network.Desired.Revision
+				report["network_policy_mode"] = network.Mode
 				report["effective_network_policy_revision"] = resources.Profile.NetworkPolicyRevision
-				report["network_policy_pending"] = network.Revision != resources.Profile.NetworkPolicyRevision
+				report["network_policy_pending"] = network.Desired.Revision != resources.Profile.NetworkPolicyRevision
 			}
 			observed, e := a.Backend.InspectConfiguration(r.Context(), resources.Reference)
 			if e != nil {
 				report["observation_error"] = e.Error()
 			} else {
-				mounts := append([]sandbox.Mount{}, resources.Profile.PublishedMounts...)
-				mounts = append(mounts, sandbox.Mount{VolumeID: resources.WorkspaceVolume, Destination: "/workspace", Access: "exclusive"}, sandbox.Mount{VolumeID: resources.RuntimeVolume, Destination: "/runtime", Access: "exclusive"})
-				report["configuration_matches"] = sandbox.SameConfiguration(observed, resources.Profile.Reachability.Declaration(), mounts)
+				mounts, mountErr := resources.Mounts()
+				report["configuration_matches"] = mountErr == nil && sandbox.SameConfiguration(observed, resources.Profile.Reachability.Declaration(), mounts)
 				report["observation"] = observed
 			}
 		}
@@ -285,15 +290,42 @@ func (a *Application) controlHandler() http.Handler {
 		}
 		w.WriteHeader(204)
 	})
+	mux.HandleFunc("POST /volume/publish", a.publishVolume)
+	mux.HandleFunc("GET /limits", func(w http.ResponseWriter, r *http.Request) {
+		values, err := a.Store.OperatorPlatformLimits(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), 409)
+			return
+		}
+		writeControl(w, map[string]any{"limits": values})
+	})
+	mux.HandleFunc("PATCH /limits", func(w http.ResponseWriter, r *http.Request) {
+		var input product.PlatformLimitEdit
+		if !decodeControl(w, r, &input) {
+			return
+		}
+		result, err := a.Store.EditPlatformLimit(r.Context(), input)
+		if err != nil {
+			http.Error(w, err.Error(), 409)
+			return
+		}
+		writeControl(w, result)
+	})
+	mux.HandleFunc("POST /runtime/register", a.registerRuntime)
+	mux.HandleFunc("GET /runtime/registry", a.runtimeRegistryState)
+	mux.HandleFunc("PATCH /runtime/registry", a.editRuntimeRegistryState)
 	mux.HandleFunc("POST /publish", func(w http.ResponseWriter, r *http.Request) {
+		var input Content
+		if !decodeControl(w, r, &input) {
+			return
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 		defer cancel()
-		profile, err := a.publish(ctx)
-		if err != nil {
+		if _, err := a.publish(ctx, input); err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		writeControl(w, map[string]any{"published_mounts": profile.PublishedMounts, "default_activation": "on application restart"})
+		writeControl(w, map[string]any{"status": "registered", "default_changed": false})
 	})
 	return mux
 }
@@ -303,7 +335,10 @@ func writeControl(w http.ResponseWriter, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func decodeControl(w http.ResponseWriter, r *http.Request, value any) bool {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	return decodeControlLimit(w, r, value, 64<<10)
+}
+func decodeControlLimit(w http.ResponseWriter, r *http.Request, value any, limit int64) bool {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
 		http.Error(w, "invalid control request", 400)

@@ -10,7 +10,7 @@ its database to emulate a product capability.
 Keep code abstractions, packages, protocols, temporary paths and test harness
 identifiers brand-neutral and named for their function. Product names belong in
 documentation and presentation defaults. Frontend components and metadata read
-the shared display-name setting from `frontend/lib/ui-config.ts`; translation
+the shared display-name setting from `web/brand.ts`; translation
 catalogs must not embed the product name.
 
 ```sh
@@ -18,6 +18,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r frontend/e2e/requirements.txt
 npm --prefix frontend ci
+npm --prefix admin-frontend ci
 npm ci --ignore-scripts --prefix orchestrator/internal/runtimerelease
 cd frontend
 npx --no-install playwright install chromium
@@ -31,8 +32,8 @@ Individual gates and optional measurement/browser/runtime suites are defined in
 The frontend gate builds once and runs deterministic UI tests against that build.
 
 The frontend development server needs the Go edge for product HTTP/SSE/WebSocket.
-Configure an explicit loopback-only development actor or the normal credential
-registry. `PROJECT_DEV_ORIGINS` is a comma-separated development host allowlist.
+Bootstrap a database account using the protected operator command in
+[operations](operations.md). Development uses the same login flow. `PROJECT_DEV_ORIGINS` is a comma-separated development host allowlist.
 A gateway-enabled application needs non-loopback frontend/model/engine endpoints
 because its dedicated UID remains subject to Khora's network floor.
 

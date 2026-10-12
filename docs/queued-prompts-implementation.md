@@ -62,15 +62,9 @@ Control request bodies retain their exact request identity through reload.
 
 ## Verification
 
-The current repository checks pass:
-
-- `go test ./...`
-- `go test -race` focused lifecycle, claim, projection and recovery suites
-- frontend Vitest: 206 passed, 1 skipped
-- frontend TypeScript and ESLint checks
-
-Former review regressions cover historical ordering, unknown-run segments,
-late-tool ownership, handled inputs, listener cleanup failure and continued
-segment rendering. The current immutable runtime passed real release, network and browser gates.
-The authorized live reset and restart passed actual provider/browser smoke.
-See [acceptance](queued-prompts-acceptance.md) for exact coverage and limits.
+Verification covers lifecycle, claims, projection and recovery through ordinary
+Go tests and focused race suites, plus frontend unit, TypeScript and ESLint checks.
+Regression cases cover historical ordering, unknown-run segments, late-tool
+ownership, handled inputs, listener cleanup failure and continued segment rendering.
+The runtime release, network and browser gates exercise the built artifacts.
+See [verification](verification.md) for commands, coverage and limits.

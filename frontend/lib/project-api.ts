@@ -1,8 +1,10 @@
+import { resourceQuotaMessage } from "@web/resource-errors";
 import { PREVIEW_LIMITS, PreviewFailure } from "./preview-budget";
 import { fetchFileRead, FILE_BUSY_MESSAGE } from "./file-read";
 import { requestCategory, startTiming } from "./interaction-metrics";
 
 export type Project = {
+ execution_suspended?: boolean;
   id: string;
   title: string;
   state: string;
@@ -48,6 +50,7 @@ export type Turn = {
   delivery_id?: string;
   delivery_state?: string;
   delivery_error?: string;
+  dispatch_error?: string;
 };
 export type PromptQueuePage = {
   items: Turn[];
@@ -160,6 +163,7 @@ export type Conversation = {
   revision: number;
 };
 export type Share = {
+ suspended?: boolean;
   id: string;
   title: string;
   state: string;
@@ -174,7 +178,6 @@ export type Projection = {
   revision: number;
   kind: string;
 };
-export type Identity = { username: string; role: string; development: boolean };
 export class APIError extends Error {
   constructor(
     public status: number,
@@ -190,6 +193,8 @@ export const sessionURL = (project: string, session: string) =>
   `${projectURL(project)}/sessions/${encode(session)}`;
 export const fileURL = (project: string, path: string) =>
   `${projectURL(project)}/files/content?path=${encode(path)}`;
+export const fileDownloadURL = (project: string, path: string) =>
+  `${projectURL(project)}/files/download?path=${encode(path)}`;
 export async function api<T>(
   path: string,
   init: RequestInit = {},
@@ -226,6 +231,8 @@ export async function api<T>(
     throw error;
   }
   networkDone(response.status);
+  if (response.status === 403 && typeof window !== "undefined" && path !== "/api/me/capabilities")
+    window.dispatchEvent(new Event("project-permission-denied"));
   if (
     response.status === 401 &&
     typeof window !== "undefined" &&
@@ -251,6 +258,7 @@ export async function api<T>(
       response.status,
       data.state === "unknown"
         ? "The operation's outcome is unknown. Inspect its current state before trying again."
+        : data.code === "quota_exceeded" ? resourceQuotaMessage(data.quota)
         : [429, 503].includes(response.status) && !mutation && path.includes("/files")
           ? FILE_BUSY_MESSAGE
           : data.error || `Request failed (${response.status})`,
@@ -267,7 +275,11 @@ export const command = <T>(path: string, body?: unknown, method = "POST") =>
     true,
   );
 export const newID = () => crypto.randomUUID();
-export async function upload(project: string, path: string, bytes: Blob) {
+export const upload = (project: string, path: string, bytes: Blob) =>
+  writeFileBytes(fileURL(project, path), bytes);
+export const saveEditorFile = (project: string, path: string, bytes: Blob) =>
+  writeFileBytes(`${projectURL(project)}/files/editor-content?path=${encode(path)}`, bytes);
+export async function writeFileBytes(url: string, bytes: Blob) {
   if (bytes.size > 256 * 1024 * 1024)
     throw new Error("Uploads are limited to 256 MiB.");
   const digest = Array.from(
@@ -277,7 +289,7 @@ export async function upload(project: string, path: string, bytes: Blob) {
     (b) => b.toString(16).padStart(2, "0"),
   ).join("");
   // Exactly one mutation attempt. Reconnecting never resends these bytes.
-  return api<{ id: string; state: string }>(fileURL(project, path), {
+  return api<{ id: string; state: string }>(url, {
     method: "PUT",
     body: bytes,
     headers: { "X-Content-SHA256": digest, "Idempotency-Key": newID() },
@@ -302,7 +314,8 @@ export async function readPreview(
       throw new PreviewFailure("source_too_large", "download", { limit: max, metric: "bytes" });
     throw new APIError(
       response.status,
-      [202, 429, 503].includes(response.status) ? FILE_BUSY_MESSAGE : data.error || "The file is not available yet.",
+      data.code === "quota_exceeded" ? resourceQuotaMessage(data.quota) : [202, 429, 503].includes(response.status) ? FILE_BUSY_MESSAGE : data.error || "The file is not available yet.",
+      data,
     );
   }
   const reader = response.body?.getReader();

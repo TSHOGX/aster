@@ -1,0 +1,12 @@
+import type { ProductAction, EffectiveAccess } from "@web/capabilities";
+export type PolicyEffect = "unset" | "allow" | "deny";
+export type Policy = { id: string; name: string; description: string; revision: number; statements: Partial<Record<ProductAction, PolicyEffect>> };
+export type GroupDetail = { network_template_id?: string; environment_template_id?: string; id: string; name: string; description: string; revision: number; member_count: number; policy_ids: string[] };
+export type GroupSummary = Omit<GroupDetail, "policy_ids"> & { policy_count: number };
+export type PolicyResult = { group?: GroupDetail; policy?: Policy; deleted_id?: string; replayed: boolean };
+export type AccessSource = { group_id: string; group_name: string; policy_id: string; policy_name: string; effect: PolicyEffect };
+export type ExplainedAction = { allowed: boolean; sources: AccessSource[] };
+export type ExplainedAccess = Omit<EffectiveAccess, "actions"> & { actions: Record<ProductAction, ExplainedAction> };
+export type ResourceValue = { default: string; ceiling: string; effective: string; platform_limit: string };
+export type GroupImpact = { account_id: string; username: string; account_status: string; management_role: string; before_access: Record<ProductAction, ExplainedAction>; after_access: Record<ProductAction, ExplainedAction>; before_resources: Record<string, ResourceValue>; after_resources: Record<string, ResourceValue> };
+export type DeletionPreview = { group: GroupDetail; expected_dependencies: string; users: GroupImpact[]; next_cursor?: string };

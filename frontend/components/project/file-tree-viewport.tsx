@@ -7,12 +7,13 @@ import { useT } from "@/lib/i18n";
 const ROW_HEIGHT = 36;
 const OVERSCAN = 8;
 
-export function FileTreeViewport({ rows, renderRow, load, onAnchor, selected }: {
+export function FileTreeViewport({ rows, renderRow, load, onAnchor, selected, busy = false }: {
   rows: TreeRow[];
   renderRow: (row: TreeRow, focusable: boolean) => ReactNode;
   load: (directory: string, cursor?: string) => void;
   onAnchor?: (directory: string, name: string) => void;
   selected: string;
+  busy?: boolean;
 }) {
   const tr = useT();
   const host = useRef<HTMLDivElement>(null);
@@ -76,7 +77,7 @@ export function FileTreeViewport({ rows, renderRow, load, onAnchor, selected }: 
   };
   const focusedIndex = rows.findIndex(row => row.kind === "entry" && row.path === focused);
   const extra = focusedIndex >= 0 && (focusedIndex < first || focusedIndex >= end) ? [{ row: rows[focusedIndex], index: focusedIndex }] : [];
-  return <div className="file-tree-scroll virtual-file-tree" ref={host} role="tree" aria-label={tr("File tree")}
+  return <div className="file-tree-scroll virtual-file-tree" ref={host} role="tree" aria-busy={busy} aria-label={tr("File tree")}
     onScroll={event => {
       const node = event.currentTarget;
       const index = Math.min(rows.length - 1, Math.floor(node.scrollTop / ROW_HEIGHT));

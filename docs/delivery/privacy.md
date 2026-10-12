@@ -3,7 +3,10 @@
 Public source contains generic configuration examples, architecture, contracts,
 reproducible tests and build tooling. It must not contain real credentials,
 endpoint/account inventories, user databases, native histories, deployment paths,
-operational logs or private planning/evidence links.
+operational logs or private planning/evidence links. Installation reports,
+deployment histories, machine-specific acceptance results and artifact inventories
+are excluded even when sanitized. Public docs describe reusable procedures and
+verification methods, not the state or history of a particular installation.
 
 Keep deployment configuration and raw evidence outside source control. The local
 `private/` directory is ignored and must never be force-added, shipped in an image

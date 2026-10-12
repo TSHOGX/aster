@@ -33,11 +33,28 @@ func liveTerminalIncarnation(ctx context.Context, q queryer, terminal string) (T
 	return scanTerminalIncarnation(q.QueryRowContext(ctx, `SELECT `+terminalIncarnationColumns+` FROM terminal_incarnations WHERE terminal_id=? AND state IN ('starting','running')`, terminal))
 }
 
+// CanUseTerminal authorizes interactive access independently of Project metadata
+// reads. Ownership is resolved first so guessed foreign children remain hidden.
+func (s *Store) CanUseTerminal(ctx context.Context, scope Scope, terminal string) error {
+	child, err := terminalIn(ctx, s.reader, scope, terminal)
+	if err != nil {
+		return err
+	}
+	if child.Deletion != Live {
+		return ErrDeleting
+	}
+	return authorizeExecution(ctx, s.reader, scope, ActionTerminalsUse)
+}
+
 // LiveTerminal returns the Terminal's current PTY process, or ErrNotFound when it
 // has none. A Terminal row without a live incarnation is a terminal that is not
-// running: that is an ordinary state, not a fault.
+// running: that is an ordinary state, not a fault. This reduction/outcome read
+// does not attach to output and remains available after functional grant loss.
 func (s *Store) LiveTerminal(ctx context.Context, scope Scope, terminal string) (TerminalIncarnation, error) {
 	if _, err := terminalIn(ctx, s.reader, scope, terminal); err != nil {
+		return TerminalIncarnation{}, err
+	}
+	if err := activeAccount(ctx, s.reader, scope.Actor); err != nil {
 		return TerminalIncarnation{}, err
 	}
 	return liveTerminalIncarnation(ctx, s.reader, terminal)
@@ -51,7 +68,7 @@ func (s *Store) reserveTerminal(ctx context.Context, scope Scope, terminal strin
 		return i, ErrInvalid
 	}
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		p, err := writableProject(ctx, tx, scope)
+		p, err := mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
@@ -65,11 +82,17 @@ func (s *Store) reserveTerminal(ctx context.Context, scope Scope, terminal strin
 		if child.Deletion != Live {
 			return ErrDeleting
 		}
+		if err := authorizeExecution(ctx, tx, scope, ActionTerminalsUse); err != nil {
+			return err
+		}
 		i, err = liveTerminalIncarnation(ctx, tx, terminal)
 		if err == nil {
 			return nil
 		}
 		if !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if err := admitCount(ctx, tx, scope.Actor, ResourceTerminals, 1); err != nil {
 			return err
 		}
 		r, err := resources(ctx, tx, scope.ProjectID)
@@ -156,6 +179,9 @@ func (s *Store) resizeTerminal(ctx context.Context, scope Scope, terminal string
 		}
 		if child.Deletion != Live {
 			return ErrDeleting
+		}
+		if err := authorizeExecution(ctx, tx, scope, ActionTerminalsUse); err != nil {
+			return err
 		}
 		if expected != nil {
 			current, e := liveTerminalIncarnation(ctx, tx, terminal)

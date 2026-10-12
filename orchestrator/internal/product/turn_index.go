@@ -23,7 +23,7 @@ type TurnIndexPage struct {
 
 func (s *Store) TurnIndex(ctx context.Context, scope Scope, session string, before, after int64, limit int) (TurnIndexPage, error) {
 	out := TurnIndexPage{Turns: []TurnIndexItem{}}
-	if _, err := sessionIn(ctx, s.reader, scope, session); err != nil {
+	if _, err := readableSession(ctx, s.reader, scope, session); err != nil {
 		return out, err
 	}
 	if limit < 1 || limit > 300 {

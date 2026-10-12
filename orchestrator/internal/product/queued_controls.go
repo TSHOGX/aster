@@ -27,12 +27,20 @@ func (s *Store) MutatePrompt(ctx context.Context, scope Scope, session, prompt, 
 	digest := intentDigest(action, request, prompt, revision)
 	var result PromptMutationReceipt
 	err := s.writeClass(ctx, controlWrite, scope.ProjectID, 1<<20, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		child, err := sessionIn(ctx, tx, scope, session)
 		if err != nil {
 			return err
+		}
+		if err := activeAccount(ctx, tx, scope.Actor); err != nil {
+			return err
+		}
+		if action == "release" {
+			if err := authorizeExecution(ctx, tx, scope, ActionAgentsRun); err != nil {
+				return err
+			}
 		}
 		oldDigest, _, oldPrompt, _, _, _, raw, err := receipt(ctx, tx, session, request)
 		if err == nil {
@@ -69,7 +77,7 @@ func (s *Store) MutatePrompt(ctx context.Context, scope Scope, session, prompt, 
 		}
 		next := map[string]string{"hold": "held", "release": "queued", "cancel": "canceled"}[action]
 		if action == "cancel" || (action == "hold" && t.QueuePolicy != "held") || (action == "release" && t.QueuePolicy != "released") {
-			if err := changed(tx.ExecContext(ctx, `UPDATE turns SET queue_policy=?,disposition=?,updated_at=? WHERE id=? AND prompt_revision=? AND disposition='pending'`, map[string]string{"hold": "held", "release": "released", "cancel": t.QueuePolicy}[action], map[bool]string{true: "canceled", false: "pending"}[action == "cancel"], s.timestamp(), prompt, revision)); err != nil {
+			if err := changed(tx.ExecContext(ctx, `UPDATE turns SET queue_policy=?,disposition=?,dispatch_error='',updated_at=? WHERE id=? AND prompt_revision=? AND disposition='pending'`, map[string]string{"hold": "held", "release": "released", "cancel": t.QueuePolicy}[action], map[bool]string{true: "canceled", false: "pending"}[action == "cancel"], s.timestamp(), prompt, revision)); err != nil {
 				return err
 			}
 			t.PromptRevision++

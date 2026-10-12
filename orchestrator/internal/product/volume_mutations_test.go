@@ -20,7 +20,11 @@ func TestPausedVolumeMutationsRetainComputeReleaseAndReplayIdentity(t *testing.T
 	must(t, f.Lifecycle.Pause(ctx, scope, p.Revision))
 	drive(t, f.Lifecycle, scope.ProjectID)
 	for i, r := range []projectfiles.Request{{Operation: "mkdir", Path: "reports"}, writeRequest("reports/note.txt", "new bytes"), {Operation: "move", Path: "reports/note.txt", Destination: "reports/final.txt"}} {
-		_, err = f.Execute(ctx, scope, []string{"dir", "write", "move"}[i], r, strings.NewReader("new bytes"))
+		if r.Operation == "write" {
+			_, err = f.Upload(ctx, scope, "write", r, strings.NewReader("new bytes"))
+		} else {
+			_, err = f.Manage(ctx, scope, []string{"dir", "write", "move"}[i], r)
+		}
 		must(t, err)
 	}
 	got, err := os.ReadFile(filepath.Join(b.root, "reports/final.txt"))
@@ -28,19 +32,19 @@ func TestPausedVolumeMutationsRetainComputeReleaseAndReplayIdentity(t *testing.T
 	if string(got) != "new bytes" {
 		t.Fatal(string(got))
 	}
-	_, err = f.Execute(ctx, scope, "write", writeRequest("reports/note.txt", "new bytes"), strings.NewReader("new bytes"))
+	_, err = f.Upload(ctx, scope, "write", writeRequest("reports/note.txt", "new bytes"), strings.NewReader("new bytes"))
 	must(t, err)
 	if _, err = os.Stat(filepath.Join(b.root, "reports/note.txt")); !os.IsNotExist(err) {
 		t.Fatal("replayed direct mutation", err)
 	}
-	_, err = f.Execute(ctx, scope, "bad-hash", writeRequest("reports/final.txt", "wrong"), strings.NewReader("other"))
+	_, err = f.Upload(ctx, scope, "bad-hash", writeRequest("reports/final.txt", "wrong"), strings.NewReader("other"))
 	wantError(t, err, ErrFileOperationFailed)
 	got, err = os.ReadFile(filepath.Join(b.root, "reports/final.txt"))
 	must(t, err)
 	if string(got) != "new bytes" {
 		t.Fatal("invalid upload replaced original")
 	}
-	_, err = f.Execute(ctx, scope, "remove", projectfiles.Request{Operation: "remove", Path: "reports/final.txt"}, nil)
+	_, err = f.Manage(ctx, scope, "remove", projectfiles.Request{Operation: "remove", Path: "reports/final.txt"})
 	must(t, err)
 	p, err = f.Store.Project(ctx, scope)
 	must(t, err)
@@ -60,11 +64,11 @@ func TestFreshProjectCanUploadAndBrowseBeforeFirstComputeStart(t *testing.T) {
 	if len(page.Entries) != 0 {
 		t.Fatal(page)
 	}
-	_, err = f.Execute(ctx, scope, "upload", writeRequest("new.txt", "created without compute"), strings.NewReader("created without compute"))
+	_, err = f.Upload(ctx, scope, "upload", writeRequest("new.txt", "created without compute"), strings.NewReader("created without compute"))
 	must(t, err)
 	r, err := f.Store.Resources(ctx, scope)
 	must(t, err)
-	if r.Occupied || r.Reference.SandboxID != "" || r.RuntimeVolume != "" || r.WorkspaceVolume == "" || b.starts != 0 {
+	if r.Occupied || r.Reference.SandboxID != "" || r.VolumeForRole("runtime") != "" || r.VolumeForRole("workspace") == "" || b.starts != 0 {
 		t.Fatal(r)
 	}
 	capture, err := f.Capture(ctx, scope, "new.txt")
@@ -75,13 +79,13 @@ func TestFreshProjectCanUploadAndBrowseBeforeFirstComputeStart(t *testing.T) {
 	if string(data) != "created without compute" {
 		t.Fatal(string(data))
 	}
-	workspace := r.WorkspaceVolume
+	workspace := r.VolumeForRole("workspace")
 	f.Lifecycle.MaxProjects = 4
-	must(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile))
+	must(t, f.Lifecycle.EnsureActive(ctx, scope, f.Bindings))
 	drive(t, f.Lifecycle, scope.ProjectID)
 	r, err = f.Store.Resources(ctx, scope)
 	must(t, err)
-	if r.WorkspaceVolume != workspace || r.Reference.SandboxID == "" {
+	if r.VolumeForRole("workspace") != workspace || r.Reference.SandboxID == "" {
 		t.Fatal("first compute replaced workspace", r)
 	}
 }
@@ -116,7 +120,7 @@ func TestPausedUploadFencesResumeAndPreservesUnknownOutcome(t *testing.T) {
 			f.Backend = blocked
 			result := make(chan error, 1)
 			go func() {
-				_, e := f.Execute(ctx, scope, "pending", writeRequest("file", "bytes"), strings.NewReader("bytes"))
+				_, e := f.Upload(ctx, scope, "pending", writeRequest("file", "bytes"), strings.NewReader("bytes"))
 				result <- e
 			}()
 			select {
@@ -124,12 +128,12 @@ func TestPausedUploadFencesResumeAndPreservesUnknownOutcome(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("upload did not start")
 			}
-			wantError(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile), ErrBusy)
+			wantError(t, f.Lifecycle.EnsureActive(ctx, scope, f.Bindings), ErrBusy)
 			close(blocked.continueWrite)
 			err = <-result
 			if !uncertain {
 				must(t, err)
-				must(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile))
+				must(t, f.Lifecycle.EnsureActive(ctx, scope, f.Bindings))
 				return
 			}
 			wantError(t, err, ErrFileOutcomeUnknown)
@@ -139,8 +143,8 @@ func TestPausedUploadFencesResumeAndPreservesUnknownOutcome(t *testing.T) {
 			if op.State != "unknown" || op.Settled {
 				t.Fatal(op)
 			}
-			wantError(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile), ErrBusy)
-			_, err = f.Execute(ctx, scope, "pending", writeRequest("file", "bytes"), strings.NewReader("bytes"))
+			wantError(t, f.Lifecycle.EnsureActive(ctx, scope, f.Bindings), ErrBusy)
+			_, err = f.Upload(ctx, scope, "pending", writeRequest("file", "bytes"), strings.NewReader("bytes"))
 			wantError(t, err, ErrFileOutcomeUnknown)
 		})
 	}
@@ -162,7 +166,7 @@ func TestPausedVolumeQuotaFailureKeepsTargetAndReclaimsStaging(t *testing.T) {
 	must(t, f.Lifecycle.Pause(ctx, scope, p.Revision))
 	drive(t, f.Lifecycle, scope.ProjectID)
 	f.Backend = &fullVolumeBackend{b}
-	op, err := f.Execute(ctx, scope, "full", writeRequest("target", "replacement"), strings.NewReader("replacement"))
+	op, err := f.Upload(ctx, scope, "full", writeRequest("target", "replacement"), strings.NewReader("replacement"))
 	wantError(t, err, ErrFileOperationFailed)
 	if op.State != "failed" || !op.Settled {
 		t.Fatal(op)
@@ -177,7 +181,7 @@ func TestPausedVolumeQuotaFailureKeepsTargetAndReclaimsStaging(t *testing.T) {
 	if len(entries) != 1 || entries[0].Name() != "target" {
 		t.Fatal("quota failure leaked staging", entries)
 	}
-	_, err = f.Execute(ctx, scope, "free-space", projectfiles.Request{Operation: "remove", Path: "target"}, nil)
+	_, err = f.Manage(ctx, scope, "free-space", projectfiles.Request{Operation: "remove", Path: "target"})
 	must(t, err)
-	must(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile))
+	must(t, f.Lifecycle.EnsureActive(ctx, scope, f.Bindings))
 }

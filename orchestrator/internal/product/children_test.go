@@ -74,7 +74,7 @@ func TestChildCleanupRequiresEvidenceAndReleasesProjectWork(t *testing.T) {
 
 func TestTerminalCleanupWaitsForItsProcessAndSpareSiblings(t *testing.T) {
 	l, scope, _ := lifecycleFixture(t)
-	must(t, l.EnsureActive(ctx, scope, testProfile()))
+	must(t, l.EnsureActive(ctx, scope, testProfile().Bindings()))
 	drive(t, l, scope.ProjectID)
 	s := l.Store
 	for _, id := range []string{"keep", "drop"} {

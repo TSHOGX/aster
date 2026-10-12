@@ -38,7 +38,7 @@ func TestReleaseFenceBlocksWorkButPreservesStopAndIngest(t *testing.T) {
 	wantError(t, err, ErrDraining)
 	_, err = s.reserveTerminal(ctx, scope, "new-terminal", 24, 80)
 	wantError(t, err, ErrDraining)
-	_, _, err = s.reserveFile(ctx, scope, "new-file", writeRequest("new.txt", "new"))
+	_, _, err = s.reserveFile(ctx, scope, "new-file", ActionFilesUpload, writeRequest("new.txt", "new"))
 	wantError(t, err, ErrDraining)
 	// Genuine evidence and Stop remain writable while new execution is fenced.
 	_, err = s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{"success":true}`))
@@ -95,7 +95,7 @@ func TestReleaseFenceStopsQueuedAndPreexistingPendingDispatch(t *testing.T) {
 
 func TestReleaseDeadlineAndStaleCoordinatorSurviveReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "release.db")
-	s, err := Open(ctx, path)
+	s, err := openFixtureStore(ctx, path)
 	must(t, err)
 	state, err := s.BeginReleaseDrain(ctx, "first", time.Second)
 	must(t, err)
@@ -105,7 +105,7 @@ func TestReleaseDeadlineAndStaleCoordinatorSurviveReopen(t *testing.T) {
 		t.Fatal("retry extended drain", same, state)
 	}
 	must(t, s.Close())
-	s, err = Open(ctx, path)
+	s, err = openFixtureStore(ctx, path)
 	must(t, err)
 	defer s.Close()
 	restored, err := s.ReleaseState(ctx)
@@ -202,12 +202,12 @@ func TestReleaseFenceBlocksProjectActivationAndQueuedDispatch(t *testing.T) {
 	l, scope, _ := lifecycleFixture(t)
 	state, err := l.Store.BeginReleaseDrain(ctx, "activation", time.Minute)
 	must(t, err)
-	wantError(t, l.EnsureActive(ctx, scope, testProfile()), ErrDraining)
+	wantError(t, l.EnsureActive(ctx, scope, testProfile().Bindings()), ErrDraining)
 	_, err = l.Store.Resources(ctx, scope)
 	wantError(t, err, ErrNotFound)
 	_, err = l.Store.AbortReleaseDrain(ctx, state.Owner, state.Generation)
 	must(t, err)
-	must(t, l.EnsureActive(ctx, scope, testProfile()))
+	must(t, l.EnsureActive(ctx, scope, testProfile().Bindings()))
 	drive(t, l, scope.ProjectID)
 	p, err := l.Store.Project(ctx, scope)
 	must(t, err)
@@ -215,7 +215,7 @@ func TestReleaseFenceBlocksProjectActivationAndQueuedDispatch(t *testing.T) {
 	drive(t, l, scope.ProjectID)
 	_, err = l.Store.BeginReleaseDrain(ctx, "resume", time.Minute)
 	must(t, err)
-	wantError(t, l.EnsureActive(ctx, scope, testProfile()), ErrDraining)
+	wantError(t, l.EnsureActive(ctx, scope, testProfile().Bindings()), ErrDraining)
 	p, err = l.Store.Project(ctx, scope)
 	must(t, err)
 	if p.State != "paused" {

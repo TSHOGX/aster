@@ -18,6 +18,7 @@ import {
   type Project,
   type Schedule,
 } from "@/lib/project-api";
+import { useCapabilities } from "./capability-provider";
 import { useT } from "@/lib/i18n";
 import {
   parseRecurrence,
@@ -47,6 +48,8 @@ export function ScheduleEditor({
   onClose: () => void;
   onSaved: (s: Schedule) => void;
 }) {
+  const can = useCapabilities();
+  const canManage = can("schedules.manage");
   const tr = useT(),
     ask = useDialog();
   const [baseline, setBaseline] = useState(schedule);
@@ -596,7 +599,7 @@ export function ScheduleEditor({
         </button>
         <button
           className="primary"
-          disabled={busy || (!uncertain && (!valid || (!!schedule && !dirty)))}
+          disabled={busy || !canManage || (!uncertain && (!valid || (!!schedule && !dirty)))}
         >
           {busy
             ? tr("Saving…")

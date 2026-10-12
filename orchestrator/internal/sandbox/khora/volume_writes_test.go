@@ -175,3 +175,45 @@ func TestSnapshotVolumeReplaysAndInspects(t *testing.T) {
 		t.Fatal("snapshot without a capacity accepted")
 	}
 }
+
+func TestVolumeAbsenceRetainsOnlyKnownOriginalIdentity(t *testing.T) {
+	for _, operation := range []string{"create", "snapshot", "missing-source"} {
+		t.Run(operation, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/v1/info":
+					json.NewEncoder(w).Encode(map[string]any{"store_id": "store", "version": EngineRevision, "manual_cold_recovery": true})
+				case r.Method == "POST" && (r.URL.Path == "/v1/volumes" || strings.HasSuffix(r.URL.Path, "/snapshot")):
+					if operation == "missing-source" {
+						http.NotFound(w, r)
+						return
+					}
+					json.NewEncoder(w).Encode(map[string]any{"volume_id": "original-volume", "size": 1 << 20})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			backend, err := New(context.Background(), Config{Endpoint: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result sandbox.Volume
+			if operation == "create" {
+				result, err = backend.CreateVolume(context.Background(), "original-key", 1<<20)
+			} else {
+				result, err = backend.SnapshotVolume(context.Background(), sandbox.VolumeReference{StoreID: "store", VolumeID: "source"}, "original-key", 1<<20)
+			}
+			if !sandbox.Is(err, sandbox.NotFound) {
+				t.Fatal(err)
+			}
+			if operation == "missing-source" {
+				if result.VolumeID != "" {
+					t.Fatal("source failure invented allocation evidence", result)
+				}
+			} else if result.VolumeID != "original-volume" || result.StoreID != "store" {
+				t.Fatal("original absence evidence lost", result)
+			}
+		})
+	}
+}

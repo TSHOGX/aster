@@ -22,8 +22,11 @@ import (
 // in the record, not only in the hash.
 func (s *Store) ClaimContentPublication(ctx context.Context, p content.Publication) (content.Publication, error) {
 	var empty content.Publication
-	if p.StoreID == "" || (p.Purpose != "assets" && p.Purpose != "config") || !content.ValidDigest(p.RevisionDigest) || p.Capacity <= 0 || len(p.Entries) == 0 {
+	if p.StoreID == "" || !content.ValidPurpose(p.Purpose) || !content.ValidDigest(p.RevisionDigest) || p.Capacity <= 0 || len(p.Entries) == 0 {
 		return empty, fmt.Errorf("store identity, purpose, revision digest, capacity and entries required")
+	}
+	if _, err := checkedProduct(p.Capacity, 2); err != nil {
+		return empty, err
 	}
 	entries, err := json.Marshal(p.Entries)
 	if err != nil {
@@ -39,7 +42,7 @@ func (s *Store) ClaimContentPublication(ctx context.Context, p content.Publicati
 	}
 	defer release()
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO content_publications(store_id,purpose,revision_digest,capacity,entries,stage,created_at,updated_at) VALUES(?,?,?,?,?,'preparing',?,?)`, p.StoreID, p.Purpose, p.RevisionDigest, p.Capacity, string(entries), now, now)
+	insert, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO content_publications(store_id,purpose,revision_digest,capacity,entries,stage,created_at,updated_at) VALUES(?,?,?,?,?,'preparing',?,?)`, p.StoreID, p.Purpose, p.RevisionDigest, p.Capacity, string(entries), now, now)
 	if err != nil {
 		return empty, releaseFenceError(err)
 	}
@@ -49,6 +52,16 @@ func (s *Store) ClaimContentPublication(ctx context.Context, p content.Publicati
 	}
 	if stored.Capacity != p.Capacity || content.Digest(stored.Entries) != p.RevisionDigest {
 		return empty, fmt.Errorf("existing publication of this revision declares different content or capacity")
+	}
+	if _, err = platformStorage(ctx, tx); err != nil {
+		return empty, err
+	}
+	if count, err := insert.RowsAffected(); err != nil {
+		return empty, err
+	} else if count == 1 {
+		if err = s.auditEvent(ctx, tx, "operator", "publication.claim", "publication", p.Purpose+"/"+p.RevisionDigest, "", 1, map[string]any{"store_id": p.StoreID, "capacity_bytes": p.Capacity}); err != nil {
+			return empty, err
+		}
 	}
 	return stored, tx.Commit()
 }
@@ -206,6 +219,11 @@ func (s *Store) advancePublication(ctx context.Context, p content.Publication, s
 	}
 	if updated.Stage != stage && !(stage == "derived" && updated.Stage == "published") {
 		return empty, fmt.Errorf("publication stage did not advance to %s", stage)
+	}
+	if stored.Stage != "published" && updated.Stage == "published" {
+		if err = s.auditEvent(ctx, tx, "operator", "publication.commit", "publication", p.Purpose+"/"+p.RevisionDigest, "", 1, map[string]any{"store_id": p.StoreID, "volume_id": updated.PublishedVolumeID}); err != nil {
+			return empty, err
+		}
 	}
 	return updated, tx.Commit()
 }

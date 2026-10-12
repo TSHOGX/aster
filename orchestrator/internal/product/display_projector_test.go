@@ -244,7 +244,7 @@ func TestDisplayCrashResumeAndAtomicCommit(t *testing.T) {
 	var name, path string
 	must(t, s.db.QueryRow(`PRAGMA database_list`).Scan(&seq, &name, &path))
 	must(t, s.Close())
-	s, err = Open(ctx, path)
+	s, err = openFixtureStore(ctx, path)
 	must(t, err)
 	defer s.Close()
 	_, err = s.IngestAgent(ctx, i, record(i, c, 3, "native", `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"after restart"},{"type":"thinking","thinking":"second block"}]}}`))

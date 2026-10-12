@@ -13,12 +13,10 @@ import (
 	"sync"
 	"time"
 
-	sdk "github.com/TSHOGX/khora/pkg/khora"
 	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/edge"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/producthttp"
-	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sandbox/khora"
 )
 
@@ -47,8 +45,6 @@ type Application struct {
 	controlServer   *http.Server
 	releaseIdentity ReleaseIdentity
 	retireOnce      sync.Once
-	networkReloadMu sync.Mutex
-	networkReload   NetworkReloadStatus
 }
 
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application, result error) {
@@ -62,18 +58,18 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 			app.Close()
 		}
 	}()
-	prepared, err := prepareRelease(cfg)
+	identity, err := InspectRelease(cfg)
 	if err != nil {
 		return app, err
 	}
-	cfg = prepared.config
-	app.Config = cfg
-	app.releaseIdentity = prepared.identity
+	app.releaseIdentity = identity
+	startup, done := context.WithTimeout(ctx, 2*time.Minute)
+	defer done()
 
 	if err := os.MkdirAll(cfg.StateDirectory, 0700); err != nil {
 		return app, err
 	}
-	store, err := product.OpenApplication(ctx, cfg.DatabasePath(), product.ApplicationIdentity{ExecutableDigest: app.releaseIdentity.ExecutableDigest, CompatibilityDigest: app.releaseIdentity.CompatibilityDigest, NetworkPolicyRevision: app.releaseIdentity.NetworkPolicyRevision})
+	store, err := product.OpenApplication(ctx, cfg.DatabasePath(), product.ApplicationIdentity{ExecutableDigest: app.releaseIdentity.ExecutableDigest, CompatibilityDigest: app.releaseIdentity.CompatibilityDigest})
 	if err != nil {
 		return app, err
 	}
@@ -86,59 +82,36 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	}); err != nil {
 		return app, err
 	}
-	policy, err := product.NewNetworkPolicy(cfg.Project.Reachability)
-	if err != nil {
-		return app, err
-	}
-	if _, err = store.InitializeNetworkPolicy(ctx, policy); err != nil {
-		return app, err
-	}
 	engineConfig, err := cfg.Engine.Build(cfg.base)
 	if err != nil {
 		return app, err
 	}
-	startup, done := context.WithTimeout(ctx, 2*time.Minute)
-	defer done()
 	backend, err := khora.New(startup, engineConfig)
 	if err != nil {
 		return app, err
 	}
 	app.Backend = backend
-	client, err := sdk.New(engineConfig.Endpoint, sdk.WithHTTPClient(engineConfig.HTTPClient))
-	if err != nil {
+	if err = store.ValidateReleasedBindings(startup, cfg.Engine.StoreID); err != nil {
 		return app, err
 	}
-	registered, err := client.Template(startup, cfg.Template.ID)
-	if err != nil {
-		return app, err
-	}
-	if registered.Manifest.Platform != "" && registered.Manifest.Platform != cfg.Manifest.Platform {
-		return app, errors.New("engine template platform differs from runtime release")
-	}
-	if err = store.ValidateReleasedBindings(startup, cfg.Engine.StoreID, product.ReleasedTemplate{TemplateID: cfg.Template.ID, Digest: cfg.Template.Digest}); err != nil {
-		return app, err
-	}
-	profile, err := app.publishPrepared(startup, prepared.publications)
-	if err != nil {
-		return app, err
-	}
+	bindings := cfg.RuntimeBindings()
 	lifecycle := &product.Lifecycle{Store: store, Backend: backend, MaxProjects: cfg.Limits.Projects, VerifyRuntime: backend.VerifyRuntime}
 	app.Lifecycle = lifecycle
-	agents := product.NewAgents(ctx, store, lifecycle, backend, profile, cfg.Limits.Agents)
+	agents := product.NewAgents(ctx, store, lifecycle, backend, bindings, cfg.Limits.Agents)
 	agents.MaxPerProject = cfg.Limits.AgentsPerProject
 	agents.ServiceAudience = cfg.AgentAudience
 	agents.PlatformEndpoint = func(ctx context.Context, scope product.Scope) string {
 		return app.platformEndpoint(ctx, scope)
 	}
 	app.Agents = agents
-	terminals := product.NewTerminals(ctx, store, lifecycle, backend, profile, cfg.Limits.Terminals)
+	terminals := product.NewTerminals(ctx, store, lifecycle, backend, bindings, cfg.Limits.Terminals)
 	terminals.MaxPerProject = cfg.Limits.TerminalsPerProject
 	app.Terminals = terminals
 	readDirectory := filepath.Join(cfg.StateDirectory, "read-captures")
 	if err := os.MkdirAll(readDirectory, 0700); err != nil {
 		return app, err
 	}
-	files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Profile: profile, CaptureDirectory: readDirectory}
+	files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Bindings: bindings, CaptureDirectory: readDirectory}
 	app.Files = files
 	shares := &product.Shares{Store: store, Files: files, Directory: filepath.Join(cfg.StateDirectory, "shares")}
 	app.Shares = shares
@@ -148,24 +121,16 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	recovery := &product.AgentRecovery{Store: store, Lifecycle: lifecycle, Backend: backend}
 	retirement := &product.ChildRetirement{Store: store, Lifecycle: lifecycle, Backend: backend, Captures: captures, Shares: shares}
 	app.Workers = &product.Workers{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Captures: captures, Recovery: recovery, Retirement: retirement, Titles: cfg.titleGenerator(), IdleAfter: time.Duration(cfg.Limits.IdleAfter), IdleAgentAfter: time.Duration(cfg.Limits.IdleAgentAfter), Interval: time.Duration(cfg.Limits.Interval), Report: func(kind string, err error) { logger.Warn("application work pending", "scope", kind, "error", err) }}
-	var users []producthttp.AuthUser
-	if cfg.Auth.UsersFile != "" {
-		users, err = ReadUsers(cfg.Auth.UsersFile)
-		if err != nil {
-			return app, err
-		}
-	}
 	transportConfig := producthttp.Config{TrustForwardedHost: true}
 	if cfg.HTTPMetrics {
 		transportConfig.ObserveHTTP = func(o producthttp.HTTPObservation) {
 			logger.Info("http timing", "category", o.Category, "status", o.Status, "bytes", o.Bytes, "duration_ms", o.Duration.Milliseconds())
 		}
 	}
-	app.Auth, err = producthttp.NewAuthentication(store, transportConfig, users, cfg.Auth.DevelopmentActor)
-	if err != nil {
-		return app, err
-	}
-	app.API = &producthttp.Server{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Profile: profile, Auth: app.Auth, Config: transportConfig}
+	app.Auth = producthttp.NewAuthentication(store, transportConfig)
+	app.Auth.RuntimeInspector = app.Backend
+	app.Auth.ProjectInspector = app.Backend
+	app.API = &producthttp.Server{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Bindings: bindings, Auth: app.Auth, Config: transportConfig}
 	api := app.API.Handler()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
@@ -181,8 +146,9 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	app.listeners = append(app.listeners, applicationListener)
 	app.servers = append(app.servers, app.server(mux))
 	frontendURL, _ := url.Parse(cfg.Frontend)
+	adminURL, _ := url.Parse(cfg.AdminFrontend)
 	applicationURL, _ := url.Parse("http://project-application")
-	proxy, err := edge.New(edge.Config{Application: applicationURL, ApplicationSocket: cfg.ApplicationSocket, Frontend: frontendURL})
+	proxy, err := edge.New(edge.Config{Application: applicationURL, ApplicationSocket: cfg.ApplicationSocket, Frontend: frontendURL, AdminFrontend: adminURL, PageAccount: app.Auth.Actor})
 	if err != nil {
 		return app, err
 	}
@@ -209,35 +175,47 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 func (a *Application) server(handler http.Handler) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Minute, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return a.ctx }}
 }
-func (a *Application) publish(ctx context.Context) (product.Profile, error) {
-	sources, err := readPublications(a.Config)
-	if err != nil {
-		return a.Config.Profile(), err
+func (a *Application) publish(ctx context.Context, input Content) (product.RuntimeBindings, error) {
+	if input.VolumeBytes <= 0 || input.AgentConfig == "" && input.SharedAssets == "" {
+		return a.Config.RuntimeBindings(), product.ErrInvalid
 	}
-	return a.publishPrepared(ctx, sources)
+	for _, source := range []string{input.AgentConfig, input.SharedAssets} {
+		if source != "" && (!filepath.IsAbs(source) || source == "/") {
+			return a.Config.RuntimeBindings(), product.ErrInvalid
+		}
+	}
+	sources, err := readPublications(Config{Content: input})
+	if err != nil {
+		return a.Config.RuntimeBindings(), err
+	}
+	return a.publishPrepared(ctx, sources, input.VolumeBytes)
 }
-func (a *Application) publishPrepared(ctx context.Context, sources []preparedPublication) (product.Profile, error) {
+func (a *Application) publishPrepared(ctx context.Context, sources []preparedPublication, capacity int64) (product.RuntimeBindings, error) {
 	a.publication.Lock()
 	defer a.publication.Unlock()
-	profile := a.Config.Profile()
+	bindings := a.Config.RuntimeBindings()
 	publisher := content.Publisher{Repository: a.Store, Backend: a.Backend}
 	for _, source := range sources {
-		volume, err := publisher.Publish(ctx, source.purpose, source.revision, a.Config.Content.VolumeBytes)
-		if err != nil {
-			return profile, err
+		if _, err := publisher.Publish(ctx, source.purpose, source.revision, capacity); err != nil {
+			return bindings, err
 		}
-		profile.PublishedMounts = append(profile.PublishedMounts, sandbox.Mount{VolumeID: volume, Destination: source.destination, Access: "shared-ro"})
+		role := "shared_assets"
+		if source.purpose == "config" {
+			role = "agent_config"
+		}
+		artifact := product.BuiltinVolume{Reference: product.ArtifactReference{ID: role, Version: source.revision.Digest, Digest: source.revision.Digest}, StoreID: bindings.StoreID, PublicationPurpose: source.purpose, MinimumBytes: capacity, SourceCapacityBytes: capacity, Roles: []string{role}, Entries: source.revision.Entries}
+		if err := a.Store.RegisterBuiltinVolume(ctx, artifact); err != nil {
+			return bindings, err
+		}
 	}
-	return profile, profile.Validate()
+	return bindings, nil
 }
 
 func (a *Application) Run(ctx context.Context) error {
 	a.group.Add(1)
 	go func() { defer a.group.Done(); a.Workers.Run(a.ctx) }()
 	a.group.Add(1)
-	go func() { defer a.group.Done(); a.watchCredentials() }()
-	a.group.Add(1)
-	go func() { defer a.group.Done(); a.watchNetworkPolicy() }()
+	go func() { defer a.group.Done(); a.collectAuthenticationLimits() }()
 	failures := make(chan error, len(a.servers))
 	for index, server := range a.servers {
 		index, server := index, server
@@ -312,31 +290,15 @@ func (a *Application) retireAfterActivation() {
 	})
 }
 
-func (a *Application) watchCredentials() {
+func (a *Application) collectAuthenticationLimits() {
 	timer := time.NewTicker(2 * time.Second)
 	defer timer.Stop()
-	lastError := ""
 	for {
 		select {
 		case <-a.ctx.Done():
 			return
 		case <-timer.C:
-		}
-		a.Auth.GC()
-		if a.Config.Auth.UsersFile == "" {
-			continue
-		}
-		users, err := ReadUsers(a.Config.Auth.UsersFile)
-		if err == nil {
-			err = a.Auth.ReplaceUsers(users)
-		}
-		if err != nil {
-			if err.Error() != lastError {
-				a.logger.Warn("credential reload refused; previous valid registry retained", "error", err)
-				lastError = err.Error()
-			}
-		} else {
-			lastError = ""
+			a.Auth.GC()
 		}
 	}
 }

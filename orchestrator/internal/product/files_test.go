@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/testfixture"
 	"io"
 	"os"
 	"path/filepath"
@@ -62,8 +63,8 @@ func (b *localFileBackend) StartProcess(_ context.Context, r sandbox.StartProces
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	var request projectfiles.Request
-	service := len(r.Arguments) == 1 && r.Arguments[0] == "--reader"
-	if err := json.Unmarshal([]byte(r.Arguments[0]), &request); err != nil && !service {
+	service := len(r.Arguments) == 3 && r.Arguments[0] == "--root" && r.Arguments[2] == "--reader"
+	if err := json.Unmarshal([]byte(r.Arguments[len(r.Arguments)-1]), &request); err != nil && !service {
 		return nil, err
 	}
 	reader, writer := io.Pipe()
@@ -117,19 +118,19 @@ func (b *localFileBackend) SignalProcess(_ context.Context, r sandbox.ProcessRef
 func (b *localFileBackend) ConnectProcess(context.Context, sandbox.ProcessReference, uint64) (sandbox.ProcessStream, error) {
 	return nil, &sandbox.Error{Class: sandbox.NotFound}
 }
-func (b *localFileBackend) WatchWorkspace(context.Context, sandbox.Reference, uint64) (sandbox.FileWatch, error) {
+func (b *localFileBackend) WatchWorkspace(context.Context, sandbox.Reference, string, uint64) (sandbox.FileWatch, error) {
 	return nil, errors.New("not configured")
 }
 func fileFixture(t *testing.T) (*Files, Scope, *localFileBackend) {
 	t.Helper()
 	s, a, _ := fixture(t)
 	backend := fakeBackend()
-	l := &Lifecycle{Store: s, Backend: backend, MaxProjects: 2}
+	l := &Lifecycle{VerifyRuntime: testfixture.VerifyRuntime, Store: s, Backend: backend, MaxProjects: 2}
 	profile := testProfile()
-	must(t, l.EnsureActive(ctx, a, profile))
+	must(t, l.EnsureActive(ctx, a, profile.Bindings()))
 	drive(t, l, a.ProjectID)
 	files := &localFileBackend{root: t.TempDir(), processes: map[string]*localFileProcess{}}
-	f := &Files{Store: s, Lifecycle: l, Backend: files, Profile: profile}
+	f := &Files{Store: s, Lifecycle: l, Backend: files, Bindings: profile.Bindings()}
 	t.Cleanup(func() { _ = f.Close() })
 	return f, a, files
 }
@@ -140,16 +141,16 @@ func TestFilesLostReplyNeverReplaysOverSibling(t *testing.T) {
 	f, a, b := fileFixture(t)
 	b.loseEnd = true
 	request := writeRequest("same", "first")
-	o, err := f.Execute(ctx, a, "lost", request, strings.NewReader("first"))
+	o, err := f.Upload(ctx, a, "lost", request, strings.NewReader("first"))
 	wantError(t, err, ErrFileOutcomeUnknown)
 	if o.State != "unknown" || o.Settled {
 		t.Fatal(o)
 	}
 	must(t, os.WriteFile(filepath.Join(b.root, "same"), []byte("sibling"), 0600))
 	// A different operation can proceed; there is no workspace lock.
-	_, err = f.Execute(ctx, a, "other", writeRequest("other", "ok"), strings.NewReader("ok"))
+	_, err = f.Upload(ctx, a, "other", writeRequest("other", "ok"), strings.NewReader("ok"))
 	must(t, err)
-	_, err = f.Execute(ctx, a, "lost", request, strings.NewReader("first"))
+	_, err = f.Upload(ctx, a, "lost", request, strings.NewReader("first"))
 	wantError(t, err, ErrFileOutcomeUnknown)
 	must(t, f.Reconcile(ctx, 32))
 	got, err := os.ReadFile(filepath.Join(b.root, "same"))
@@ -175,14 +176,14 @@ func TestFilesAdmissionOwnershipAndConcurrentTurns(t *testing.T) {
 	_, err = f.Store.AdmitTurn(ctx, a, "agent", "turn", "work", false)
 	must(t, err)
 	request := writeRequest("data", "content")
-	_, err = f.Execute(ctx, Scope{"bob", a.ProjectID}, "foreign", request, strings.NewReader("content"))
+	_, err = f.Upload(ctx, Scope{"bob", a.ProjectID}, "foreign", request, strings.NewReader("content"))
 	wantError(t, err, ErrNotFound)
 	if b.starts != 0 {
 		t.Fatal("unauthorized process")
 	}
-	_, err = f.Execute(ctx, a, "valid", request, strings.NewReader("content"))
+	_, err = f.Upload(ctx, a, "valid", request, strings.NewReader("content"))
 	must(t, err)
-	_, err = f.Execute(ctx, a, "valid", writeRequest("data", "changed"), strings.NewReader("changed"))
+	_, err = f.Upload(ctx, a, "valid", writeRequest("data", "changed"), strings.NewReader("changed"))
 	wantError(t, err, ErrConflict)
 	var out bytes.Buffer
 	capture, err := f.Capture(ctx, a, "data")
@@ -198,7 +199,7 @@ func TestFilesActivityRejectsStalePauseAndDoesNotWakeFromWatch(t *testing.T) {
 	f, a, _ := fileFixture(t)
 	snapshot, err := f.Store.ArmIdle(ctx, a, time.Nanosecond)
 	must(t, err)
-	o, fresh, err := f.Store.reserveFile(ctx, a, "crashed-before-start", writeRequest("x", "hello"))
+	o, fresh, err := f.Store.reserveFile(ctx, a, "crashed-before-start", ActionFilesUpload, writeRequest("x", "hello"))
 	must(t, err)
 	if !fresh {
 		t.Fatal("not admitted")

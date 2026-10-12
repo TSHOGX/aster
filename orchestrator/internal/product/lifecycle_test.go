@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/testfixture"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -54,7 +55,10 @@ func (f *fakeLifecycle) CreateVolume(_ context.Context, key string, capacity int
 		f.volumeKeys[key] = id
 		f.volumes[id] = sandbox.Volume{VolumeReference: sandbox.VolumeReference{StoreID: f.store, VolumeID: id}, Capacity: capacity}
 	}
-	v := f.volumes[id]
+	v, found := f.volumes[id]
+	if !found {
+		return sandbox.Volume{VolumeReference: sandbox.VolumeReference{StoreID: f.store, VolumeID: id}, Capacity: capacity}, &sandbox.Error{Class: sandbox.NotFound, Operation: "inspect volume"}
+	}
 	return v, f.lost("volume")
 }
 func (f *fakeLifecycle) Create(_ context.Context, r sandbox.CreateRequest) (sandbox.Observation, error) {
@@ -135,13 +139,13 @@ func (f *fakeLifecycle) WriteProjection(_ context.Context, ref sandbox.Reference
 	return f.lost("projection")
 }
 func testProfile() Profile {
-	return Profile{StoreID: "engine", TemplateID: "test", CPUMillis: 1000, MemoryBytes: 256 << 20, DiskBytes: 128 << 20, WorkspaceBytes: 64 << 20, RuntimeBytes: 32 << 20}
+	return Profile{StoreID: "engine", TemplateID: "test", CPUMillis: 1000, MemoryBytes: 256 << 20, DiskBytes: 128 << 20, Volumes: []VolumePlan{{Key: "workspace", Role: "workspace", Destination: "/workspace", Storage: "owned", Access: "read_write", CapacityBytes: 64 << 20}, {Key: "runtime", Role: "runtime", Destination: "/runtime", Storage: "owned", Access: "read_write", CapacityBytes: 32 << 20}}}
 }
 func lifecycleFixture(t *testing.T) (*Lifecycle, Scope, *fakeLifecycle) {
 	t.Helper()
 	s, a, _ := fixture(t)
 	f := fakeBackend()
-	return &Lifecycle{Store: s, Backend: f, MaxProjects: 1}, a, f
+	return &Lifecycle{VerifyRuntime: testfixture.VerifyRuntime, Store: s, Backend: f, MaxProjects: 1}, a, f
 }
 func drive(t *testing.T, l *Lifecycle, project string) {
 	t.Helper()
@@ -175,7 +179,7 @@ func TestConcurrentProjectFirstUseAndOriginalCreateKeys(t *testing.T) {
 	errs := make(chan error, 30)
 	for i := 0; i < 30; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); errs <- l.EnsureActive(ctx, a, testProfile()) }()
+		go func() { defer wg.Done(); errs <- l.EnsureActive(ctx, a, testProfile().Bindings()) }()
 	}
 	wg.Wait()
 	close(errs)
@@ -187,13 +191,17 @@ func TestConcurrentProjectFirstUseAndOriginalCreateKeys(t *testing.T) {
 	}
 	r, err := l.Store.Resources(ctx, a)
 	must(t, err)
-	if !r.Occupied || r.WorkspaceVolume != "" {
+	if !r.Occupied || r.VolumeForRole("workspace") != "" {
 		t.Fatal(r)
 	}
-	must(t, l.Reconcile(ctx, a.ProjectID))
-	must(t, l.Reconcile(ctx, a.ProjectID))
-	if err := l.Reconcile(ctx, a.ProjectID); err == nil {
-		t.Fatal("expected lost create reply")
+	for attempts := 0; attempts < 10 && f.calls["create"] == 0; attempts++ {
+		err = l.Reconcile(ctx, a.ProjectID)
+		if f.calls["create"] == 0 {
+			must(t, err)
+		}
+	}
+	if err == nil || f.calls["create"] != 1 {
+		t.Fatal("expected lost create reply", err)
 	}
 	drive(t, l, a.ProjectID)
 	r, err = l.ActiveResources(ctx, a)
@@ -202,23 +210,23 @@ func TestConcurrentProjectFirstUseAndOriginalCreateKeys(t *testing.T) {
 		t.Fatal(r, f.creates, f.volumes)
 	}
 	mounts := f.mounts[r.Reference.SandboxID]
-	if len(mounts) != 2 || mounts[0].Destination != "/workspace" || mounts[1].Destination != "/runtime" {
+	if len(mounts) != 2 || !sandbox.SameConfiguration(sandbox.Configuration{Mounts: mounts}, sandbox.Network{}, []sandbox.Mount{{VolumeID: r.VolumeForRole("workspace"), Destination: "/workspace", Access: "exclusive"}, {VolumeID: r.VolumeForRole("runtime"), Destination: "/runtime", Access: "exclusive"}}) {
 		t.Fatal(mounts)
 	}
 	for i := 0; i < 10; i++ {
 		_, err = l.Store.CreateSession(ctx, a, fmt.Sprintf("s%d", i), "Agent")
 		must(t, err)
 	}
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	if len(f.creates) != 1 {
 		t.Fatal("Session reserved placement")
 	}
-	wantError(t, l.EnsureActive(ctx, Scope{"bob", "b"}, testProfile()), ErrCapacity)
+	wantError(t, l.EnsureActive(ctx, Scope{"bob", "b"}, testProfile().Bindings()), ErrCapacity)
 }
 
 func TestIdleRevisionsQueuedSessionsHeldAndRetainedTerminal(t *testing.T) {
 	l, a, _ := lifecycleFixture(t)
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	now := time.Now()
 	l.Store.now = func() time.Time { return now }
@@ -286,7 +294,7 @@ func TestIdleRevisionsQueuedSessionsHeldAndRetainedTerminal(t *testing.T) {
 
 func TestLostPauseResumeAndAdmissionDuringPause(t *testing.T) {
 	l, a, f := lifecycleFixture(t)
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	_, err := l.Store.CreateSession(ctx, a, "s", "Agent")
 	must(t, err)
@@ -310,10 +318,17 @@ func TestLostPauseResumeAndAdmissionDuringPause(t *testing.T) {
 	if r.Occupied {
 		t.Fatal("confirmed pause retains placement")
 	}
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	f.fail["resume"] = 1
-	if err = l.Reconcile(ctx, a.ProjectID); err == nil {
-		t.Fatal("lost resume reply missing")
+	before := f.calls["resume"]
+	for attempts := 0; attempts < 4 && f.calls["resume"] == before; attempts++ {
+		err = l.Reconcile(ctx, a.ProjectID)
+		if f.calls["resume"] == before {
+			must(t, err)
+		}
+	}
+	if err == nil || f.calls["resume"] != before+1 {
+		t.Fatal("lost resume reply missing", err)
 	}
 	drive(t, l, a.ProjectID)
 	r, err = l.ActiveResources(ctx, a)
@@ -330,26 +345,26 @@ func TestLostPauseResumeAndAdmissionDuringPause(t *testing.T) {
 
 func TestRestartRecoversDeadlineAndActivities(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "product.db")
-	s, err := Open(ctx, path)
+	s, err := openFixtureStore(ctx, path)
 	must(t, err)
 	f := fakeBackend()
-	l := &Lifecycle{Store: s, Backend: f, MaxProjects: 1}
+	l := &Lifecycle{VerifyRuntime: testfixture.VerifyRuntime, Store: s, Backend: f, MaxProjects: 1}
 	a := Scope{"alice", "a"}
 	_, err = s.CreateProject(ctx, a.Actor, a.ProjectID, "A")
 	must(t, err)
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	timer, err := s.ArmIdle(ctx, a, time.Second)
 	must(t, err)
 	must(t, s.Close())
-	s, err = Open(ctx, path)
+	s, err = openFixtureStore(ctx, path)
 	must(t, err)
 	defer s.Close()
-	l = &Lifecycle{Store: s, Backend: f, MaxProjects: 1}
+	l = &Lifecycle{VerifyRuntime: testfixture.VerifyRuntime, Store: s, Backend: f, MaxProjects: 1}
 	s.now = func() time.Time { return time.Now().Add(time.Minute) }
 	must(t, l.PauseIdle(ctx, a, timer))
 	drive(t, l, a.ProjectID)
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	must(t, s.BeginActivity(ctx, a, Activity{ID: "upload", Kind: "files", Detail: "large upload"}))
 	must(t, s.SettleActivity(ctx, a.ProjectID, "upload", "unknown"))
@@ -369,7 +384,7 @@ func TestRestartRecoversDeadlineAndActivities(t *testing.T) {
 
 func TestDeleteAfterUncertainProvisioningReclaimsOwnedResources(t *testing.T) {
 	l, a, f := lifecycleFixture(t)
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	must(t, l.Reconcile(ctx, a.ProjectID))
 	f.fail["volume"] = 1
 	if err := l.Reconcile(ctx, a.ProjectID); err == nil {
@@ -396,7 +411,7 @@ func TestDeleteAfterUncertainProvisioningReclaimsOwnedResources(t *testing.T) {
 	if r.Occupied {
 		t.Fatal(r)
 	}
-	wantError(t, l.EnsureActive(ctx, a, testProfile()), ErrDeleting)
+	wantError(t, l.EnsureActive(ctx, a, testProfile().Bindings()), ErrDeleting)
 	pending, err := l.Store.PendingProjects(ctx, 100)
 	must(t, err)
 	if len(pending) != 0 {
@@ -406,7 +421,7 @@ func TestDeleteAfterUncertainProvisioningReclaimsOwnedResources(t *testing.T) {
 
 func TestIdentityMismatchAndChangedConditionalReferenceStayFenced(t *testing.T) {
 	l, a, f := lifecycleFixture(t)
-	must(t, l.EnsureActive(ctx, a, testProfile()))
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	p, err := l.Store.Project(ctx, a)
 	must(t, err)
@@ -442,7 +457,7 @@ func (f *fakeLifecycle) InspectConfiguration(_ context.Context, ref sandbox.Refe
 	r := f.configurations[ref.SandboxID]
 	return sandbox.Configuration{Observation: o, Network: r.Network, Mounts: r.Mounts, TemplateID: r.TemplateID, CPUMillis: r.CPUMillis, MemoryBytes: r.MemoryBytes, DiskCapacityBytes: r.DiskBytes, IdleTimeout: "0s", Retention: "0s"}, nil
 }
-func (f *fakeLifecycle) UpdateNetwork(ctx context.Context, ref sandbox.Reference, network sandbox.Network) (sandbox.Configuration, error) {
+func (f *fakeLifecycle) UpdateConfiguration(ctx context.Context, ref sandbox.Reference, network sandbox.Network, mounts []sandbox.Mount) (sandbox.Configuration, error) {
 	f.mu.Lock()
 	o := f.sandboxes[ref.SandboxID]
 	if o.Reference != ref || o.State != "paused" {
@@ -451,6 +466,8 @@ func (f *fakeLifecycle) UpdateNetwork(ctx context.Context, ref sandbox.Reference
 	}
 	r := f.configurations[ref.SandboxID]
 	r.Network = network
+	r.Mounts = mounts
+	f.mounts[ref.SandboxID] = mounts
 	f.configurations[ref.SandboxID] = r
 	o.MutationRevision += "n"
 	f.sandboxes[ref.SandboxID] = o

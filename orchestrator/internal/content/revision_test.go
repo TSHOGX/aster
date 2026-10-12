@@ -22,6 +22,13 @@ func authored(t *testing.T, files map[string]string) string {
 	return root
 }
 
+func TestReadRefusesTreeDeeperThanVerificationCanServe(t *testing.T) {
+	root := authored(t, map[string]string{strings.Repeat("directory/", 17) + "file": "reviewed bytes"})
+	if _, err := Read(root); err == nil || !strings.Contains(err.Error(), "deeper than 16") {
+		t.Fatal("unsupported authored depth reached publication", err)
+	}
+}
+
 func TestRevisionIdentifiesContentNotLocation(t *testing.T) {
 	files := map[string]string{"AGENTS.md": "shared context\n", "skills/one/SKILL.md": "step\n"}
 	first, err := Read(authored(t, files))

@@ -43,9 +43,17 @@ func TestReleasedOwnerHandoff(t *testing.T) {
 		turns := a.request("GET", base+"/turns", nil, 200)["turns"].([]any)
 		return len(bytes.TrimSpace(raw)) > 0 && len(turns) == 1 && turns[0].(map[string]any)["state"] == "running"
 	})
+	// Change database policy without editing the deployment file used by the
+	// replacement's candidate inspection. The live placement remains unchanged.
+	network := a.resourceTemplate("network", "network-default")
+	changedNetwork := a.saveResourceTemplate("network", network, map[string]any{"direct": []any{map[string]any{"cidr": "198.51.100.0/24", "port": 443, "protocol": "tcp"}}, "resolvers": []string{}}, "handoff-network-edit")
+	if changedNetwork["revision"] == network["revision"] {
+		t.Fatal("network fixture did not change policy")
+	}
+	evidence["accepted_network_revision"] = changedNetwork["revision"]
 	target := candidate["executable_digest"].(string)
 	drain := a.cli("drain", "--socket", ownerSocket, "--owner", "active-owner", "--mode", "owner", "--target", target, "--compatibility", candidate["compatibility_digest"].(string), "--timeout-seconds", "60")
-	if drain["mode"] != "owner" || drain["phase"] != "draining" {
+	if drain["mode"] != "owner" || drain["phase"] != "draining" || drain["runtime_configuration_digest"] == "" {
 		t.Fatal(drain)
 	}
 	generation := fmt.Sprint(drain["generation"])
@@ -99,6 +107,11 @@ func TestReleasedOwnerHandoff(t *testing.T) {
 	if gateway["pid"] != initialGateway["pid"] || gateway["active"] != float64(1) {
 		t.Fatal("update did not retain the original active gateway stream", gateway, initialGateway)
 	}
+	afterNetwork := a.resourceTemplate("network", "network-default")
+	if afterNetwork["revision"] != changedNetwork["revision"] {
+		t.Fatal("handoff replaced DB network with bootstrap config", afterNetwork)
+	}
+	evidence["runtime_configuration_digest"] = drain["runtime_configuration_digest"]
 	evidence["gateway_after_handoff"] = gateway
 	a.await(20*time.Second, "original native completion on replacement", func() bool {
 		turns := a.request("GET", base+"/turns", nil, 200)["turns"].([]any)

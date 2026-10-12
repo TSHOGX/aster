@@ -3,7 +3,7 @@
 A Project profile declares all direct and service reachability at creation.
 Accepted direct/DNS defaults may replace those portions at a later resume boundary;
 service routes and model host mappings remain bound to the Project. Running
-placements are never rewritten by a network reload.
+placements are never rewritten by a network policy edit.
 Direct tuples are usable by every Project process and carry no Agent authority.
 Service tuples map a synthetic destination and optional stable hostname to an
 explicit host gateway. Empty direct/service lists are supported and deny egress.

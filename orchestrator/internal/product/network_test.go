@@ -91,8 +91,9 @@ func TestReachabilityDeclarationAndProjections(t *testing.T) {
 
 func TestPlacementProjectionsWrittenOncePerEpochAndNotByChildren(t *testing.T) {
 	l, scope, f := lifecycleFixture(t)
+	fixtureEnvironment(t, l.Store, serviceProfile())
 	f.fail["projection"] = 1
-	must(t, l.EnsureActive(ctx, scope, serviceProfile()))
+	must(t, l.EnsureActive(ctx, scope, serviceProfile().Bindings()))
 	// The lost projection reply retries against the original placement instead of
 	// provisioning a second sandbox.
 	settle(t, l, scope.ProjectID)
@@ -119,7 +120,7 @@ func TestPlacementProjectionsWrittenOncePerEpochAndNotByChildren(t *testing.T) {
 	}
 	_, err = l.Store.CreateTerminal(ctx, scope, "t1", "Terminal", 24, 80)
 	must(t, err)
-	must(t, l.EnsureActive(ctx, scope, serviceProfile()))
+	must(t, l.EnsureActive(ctx, scope, serviceProfile().Bindings()))
 	if f.calls["projection"] != writes {
 		t.Fatal("child creation rewrote Project reachability")
 	}
@@ -262,7 +263,7 @@ func TestServiceAuthorityFollowsProjectIncarnationAndExpiry(t *testing.T) {
 
 func TestIdleAgentHasNoServiceAuthorityWithoutAdmittedTurn(t *testing.T) {
 	l, scope, _ := lifecycleFixture(t)
-	must(t, l.EnsureActive(ctx, scope, serviceProfile()))
+	must(t, l.EnsureActive(ctx, scope, serviceProfile().Bindings()))
 	drive(t, l, scope.ProjectID)
 	s := l.Store
 	_, err := s.CreateSession(ctx, scope, "idle", "Agent")

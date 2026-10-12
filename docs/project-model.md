@@ -1,9 +1,11 @@
 # Project model
 
 A Project is the authorization, workspace, runtime and reachability unit. It owns
-one sandbox binding and two exclusive volumes: `/workspace` for ordinary user
-files and `/runtime` for Session state and journals. Reviewed content volumes are
-shared read-only publications and do not belong to Project cleanup.
+one sandbox binding and a saved list of Volume slots. Workspace and runtime are
+required writable owned roles with saved configurable guest destinations
+(`/workspace` and `/runtime` are bootstrap defaults). Additional owned data slots may be writable or read-only.
+Reviewed shared read-only publications are referenced by slots and never deleted
+by Project cleanup. Stable slot keys, not array positions, identify resources.
 
 Project states describe provisioning, active execution, pause/resume, failure and
 deletion. Durable operations preserve original keys and revision fences across

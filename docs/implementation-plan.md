@@ -1,8 +1,10 @@
 # Navigation, scheduling and network implementation
 
-The current implementation uses one canonical schema and one measured runtime
-per installation. Format and runtime changes use a deliberate fresh installation;
-there is no migration chain, old-client adapter or retained-template catalog.
+The current implementation uses one canonical schema and host protocol contract.
+Operator-registered immutable runtime versions may coexist under that contract;
+Projects retain exact releases, mounts and artifacts. Format/protocol changes
+require an explicitly authorized fresh installation. There is no migration chain
+or old-client adapter.
 
 ## Delivered behavior
 
@@ -26,6 +28,6 @@ there is no migration chain, old-client adapter or retained-template catalog.
 
 See [conversational scheduling acceptance](conversational-scheduling-implementation.md)
 for authority, lifecycle and qualification details, and [configuration](configuration.md)
-for network reload boundaries. [Delivery](delivery.md) defines candidate checks and
-[bootstrap](bootstrap.md) defines the scoped reset procedure. The latest installed
-artifacts and checks are recorded in [fresh deployment](fresh-deployment.md).
+for database network policy boundaries. [Delivery](delivery.md) defines candidate checks and
+[bootstrap](bootstrap.md) defines the scoped reset procedure. Keep installation-specific
+artifacts and results outside the publishable repository.

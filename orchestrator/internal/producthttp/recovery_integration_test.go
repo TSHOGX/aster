@@ -4,7 +4,9 @@ package producthttp
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"harness-platform/orchestrator/internal/producttest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	sdk "github.com/TSHOGX/khora/pkg/khora"
+	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sandbox/khora"
@@ -50,11 +53,6 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 	fixture := &browserSubstrate{Backend: backend, api: api, binaries: os.Getenv("PROJECT_TEST_BIN_DIR"), initialized: map[string]bool{}, modelMode: "model-independent", loseDeleteReplies: true, destroyed: make(chan struct{}, 1)}
 	directory := t.TempDir()
 	dbPath := filepath.Join(directory, "product.db")
-	store, err := product.Open(runctx, dbPath)
-	must(t, err)
-	reader, err := sqlitex.OpenReader(runctx, dbPath, 1)
-	must(t, err)
-	defer reader.Close()
 	profile := testProfile()
 	profile.StoreID = identity.StoreID
 	profile.TemplateID = "agent-runtime"
@@ -65,7 +63,14 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 	must(t, err)
 	sharedVolume, err := api.SnapshotVolume(runctx, sharedBase.VolumeID, 8<<20)
 	must(t, err)
-	profile.PublishedMounts = []sandbox.Mount{{VolumeID: sharedVolume, Destination: "/opt/shared-assets", Access: "shared-ro"}}
+	sharedEntries := []content.Entry{{Path: "sentinel", Size: int64(len("published-shared-asset")), Digest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("published-shared-asset")))}}
+	profile.Volumes = append(profile.Volumes, product.VolumePlan{Key: "shared", Role: "shared_assets", Destination: "/opt/shared-assets", Storage: "shared_readonly", Access: "read_only", CapacityBytes: 8 << 20, Source: &product.VolumeSource{Reference: product.ArtifactReference{ID: "shared_assets", Version: "v1", Digest: content.Digest(sharedEntries)}, VolumeID: sharedVolume, MinimumBytes: 8 << 20}})
+
+	store, profile, err := producttest.OpenWithRuntime(runctx, dbPath, profile, backend, map[string][]content.Entry{content.Digest(sharedEntries): sharedEntries}, content.Publication{StoreID: identity.StoreID, Purpose: "assets", RevisionDigest: content.Digest(sharedEntries), Capacity: 8 << 20, Entries: sharedEntries, StagingVolumeID: sharedBase.VolumeID, DerivedVolumeID: sharedVolume, PublishedVolumeID: sharedVolume})
+	must(t, err)
+	reader, err := sqlitex.OpenReader(runctx, dbPath, 1)
+	must(t, err)
+	defer reader.Close()
 
 	scope := product.Scope{Actor: "owner", ProjectID: "recovery"}
 	_, err = store.CreateProject(runctx, scope.Actor, scope.ProjectID, "Recovery")
@@ -81,10 +86,10 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 	var stop context.CancelFunc
 	var done chan struct{}
 	start := func() {
-		lifecycle = &product.Lifecycle{Store: store, Backend: fixture, MaxProjects: 2}
-		agents = product.NewAgents(runctx, store, lifecycle, backend, profile, 16)
-		terminals = product.NewTerminals(runctx, store, lifecycle, backend, profile, 16)
-		files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Profile: profile}
+		lifecycle = &product.Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: store, Backend: fixture, MaxProjects: 2}
+		agents = product.NewAgents(runctx, store, lifecycle, backend, profile.Bindings(), 16)
+		terminals = product.NewTerminals(runctx, store, lifecycle, backend, profile.Bindings(), 16)
+		files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Bindings: profile.Bindings()}
 		shares = &product.Shares{Store: store, Files: files, Directory: filepath.Join(directory, "shares")}
 		captures := &product.Captures{Store: store, Backend: backend, Directory: filepath.Join(directory, "captures")}
 		lifecycle.Artifacts = &product.Artifacts{Store: store, Captures: captures, Shares: shares}
@@ -167,7 +172,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 	})
 	t.Run("application-restart-adopts-original-runners-and-PTY", func(t *testing.T) {
 		shutdown()
-		store, err = product.Open(runctx, dbPath)
+		store, err = producttest.Open(runctx, dbPath)
 		must(t, err)
 		start()
 		await(t, "PTY adoption", func() bool {
@@ -208,7 +213,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		view.Close()
 		shutdown()
 		time.Sleep(2 * time.Second)
-		store, err = product.Open(runctx, dbPath)
+		store, err = producttest.Open(runctx, dbPath)
 		must(t, err)
 		start()
 		await(t, "retained terminal exit evidence", func() bool {
@@ -233,7 +238,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		})
 		shutdown()
 		time.Sleep(2500 * time.Millisecond)
-		store, err = product.Open(runctx, dbPath)
+		store, err = producttest.Open(runctx, dbPath)
 		must(t, err)
 		start()
 		await(t, "durable replay after owner disconnect", func() bool {
@@ -265,7 +270,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		await(t, "escaped descendant started", func() bool {
 			return strings.Contains(shell(t, "test -s /workspace/escaped-fault.pid && echo ready || true"), "ready")
 		})
-		shell(t, "/usr/local/bin/runtime-fixture kill-worker fault")
+		shell(t, "/tmp/runtime-fixture kill-worker fault")
 		await(t, "journal and guardian cleanup", func() bool {
 			var recovery, cleanup string
 			e := reader.QueryRow(`SELECT recovery_state,cleanup_state FROM agent_incarnations WHERE session_id='fault' ORDER BY created_at DESC LIMIT 1`).Scan(&recovery, &cleanup)
@@ -330,7 +335,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		})
 		var token string
 		must(t, reader.QueryRow(`SELECT input_token FROM input_deliveries WHERE id=?`, receipt.DeliveryID).Scan(&token))
-		shell(t, "/usr/local/bin/runtime-fixture kill-worker steer-crash")
+		shell(t, "/tmp/runtime-fixture kill-worker steer-crash")
 		await(t, "uncertain Steer journal recovery", func() bool {
 			var recovery, cleanup, state string
 			e := reader.QueryRow(`SELECT recovery_state,cleanup_state FROM agent_incarnations WHERE id=?`, run.IncarnationID).Scan(&recovery, &cleanup)
@@ -368,7 +373,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		agents.Close()
 		terminals.Close()
 		must(t, store.Close())
-		store, err = product.Open(runctx, dbPath)
+		store, err = producttest.Open(runctx, dbPath)
 		must(t, err)
 		start()
 
@@ -390,17 +395,17 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		<-done
 		var incarnation string
 		must(t, reader.QueryRow(`SELECT id FROM agent_incarnations WHERE session_id='fault' AND state='running'`).Scan(&incarnation))
-		shell(t, "/usr/local/bin/runtime-fixture kill-worker fault")
+		shell(t, "/tmp/runtime-fixture kill-worker fault")
 		await(t, "fault worker ended", func() bool {
 			var state string
 			e := reader.QueryRow(`SELECT state FROM agent_incarnations WHERE id=?`, incarnation).Scan(&state)
 			return e == nil && state == "exited"
 		})
-		shell(t, "/usr/local/bin/runtime-fixture corrupt-journal fault "+incarnation)
+		shell(t, "/tmp/runtime-fixture corrupt-journal /runtime fault "+incarnation)
 		agents.Close()
 		terminals.Close()
 		must(t, store.Close())
-		store, err = product.Open(runctx, dbPath)
+		store, err = producttest.Open(runctx, dbPath)
 		must(t, err)
 		start()
 		await(t, "explicit failed journal recovery", func() bool {
@@ -416,7 +421,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 			}
 		}
 		turn(t, "beta", "during-recovery-failure", "sibling remains independent of journal failure")
-		shell(t, "/usr/local/bin/runtime-fixture restore-journal fault "+incarnation)
+		shell(t, "/tmp/runtime-fixture restore-journal /runtime fault "+incarnation)
 		child, err := store.Session(runctx, scope, "fault")
 		must(t, err)
 		must(t, store.RetryRecovery(runctx, scope, "fault", child.Revision))
@@ -569,7 +574,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 			t.Fatal("sandbox destroy effect not observed")
 		}
 		shutdown()
-		store, err = product.Open(runctx, dbPath)
+		store, err = producttest.Open(runctx, dbPath)
 		must(t, err)
 		retained, err := store.Resources(runctx, scope)
 		must(t, err)
@@ -585,7 +590,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		volumes, err := api.Volumes(runctx)
 		must(t, err)
 		for _, volume := range volumes {
-			if volume.VolumeID == r.WorkspaceVolume || volume.VolumeID == r.RuntimeVolume {
+			if volume.VolumeID == r.VolumeForRole("workspace") || volume.VolumeID == r.VolumeForRole("runtime") {
 				t.Fatal("owned volume still listed after completed deletion", volume.VolumeID)
 			}
 		}

@@ -6,6 +6,27 @@ on navigation, URL parsing, and browser history. Mixed URLs are replaced with
 their canonical form. Project workspace preferences restore only Project views;
 leaving a Project checks unsaved files before releasing its view and subscriptions.
 
+The account menu opens Settings without replacing the selected Project, Session,
+draft or file editor. Its desktop dialog becomes a full-screen mobile panel.
+Appearance supports system/light/dark mode and neutral/blue/green/violet accents;
+semantic status colors retain their meaning. The system mode follows live OS
+changes. Profile and security forms edit the display name, change the password
+or sign out all sessions. Closing with typed passwords or an unsaved display name
+requires a discard decision. Logout uses the existing unsaved-file guard and
+leaves autonomous work running.
+
+Preference/profile writes carry the current server revision. Appearance changes
+preview immediately, with pending, saved or unsaved state. A failed or conflicting
+save retains the changed fields and offers retry/reapply or revert; unrelated
+server changes remain intact. The confirmed preference cache is keyed and bound
+to immutable account identity. The Go edge replaces incoming page-identity metadata
+with the account verified from the current cookie; the server-rendered page uses
+that identity to select the first-paint cache. An expired cookie cannot select a
+previous account's cache. Logout clears the active binding; anonymous/public
+pages use system/neutral defaults. Local tabs synchronize through storage events,
+and a returning visible page refreshes server preferences. Password fields never
+enter browser storage.
+
 Received conversation details use `/?view=shared&conversation=<session-id>`.
 Selection is reflected in browser history. A grant-specific detail read validates
 eligibility before messages or SSE start, independently of list pagination.
@@ -215,10 +236,10 @@ Search, inbox, conversation grants and frozen public sharing remain supported;
 read-only conversation sharing does not grant live Files or PTY access. Browser
 auth expiry returns to sign-in and tears down user-scoped state/connections.
 
-The UI supports browser-selected English/Chinese, light/dark themes, keyboard
+The UI supports browser-selected English/Chinese, system/light/dark themes, keyboard
 menus/dialogs and resizable separators. Narrow screens use navigation and file
 workspaces as drawers/overlays. Branding uses `NEXT_PUBLIC_PROJECT_BRAND_NAME`;
-theme preference uses `project-theme`. Next.js only serves pages/assets: the Go
+appearance preferences belong to the signed-in account. Next.js only serves pages/assets: the Go
 edge retains all HTTP/SSE/WebSocket authority, datastore and runtime ownership.
 
 Run `npm run test:ui` for deterministic Chromium interactions and screenshots
@@ -315,3 +336,54 @@ preview/excerpt bounds, with a notice; markup and links remain literal. Selectio
 original-file download and model-based answer copying stay available. See
 [Markdown qualification](performance.md#bounded-markdown-rendering) for the limits
 and the measured large-file layout cost.
+
+Administration includes independent Groups and Policies pages. Groups expose
+revisioned metadata, complete policy bindings, paginated membership editing, and
+a deletion preview showing effective grant losses and resource entitlement changes.
+Confirmed populated-group deletion sends the preview dependency fingerprint; a
+stale preview must be refreshed. No replacement membership is assigned silently.
+Policies edit only the closed action registry with unset/allow/deny selectors.
+
+User details include effective access with group/policy provenance and account/role
+constraints. Editors retain the original request body after an uncertain response,
+replay the durable receipt, and preserve changed fields when explicitly reloading
+stale data. Unsaved edits guard navigation across admin screens and the workbench.
+
+Workbench capabilities also gate Project creation/rename/resume/restart, Agent
+submission/release/steer, and Terminal start/attachment. Denied Agent submission
+retains editable drafts. Terminal capability loss removes the live view while
+retaining its owned termination/delete controls. Pause, stop, cancel, delete and
+recovery remain available through their separate reduction authority.
+
+
+## Advanced configuration and shared directories
+
+Account settings lazily loads configuration when Advanced / Developer is opened.
+Shared system pickers expose inherited defaults, explicit choices and unavailable saved
+selections. Existing projects have a separate network-change action; choosing a
+preference does not change them. English and Chinese strings cover these flows.
+
+`account-advanced.tsx` coordinates preferences and project configuration;
+`shared-directory-browser.tsx` owns mount-scoped navigation and file operations.
+Listings are keyed by project, mount, path and cursor, so a late or failed request
+cannot expose stale rows in a different directory. Text editing is limited to
+bounded valid UTF-8; other files remain downloadable. Shared uploads explain
+replacement, edits require a discard decision, and uncertain file operations
+require a refreshed view before a new mutation. This editor does not provide
+cross-user merge or compare-and-swap semantics for concurrent file changes.
+
+`web/select-picker.tsx` and `web/picker-popover.ts` provide the shared dropdown
+behavior for scheduling, administration and account settings. `web/select.tsx`
+adapts form options to the same component while retaining a hidden native control
+for form serialization and constraint validation. Visible menus use system
+surfaces, compact selection marks, keyboard navigation, typeahead, disabled options
+and focus restoration. Popovers stay within the viewport and inside an enclosing
+modal's top layer. Checkbox and disclosure controls retain native behavior.
+
+The administration shell lives in the root layout. Route changes preserve account,
+appearance and navigation state while updating the selected content; they do not
+remount the shell or repeat its initial authentication load. Navigation and action
+selection use quiet surface changes without underlines. Responsive spacing and
+wrapping keep controls usable at narrow widths. The deterministic browser suite covers saved
+overrides, single-option network repair, confirmed-write refresh recovery,
+shared-edit discard protection and stale listings.

@@ -14,7 +14,7 @@ import (
 // unbounded application memory or hold a write slot open indefinitely.
 const (
 	socketReadLimit   = 1 << 20
-	socketWriteWait   = 10 * time.Second
+	socketWriteWait   = authorityWriteWait
 	socketPingPeriod  = 30 * time.Second
 	socketPongWait    = 70 * time.Second
 	socketReauthorize = time.Second
@@ -121,7 +121,7 @@ func (s *Server) readSocket(r *http.Request, conn *websocket.Conn, observer *pro
 			case "resize":
 				_ = s.Terminals.ObserverResize(r.Context(), scope, observer, message.Rows, message.Cols)
 			case "claim_input":
-				_ = s.Terminals.ClaimInput(observer)
+				_ = s.Terminals.ClaimInput(r.Context(), observer)
 			case "eof":
 				_ = s.Terminals.ObserverEOF(r.Context(), observer)
 			case "interrupt":
@@ -148,6 +148,19 @@ func (s *Server) writeSocket(r *http.Request, conn *websocket.Conn, observer *pr
 	// must close a live subscription, not merely refuse the next new one.
 	recheck := time.NewTicker(socketReauthorize)
 	defer recheck.Stop()
+	invalidations := identityInvalidations(s.Auth)
+	authorized := func() bool {
+		actor, e := s.Auth.Actor(r)
+		if e != nil || actor != scope.Actor {
+			s.closeSocket(conn, websocket.ClosePolicyViolation, "login no longer valid")
+			return false
+		}
+		if err := s.Store.CanUseTerminal(r.Context(), scope, r.PathValue("terminal")); err != nil {
+			s.closeSocket(conn, websocket.ClosePolicyViolation, closeReason(err))
+			return false
+		}
+		return true
+	}
 	for {
 		select {
 		case <-done:
@@ -159,16 +172,16 @@ func (s *Server) writeSocket(r *http.Request, conn *websocket.Conn, observer *pr
 			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
+		case <-invalidations:
+			invalidations = identityInvalidations(s.Auth)
+			if !authorized() {
+				return
+			}
 		case <-recheck.C:
-			actor, e := s.Auth.Actor(r)
-			if e != nil || actor != scope.Actor {
-				s.closeSocket(conn, websocket.ClosePolicyViolation, "login no longer valid")
+			if !authorized() {
 				return
 			}
-			if _, err := s.Store.Project(r.Context(), scope); err != nil {
-				s.closeSocket(conn, websocket.ClosePolicyViolation, closeReason(err))
-				return
-			}
+
 		case frame, ok := <-observer.Frames():
 			if !ok {
 				// The attachment ended: the process exited, the placement was lost, or

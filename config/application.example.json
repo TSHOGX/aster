@@ -10,7 +10,8 @@
   "template": {
     "id": "agent-runtime",
     "manifest": "../releases/agent-runtime.manifest.json",
-    "digest": "REPLACE_WITH_RUNTIME_RELEASE_DIGEST"
+    "digest": "REPLACE_WITH_RUNTIME_RELEASE_DIGEST",
+    "version": "v1"
   },
   "project": {
     "cpu_millis": 2000,
@@ -20,7 +21,6 @@
     "runtime_bytes": 536870912,
     "reachability": {}
   },
-  "auth": { "users_file": "auth-users.yaml" },
   "content": {
     "agent_config": "agent-config.example",
     "shared_assets": "shared-assets",
@@ -34,12 +34,14 @@
     "terminals_per_project": 8,
     "idle_after": "5m",
     "idle_agent_after": "1m",
-    "interval": "250ms"
+    "interval": "250ms",
+    "max_mounts_per_project": 8
   },
   "notifications": {
     "agent_run_outcome": false,
     "conversation_shared": true,
     "operator_directed": true,
     "operator_broadcast": true
-  }
+  },
+  "admin_frontend": "http://127.0.0.1:3001"
 }

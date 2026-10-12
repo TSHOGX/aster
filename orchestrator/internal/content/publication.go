@@ -62,7 +62,7 @@ func (p Publisher) Publish(ctx context.Context, purpose string, revision Revisio
 	if p.Repository == nil || p.Backend == nil {
 		return "", fmt.Errorf("content publication repository and engine backend required")
 	}
-	if purpose != "assets" && purpose != "config" {
+	if !ValidPurpose(purpose) {
 		return "", fmt.Errorf("unsupported content purpose %q", purpose)
 	}
 	if !ValidDigest(revision.Digest) || len(revision.Entries) == 0 {
@@ -78,11 +78,6 @@ func (p Publisher) Publish(ctx context.Context, purpose string, revision Revisio
 	identity, err := p.Backend.Identity(ctx)
 	if err != nil {
 		return "", err
-	}
-	if volume, found, err := p.Repository.FindPublishedContent(ctx, identity.StoreID, purpose, revision.Digest); err != nil {
-		return "", err
-	} else if found {
-		return volume, nil
 	}
 	record, err := p.Repository.ClaimContentPublication(ctx, Publication{StoreID: identity.StoreID, Purpose: purpose, RevisionDigest: revision.Digest, Capacity: capacity, Entries: revision.Entries})
 	if err != nil {
@@ -214,7 +209,24 @@ func (p Publisher) read(entry Entry) ([]byte, error) {
 
 // verify reconstructs the revision from the engine's own view of the volume. It
 // walks listings and reads bytes rather than trusting what publication wrote.
+type VolumeVerifier interface {
+	sandbox.VolumeListings
+	sandbox.VolumeReads
+}
+type volumeVerifier struct {
+	Backend VolumeVerifier
+	entries int
+	bytes   int64
+}
+
 func (p Publisher) verify(ctx context.Context, reference sandbox.VolumeReference, expected string) error {
+	return VerifyVolume(ctx, p.Backend, reference, expected)
+}
+
+// VerifyVolume reuses bounded publication verification before an owned seed copy
+// becomes visible. A ready, potentially user-modified volume is never reverified.
+func VerifyVolume(ctx context.Context, backend VolumeVerifier, reference sandbox.VolumeReference, expected string) error {
+	p := volumeVerifier{Backend: backend}
 	observed, err := p.walk(ctx, reference, "", 0)
 	if err != nil {
 		return err
@@ -225,9 +237,9 @@ func (p Publisher) verify(ctx context.Context, reference sandbox.VolumeReference
 	return nil
 }
 
-func (p Publisher) walk(ctx context.Context, reference sandbox.VolumeReference, directory string, depth int) ([]Entry, error) {
+func (p *volumeVerifier) walk(ctx context.Context, reference sandbox.VolumeReference, directory string, depth int) ([]Entry, error) {
 	if depth > 16 {
-		return nil, fmt.Errorf("published content nests deeper than 16 directories")
+		return nil, fmt.Errorf("%w: published content nests deeper than 16 directories", ErrContentRefused)
 	}
 	listing, err := p.Backend.ListVolume(ctx, reference, directory)
 	if err != nil {
@@ -237,6 +249,10 @@ func (p Publisher) walk(ctx context.Context, reference sandbox.VolumeReference, 
 	for _, item := range listing {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		p.entries++
+		if p.entries > MaxEntries {
+			return nil, fmt.Errorf("%w: published content exceeds %d entries", ErrContentRefused, MaxEntries)
 		}
 		name := item.Name
 		if strings.ContainsAny(name, "/\x00") || name == "" || name == "." || name == ".." {
@@ -252,6 +268,10 @@ func (p Publisher) walk(ctx context.Context, reference sandbox.VolumeReference, 
 			}
 			result = append(result, children...)
 		case "file":
+			if item.Size < 0 || item.Size > MaxTotalBytes-p.bytes {
+				return nil, fmt.Errorf("%w: published content exceeds %d bytes", ErrContentRefused, MaxTotalBytes)
+			}
+			p.bytes += item.Size
 			digest, err := p.readVolumeDigest(ctx, reference, full, item.Size)
 			if err != nil {
 				return nil, err
@@ -260,14 +280,11 @@ func (p Publisher) walk(ctx context.Context, reference sandbox.VolumeReference, 
 		default:
 			return nil, fmt.Errorf("%w: published content entry %q has unsupported type %q", ErrContentRefused, full, item.Type)
 		}
-		if len(result) > MaxEntries {
-			return nil, fmt.Errorf("published content exceeds %d entries", MaxEntries)
-		}
 	}
 	return result, nil
 }
 
-func (p Publisher) readVolumeDigest(ctx context.Context, reference sandbox.VolumeReference, name string, size int64) (string, error) {
+func (p volumeVerifier) readVolumeDigest(ctx context.Context, reference sandbox.VolumeReference, name string, size int64) (string, error) {
 	if size < 0 || size > MaxFileBytes {
 		return "", fmt.Errorf("%w: published content file %q has unsupported size %d", ErrContentRefused, name, size)
 	}
@@ -312,4 +329,10 @@ func terminal(err error) bool { return errors.Is(err, ErrContentRefused) }
 
 func contextWithoutCancelTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+}
+
+// ValidPurpose separates system publications from operator-authored builtin
+// content while sharing the same immutable transport and accounting.
+func ValidPurpose(purpose string) bool {
+	return purpose == "assets" || purpose == "config" || purpose == "builtin"
 }

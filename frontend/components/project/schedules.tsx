@@ -1,4 +1,5 @@
 "use client";
+import { useCapabilities } from "./capability-provider";
 import { scheduleWrite, scheduleStateLabels } from "@/lib/schedule-recurrence";
 import {
   useEffect,
@@ -67,10 +68,13 @@ export function Schedules({
   runRequests: RefObject<Map<string, string>>;
   listMemoryRef: RefObject<{ key: string; top: number }>;
 }) {
+  const can = useCapabilities();
+  const canManage = can("schedules.manage");
   const tr = useT(),
     locale = useLocale();
   const [syncHealth, setSyncHealth] = useState<WatchHealth>("connecting"),
     [notice, setNotice] = useState("");
+  const syncHealthRef = useRef<WatchHealth>("connecting");
   const [query, setQuery] = useState(nav.scheduleQuery || ""),
     [composing, setComposing] = useState(false);
   const [detail, setDetail] = useState<{
@@ -191,7 +195,10 @@ export function Schedules({
           relevant && (reset || event.resource_kind.startsWith("run."));
         if (!timer) timer = setTimeout(flush, 200);
       },
-      setSyncHealth,
+      (health) => {
+        syncHealthRef.current = health;
+        setSyncHealth(health);
+      },
     );
     return () => {
       unsubscribe();
@@ -203,6 +210,9 @@ export function Schedules({
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout>;
     const retry = () => {
+      // Transport events can precede React effect cleanup, especially during
+      // rotation. Never poll a connection that has already recovered.
+      if (syncHealthRef.current === "live" || syncHealthRef.current === "closed") return;
       if (!document.hidden) {
         void list.controller.refresh();
         setDetailRefresh((n) => n + 1);
@@ -316,6 +326,7 @@ export function Schedules({
             <h1>{tr("Scheduled")}</h1>
             <button
               className="primary"
+              disabled={!canManage}
               onClick={() =>
                 onNavigate({
                   ...nav,
@@ -502,7 +513,7 @@ export function Schedules({
                       items={[
                         {
                           label: tr("Edit task"),
-                          disabled: !["active", "paused"].includes(s.state),
+                          disabled: !canManage || !["active", "paused"].includes(s.state),
                           action: () =>
                             onNavigate({
                               ...nav,
@@ -670,6 +681,8 @@ function SelectedSchedule({
   onDeleted: () => void;
   onOpen: (p: string, s: string) => void;
 }) {
+  const can = useCapabilities();
+  const canManage = can("schedules.manage"), canRun = canManage && can("agents.run");
   const tr = useT(),
     locale = useLocale(),
     ask = useDialog();
@@ -817,7 +830,7 @@ function SelectedSchedule({
             <div className="row-actions">
               <button
                 disabled={
-                  busy || !["active", "paused"].includes(schedule.state)
+                  busy || !canManage || !["active", "paused"].includes(schedule.state)
                 }
                 onClick={onEdit}
               >
@@ -826,7 +839,7 @@ function SelectedSchedule({
               </button>
               <button
                 disabled={
-                  busy || !["active", "paused"].includes(schedule.state)
+                  busy || (schedule.state !== "active" && !canManage) || !["active", "paused"].includes(schedule.state)
                 }
                 onClick={() => void toggle()}
               >
@@ -966,7 +979,7 @@ function SelectedSchedule({
             <button
               className="primary"
               disabled={
-                busy ||
+                busy || !canRun ||
                 (schedule.state !== "active" &&
                   !runRequests.current.has(path)) ||
                 targetError

@@ -9,8 +9,10 @@ import (
 )
 
 func profileConfiguration(actual sandbox.Configuration, p Profile, r Resources) bool {
-	mounts := append([]sandbox.Mount{}, p.PublishedMounts...)
-	mounts = append(mounts, sandbox.Mount{VolumeID: r.WorkspaceVolume, Destination: "/workspace", Access: "exclusive"}, sandbox.Mount{VolumeID: r.RuntimeVolume, Destination: "/runtime", Access: "exclusive"})
+	mounts, err := r.Mounts()
+	if err != nil {
+		return false
+	}
 	return actual.TemplateID == p.TemplateID && actual.CPUMillis == p.CPUMillis && actual.MemoryBytes == p.MemoryBytes && actual.DiskCapacityBytes == p.DiskBytes && sandbox.SameConfiguration(actual, p.Reachability.Declaration(), mounts)
 }
 
@@ -32,6 +34,11 @@ func (l *Lifecycle) prepareNetwork(ctx context.Context, o operation, r Resources
 		return ErrConflict
 	}
 	target := policy.Apply(r.Profile)
+	if request.Volumes != nil {
+		target.Volumes = request.Volumes
+	}
+	targetResources := r
+	targetResources.Profile = target
 	if err = target.Validate(); err != nil {
 		return err
 	}
@@ -47,7 +54,7 @@ func (l *Lifecycle) prepareNetwork(ctx context.Context, o operation, r Resources
 		return ErrConflict
 	}
 	sourceMatches := profileConfiguration(observed, r.Profile, r)
-	targetMatches := profileConfiguration(observed, target, r)
+	targetMatches := profileConfiguration(observed, target, targetResources)
 	if observed.Reference != ref {
 		// Accept an uncertain successful PATCH only when it changed the complete
 		// source declaration into exactly the recorded target on this placement.
@@ -58,11 +65,15 @@ func (l *Lifecycle) prepareNetwork(ctx context.Context, o operation, r Resources
 		if !sourceMatches {
 			return ErrConflict
 		}
-		observed, err = l.Backend.UpdateNetwork(ctx, ref, target.Reachability.Declaration())
+		mounts, e := targetResources.Mounts()
+		if e != nil {
+			return e
+		}
+		observed, err = l.Backend.UpdateConfiguration(ctx, ref, target.Reachability.Declaration(), mounts)
 		if err != nil {
 			return err
 		}
-		if !validPlacement(observed) || !profileConfiguration(observed, target, r) {
+		if !validPlacement(observed) || !profileConfiguration(observed, target, targetResources) {
 			return ErrConflict
 		}
 	}

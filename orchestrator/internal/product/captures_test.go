@@ -15,7 +15,7 @@ import (
 
 type captureReader struct{ bytes string }
 
-func (r captureReader) ReadNativeCapture(context.Context, sandbox.Reference, string) (io.ReadCloser, error) {
+func (r captureReader) ReadNativeCapture(context.Context, sandbox.Reference, string, string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader(r.bytes)), nil
 }
 func TestCaptureExportReleasesGuestActivityOnlyAfterVerifiedSync(t *testing.T) {
@@ -65,7 +65,7 @@ type selectiveCaptureReader struct {
 	content string
 }
 
-func (r selectiveCaptureReader) ReadNativeCapture(ctx context.Context, _ sandbox.Reference, path string) (io.ReadCloser, error) {
+func (r selectiveCaptureReader) ReadNativeCapture(ctx context.Context, _ sandbox.Reference, _ string, path string) (io.ReadCloser, error) {
 	if strings.Contains(path, "/agent/") {
 		close(r.blocked)
 		select {

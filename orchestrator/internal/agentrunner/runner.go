@@ -24,10 +24,10 @@ import (
 )
 
 type Config struct {
-	Session, Incarnation, StateRoot, Workspace, PiBinary string
-	PiArgs                                               []string
-	Environment                                          []string
-	JournalBytes                                         int64
+	Session, Incarnation, StateRoot, Workspace, ConfigRoot, SharedRoot, PiBinary string
+	PiArgs                                                                       []string
+	Environment                                                                  []string
+	JournalBytes                                                                 int64
 	// ServiceCredential is this incarnation's application token for the Project's
 	// declared service audience. It is written into Pi's authored provider
 	// configuration before Pi starts, so no native command carries a secret and no
@@ -102,7 +102,7 @@ func (r *Runner) response(f agentwire.Frame) {
 }
 
 func Run(ctx context.Context, c Config, input io.Reader, output, diagnostics io.Writer) error {
-	if !validIdentity(c.Session) || !validIdentity(c.Incarnation) || !filepath.IsAbs(c.StateRoot) || !filepath.IsAbs(c.Workspace) || c.PiBinary == "" {
+	if !validIdentity(c.Session) || !validIdentity(c.Incarnation) || !filepath.IsAbs(c.StateRoot) || !filepath.IsAbs(c.Workspace) || !filepath.IsAbs(c.ConfigRoot) || !filepath.IsAbs(c.SharedRoot) || c.PiBinary == "" {
 		return errors.New("invalid runner configuration")
 	}
 	if c.JournalBytes == 0 {
@@ -128,7 +128,7 @@ func Run(ctx context.Context, c Config, input io.Reader, output, diagnostics io.
 	if err = becomeSubreaper(); err != nil {
 		return err
 	}
-	if err = materializeConfig("/opt/agent-config/pi", root); err != nil {
+	if err = materializeConfig(filepath.Join(c.ConfigRoot, "pi"), root); err != nil {
 		return err
 	}
 	if err = materializeCredential(root, c.ServiceCredential); err != nil {
@@ -142,15 +142,15 @@ func Run(ctx context.Context, c Config, input io.Reader, output, diagnostics io.
 	args := c.PiArgs
 	if args == nil {
 		args = []string{"--mode", "rpc", "--session", nativeFile, "--session-dir", nativeRoot, "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--append-system-prompt", "/usr/local/share/project-runtime/system.md"}
-		for _, contextFile := range []string{"/opt/shared-assets/AGENTS.md", "/opt/agent-config/pi/APPEND_SYSTEM.md"} {
+		for _, contextFile := range []string{filepath.Join(c.SharedRoot, "AGENTS.md"), filepath.Join(c.ConfigRoot, "pi/APPEND_SYSTEM.md")} {
 			if info, e := os.Stat(contextFile); e == nil && info.Mode().IsRegular() {
 				args = append(args, "--append-system-prompt", contextFile)
 			} else if e != nil && !errors.Is(e, os.ErrNotExist) {
 				return e
 			}
 		}
-		if info, e := os.Stat("/opt/shared-assets/skills"); e == nil && info.IsDir() {
-			args = append(args, "--skill", "/opt/shared-assets/skills")
+		if info, e := os.Stat(filepath.Join(c.SharedRoot, "skills")); e == nil && info.IsDir() {
+			args = append(args, "--skill", filepath.Join(c.SharedRoot, "skills"))
 		} else if e != nil && !errors.Is(e, os.ErrNotExist) {
 			return e
 		}

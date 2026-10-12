@@ -25,16 +25,17 @@ const MaxWorkspaceReaders = 16
 const MaxCapturedBytes int64 = 512 << 20
 
 type readerCarrier struct {
-	scope   Scope
-	ref     sandbox.ProcessReference
-	ctx     context.Context
-	cancel  context.CancelFunc
-	ready   chan struct{}
-	client  *workspacereader.Client
-	err     error
-	uses    int
-	listing bool
-	used    time.Time
+	workspace string
+	scope     Scope
+	ref       sandbox.ProcessReference
+	ctx       context.Context
+	cancel    context.CancelFunc
+	ready     chan struct{}
+	client    *workspacereader.Client
+	err       error
+	uses      int
+	listing   bool
+	used      time.Time
 }
 
 // WorkspaceReader owns read-only helper lifetimes and immutable capture leases.
@@ -170,7 +171,7 @@ func (w *WorkspaceReader) start(entry *readerCarrier) {
 		return
 	}
 	entry.err = w.Store.write(attempt, func(tx *sql.Tx) error {
-		p, err := writableProject(attempt, tx, entry.scope)
+		p, err := mutableOwnedProject(attempt, tx, entry.scope)
 		if err != nil {
 			return err
 		}
@@ -198,7 +199,7 @@ func (w *WorkspaceReader) start(entry *readerCarrier) {
 	// Start's stream must outlive its first HTTP consumer. The timeout cancels
 	// startup only; a successful handshake transfers lifetime to the carrier.
 	stop := context.AfterFunc(attempt, entry.cancel)
-	stream, err := w.Backend.StartProcess(entry.ctx, sandbox.StartProcessRequest{ProcessReference: entry.ref, IdempotencyKey: entry.ref.Handle, Command: helper, Arguments: []string{"--reader"}, Directory: "/workspace"})
+	stream, err := w.Backend.StartProcess(entry.ctx, sandbox.StartProcessRequest{ProcessReference: entry.ref, IdempotencyKey: entry.ref.Handle, Command: helper, Arguments: []string{"--root", entry.workspace, "--reader"}, Directory: entry.workspace})
 	if err == nil {
 		entry.client, err = workspacereader.New(attempt, stream, func(ctx context.Context, data []byte) error { return w.Backend.SendProcessInput(ctx, entry.ref, data) })
 	}
@@ -286,7 +287,7 @@ func (w *WorkspaceReader) acquire(ctx context.Context, scope Scope, list bool) (
 			return nil, nil, nil, ErrCapacity
 		}
 		lifetime, cancel := context.WithCancel(context.Background())
-		entry = &readerCarrier{scope: scope, ref: sandbox.ProcessReference{StoreID: current.Reference.StoreID, SandboxID: current.Reference.SandboxID, Epoch: current.Reference.Epoch, Handle: "reader-" + uuid.NewString()}, ctx: lifetime, cancel: cancel, ready: make(chan struct{}), used: time.Now()}
+		entry = &readerCarrier{scope: scope, workspace: current.Profile.RolePath("workspace"), ref: sandbox.ProcessReference{StoreID: current.Reference.StoreID, SandboxID: current.Reference.SandboxID, Epoch: current.Reference.Epoch, Handle: "reader-" + uuid.NewString()}, ctx: lifetime, cancel: cancel, ready: make(chan struct{}), used: time.Now()}
 		w.entries[scope.ProjectID] = entry
 		w.group.Add(1)
 		go w.start(entry)
@@ -330,6 +331,14 @@ func (w *WorkspaceReader) acquire(ctx context.Context, scope Scope, list bool) (
 		release()
 		return nil, nil, nil, entry.err
 	}
+	action := ActionFilesRead
+	if list {
+		action = ActionFilesList
+	}
+	if _, err := projectAction(requestCtx, w.Store.reader, scope, action); err != nil {
+		release()
+		return nil, nil, nil, err
+	}
 	transferred = true
 	return entry, requestCtx, release, nil
 }
@@ -353,6 +362,9 @@ type workspaceCursor struct {
 func (w *WorkspaceReader) List(ctx context.Context, scope Scope, query projectfiles.DirectoryQuery) (projectfiles.Page, error) {
 	if query.Validate() != nil {
 		return projectfiles.Page{}, ErrInvalid
+	}
+	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesList); err != nil {
+		return projectfiles.Page{}, err
 	}
 	path, cursor, limit := query.Path, query.Cursor, query.Limit
 	r, readctx, _, done, paused, err := w.pausedVolume(ctx, scope)
@@ -397,6 +409,9 @@ func (w *WorkspaceReader) List(ctx context.Context, scope Scope, query projectfi
 		return page, readerError(err)
 	}
 	if err = w.validate(ctx, entry); err != nil {
+		return projectfiles.Page{}, err
+	}
+	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesList); err != nil {
 		return projectfiles.Page{}, err
 	}
 	if page.Next != "" {
@@ -466,6 +481,9 @@ func (w *WorkspaceReader) CaptureLimited(ctx context.Context, scope Scope, path 
 	if projectfiles.Path(path, false) != nil {
 		return nil, ErrInvalid
 	}
+	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesRead); err != nil {
+		return nil, err
+	}
 	r, readctx, unlock, done, paused, err := w.pausedVolume(ctx, scope)
 	if paused {
 		if err != nil {
@@ -503,6 +521,9 @@ func (w *WorkspaceReader) CaptureLimited(ctx context.Context, scope Scope, path 
 		case "metadata":
 			if metadata != nil || frame.Metadata == nil || frame.Metadata.Size < 0 || frame.Metadata.Size > projectfiles.MaxTransfer {
 				return ErrInvalid
+			}
+			if err := admitTransfer(ctx, w.Store.reader, scope.Actor, frame.Metadata.Size); err != nil {
+				return err
 			}
 			if frame.Metadata.Size > maxBytes {
 				return ErrPreviewSourceTooLarge
@@ -547,6 +568,9 @@ func (w *WorkspaceReader) CaptureLimited(ctx context.Context, scope Scope, path 
 		return nil, ErrInvalid
 	}
 	if err = w.validate(ctx, entry); err != nil {
+		return nil, err
+	}
+	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesRead); err != nil {
 		return nil, err
 	}
 	// Reopen the unlinked inode read-only before handing it to HTTP. No pathname

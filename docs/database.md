@@ -1,7 +1,7 @@
 # Product database
 
 The canonical SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
-The current fresh lineage has schema version 4. Its exact compiled DDL
+The current fresh lineage has schema version 6. Its exact compiled DDL
 fingerprint is returned by `product.SchemaIdentity`; release manifests must use
 that measured value.
 `product.Open` initializes that schema atomically on a new database
@@ -15,8 +15,14 @@ Application startup validates pending activation against the measured executable
 through a read-only connection under the same lock. Only the selected replacement
 can acquire authority; a rejected candidate cannot change schema or ownership.
 One application owns all writes; operator control commands use that owner.
-Credentials are an independently managed atomic YAML registry, not a second
-product database.
+Accounts, credential hashes, session revisions, group membership and resource
+policy seeds belong to this same database. First-admin creation and all bootstrap
+seed records commit together; audit failure rolls the entire initialization back.
+`audit_events` is the common redacted audit surface. `admin_receipts` binds each
+actor/request ID to an action, target and body digest with a non-secret result;
+credential plaintext is never stored there. Account edits and receipts share the
+same writer transaction. `admin_operations` and its project targets retain account
+suspension intent separately from actual remote completion.
 
 Projects, saved profiles, owned resources and lifecycle operations describe
 parent authority. Sessions and prompt rows own immutable input and queue policy;
@@ -53,8 +59,7 @@ current ingestion transactions, never by a historical backfill.
 
 For a current installation, a coordinated database/volume backup must include
 all retained application artifacts. A deliberately reset installation starts
-fresh. An incompatible queued-prompts format is discarded during the
-destructive reset documented in [queued-prompts-release.md](queued-prompts-release.md);
+fresh, following the reset procedure in [bootstrap](bootstrap.md);
 no conversion path runs automatically when a Store opens.
 
 The background display projector advances bounded session batches and serves the
@@ -81,8 +86,8 @@ interpret arbitrary transport failures as those explicit rejections.
 Derived replay retention removes bounded prefixes with revision/ordinal frontiers.
 Current details and retained change-version details are pinned. Raw records, source
 identity, native captures and uncertain command identities remain until their
-existing explicit retirement authority permits deletion. Schema 6 removes obsolete
-read command rows while retaining original helper identities for cleanup; no read
+existing explicit retirement authority permits deletion. The canonical schema
+excludes obsolete read command rows while retaining original helper identities for cleanup; no read
 is replayed through a mutation dispatcher. Product events no longer include
 per-token raw-record notifications.
 
@@ -110,9 +115,14 @@ The application's startup identity and candidate CLI therefore agree even while
 the current owner holds the exclusive Store lock.
 
 
-The release singleton records mode, compatibility/schema digests and the pinned
-gateway registration snapshot. `owner_transferable_turns` identifies running turns
-with durably applied original prompts, active Projects and running incarnations.
+The release singleton records mode, compatibility/schema/runtime-configuration
+digests and the pinned gateway registration snapshot. The runtime digest covers
+registry bindings, default environment/network and account-policy/resource
+configuration; it excludes credentials, preferences, operational traffic and usage.
+It is captured with the drain and rechecked at readiness, activation, completion
+and read-only startup under the lifetime lock. `owner_transferable_turns` identifies running turns
+with durably applied original prompts, active accounts/Projects and running
+incarnations.
 `owner_handoff_blockers` retains every other release blocker, including requests
 whose turn or grant no longer qualifies. Changes to retained prompt/turn/session,
 grant/request authority or gateway registration revoke a pending owner-ready
@@ -125,17 +135,30 @@ bypass that condition. Completion requires the selected executable. Replacing a
 pinned gateway additionally requires full quiescence before completion.
 
 File mutation rows distinguish volume authority (`volume_id`, `staging_path`)
-from guest process authority. `project_resources.storage_key` records workspace
-creation intent before remote allocation without marking compute occupied.
+from guest process authority. `project_resources` holds the saved Profile and
+compute binding. `project_volume_slots` holds each stable key, original create
+intent, observed Volume ID and reserved/creating/initializing/ready/deleting/deleted
+state. `storage_reservations` records capacity as reserved, allocated or released;
+it is accounting, not another Volume inventory. First binding reserves every owned
+slot; first upload materializes only workspace without marking compute occupied.
+Observed creation converts reservation to allocation before seed verification.
+Uncertain creation/deletion retains its charge; confirmed deletion or proven
+absence releases it. Never-dispatched slots can be abandoned without allocation.
+Shared references have no per-user owned-byte charge and survive Project deletion.
+Creating/initializing/deleting slots also participate in release readiness fences.
 The canonical DDL contains the final admission triggers, indexes and blocker
 views directly. Migration-only read-command retirement state has been removed.
 
-The network-defaults singleton stores only direct rules, resolver order, content
-revision and acceptance time. A lifecycle operation records its selected target
-in durable request JSON. The `network` resume phase commits verified binding
-revision and effective profile together before advancing to `sandbox`, then
-`reachability`; admission remains closed until projection/readiness succeeds.
-An uncertain PATCH is reconciled against the whole original/target binding.
+Network policies live in `network_templates` and per-project snapshots in
+`project_configuration`. Group, administrator and user selections reference the
+catalog. The singleton `runtime_store` contains only the bootstrapped engine store
+identity; environment selection never determines which engine owns the registry.
+There are no duplicate global network or runtime configuration documents.
+
+A lifecycle operation records its selected target in durable request JSON. The
+`network` resume phase commits the verified binding revision and effective profile
+before advancing to sandbox and reachability checks. An uncertain PATCH is
+reconciled against the complete original/target binding.
 
 Scheduled metadata uses a separate owner-scoped outbox capped at 2,048 hints.
 Frontiers survive event pruning and Project/Session retirement, so disconnected
@@ -153,3 +176,87 @@ mutation results; reusing an identity with different intent conflicts. Receipts
 live until explicit resource retirement. Source Session retirement redacts their
 private result while retaining the identity/digest tombstone. Fixed-target
 retirement cancels future work; source-only retirement clears provenance.
+
+Resource-setting configuration uses `group_resource_policy` for per-dimension
+member defaults/ceilings, `account_resource_settings` for the override revision,
+and `account_resource_overrides` for explicit nonnegative requests. Missing rows
+mean inheritance; zero is an explicit zero allowance. Saved requests survive later
+ceiling reductions. Group deletion previews resolve these requests before and
+after removal, and their dependency fingerprint includes override authority.
+
+The resource-change service computes bounded affected-account configuration and
+whole-environment fit previews, checks dependency revisions on commit, and reuses
+administrative receipts/audit. The admin resource-policy/resource-settings APIs
+expose these services; `/api/me/usage` resolves the current session's own account.
+Reads use one database snapshot. Quantity fields use decimal strings on the wire,
+including overrides, source defaults/ceilings, fit issues and usage; revisions
+remain revision numbers. User override null means inheritance.
+
+Usage projections share admission's counters: allocated and outstanding reserved
+storage, occupied compute, starting/running Agent and Terminal work, active
+schedules and non-deleted Project metadata. Preview reports current overages,
+current-default fit and retained-plan conflicts separately, including exact slot
+fields. Saved-plan summaries count all conflicting Projects and include the first
+20. A preview reserves no capacity. Allocation selects database environment and
+effective user requests inside the reservation transaction; product admission
+enforces those allowances against existing reservations and the complete plan.
+The slot ledger records full declared capacities, not
+measured filesystem byte consumption or a promise of available engine capacity.
+
+Every saved Profile includes positive environment/resource revisions and an exact
+sandbox release reference matching its digest. Canonical schema constraints reject
+profiles without that provenance. Operator registry additions are immutable,
+audited and release-fenced; they do not change selected templates. Catalog edits
+carry a monotonic revision and complete document. The admin transaction checks
+revision and review dependencies, then commits the mutation, receipt and audit.
+No startup writer or file watcher substitutes another template.
+
+Platform storage accounting derives from the existing storage-reservation and
+content-publication authorities. Each publication claim reserves two capacities
+(staging plus immutable derivative), converting each to allocation when its
+engine identity is durably observed. Derived and published pointers refer to one
+object. The projection deduplicates source objects by engine store and Volume
+identity, rejects contradictory capacities and checks all sums for overflow.
+Failed/uncertain publication rows remain charged. There is no second inventory,
+copy-on-write discount, or per-Project duplicate charge for shared sources.
+
+`shares.suspended` and `conversation_grants.suspended` preserve suspension
+separately from revoked access. The account-status transaction sets these flags,
+pauses active schedules, holds unstarted queued prompts and revokes service
+grants alongside its operation/audit intent. Re-enabling the account leaves the
+flags intact. Explicit, authorized reactivation clears only the selected resource;
+public-link retries resolve their original receipt rather than reapplying a past
+reactivation after a new suspension.
+
+`projects.execution_suspended` is durable resource authority independent of account
+status. Suspension sets it atomically with the administrative intent; account
+enable cannot clear it. Explicit owner resume clears it only after all suspension
+targets have succeeded and current admission checks pass. The hold participates
+in owner-handoff configuration fencing. Pending administrative suspension blocks
+release readiness. `project_operations.state='canceled'` records interrupted
+creation/resume intent without claiming success; slot identities/reservations
+remain independent and intact. Canceled operations are outside the active lane.
+
+Administrative Project controls use `admin_operations` and its existing targets.
+Target phase, lifecycle ID and optional reviewed network revision are the small
+continuation state for stop/resume. `execution_hold_reason` distinguishes account
+suspension from an administrative pause/stop/restart. It travels with the durable
+execution hold in handoff configuration fencing. Pending Project controls block
+release readiness. The same saved-plan compute admission and lifecycle worker
+serve named administrative authority; no owner session is forged.
+
+
+## Resource catalog (schema 6)
+
+Network/environment templates and shared volumes have revisioned identities.
+`policy_resource_bindings` grants them independently of action permissions;
+`group_configuration_defaults`, `account_configuration_defaults` and
+`account_configuration_preferences` separate group inheritance, administrator
+resolution and user choice. `project_configuration` retains the selected template
+IDs and copied documents. Shared storage has its own provisioning/deletion state;
+project deletion removes bindings without deleting the shared volume. File
+operations and preview snapshots retain their mount scope.
+
+This fresh-schema lineage rejects older databases; no in-place migration is
+provided. Follow [bootstrap](bootstrap.md) and the backup procedures in
+[operations](operations.md) before changing a persistent installation.

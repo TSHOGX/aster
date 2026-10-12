@@ -93,6 +93,9 @@ func Read(root string) (Revision, error) {
 		}
 		switch mode := entry.Type(); {
 		case mode.IsDir():
+			if strings.Count(relative, "/") >= 16 {
+				return fmt.Errorf("authored content nests deeper than 16 directories")
+			}
 			entries = append(entries, Entry{Path: relative, Directory: true, Source: name})
 			return nil
 		case mode.IsRegular():

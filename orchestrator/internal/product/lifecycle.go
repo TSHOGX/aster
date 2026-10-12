@@ -19,17 +19,18 @@ var ErrPending = errors.New("project operation pending")
 var ErrCapacity = errors.New("active Project capacity exhausted")
 
 type Profile struct {
-	NetworkPolicyRevision string          `json:"network_policy_revision,omitempty"`
-	ReleaseDigest         string          `json:"release_digest,omitempty"`
-	StoreID               string          `json:"store_id"`
-	TemplateID            string          `json:"template_id"`
-	CPUMillis             int64           `json:"cpu_millis"`
-	MemoryBytes           int64           `json:"memory_bytes"`
-	DiskBytes             int64           `json:"disk_bytes"`
-	WorkspaceBytes        int64           `json:"workspace_bytes"`
-	RuntimeBytes          int64           `json:"runtime_bytes"`
-	Reachability          Reachability    `json:"reachability"`
-	PublishedMounts       []sandbox.Mount `json:"published_mounts"`
+	EnvironmentRevision   int64             `json:"environment_revision"`
+	ResourceRevision      int64             `json:"resource_revision"`
+	SandboxRelease        ArtifactReference `json:"sandbox_release"`
+	NetworkPolicyRevision string            `json:"network_policy_revision,omitempty"`
+	ReleaseDigest         string            `json:"release_digest,omitempty"`
+	StoreID               string            `json:"store_id"`
+	TemplateID            string            `json:"template_id"`
+	CPUMillis             int64             `json:"cpu_millis"`
+	MemoryBytes           int64             `json:"memory_bytes"`
+	DiskBytes             int64             `json:"disk_bytes"`
+	Reachability          Reachability      `json:"reachability"`
+	Volumes               []VolumePlan      `json:"volumes"`
 }
 
 func (p Profile) Validate() error {
@@ -39,32 +40,31 @@ func (p Profile) Validate() error {
 	if p.ReleaseDigest != "" && !content.ValidDigest(p.ReleaseDigest) {
 		return ErrInvalid
 	}
-	if p.StoreID == "" || p.TemplateID == "" || p.CPUMillis <= 0 || p.MemoryBytes <= 0 || p.DiskBytes <= 0 || p.WorkspaceBytes <= 0 || p.RuntimeBytes <= 0 {
+	if p.StoreID == "" || p.TemplateID == "" || p.CPUMillis <= 0 || p.MemoryBytes <= 0 || p.DiskBytes <= 0 {
 		return ErrInvalid
 	}
-	for _, m := range p.PublishedMounts {
-		if m.Access != "shared-ro" || m.VolumeID == "" || (m.Destination != "/opt/agent-config" && m.Destination != "/opt/shared-assets") {
-			return ErrInvalid
-		}
+	if err := validateVolumePlan(p.Volumes); err != nil {
+		return err
 	}
 	return p.Reachability.validate()
 }
 
 type Resources struct {
-	ProjectID       string            `json:"project_id"`
-	Reference       sandbox.Reference `json:"reference"`
-	Profile         Profile           `json:"profile"`
-	StorageKey      string            `json:"-"`
-	WorkspaceVolume string            `json:"workspace_volume"`
-	RuntimeVolume   string            `json:"runtime_volume"`
-	Occupied        bool              `json:"occupied"`
+	ProjectID string            `json:"project_id"`
+	Reference sandbox.Reference `json:"reference"`
+	Profile   Profile           `json:"profile"`
+	Volumes   []VolumeSlot      `json:"volumes"`
+	Occupied  bool              `json:"occupied"`
 }
 
 func resources(ctx context.Context, q queryer, project string) (r Resources, err error) {
 	var raw string
-	err = missing(q.QueryRowContext(ctx, `SELECT project_id,store_id,profile,workspace_volume,runtime_volume,sandbox_id,mutation_revision,epoch,occupied,storage_key FROM project_resources WHERE project_id=?`, project).Scan(&r.ProjectID, &r.Reference.StoreID, &raw, &r.WorkspaceVolume, &r.RuntimeVolume, &r.Reference.SandboxID, &r.Reference.MutationRevision, &r.Reference.Epoch, &r.Occupied, &r.StorageKey))
+	err = missing(q.QueryRowContext(ctx, `SELECT project_id,store_id,profile,sandbox_id,mutation_revision,epoch,occupied FROM project_resources WHERE project_id=?`, project).Scan(&r.ProjectID, &r.Reference.StoreID, &raw, &r.Reference.SandboxID, &r.Reference.MutationRevision, &r.Reference.Epoch, &r.Occupied))
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &r.Profile)
+	}
+	if err == nil {
+		r.Volumes, err = volumeSlots(ctx, q, project)
 	}
 	return
 }
@@ -75,7 +75,7 @@ func (s *Store) resourcesFor(ctx context.Context, project string) (Resources, er
 	return resources(ctx, s.reader, project)
 }
 func (s *Store) Resources(ctx context.Context, scope Scope) (Resources, error) {
-	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
+	if _, err := ownedProject(ctx, s.reader, scope); err != nil {
 		return Resources{}, err
 	}
 	return resources(ctx, s.reader, scope.ProjectID)
@@ -83,7 +83,7 @@ func (s *Store) Resources(ctx context.Context, scope Scope) (Resources, error) {
 
 type LifecycleBackend interface {
 	InspectConfiguration(context.Context, sandbox.Reference) (sandbox.Configuration, error)
-	UpdateNetwork(context.Context, sandbox.Reference, sandbox.Network) (sandbox.Configuration, error)
+	UpdateConfiguration(context.Context, sandbox.Reference, sandbox.Network, []sandbox.Mount) (sandbox.Configuration, error)
 	Identity(context.Context) (sandbox.Identity, error)
 	CreateVolume(context.Context, string, int64) (sandbox.Volume, error)
 	Create(context.Context, sandbox.CreateRequest) (sandbox.Observation, error)
@@ -120,11 +120,12 @@ type operationRequest struct {
 	Restart       bool
 	Force         bool
 	NetworkPolicy *NetworkPolicy `json:",omitempty"`
+	Volumes       []VolumePlan   `json:",omitempty"`
 }
 type operation struct{ ID, ProjectID, Kind, State, Phase, Request, Error string }
 
 func pendingOperation(ctx context.Context, q queryer, project string) (o operation, err error) {
-	err = missing(q.QueryRowContext(ctx, `SELECT id,project_id,kind,state,phase,request,error FROM project_operations WHERE project_id=? AND state<>'succeeded'`, project).Scan(&o.ID, &o.ProjectID, &o.Kind, &o.State, &o.Phase, &o.Request, &o.Error))
+	err = missing(q.QueryRowContext(ctx, `SELECT id,project_id,kind,state,phase,request,error FROM project_operations WHERE project_id=? AND state NOT IN ('succeeded','canceled')`, project).Scan(&o.ID, &o.ProjectID, &o.Kind, &o.State, &o.Phase, &o.Request, &o.Error))
 	return
 }
 func (l *Lifecycle) reserve(ctx context.Context, tx *sql.Tx) error {
@@ -146,10 +147,22 @@ func (l *Lifecycle) newOperation(ctx context.Context, tx *sql.Tx, project, kind,
 		if err != nil {
 			return err
 		}
-		target, policy, err := selectedNetworkProfile(ctx, tx, r.Profile)
+		var actor string
+		if err := tx.QueryRowContext(ctx, `SELECT owner_id FROM projects WHERE id=?`, project).Scan(&actor); err != nil {
+			return err
+		}
+		if err := validateRetainedProfile(ctx, tx, r.Profile); err != nil {
+			return err
+		}
+		target, policy, err := selectedNetworkProfile(ctx, tx, actor, r.Profile, project)
 		if err != nil {
 			return err
 		}
+		target.Volumes, err = authorizedVolumePlan(ctx, tx, actor, project, r.Profile.Volumes)
+		if err != nil {
+			return err
+		}
+		request.Volumes = target.Volumes
 		request.NetworkPolicy = policy
 		if kind == "create" {
 			raw, err := json.Marshal(target)
@@ -180,83 +193,134 @@ func (l *Lifecycle) newOperation(ctx context.Context, tx *sql.Tx, project, kind,
 
 // EnsureActive records original provisioning/resume intent. It does not issue
 // remote work or tie its lifetime to an HTTP request. Workers call Reconcile.
-func (l *Lifecycle) EnsureActive(ctx context.Context, scope Scope, profile Profile) error {
-	return l.ensureActive(ctx, scope, profile, false)
+func (l *Lifecycle) EnsureActive(ctx context.Context, scope Scope, bindings RuntimeBindings) error {
+	return l.ensureActive(ctx, scope, bindings, false)
 }
-func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, profile Profile, useSaved bool) error {
-	if err := profile.Validate(); err != nil {
-		return err
-	}
-	raw, err := json.Marshal(profile)
-	if err != nil {
+
+// Resume is the explicit owner operation. Internal action services admit their
+// own Agent/Terminal/file work before entering the shared lifecycle helper.
+func (l *Lifecycle) Resume(ctx context.Context, scope Scope, bindings RuntimeBindings) error {
+	return l.ensureActive(ctx, scope, bindings, true)
+}
+func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, bindings RuntimeBindings, requireManage bool) error {
+	if err := bindings.validate(); err != nil {
 		return err
 	}
 	return l.Store.write(ctx, func(tx *sql.Tx) error {
-		p, err := writableProject(ctx, tx, scope)
+		p, err := mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
-		r, err := resources(ctx, tx, p.ID)
-		if errors.Is(err, ErrNotFound) {
-			if err = l.reserve(ctx, tx); err != nil {
+		if err := noAdminProjectControl(ctx, tx, p.ID); err != nil {
+			return err
+		}
+		if err := activeAccount(ctx, tx, scope.Actor); err != nil {
+			return err
+		}
+		if p.ExecutionSuspended {
+			if p.ExecutionHoldReason == "configuration_revoked" || p.ExecutionHoldReason == "configuration_changed" {
+				if p.State != "paused" && p.State != "created" {
+					return Admission("suspension_pending", ErrConflict)
+				}
+				if _, err := authorizeProjectConfiguration(ctx, tx, scope.Actor, p.ID); err != nil {
+					return err
+				}
+			}
+			if !requireManage {
+				return Admission("project_suspended", ErrForbidden)
+			}
+			var pending bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM admin_operation_targets t JOIN admin_operations o ON o.id=t.operation_id WHERE t.project_id=? AND o.action='account.suspend' AND t.state<>'succeeded')`, p.ID).Scan(&pending); err != nil {
 				return err
 			}
-			if _, err = tx.ExecContext(ctx, `INSERT INTO project_resources(project_id,store_id,profile,occupied) VALUES(?,?,?,1)`, p.ID, profile.StoreID, string(raw)); err != nil {
+			if pending {
+				return Admission("suspension_pending", ErrConflict)
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE projects SET execution_suspended=0,execution_hold_reason='' WHERE id=?`, p.ID); err != nil {
 				return err
 			}
-			return l.newOperation(ctx, tx, p.ID, "create", "workspace", operationRequest{})
+			if err := l.Store.auditEvent(ctx, tx, scope.Actor, "project.reactivate", "project", p.ID, "", p.Revision, map[string]any{}); err != nil {
+				return err
+			}
 		}
+		if requireManage {
+			if err := authorizeAction(ctx, tx, scope.Actor, ActionProjectsManage); err != nil {
+				return err
+			}
+		}
+		return l.admitProjectActivation(ctx, tx, p, bindings)
+	})
+}
+
+// admitProjectActivation is shared by named owner and administrative admission.
+// Callers establish their own authority; this function resolves only saved plans
+// and enforces the owner's current quotas in the same transaction.
+func (l *Lifecycle) admitProjectActivation(ctx context.Context, tx *sql.Tx, p Project, bindings RuntimeBindings) error {
+	r, err := resources(ctx, tx, p.ID)
+	if errors.Is(err, ErrNotFound) {
+		profile, err := resolveAllocationProfile(ctx, tx, p.OwnerID, p.ID, bindings)
 		if err != nil {
 			return err
 		}
-		stored, err := json.Marshal(r.Profile)
-		if err != nil {
+		if err = admitCompute(ctx, tx, p.OwnerID, profile, false); err != nil {
 			return err
-		}
-		if !useSaved && string(stored) != string(raw) {
-			return ErrConflict
-		}
-		if _, err := pendingOperation(ctx, tx, p.ID); err == nil {
-			return nil
-		} else if !errors.Is(err, ErrNotFound) {
-			return err
-		}
-		if p.State == "active" {
-			return nil
-		}
-		if p.State != "paused" && p.State != "created" {
-			return ErrConflict
-		}
-		var pendingFiles int
-		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM file_operations WHERE project_id=? AND volume_id<>'' AND settled=0`, p.ID).Scan(&pendingFiles); err != nil {
-			return err
-		}
-		if pendingFiles > 0 {
-			return ErrBusy
 		}
 		if err = l.reserve(ctx, tx); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE project_resources SET occupied=1 WHERE project_id=?`, p.ID); err != nil {
+		if err = l.Store.bindVolumePlan(ctx, tx, p.ID, profile, true); err != nil {
 			return err
 		}
-		if r.Reference.SandboxID == "" {
-			phase := "sandbox"
-			if r.RuntimeVolume == "" {
-				phase = "runtime"
-			}
-			if r.WorkspaceVolume == "" {
-				phase = "workspace"
-			}
-			return l.newOperation(ctx, tx, p.ID, "create", phase, operationRequest{})
-		}
-		return l.newOperation(ctx, tx, p.ID, "resume", "sandbox", operationRequest{Reference: r.Reference})
-	})
+		return l.newOperation(ctx, tx, p.ID, "create", "volumes", operationRequest{})
+	}
+	if err != nil {
+		return err
+	}
+	if r.Reference.StoreID != bindings.StoreID {
+		return Admission("engine_store_mismatch", ErrConflict)
+	}
+	if _, err := registeredSandbox(ctx, tx, r.Profile.SandboxRelease, false); err != nil {
+		return err
+	}
+	if _, err := pendingOperation(ctx, tx, p.ID); err == nil {
+		return nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if p.State == "active" {
+		return nil
+	}
+	if p.State != "paused" && p.State != "created" {
+		return ErrConflict
+	}
+	var pendingFiles int
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM file_operations WHERE project_id=? AND volume_id<>'' AND settled=0`, p.ID).Scan(&pendingFiles); err != nil {
+		return err
+	}
+	if pendingFiles > 0 {
+		return ErrBusy
+	}
+	if err = admitCompute(ctx, tx, p.OwnerID, r.Profile, false); err != nil {
+		return err
+	}
+	if err = l.reserve(ctx, tx); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE project_resources SET occupied=1 WHERE project_id=?`, p.ID); err != nil {
+		return err
+	}
+	if r.Reference.SandboxID == "" {
+		return l.newOperation(ctx, tx, p.ID, "create", "volumes", operationRequest{})
+	}
+	return l.newOperation(ctx, tx, p.ID, "resume", "sandbox", operationRequest{Reference: r.Reference})
 }
 func (l *Lifecycle) ActiveResources(ctx context.Context, scope Scope) (Resources, error) {
-	p, err := l.Store.Project(ctx, scope)
+	p, err := ownedProject(ctx, l.Store.reader, scope)
 	if err != nil {
 		return Resources{}, err
+	}
+	if p.ExecutionSuspended {
+		return Resources{}, Admission("project_suspended", ErrForbidden)
 	}
 	if p.State == "deleting" || p.State == "deleted" {
 		return Resources{}, ErrDeleting
@@ -280,9 +344,24 @@ func (l *Lifecycle) PauseIdle(ctx context.Context, scope Scope, snapshot Project
 }
 func (l *Lifecycle) requestPause(ctx context.Context, scope Scope, revision int64, idle *Project, restart bool) error {
 	return l.Store.write(ctx, func(tx *sql.Tx) error {
-		p, err := writableProject(ctx, tx, scope)
+		p, err := mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
 			return err
+		}
+		if err := noAdminProjectControl(ctx, tx, p.ID); err != nil {
+			return err
+		}
+		// Idle reconciliation retains service authority. Explicit controls use
+		// the current active owner; restarting allocates work and needs manage.
+		if idle == nil {
+			if err := activeAccount(ctx, tx, scope.Actor); err != nil {
+				return err
+			}
+			if restart {
+				if err := authorizeAction(ctx, tx, scope.Actor, ActionProjectsManage); err != nil {
+					return err
+				}
+			}
 		}
 		if p.Revision != revision || p.State != "active" {
 			return ErrConflict
@@ -322,8 +401,16 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 	lock := l.lane(project)
 	lock.Lock()
 	defer lock.Unlock()
+	var held bool
+	if err := l.Store.reader.QueryRowContext(ctx, `SELECT execution_suspended=1 AND state NOT IN ('deleting','deleted') FROM projects WHERE id=?`, project).Scan(&held); err != nil {
+		return missing(err)
+	}
+	if held {
+		return l.stopHeldPlacement(ctx, project)
+	}
 	var o operation
 	var r Resources
+	var quotaDenial error
 	err := l.Store.write(ctx, func(tx *sql.Tx) error {
 		var err error
 		o, err = pendingOperation(ctx, tx, project)
@@ -363,6 +450,29 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 		if err != nil {
 			return err
 		}
+		var deleting bool
+		if err := tx.QueryRowContext(ctx, `SELECT state='deleting' FROM projects WHERE id=?`, project).Scan(&deleting); err != nil {
+			return err
+		}
+		if deleting && o.Kind == "create" && (o.Phase == "volumes" || o.Phase == "reachability" || o.Phase == "sandbox" && o.State == "pending") {
+			// No uncertain sandbox creation is abandoned. Slot-level uncertain
+			// effects retain their original keys and are resolved by deletion.
+			if _, err := tx.ExecContext(ctx, `UPDATE project_operations SET state='succeeded' WHERE id=?`, o.ID); err != nil {
+				return err
+			}
+			if err := l.newOperation(ctx, tx, project, "delete", "sandbox", operationRequest{Reference: r.Reference}); err != nil {
+				return err
+			}
+			o, err = pendingOperation(ctx, tx, project)
+			if err != nil {
+				return err
+			}
+		}
+		if !deleting {
+			if err := executionAllowed(ctx, tx, project); err != nil && (o.Kind == "create" || o.Kind == "resume") {
+				return err
+			}
+		}
 		if o.Kind == "create" && !r.Occupied {
 			if err = l.reserve(ctx, tx); err != nil {
 				return err
@@ -372,11 +482,41 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 			}
 			r.Occupied = true
 		}
+		if o.State == "pending" && (o.Kind == "create" || o.Kind == "resume") && o.Phase == "sandbox" {
+			var actor string
+			if err := tx.QueryRowContext(ctx, `SELECT owner_id FROM projects WHERE id=?`, project).Scan(&actor); err != nil {
+				return err
+			}
+			if err := admitCompute(ctx, tx, actor, r.Profile, r.Occupied); err != nil {
+				if !errors.Is(err, ErrQuotaExceeded) {
+					return err
+				}
+				quotaDenial = err
+				if _, e := tx.ExecContext(ctx, `UPDATE project_operations SET error=? WHERE id=?`, err.Error(), o.ID); e != nil {
+					return e
+				}
+				result, e := tx.ExecContext(ctx, `UPDATE projects SET failure=? WHERE id=? AND failure<>?`, err.Error(), project, err.Error())
+				if e != nil {
+					return e
+				}
+				count, e := result.RowsAffected()
+				if e != nil {
+					return e
+				}
+				if count > 0 {
+					return l.Store.bumpProject(ctx, tx, project, "project.quota_exceeded")
+				}
+				return nil
+			}
+		}
 		_, err = tx.ExecContext(ctx, `UPDATE project_operations SET state='issued',attempted_at=? WHERE id=?`, l.Store.timestamp(), o.ID)
 		return err
 	})
 	if err != nil {
 		return err
+	}
+	if quotaDenial != nil {
+		return quotaDenial
 	}
 	if o.ID == "" {
 		return nil
@@ -420,7 +560,11 @@ func (l *Lifecycle) unknown(ctx context.Context, o operation, cause error) error
 	settle, done := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer done()
 	err := l.Store.write(settle, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(settle, `UPDATE project_operations SET state='unknown',error=? WHERE id=? AND state<>'succeeded'`, cause.Error(), o.ID); err != nil {
+		state := "unknown"
+		if errors.Is(cause, ErrQuotaExceeded) {
+			state = "pending"
+		}
+		if _, err := tx.ExecContext(settle, `UPDATE project_operations SET state=?,error=? WHERE id=? AND state NOT IN ('succeeded','canceled')`, state, cause.Error(), o.ID); err != nil {
 			return err
 		}
 		res, err := tx.ExecContext(settle, `UPDATE projects SET failure=? WHERE id=? AND failure<>?`, cause.Error(), o.ProjectID, cause.Error())
@@ -445,34 +589,25 @@ func (l *Lifecycle) phase(ctx context.Context, o operation, next, column, value 
 				return err
 			}
 		}
-		return changed(tx.ExecContext(ctx, `UPDATE project_operations SET phase=?,state='pending',error='' WHERE id=? AND phase=? AND state<>'succeeded'`, next, o.ID, o.Phase))
+		return changed(tx.ExecContext(ctx, `UPDATE project_operations SET phase=?,state='pending',error='' WHERE id=? AND phase=? AND state NOT IN ('succeeded','canceled')`, next, o.ID, o.Phase))
 	})
 }
 func (l *Lifecycle) provision(ctx context.Context, o operation, r Resources) error {
 	switch o.Phase {
-	case "workspace", "runtime":
-		capacity := r.Profile.WorkspaceBytes
-		column, next := "workspace_volume", "runtime"
-		if o.Phase == "runtime" {
-			capacity = r.Profile.RuntimeBytes
-			column, next = "runtime_volume", "sandbox"
+	case "volumes":
+		for _, slot := range r.Volumes {
+			if slot.State != "ready" {
+				_, err := l.materializeSlot(ctx, r, slot.Key)
+				return err
+			}
 		}
-		key := o.ID + "/" + o.Phase
-		if o.Phase == "workspace" && r.StorageKey != "" {
-			key = r.StorageKey
-		}
-		v, err := l.Backend.CreateVolume(ctx, key, capacity)
+		return l.phase(ctx, o, "sandbox", "", "")
+	case "sandbox":
+		p := r.Profile
+		mounts, err := r.Mounts()
 		if err != nil {
 			return err
 		}
-		if v.StoreID != r.Reference.StoreID || v.VolumeID == "" || v.Capacity != capacity {
-			return ErrConflict
-		}
-		return l.phase(ctx, o, next, column, v.VolumeID)
-	case "sandbox":
-		p := r.Profile
-		mounts := append([]sandbox.Mount{}, p.PublishedMounts...)
-		mounts = append(mounts, sandbox.Mount{VolumeID: r.WorkspaceVolume, Destination: "/workspace", Access: "exclusive"}, sandbox.Mount{VolumeID: r.RuntimeVolume, Destination: "/runtime", Access: "exclusive"})
 		observed, err := l.Backend.Create(ctx, sandbox.CreateRequest{IdempotencyKey: o.ID + "/sandbox", TemplateID: p.TemplateID, CPUMillis: p.CPUMillis, MemoryBytes: p.MemoryBytes, DiskBytes: p.DiskBytes, Network: p.Reachability.Declaration(), Mounts: mounts})
 		if err != nil {
 			return err
@@ -595,7 +730,7 @@ func (l *Lifecycle) commit(ctx context.Context, o operation, obs sandbox.Observa
 		if _, err := l.Store.loseStalePTYs(ctx, tx, o.ProjectID, obs.Epoch, "placement replaced; PTY process did not survive"); err != nil {
 			return err
 		}
-		return changed(tx.ExecContext(ctx, `UPDATE project_operations SET phase=?,state='pending',error='' WHERE id=? AND phase=? AND state<>'succeeded'`, next, o.ID, o.Phase))
+		return changed(tx.ExecContext(ctx, `UPDATE project_operations SET phase=?,state='pending',error='' WHERE id=? AND phase=? AND state NOT IN ('succeeded','canceled')`, next, o.ID, o.Phase))
 	})
 }
 func (l *Lifecycle) finish(ctx context.Context, o operation, obs sandbox.Observation, state string, occupied, restart bool) error {
@@ -629,7 +764,7 @@ func (l *Lifecycle) finish(ctx context.Context, o operation, obs sandbox.Observa
 	})
 }
 func (l *Lifecycle) settle(ctx context.Context, tx *sql.Tx, o operation, state string, occupied, restart bool, resume ...sandbox.Reference) error {
-	if err := changed(tx.ExecContext(ctx, `UPDATE project_operations SET state='succeeded',error='' WHERE id=? AND state<>'succeeded'`, o.ID)); err != nil {
+	if err := changed(tx.ExecContext(ctx, `UPDATE project_operations SET state='succeeded',error='' WHERE id=? AND state NOT IN ('succeeded','canceled')`, o.ID)); err != nil {
 		return err
 	}
 	var deleting bool
@@ -646,6 +781,9 @@ func (l *Lifecycle) settle(ctx context.Context, tx *sql.Tx, o operation, state s
 		return err
 	}
 	if restart && len(resume) == 1 {
+		if err := executionAllowed(ctx, tx, o.ProjectID); err != nil {
+			return nil
+		}
 		return l.newOperation(ctx, tx, o.ProjectID, "resume", "sandbox", operationRequest{Reference: resume[0]})
 	}
 	return nil
@@ -667,30 +805,16 @@ func (l *Lifecycle) destroy(ctx context.Context, o operation, r Resources) error
 			if _, err := tx.ExecContext(ctx, `UPDATE project_resources SET occupied=0 WHERE project_id=?`, o.ProjectID); err != nil {
 				return err
 			}
-			_, err := tx.ExecContext(ctx, `UPDATE project_operations SET phase='workspace',state='pending',error='' WHERE id=?`, o.ID)
+			_, err := tx.ExecContext(ctx, `UPDATE project_operations SET phase='volumes',state='pending',error='' WHERE id=?`, o.ID)
 			return err
 		})
-	case "workspace", "runtime":
-		id, next := r.WorkspaceVolume, "runtime"
-		if o.Phase == "runtime" {
-			id, next = r.RuntimeVolume, "complete"
-		}
-		if id == "" && o.Phase == "workspace" && r.StorageKey != "" {
-			v, err := l.Backend.CreateVolume(ctx, r.StorageKey, r.Profile.WorkspaceBytes)
-			if err != nil {
-				return err
-			}
-			if v.StoreID != r.Reference.StoreID {
-				return ErrConflict
-			}
-			id = v.VolumeID
-		}
-		if id != "" {
-			if err := l.Backend.DeleteVolume(ctx, sandbox.VolumeReference{StoreID: r.Reference.StoreID, VolumeID: id}); err != nil {
-				return err
+	case "volumes":
+		for _, slot := range r.Volumes {
+			if slot.State != "deleted" {
+				return l.deleteSlot(ctx, r, slot)
 			}
 		}
-		return l.phase(ctx, o, next, "", "")
+		return l.phase(ctx, o, "complete", "", "")
 	case "complete":
 		if l.Artifacts != nil {
 			if err := l.Artifacts.RemoveProject(ctx, o.ProjectID); err != nil {
@@ -726,7 +850,7 @@ func (l *Lifecycle) destroy(ctx context.Context, o operation, r Resources) error
 // PendingProjects rotates attempts by oldest attempt, and includes deletion
 // tombstones even when no remote operation had yet been created at a crash.
 func (s *Store) PendingProjects(ctx context.Context, limit int) ([]string, error) {
-	rows, err := s.reader.QueryContext(ctx, `SELECT p.id FROM projects p LEFT JOIN project_operations o ON o.project_id=p.id AND o.state<>'succeeded' WHERE o.id IS NOT NULL OR p.state='deleting' ORDER BY coalesce(o.attempted_at,p.updated_at),p.id LIMIT ?`, pageSize(limit))
+	rows, err := s.reader.QueryContext(ctx, `SELECT p.id FROM projects p LEFT JOIN project_operations o ON o.project_id=p.id AND o.state NOT IN ('succeeded','canceled') WHERE o.id IS NOT NULL OR p.state='deleting' ORDER BY coalesce(o.attempted_at,p.updated_at),p.id LIMIT ?`, pageSize(limit))
 	if err != nil {
 		return nil, err
 	}

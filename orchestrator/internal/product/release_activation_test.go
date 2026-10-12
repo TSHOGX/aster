@@ -10,7 +10,7 @@ import (
 
 func TestReleaseActivationRequiresReplacementIdentityAndSettledWork(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "activation.db")
-	s, err := Open(ctx, path)
+	s, err := openFixtureStore(ctx, path)
 	must(t, err)
 	scope := Scope{"owner", "project"}
 	_, err = s.CreateProject(ctx, scope.Actor, scope.ProjectID, "Project")
@@ -47,7 +47,7 @@ func TestReleaseActivationRequiresReplacementIdentityAndSettledWork(t *testing.T
 		t.Fatal(still)
 	}
 	must(t, s.Close())
-	s, err = Open(ctx, path)
+	s, err = openFixtureStore(ctx, path)
 	must(t, err)
 	defer s.Close()
 	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, "sha256:"+strings.Repeat("b", 64))
@@ -77,7 +77,7 @@ func TestReleaseActivationRequiresReplacementIdentityAndSettledWork(t *testing.T
 
 func TestReleaseCompletionAndCoordinatorReuse(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "completion.db")
-	s, err := Open(ctx, path)
+	s, err := openFixtureStore(ctx, path)
 	must(t, err)
 	target := "sha256:" + strings.Repeat("c", 64)
 	drain, err := s.BeginReleaseDrain(ctx, "original", time.Minute)
@@ -87,7 +87,7 @@ func TestReleaseCompletionAndCoordinatorReuse(t *testing.T) {
 	_, err = s.ActivateRelease(ctx, drain.Owner, drain.Generation, target)
 	must(t, err)
 	must(t, s.Close())
-	s, err = Open(ctx, path)
+	s, err = openFixtureStore(ctx, path)
 	must(t, err)
 	defer s.Close()
 	completedDigest := target
@@ -108,7 +108,7 @@ func TestReleaseCompletionAndCoordinatorReuse(t *testing.T) {
 
 func TestReplacementCanPublishButRetiringOwnerCannot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "publication.db")
-	s, err := Open(ctx, path)
+	s, err := openFixtureStore(ctx, path)
 	must(t, err)
 	drain, err := s.BeginReleaseDrain(ctx, "publisher", time.Minute)
 	must(t, err)
@@ -122,7 +122,7 @@ func TestReplacementCanPublishButRetiringOwnerCannot(t *testing.T) {
 	_, err = s.ClaimContentPublication(ctx, publication)
 	wantError(t, err, ErrDraining)
 	must(t, s.Close())
-	s, err = Open(ctx, path)
+	s, err = openFixtureStore(ctx, path)
 	must(t, err)
 	defer s.Close()
 	_, err = s.ClaimContentPublication(ctx, publication)

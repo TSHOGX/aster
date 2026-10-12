@@ -32,15 +32,24 @@ func main() {
 }
 func run(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE\norchestrator gateway --config FILE\norchestrator release-identity --config FILE\norchestrator gateway-status|gateway-stop --socket PATH [--owner ID --generation N]\norchestrator version\norchestrator diagnostics|publish|notify|network-reload --socket PATH [flags]\norchestrator drain|drain-status|drain-ready|drain-abort|drain-activate|drain-complete --socket PATH [--owner ID] [--generation N] [--timeout-seconds N] [--mode quiescent|owner] [--target sha256:DIGEST] [--compatibility sha256:DIGEST]\norchestrator user add|password|role|remove|list --file FILE --username NAME [--password-stdin] [--role user|admin]")
+		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE\norchestrator gateway --config FILE\norchestrator release-identity --config FILE\norchestrator gateway-status|gateway-stop --socket PATH [--owner ID --generation N]\norchestrator version\norchestrator diagnostics|notify --socket PATH [flags]\norchestrator publish --socket PATH --config FILE\norchestrator limits inspect --socket PATH\norchestrator limits set --socket PATH --dimension DIMENSION --maximum N --expected-revision N --request-id ID\norchestrator volume inspect-source --source DIR\norchestrator volume publish --socket PATH --source DIR --id ID --version VERSION --digest sha256:DIGEST --capacity-bytes N --minimum-bytes N --roles ROLE[,ROLE] [--clean-runtime-seed]\norchestrator runtime inspect|disable|enable|retire --socket PATH --kind sandbox|volume --id ID --version VERSION --digest sha256:DIGEST [--expected-revision N --request-id ID]\norchestrator runtime register --socket PATH --id ID --version VERSION --template TEMPLATE --manifest FILE --digest sha256:DIGEST\norchestrator drain|drain-status|drain-ready|drain-abort|drain-activate|drain-complete --socket PATH [--owner ID] [--generation N] [--timeout-seconds N] [--mode quiescent|owner] [--target sha256:DIGEST] [--compatibility sha256:DIGEST]\norchestrator account bootstrap|recover-admin --config FILE --username NAME --password-stdin\norchestrator account recover-admin --socket PATH --username NAME --password-stdin")
 		return err
 	}
 	action := args[0]
 	if action == "version" {
 		return json.NewEncoder(output).Encode(map[string]string{"version": version, "commit": commit})
 	}
-	if action == "user" {
-		return runUser(args[1:], input, output)
+	if action == "volume" {
+		return runVolume(ctx, args[1:], output)
+	}
+	if action == "limits" {
+		return runLimits(ctx, args[1:], output)
+	}
+	if action == "runtime" {
+		return runRuntime(ctx, args[1:], output)
+	}
+	if action == "account" {
+		return runAccount(ctx, args[1:], input, output)
 	}
 	flags := flag.NewFlagSet(action, flag.ContinueOnError)
 	flags.SetOutput(output)
@@ -159,12 +168,13 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		}
 		defer app.Close()
 		return app.Run(ctx)
-	case "diagnostics", "publish", "notify", "network-reload":
+	case "diagnostics", "publish", "notify":
 		socket := flags.String("socket", "", "protected application control socket")
+		publicationConfig := flags.String("config", "", "explicit system publication source configuration")
 		project := flags.String("project", "", "optional Project diagnostic scope")
 		title := flags.String("title", "", "notification title")
 		body := flags.String("body", "", "notification body")
-		audience := flags.String("audience", "", "optional notification recipient; empty broadcasts")
+		audience := flags.String("audience", "", "optional recipient account ID; empty broadcasts")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -172,8 +182,6 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 			return errors.New("operator commands require --socket PATH")
 		}
 		switch action {
-		case "network-reload":
-			return application.Control(ctx, *socket, "POST", "/network/reload", nil, output)
 		case "diagnostics":
 			path := "/status"
 			if *project != "" {
@@ -181,7 +189,14 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 			}
 			return application.Control(ctx, *socket, "GET", path, nil, output)
 		case "publish":
-			return application.Control(ctx, *socket, "POST", "/publish", nil, output)
+			if *publicationConfig == "" {
+				return errors.New("publish requires --config FILE with explicit reviewed source declarations")
+			}
+			cfg, err := application.LoadConfig(*publicationConfig)
+			if err != nil {
+				return err
+			}
+			return application.Control(ctx, *socket, "POST", "/publish", cfg.Content, output)
 		default:
 			if *title == "" || *body == "" {
 				return errors.New("notify requires --title and --body")
@@ -192,46 +207,44 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		return fmt.Errorf("unknown command %q", action)
 	}
 }
-func runUser(args []string, input io.Reader, output io.Writer) error {
-	if len(args) == 0 {
-		return errors.New("credential action required")
+func runAccount(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
+	if len(args) == 0 || (args[0] != "bootstrap" && args[0] != "recover-admin") {
+		return errors.New("account bootstrap or recover-admin required")
 	}
 	action := args[0]
-	flags := flag.NewFlagSet("user "+action, flag.ContinueOnError)
+	flags := flag.NewFlagSet("account "+action, flag.ContinueOnError)
 	flags.SetOutput(output)
-	file := flags.String("file", "", "credential registry")
-	username := flags.String("username", "", "username")
-	role := flags.String("role", "user", "user or admin")
+	config := flags.String("config", "", "offline application configuration")
+	socket := flags.String("socket", "", "running owner's protected operator socket")
+	username := flags.String("username", "", "account username")
 	passwordInput := flags.Bool("password-stdin", false, "read password from stdin")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
-	if *file == "" || flags.NArg() != 0 {
-		return errors.New("credential command requires --file FILE")
+	if flags.NArg() != 0 || *username == "" || !*passwordInput || (*config == "") == (*socket == "") || action == "bootstrap" && *socket != "" {
+		return errors.New("account command requires username, password-stdin and exactly one config or recovery socket")
 	}
-	if action == "list" {
-		users, err := application.ReadUsers(*file)
-		if err != nil {
-			return err
-		}
-		return json.NewEncoder(output).Encode(users)
+	raw, err := io.ReadAll(io.LimitReader(input, 515))
+	if err != nil {
+		return err
 	}
-	if *username == "" {
-		return errors.New("--username required")
+	password := strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r")
+	if len(raw) > 514 || len(password) > 512 {
+		return errors.New("password exceeds bound")
 	}
-	password := ""
-	if action == "add" || action == "password" {
-		if !*passwordInput {
-			return errors.New("--password-stdin required")
-		}
-		raw, err := io.ReadAll(io.LimitReader(input, 4097))
-		if err != nil {
-			return err
-		}
-		if len(raw) > 4096 {
-			return errors.New("password exceeds bound")
-		}
-		password = strings.TrimRight(string(raw), "\r\n")
+	if *socket != "" {
+		return application.Control(ctx, *socket, "POST", "/account/recover-admin", map[string]string{"username": *username, "password": password}, output)
 	}
-	return application.UpdateUser(*file, action, *username, password, *role)
+	cfg, err := application.LoadConfig(*config)
+	if err != nil {
+		return err
+	}
+	account, err := application.AccountOperation(ctx, cfg, action, *username, password)
+	if err != nil {
+		return err
+	}
+	if action == "bootstrap" {
+		return json.NewEncoder(output).Encode(account)
+	}
+	return json.NewEncoder(output).Encode(map[string]string{"status": "recovered"})
 }

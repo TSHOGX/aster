@@ -60,7 +60,9 @@ func TestReleasedNativeRetrySettlement(t *testing.T) {
 	third := a.request("POST", base+"/turns", map[string]string{"request_id": "cancel-retry", "content": "native-retry-until-stop"}, 201)
 	thirdID := third["id"].(string)
 	a.await(10*time.Second, "cancelable retry backoff", func() bool { return count(thirdID, "native", "auto_retry_start") == 1 })
-	head := a.request("GET", base+"/view/head", nil, 200)
+	// Execution control metadata remains authoritative while content projection
+	// is building (202); waiting for a 200 is unrelated to native control.
+	head := a.request("GET", base+"/view/head", nil, 0)
 	run := head["active_run"].(map[string]any)
 	started := time.Now()
 	a.request("POST", base+"/control", map[string]any{"action": "stop", "request_id": "stop-retry", "target_run_id": run["id"], "target_incarnation_id": run["incarnation_id"], "target_owner": run["owner"]}, 202)
@@ -181,7 +183,7 @@ func TestReleasedNativeCompactionSettlement(t *testing.T) {
 				t.Fatal("fixture missed preflight cancellation window")
 			}
 		}
-		head := a.request("GET", cancelBase+"/view/head", nil, 200)
+		head := a.request("GET", cancelBase+"/view/head", nil, 0)
 		run := head["active_run"].(map[string]any)
 		a.request("POST", cancelBase+"/control", map[string]any{"action": "stop", "request_id": fmt.Sprint("stop-", index), "target_run_id": run["id"], "target_incarnation_id": run["incarnation_id"], "target_owner": run["owner"]}, 202)
 		want := "canceled"
@@ -233,7 +235,9 @@ func TestReleasedQueuedSteerConsumption(t *testing.T) {
 		require(t, db.QueryRow(`SELECT count(*) FROM agent_records WHERE turn_id=? AND kind='native' AND json_extract(payload,'$.type')='message_start' AND json_extract(payload,'$.message.role')='assistant'`, firstID).Scan(&count))
 		return count > 0
 	})
-	head := a.request("GET", base+"/view/head", nil, 200)
+	// Execution control metadata remains authoritative while content projection
+	// is building (202); waiting for a 200 is unrelated to native control.
+	head := a.request("GET", base+"/view/head", nil, 0)
 	run := head["active_run"].(map[string]any)
 	source := a.request("POST", base+"/turns", map[string]any{"request_id": "held-source", "content": "second question", "held": true}, 201)
 	sourceID := source["id"].(string)
@@ -304,7 +308,9 @@ func TestReleasedQueuedSteerStopRemovesUnconsumedInput(t *testing.T) {
 		require(t, db.QueryRow(`SELECT count(*) FROM agent_records WHERE turn_id=? AND kind='native' AND json_extract(payload,'$.type')='message_start' AND json_extract(payload,'$.message.role')='assistant'`, firstID).Scan(&count))
 		return count > 0
 	})
-	head := a.request("GET", base+"/view/head", nil, 200)
+	// Execution control metadata remains authoritative while content projection
+	// is building (202); waiting for a 200 is unrelated to native control.
+	head := a.request("GET", base+"/view/head", nil, 0)
 	run := head["active_run"].(map[string]any)
 	source := a.request("POST", base+"/turns", map[string]any{"request_id": "held-source", "content": "must remain held", "held": true}, 201)
 	sourceID := source["id"].(string)

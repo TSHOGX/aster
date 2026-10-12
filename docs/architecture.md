@@ -3,15 +3,16 @@
 One `orchestrator serve --config FILE` process composes the product store,
 application services and workers, cookie authentication, HTTP/SSE/WebSocket,
 operator control socket and browser edge. `orchestrator gateway --config FILE`
-serves declared service audiences in an independent process. Next.js is a
-separate asset/page server. The private API hop uses an owner-only Unix socket;
+serves declared service audiences in an independent process. Workbench and administration use independent Next.js
+asset/page servers. The private API hop uses an owner-only Unix socket;
 the edge preserves the browser Origin and replaces forwarded identity headers.
 
 ```mermaid
 flowchart LR
   Browser --> Edge[Go browser edge]
   Edge --> API[Go API and authentication]
-  Edge --> Next[Next.js pages and assets]
+  Edge --> Next[Workbench pages and assets]
+  Edge --> Admin[Admin pages and assets]
   API --> Product[Project services and SQLite]
   Workers[Go runtime workers] --> Product
   Workers --> SDK[Public Khora SDK and Connect]
@@ -37,7 +38,8 @@ authority transport. The gateway opens no product Store; durable bounded request
 slots preserve release accounting across owner replacement. Package-boundary and removal tests enforce these layers.
 
 A Project binds its template, runtime release digest, resource limits, service
-routes and publication mounts when first configured. Direct/DNS policy is selected
+routes and complete owned/shared Volume plan at first resource allocation,
+including a first upload before compute. Direct/DNS policy is selected
 from durable accepted defaults by each creation/resume operation; it remains
 fixed throughout the placement. Every
 Agent Session and Terminal shares that Project's workspace and Linux trust domain.

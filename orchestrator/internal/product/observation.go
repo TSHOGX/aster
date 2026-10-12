@@ -9,12 +9,6 @@ import (
 	"time"
 )
 
-// EnsureConfiguredActive retains fixed Project configuration and selects mutable
-// network defaults in the transaction recording creation/resume intent.
-func (l *Lifecycle) EnsureConfiguredActive(ctx context.Context, scope Scope, fallback Profile) error {
-	return l.ensureActive(ctx, scope, fallback, true)
-}
-
 // Observe validates the original binding, including after engine events are lost.
 // It never resolves uncertainty by silently retargeting another engine store.
 func (l *Lifecycle) Observe(ctx context.Context, project string) error {
@@ -27,6 +21,12 @@ func (l *Lifecycle) Observe(ctx context.Context, project string) error {
 		var state string
 		if err := tx.QueryRowContext(ctx, `SELECT state FROM projects WHERE id=?`, project).Scan(&state); err != nil {
 			return missing(err)
+		}
+		if err := noAdminProjectControl(ctx, tx, project); err != nil {
+			return err
+		}
+		if err := executionAllowed(ctx, tx, project); err != nil {
+			return err
 		}
 		priorState = state
 		if state != "active" && state != "paused" && state != "blocked" {
@@ -177,8 +177,14 @@ func (s *Store) settleLostActivities(ctx context.Context, tx *sql.Tx, project st
 }
 func (l *Lifecycle) ForceRestart(ctx context.Context, scope Scope, revision int64) error {
 	return l.Store.write(ctx, func(tx *sql.Tx) error {
-		p, err := writableProject(ctx, tx, scope)
+		p, err := mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
+			return err
+		}
+		if err := authorizeAction(ctx, tx, scope.Actor, ActionProjectsManage); err != nil {
+			return err
+		}
+		if err := noAdminProjectControl(ctx, tx, p.ID); err != nil {
 			return err
 		}
 		if p.Revision != revision || p.State != "active" {

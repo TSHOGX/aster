@@ -441,6 +441,42 @@ func TestPublishRejectsIncoherentRequests(t *testing.T) {
 	}
 }
 
+func TestBuiltinPublicationReplayChecksOriginalCapacity(t *testing.T) {
+	publisher, _, _, revision := fixture(t)
+	ctx := context.Background()
+	first, err := publisher.Publish(ctx, "builtin", revision, 8<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := publisher.Publish(ctx, "builtin", revision, 8<<20)
+	if err != nil || first != second {
+		t.Fatal(first, second, err)
+	}
+	if _, err = publisher.Publish(ctx, "builtin", revision, 16<<20); err == nil {
+		t.Fatal("published shortcut ignored changed physical capacity")
+	}
+}
+
+func TestVerificationBoundsObservedBytesAcrossDirectories(t *testing.T) {
+	engine := newEngine()
+	volume := "untrusted-observation"
+	engine.volumes[volume] = map[string][]byte{}
+	engine.dirs[volume] = map[string]bool{}
+	// Each individual file is permitted, but their complete observed tree is
+	// larger than the reviewed content bound. Sharing bytes keeps the fixture
+	// compact while verification still walks and hashes actual declared sizes.
+	body := make([]byte, MaxFileBytes)
+	for i := 0; i < 9; i++ {
+		directory := fmt.Sprintf("directory-%d", i)
+		engine.dirs[volume][directory] = true
+		engine.volumes[volume][directory+"/file"] = body
+	}
+	err := VerifyVolume(context.Background(), engine, sandbox.VolumeReference{StoreID: engine.store, VolumeID: volume}, "sha256:"+strings.Repeat("a", 64))
+	if !errors.Is(err, ErrContentRefused) || !strings.Contains(err.Error(), "exceeds 67108864 bytes") {
+		t.Fatal("observed tree escaped total verification bound", err)
+	}
+}
+
 func TestPublishRefusesSourceChangedAfterRevision(t *testing.T) {
 	engine, repository := newEngine(), newRepository()
 	root := authored(t, map[string]string{"AGENTS.md": "original\n"})

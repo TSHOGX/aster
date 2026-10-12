@@ -1,18 +1,22 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"harness-platform/orchestrator/internal/projectfiles"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
 func main() {
-	if len(os.Args) != 2 || strings.ContainsAny(os.Args[1], "/\\") || projectfiles.Path(os.Args[1], false) != nil {
-		fmt.Fprintln(os.Stderr, "one Session identity required")
+	root := flag.String("root", "", "saved Project runtime root")
+	flag.Parse()
+	if !filepath.IsAbs(*root) || filepath.Clean(*root) != *root || *root == "/" || flag.NArg() != 1 || strings.ContainsAny(flag.Arg(0), "/\\") || projectfiles.Path(flag.Arg(0), false) != nil {
+		fmt.Fprintln(os.Stderr, "canonical runtime --root and one Session identity required")
 		os.Exit(2)
 	}
-	if err := projectfiles.RemoveTree("/runtime/sessions", os.Args[1]); err != nil {
+	if err := projectfiles.RemoveTree(filepath.Join(*root, "sessions"), flag.Arg(0)); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

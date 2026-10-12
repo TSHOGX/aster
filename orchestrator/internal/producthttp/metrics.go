@@ -38,7 +38,7 @@ func httpCategory(r *http.Request) string {
 		return "events"
 	case strings.HasSuffix(p, "/attach"):
 		return "terminal"
-	case strings.HasSuffix(p, "/files/content"):
+	case strings.HasSuffix(p, "/files/content"), strings.HasSuffix(p, "/files/download"):
 		return "file"
 	case strings.HasSuffix(p, "/files"):
 		return "directory"

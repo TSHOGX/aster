@@ -101,7 +101,15 @@ func TestAdjacentHTTPRoutesAndReaderRevocation(t *testing.T) {
 	if status != 200 || len(runPage.Runs) != 1 || runPage.Next != "" {
 		t.Fatal(status, string(body))
 	}
+	status, body = do("GET", "/api/projects/project/sessions/session/reader-candidates?q=fixture-bob", "")
+	if status != 200 || !strings.Contains(string(body), `"id":"bob"`) || !strings.Contains(string(body), `"username":"fixture-bob"`) {
+		t.Fatal(status, string(body))
+	}
 	status, body = do("POST", "/api/projects/project/sessions/session/readers", `{"reader":"bob"}`)
+	if status != 400 {
+		t.Fatal("legacy recipient field accepted", status, string(body))
+	}
+	status, body = do("POST", "/api/projects/project/sessions/session/readers", `{"reader_id":"bob"}`)
 	if status != 204 {
 		t.Fatal(status, string(body))
 	}

@@ -57,7 +57,7 @@ func (s *Store) GrantService(ctx context.Context, scope Scope, session, incarnat
 	var grant ServiceGrant
 	var token string
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		p, err := writableProject(ctx, tx, scope)
+		p, err := mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
@@ -77,6 +77,9 @@ func (s *Store) GrantService(ctx context.Context, scope Scope, session, incarnat
 		var found string
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM agent_incarnations WHERE id=? AND project_id=? AND session_id=? AND state IN ('starting','running')`, incarnation, scope.ProjectID, session).Scan(&found); err != nil {
 			return missing(err)
+		}
+		if err := authorizeExecution(ctx, tx, scope, ActionAgentsRun); err != nil {
+			return err
 		}
 		// One live grant per incarnation and audience. A replayed start reuses it
 		// rather than leaving an unrevoked credential behind in the guest.
@@ -111,12 +114,12 @@ func authorizeService(ctx context.Context, q queryer, now, audience, token strin
 		return Attribution{}, ErrNotFound
 	}
 	var a Attribution
-	var digest string
-	err := q.QueryRowContext(ctx, `SELECT g.id,g.project_id,g.session_id,g.incarnation_id,g.audience,g.credential_digest,g.expires_at,g.state,r.prompt_id,r.state,r.id,r.owner
+	var digest, actor string
+	err := q.QueryRowContext(ctx, `SELECT g.id,g.project_id,g.session_id,g.incarnation_id,g.audience,g.credential_digest,g.expires_at,g.state,r.prompt_id,r.state,r.id,r.owner,p.owner_id
  FROM service_grants g JOIN projects p ON p.id=g.project_id
  JOIN agent_incarnations i ON i.id=g.incarnation_id AND i.session_id=g.session_id
  JOIN execution_runs r ON r.incarnation_id=i.id AND r.owner=i.owner AND r.state IN ('starting','running')
-	WHERE g.id=? AND g.audience=? AND g.state='active' AND g.expires_at>? AND p.state='active' AND i.state='running' `, id, audience, now).Scan(&a.Grant.ID, &a.Grant.ProjectID, &a.Grant.SessionID, &a.Grant.IncarnationID, &a.Grant.Audience, &digest, &a.Grant.ExpiresAt, &a.Grant.State, &a.TurnID, &a.RunState, &a.RunID, &a.RunOwner)
+	WHERE g.id=? AND g.audience=? AND g.state='active' AND g.expires_at>? AND p.state='active' AND i.state='running' `, id, audience, now).Scan(&a.Grant.ID, &a.Grant.ProjectID, &a.Grant.SessionID, &a.Grant.IncarnationID, &a.Grant.Audience, &digest, &a.Grant.ExpiresAt, &a.Grant.State, &a.TurnID, &a.RunState, &a.RunID, &a.RunOwner, &actor)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Attribution{}, ErrNotFound
 	}
@@ -125,6 +128,9 @@ func authorizeService(ctx context.Context, q queryer, now, audience, token strin
 	}
 	if subtle.ConstantTimeCompare([]byte(digest), []byte(credentialDigest(token))) != 1 {
 		return Attribution{}, ErrNotFound
+	}
+	if err := authorizeExecution(ctx, q, Scope{Actor: actor, ProjectID: a.Grant.ProjectID}, ActionAgentsRun); err != nil {
+		return Attribution{}, err
 	}
 	return a, nil
 }
@@ -136,20 +142,23 @@ func authorizeService(ctx context.Context, q queryer, now, audience, token strin
 // A request drains when its own turn leaves admission, even though the grant
 // itself survives for the Session's next turn.
 func holdsAttribution(ctx context.Context, q queryer, now string, a Attribution) error {
-	var state string
-	err := q.QueryRowContext(ctx, `SELECT r.state FROM execution_runs r
+	var state, actor string
+	err := q.QueryRowContext(ctx, `SELECT r.state,p.owner_id FROM execution_runs r
  JOIN service_grants g ON g.id=? AND g.state='active' AND g.expires_at>? AND g.session_id=r.session_id AND g.incarnation_id=r.incarnation_id
  JOIN projects p ON p.id=g.project_id AND p.state='active'
  JOIN agent_incarnations i ON i.id=g.incarnation_id AND i.state='running'
- WHERE r.id=? AND r.state IN ('starting','running','stopping')`, a.Grant.ID, now, a.RunID).Scan(&state)
+ WHERE r.id=? AND r.state IN ('starting','running','stopping')`, a.Grant.ID, now, a.RunID).Scan(&state, &actor)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return activeAccount(ctx, q, actor)
 }
 func (s *Store) RevokeService(ctx context.Context, scope Scope, grant string) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := authorizedProject(ctx, tx, scope); err != nil {
+		if _, err := activeOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		var id string
@@ -164,7 +173,7 @@ func (s *Store) RevokeService(ctx context.Context, scope Scope, grant string) er
 // ServiceGrants lists a Project's live grants for operator diagnostics. Digests
 // are never returned: a leaked listing must not become a usable credential.
 func (s *Store) ServiceGrants(ctx context.Context, scope Scope) ([]ServiceGrant, error) {
-	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
+	if _, err := activeOwnedProject(ctx, s.reader, scope); err != nil {
 		return nil, err
 	}
 	rows, err := s.reader.QueryContext(ctx, `SELECT id,project_id,session_id,incarnation_id,audience,expires_at,state FROM service_grants WHERE project_id=? AND state='active' ORDER BY created_at,id LIMIT 500`, scope.ProjectID)
@@ -196,6 +205,13 @@ func (s *Store) RenewService(ctx context.Context, i Incarnation, audience string
 		}
 		if current.ID != i.ID || current.Owner != i.Owner {
 			return ErrConflict
+		}
+		var actor string
+		if err := tx.QueryRowContext(ctx, `SELECT owner_id FROM projects WHERE id=?`, i.ProjectID).Scan(&actor); err != nil {
+			return err
+		}
+		if err := activeAccount(ctx, tx, actor); err != nil {
+			return err
 		}
 		var expiry string
 		if err = tx.QueryRowContext(ctx, `SELECT expires_at FROM service_grants WHERE incarnation_id=? AND audience=? AND state='active' AND expires_at>?`, i.ID, audience, s.timestamp()).Scan(&expiry); err != nil {

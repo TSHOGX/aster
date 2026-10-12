@@ -22,7 +22,11 @@ browser edge. The display name defaults to Aster; set `NEXT_PUBLIC_PROJECT_BRAND
 before building to customize it. See [display-name configuration](../docs/configuration.md#frontend-display-name)
 for examples, affected surfaces and rebuild requirements.
 `PROJECT_DEV_ORIGINS` declares development hosts. The interface supports English
-and Chinese and stores its light/dark preference under `project-theme`.
+and Chinese. The account Settings dialog offers system/light/dark mode,
+neutral/blue/green/violet accents, display name and security actions. Appearance
+is stored on the server; the Go edge supplies a verified account ID so the
+server-rendered page can select its account cache for first paint.
+Logging out clears the cache's active identity binding.
 
 Use the npm build/dev commands above: their hooks apply the reviewed lifecycle
 fixes for the pinned presentation viewer before Next compiles it. The patch

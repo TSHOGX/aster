@@ -125,10 +125,10 @@ func (f *fakePTY) CloseProcessInput(_ context.Context, r sandbox.ProcessReferenc
 func terminalFixture(t *testing.T) (*Terminals, *fakePTY, Scope) {
 	t.Helper()
 	l, scope, _ := lifecycleFixture(t)
-	must(t, l.EnsureActive(ctx, scope, testProfile()))
+	must(t, l.EnsureActive(ctx, scope, testProfile().Bindings()))
 	drive(t, l, scope.ProjectID)
 	backend := newFakePTY()
-	terminals := NewTerminals(ctx, l.Store, l, backend, testProfile(), 8)
+	terminals := NewTerminals(ctx, l.Store, l, backend, testProfile().Bindings(), 8)
 	t.Cleanup(terminals.Close)
 	return terminals, backend, scope
 }
@@ -272,7 +272,7 @@ func TestTerminalFanOutInputOwnershipAndGaps(t *testing.T) {
 	if reader.HoldsInput() {
 		t.Fatal("input must have exactly one holder")
 	}
-	wantError(t, terminals.ClaimInput(reader), ErrConflict)
+	wantError(t, terminals.ClaimInput(ctx, reader), ErrConflict)
 	wantError(t, terminals.Input(ctx, reader, []byte("x")), ErrConflict)
 
 	// Raw bytes reach every observer unchanged, including split UTF-8 and control
@@ -309,7 +309,7 @@ func TestTerminalFanOutInputOwnershipAndGaps(t *testing.T) {
 	// Releasing input does not silently promote another view; it is announced.
 	writer.Close()
 	awaitFrame(t, reader, func(f TerminalFrame) bool { return f.Kind == "status" && !f.Input })
-	must(t, terminals.ClaimInput(reader))
+	must(t, terminals.ClaimInput(ctx, reader))
 	if !reader.HoldsInput() {
 		t.Fatal("an explicit claim must succeed once the owner is gone")
 	}
@@ -413,10 +413,10 @@ func TestTerminalResizePersistsAndFencesPlacement(t *testing.T) {
 
 func TestTerminalLostPlacementClaimsNoExitCode(t *testing.T) {
 	l, scope, _ := lifecycleFixture(t)
-	must(t, l.EnsureActive(ctx, scope, testProfile()))
+	must(t, l.EnsureActive(ctx, scope, testProfile().Bindings()))
 	drive(t, l, scope.ProjectID)
 	backend := newFakePTY()
-	terminals := NewTerminals(ctx, l.Store, l, backend, testProfile(), 8)
+	terminals := NewTerminals(ctx, l.Store, l, backend, testProfile().Bindings(), 8)
 	defer terminals.Close()
 	s := l.Store
 	i := startTerminal(t, terminals, backend, scope, "shell", 24, 80)
@@ -545,7 +545,7 @@ func TestTerminalReconcilePreservesOtherProjects(t *testing.T) {
 	other := Scope{Actor: scope.Actor, ProjectID: "other"}
 	_, err := terminals.Store.CreateProject(ctx, other.Actor, other.ProjectID, "Other")
 	must(t, err)
-	must(t, terminals.Lifecycle.EnsureActive(ctx, other, testProfile()))
+	must(t, terminals.Lifecycle.EnsureActive(ctx, other, testProfile().Bindings()))
 	drive(t, terminals.Lifecycle, other.ProjectID)
 	first := startTerminal(t, terminals, backend, scope, "first-project-pty", 24, 80)
 	second := startTerminal(t, terminals, backend, other, "other-project-pty", 24, 80)

@@ -11,7 +11,7 @@ import (
 
 func TestCurrentSchemaInitializesAndReopensWithoutConversion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "product.db")
-	s, err := Open(ctx, path)
+	s, err := openFixtureStore(ctx, path)
 	must(t, err)
 	_, err = s.CreateProject(ctx, "owner", "project", "Current project")
 	must(t, err)
@@ -22,7 +22,7 @@ func TestCurrentSchemaInitializesAndReopensWithoutConversion(t *testing.T) {
 	before, err := schemaDigest(ctx, s.reader)
 	must(t, err)
 	must(t, s.Close())
-	s, err = Open(ctx, path)
+	s, err = openFixtureStore(ctx, path)
 	must(t, err)
 	defer s.Close()
 	after, err := schemaDigest(ctx, s.reader)
@@ -41,11 +41,11 @@ func TestCurrentSchemaInitializesAndReopensWithoutConversion(t *testing.T) {
 		t.Fatal("migration-only cleanup table remains")
 	}
 }
-func TestHistoricalAndUnknownSchemaVersionsAreRefusedWithoutWrites(t *testing.T) {
-	for _, version := range []int{0, 1, 12, 13, 14, 15, 999} {
+func TestNonCurrentSchemaIsRefusedWithoutWrites(t *testing.T) {
+	for _, version := range []int{SchemaVersion - 1, SchemaVersion + 1} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "old.db")
-			s, err := Open(ctx, path)
+			s, err := openFixtureStore(ctx, path)
 			must(t, err)
 			must(t, s.Close())
 			db, err := sql.Open("sqlite", path)
@@ -55,9 +55,9 @@ func TestHistoricalAndUnknownSchemaVersionsAreRefusedWithoutWrites(t *testing.T)
 			must(t, db.Close())
 			before, err := os.ReadFile(path)
 			must(t, err)
-			if opened, err := Open(ctx, path); err == nil {
+			if opened, err := openFixtureStore(ctx, path); err == nil {
 				opened.Close()
-				t.Fatal("historical version accepted")
+				t.Fatal("non-current schema accepted")
 			}
 			after, err := os.ReadFile(path)
 			must(t, err)

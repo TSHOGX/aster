@@ -18,7 +18,7 @@ python3 scripts/candidate.py verify /srv/candidates/new-candidate
 
 The output must be a new directory outside the checkout. The builder exports
 only the committed Git tree into a temporary source directory, runs `npm ci`,
-builds Next standalone output and static/public assets, and compiles the host
+builds both Next standalone applications and their static/public assets, and compiles the host
 `orchestrator` and `edge-proxy`. Ignored environment files, private deployment
 inputs and stale frontend output cannot enter through the working directory.
 The build intentionally runs dependency install/build hooks; use reviewed source.
@@ -27,11 +27,12 @@ the manifest. It defaults to Aster; see [display-name configuration](configurati
 The release workflow forwards the repository variable of the same name.
 Do not pass credentials as public build variables.
 
-The bundle contains `bin/`, `frontend/` and `candidate.json`. The manifest binds
-source commit, platform, tool versions, dependency lock hashes, frontend build ID
+The bundle contains `bin/`, `frontend/`, `admin-frontend/` and `candidate.json`. The manifest binds
+source commit, platform, tool versions, dependency lock hashes, both frontend build IDs
 and every artifact's bytes, mode or internal symlink. Changed, missing or extra
-files fail verification. A local HTTP smoke checks the packaged page, public asset
-and JavaScript chunk. The host package excludes guest images, engine state,
+files fail verification. A local HTTP smoke checks each packaged page, public asset
+and JavaScript chunk, plus an admin deep link. Candidate format 2 requires both
+frontend identities and their expected base paths. The host package excludes guest images, engine state,
 configuration, credentials, databases and fixture executables.
 
 Office visual assets are built before Next and included under `frontend/public/office`.
@@ -61,7 +62,7 @@ checkout and qualify with a new evidence directory:
 dev/verify-khora.sh --candidate /srv/candidates/new-candidate --template /srv/build/agent-runtime --manifest /srv/build/agent-runtime.manifest.json --output /srv/qualification/new-candidate --suite all
 ```
 
-The harness uses the candidate's actual owner and standalone frontend, records
+The harness uses the candidate's actual owner and both standalone frontends, records
 its manifest hash, and builds only the selected test packages. The alternate
 owner executable is an explicit handoff fixture, not a second deployable candidate.
 Engine/image evidence must match the target platform and native protocol. Provider
@@ -84,22 +85,24 @@ when omitted. Private qualification outputs stay outside CI/public artifacts.
 3. Select the update procedure from the table below. Coordinate supervision so
    the retired process cannot restart with obsolete bytes. Run the standalone
    frontend with `HOSTNAME=127.0.0.1 PORT=3000 node frontend/server.js` from the
-   bundle root, adjusting the reviewed bind address for the gateway topology.
+   bundle root, and the admin application with
+   `HOSTNAME=127.0.0.1 PORT=3001 node admin-frontend/server.js`. Adjust both reviewed
+   bind addresses for the gateway topology.
 4. Use the [operations runbook](operations.md) for drain, ready, activate and
    complete. Verify installed executable/frontend/runtime identities and smoke
    authentication, workspace access, a native reply and relevant browser controls.
    Remove only the disposable smoke resources created by that verification.
-5. Record the exact artifacts, checks, omissions and observed outcomes. A source
+5. Record the exact artifacts, checks, omissions and observed outcomes outside
+   the publishable repository. A source
    branch/archive is not a database or engine-volume backup.
 
 | Change | Required procedure |
 | --- | --- |
 | Owner/API binary only, matching compatibility and transfer predicate | Owner handoff; retain the independent gateway |
 | Frontend, gateway or configuration changes within the current runtime contract | Full quiescent procedure |
-| Engine, runtime template or schema/protocol changes | Deliberate fresh installation under an explicitly authorized reset scope |
+| Compatible immutable runtime version | Operator register/publish, admin preview/select; retain exact existing Project contracts |
+| Engine store or unsupported schema/protocol changes | Deliberate fresh installation under an explicitly authorized reset scope |
 
 Do not clear state or silently fall back to an old executable after activation
 failure. Repair the selected candidate while admission remains fenced, following
-[operations](operations.md) and [compatibility](compatibility.md). The historical
-queued-prompts reset is evidence for its recorded installation only; future
-updates do not inherit that reset authorization.
+[operations](operations.md) and [compatibility](compatibility.md).

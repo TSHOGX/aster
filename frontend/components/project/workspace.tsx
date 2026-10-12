@@ -108,7 +108,7 @@ export function ProjectWorkspace({
             {session?.title || tr("New Chat")}
           </span>
           <small>
-            {project.state !== "active" ? (
+            {project.execution_suspended ? tr("Execution suspended") : project.state !== "active" ? (
               project.state
             ) : session?.state === "running" ? (
               <span

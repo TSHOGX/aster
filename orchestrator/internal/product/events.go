@@ -8,7 +8,7 @@ import (
 // Events returns bounded projection invalidations. The transport reauthorizes
 // each subsequent batch rather than granting perpetual rights at subscription.
 func (s *Store) Events(ctx context.Context, scope Scope, after int64, limit int) ([]Event, error) {
-	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
+	if _, err := projectAction(ctx, s.reader, scope, ActionProjectsRead); err != nil {
 		return nil, err
 	}
 	rows, err := s.reader.QueryContext(ctx, `SELECT id,project_id,coalesce(session_id,''),coalesce(terminal_id,''),revision,kind,created_at FROM events WHERE project_id=? AND id>? ORDER BY id LIMIT ?`, scope.ProjectID, after, pageSize(limit))
@@ -33,12 +33,18 @@ func (s *Store) ScheduleEventBounds(ctx context.Context, actor string) (pruned, 
 	if actor == "" {
 		return 0, 0, ErrNotFound
 	}
+	if err = activeAccount(ctx, s.reader, actor); err != nil {
+		return
+	}
 	err = s.reader.QueryRowContext(ctx, `SELECT coalesce((SELECT retained_after FROM schedule_event_frontiers WHERE owner_id=?),0),coalesce((SELECT head FROM schedule_event_frontiers WHERE owner_id=?),0)`, actor, actor).Scan(&pruned, &head)
 	return
 }
 func (s *Store) ScheduleEvents(ctx context.Context, actor string, after int64, limit int) ([]ScheduleEvent, error) {
 	if actor == "" {
 		return nil, ErrNotFound
+	}
+	if err := activeAccount(ctx, s.reader, actor); err != nil {
+		return nil, err
 	}
 	rows, err := s.reader.QueryContext(ctx, `SELECT id,project_id,schedule_id,run_id,kind FROM schedule_events WHERE owner_id=? AND id>? ORDER BY id LIMIT ?`, actor, after, pageSize(limit))
 	if err != nil {
@@ -60,7 +66,7 @@ func (s *Store) GrantConversation(ctx context.Context, scope Scope, session, rea
 		return ErrInvalid
 	}
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		child, err := sessionIn(ctx, tx, scope, session)
@@ -70,7 +76,22 @@ func (s *Store) GrantConversation(ctx context.Context, scope Scope, session, rea
 		if child.Deletion != Live {
 			return ErrDeleting
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO conversation_grants(session_id,reader_id) VALUES(?,?) ON CONFLICT(session_id,reader_id) DO UPDATE SET revoked=0`, session, reader); err != nil {
+		if err := authorizeAction(ctx, tx, scope.Actor, ActionConversationsShare); err != nil {
+			return err
+		}
+		var recipient string
+		if err := missing(tx.QueryRowContext(ctx, `SELECT id FROM accounts WHERE id=? AND id<>? AND status='active'`, reader, scope.Actor).Scan(&recipient)); err != nil {
+			return err
+		}
+		var suspended bool
+		err = tx.QueryRowContext(ctx, `SELECT suspended AND revoked=0 FROM conversation_grants WHERE session_id=? AND reader_id=?`, session, reader).Scan(&suspended)
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		if suspended {
+			return Admission("reader_suspended", ErrConflict)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO conversation_grants(session_id,reader_id) VALUES(?,?) ON CONFLICT(session_id,reader_id) DO UPDATE SET revoked=0,suspended=0`, session, reader); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO notifications(id,audience,project_id,session_id,title,body,created_at) SELECT ?,?,?,?,?,?,? FROM notification_policy WHERE id=1 AND conversation_shared=1`, "share/"+session+"/"+reader, reader, scope.ProjectID, session, "Conversation shared with you", "Open the shared conversation to read it.", s.timestamp()); err != nil {
@@ -82,6 +103,9 @@ func (s *Store) GrantConversation(ctx context.Context, scope Scope, session, rea
 func (s *Store) RevokeConversation(ctx context.Context, scope Scope, session, reader string) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
 		if _, err := sessionIn(ctx, tx, scope, session); err != nil {
+			return err
+		}
+		if err := activeAccount(ctx, tx, scope.Actor); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE conversation_grants SET revoked=1 WHERE session_id=? AND reader_id=?`, session, reader); err != nil {
@@ -96,12 +120,19 @@ func (s *Store) CanReadConversation(ctx context.Context, actor, session string) 
 	if actor == "" {
 		return ErrNotFound
 	}
-	var id string
-	return missing(s.reader.QueryRowContext(ctx, `SELECT s.id FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND (p.owner_id=? OR EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0))`, session, actor, actor).Scan(&id))
+	var owner string
+	err := missing(s.reader.QueryRowContext(ctx, `SELECT p.owner_id FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND (p.owner_id=? OR EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0 AND g.suspended=0))`, session, actor, actor).Scan(&owner))
+	if err != nil {
+		return err
+	}
+	if owner == actor {
+		return authorizeAction(ctx, s.reader, actor, ActionProjectsRead)
+	}
+	return activeAccount(ctx, s.reader, actor)
 }
 
 func (s *Store) EventBounds(ctx context.Context, scope Scope) (first, last int64, err error) {
-	if _, err = authorizedProject(ctx, s.reader, scope); err != nil {
+	if _, err = projectAction(ctx, s.reader, scope, ActionProjectsRead); err != nil {
 		return
 	}
 	err = s.reader.QueryRowContext(ctx, `SELECT coalesce(min(id),0),coalesce(max(id),0) FROM events WHERE project_id=?`, scope.ProjectID).Scan(&first, &last)
@@ -109,7 +140,7 @@ func (s *Store) EventBounds(ctx context.Context, scope Scope) (first, last int64
 }
 
 func (s *Store) EventRetentionFrontier(ctx context.Context, scope Scope) (int64, error) {
-	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
+	if _, err := projectAction(ctx, s.reader, scope, ActionProjectsRead); err != nil {
 		return 0, err
 	}
 	var frontier int64

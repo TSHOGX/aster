@@ -18,12 +18,14 @@ import (
 	"testing"
 	"time"
 
+	"bytes"
 	sdk "github.com/TSHOGX/khora/pkg/khora"
-	"harness-platform/orchestrator/internal/auth"
 	"harness-platform/orchestrator/internal/edge"
 	"harness-platform/orchestrator/internal/product"
+	"harness-platform/orchestrator/internal/runtimerelease"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sandbox/khora"
+	"harness-platform/orchestrator/internal/testfixture"
 )
 
 // browserSubstrate installs only deterministic test dependencies into disposable
@@ -54,19 +56,18 @@ func (b *browserSubstrate) WriteProjection(ctx context.Context, ref sandbox.Refe
 	if b.initialized[key] {
 		return nil
 	}
-	for _, name := range []string{"agent-runner", "workspace-files", "runtime-fixture", "runtime-cleanup"} {
-		f, err := os.Open(filepath.Join(b.binaries, name))
-		if err != nil {
-			return err
-		}
-		err = b.api.WriteFile(ctx, ref.SandboxID, "/usr/local/bin/"+name, f)
-		f.Close()
-		if err != nil {
-			return err
-		}
+	f, err := os.Open(filepath.Join(b.binaries, "runtime-fixture"))
+	if err != nil {
+		return err
 	}
+	err = b.api.WriteFile(ctx, ref.SandboxID, "/tmp/runtime-fixture", f)
+	f.Close()
+	if err != nil {
+		return err
+	}
+
 	handle := fmt.Sprintf("browser-setup-%s-%d", ref.SandboxID, ref.Epoch)
-	stream, err := b.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/bin/sh", Arguments: []string{"-c", "chmod +x /usr/local/bin/agent-runner /usr/local/bin/workspace-files /usr/local/bin/runtime-fixture /usr/local/bin/runtime-cleanup; mkdir -p /opt/agent-config/pi"}, Directory: "/workspace"})
+	stream, err := b.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/bin/sh", Arguments: []string{"-c", "chmod +x /tmp/runtime-fixture"}, Directory: "/workspace"})
 	if err != nil {
 		return err
 	}
@@ -84,18 +85,12 @@ func (b *browserSubstrate) WriteProjection(ctx context.Context, ref sandbox.Refe
 			break
 		}
 	}
-	models := `{"providers":{"local":{"baseUrl":"http://127.0.0.1:18889","api":"anthropic-messages","apiKey":"fixture-only","models":[{"id":"local-model","name":"Local model","reasoning":false,"input":["text"],"contextWindow":8192,"maxTokens":256,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]}}}`
-	if err = b.api.WriteFile(ctx, ref.SandboxID, "/opt/agent-config/pi/models.json", strings.NewReader(models)); err != nil {
-		return err
-	}
-	if err = b.api.WriteFile(ctx, ref.SandboxID, "/opt/agent-config/pi/settings.json", strings.NewReader(`{"defaultProvider":"local","defaultModel":"local-model","compaction":{"enabled":false}}`)); err != nil {
-		return err
-	}
+
 	mode := b.modelMode
 	if mode == "" {
 		mode = "model"
 	}
-	model, err := b.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: fmt.Sprintf("browser-model-%s-%d", ref.SandboxID, ref.Epoch)}, IdempotencyKey: fmt.Sprintf("browser-model-%s-%d", ref.SandboxID, ref.Epoch), Command: "/usr/local/bin/runtime-fixture", Arguments: []string{mode}, Directory: "/workspace"})
+	model, err := b.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: fmt.Sprintf("browser-model-%s-%d", ref.SandboxID, ref.Epoch)}, IdempotencyKey: fmt.Sprintf("browser-model-%s-%d", ref.SandboxID, ref.Epoch), Command: "/tmp/runtime-fixture", Arguments: []string{mode}, Directory: "/workspace"})
 	if err != nil {
 		return err
 	}
@@ -146,12 +141,39 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	profile.StoreID = identity.StoreID
 	profile.TemplateID = "agent-runtime"
 	profile.DiskBytes = 256 << 20
-	lifecycle := &product.Lifecycle{Store: store, Backend: fixture, MaxProjects: 4}
-	agents := product.NewAgents(runctx, store, lifecycle, backend, profile, 8)
+	manifestBytes, err := os.ReadFile(os.Getenv("PROJECT_TEST_MANIFEST"))
+	must(t, err)
+	releaseDigest, err := runtimerelease.Digest(manifestBytes)
+	must(t, err)
+	manifest, err := runtimerelease.Load(bytes.NewReader(manifestBytes), releaseDigest)
+	must(t, err)
+	profile.ReleaseDigest = releaseDigest
+	network, err := product.NewNetworkPolicy(profile.Reachability)
+	must(t, err)
+	publications, err := testfixture.RuntimePublications(runctx, backend, manifest.Mounts.RequiredPublications)
+	must(t, err)
+	artifacts := []product.BuiltinVolume{}
+	for _, item := range publications {
+		p := item.Publication
+		claimed, e := store.ClaimContentPublication(runctx, p)
+		must(t, e)
+		claimed, e = store.RecordContentStaging(runctx, claimed, p.StagingVolumeID)
+		must(t, e)
+		claimed, e = store.RecordContentDerivation(runctx, claimed, p.DerivedVolumeID)
+		must(t, e)
+		_, e = store.CommitContentPublication(runctx, claimed, p.PublishedVolumeID, p.RevisionDigest)
+		must(t, e)
+		artifacts = append(artifacts, product.BuiltinVolume{Reference: product.ArtifactReference{ID: item.Required.ArtifactID, Version: p.RevisionDigest, Digest: p.RevisionDigest}, StoreID: p.StoreID, PublicationPurpose: p.Purpose, MinimumBytes: p.Capacity, SourceCapacityBytes: p.Capacity, Roles: []string{item.Required.Role}, Entries: p.Entries})
+	}
+	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: profile.CPUMillis, Memory: profile.MemoryBytes, Overlay: profile.DiskBytes, Workspace: profile.CapacityForRole("workspace"), Runtime: profile.CapacityForRole("runtime"), MaxMounts: 8, ProjectSlots: 4, AgentSlots: 8, TerminalSlots: 8}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: "agent-runtime", Version: "v1", Digest: releaseDigest}, StoreID: identity.StoreID, TemplateID: profile.TemplateID, Manifest: manifest}, artifacts, network)
+	must(t, err)
+
+	lifecycle := &product.Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: store, Backend: fixture, MaxProjects: 4}
+	agents := product.NewAgents(runctx, store, lifecycle, backend, profile.Bindings(), 8)
 	defer agents.Close()
-	terminals := product.NewTerminals(runctx, store, lifecycle, backend, profile, 8)
+	terminals := product.NewTerminals(runctx, store, lifecycle, backend, profile.Bindings(), 8)
 	defer terminals.Close()
-	files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Profile: profile}
+	files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Bindings: profile.Bindings()}
 	shares := &product.Shares{Store: store, Files: files, Directory: t.TempDir()}
 	captures := &product.Captures{Store: store, Backend: backend, Directory: t.TempDir()}
 	lifecycle.Artifacts = &product.Artifacts{Store: store, Captures: captures, Shares: shares}
@@ -162,11 +184,10 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	workerDone := make(chan struct{})
 	go func() { defer close(workerDone); workers.Run(workerctx) }()
 	defer func() { stopWorkers(); <-workerDone }()
-	hash, err := auth.HashPasswordWithIterations("isolated-browser-fixture", 1000)
+	_, err = store.BootstrapAccount(runctx, "researcher", "isolated-browser-fixture", seed)
 	must(t, err)
-	authentication, err := NewAuthentication(store, Config{TrustForwardedHost: true}, []AuthUser{{Username: "researcher", PasswordHash: hash}}, "")
-	must(t, err)
-	app := httptest.NewServer(authentication.Handler((&Server{Store: store, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Lifecycle: lifecycle, Profile: profile, Auth: authentication, Config: Config{TrustForwardedHost: true}}).Handler()))
+	authentication := NewAuthentication(store, Config{TrustForwardedHost: true})
+	app := httptest.NewServer(authentication.Handler((&Server{Store: store, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Lifecycle: lifecycle, Bindings: profile.Bindings(), Auth: authentication, Config: Config{TrustForwardedHost: true}}).Handler()))
 	defer app.Close()
 	log, err := os.Create(filepath.Join(os.Getenv("PROJECT_TEST_BIN_DIR"), "S08-frontend.log"))
 	must(t, err)
@@ -177,9 +198,16 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	frontend.Stderr = log
 	must(t, frontend.Start())
 	defer func() { _ = frontend.Process.Kill(); _ = frontend.Wait() }()
+	admin := exec.CommandContext(runctx, "node", filepath.Join(repo, "admin-frontend/node_modules/next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", "18194")
+	admin.Dir = filepath.Join(repo, "admin-frontend")
+	admin.Stdout = log
+	admin.Stderr = log
+	must(t, admin.Start())
+	defer func() { _ = admin.Process.Kill(); _ = admin.Wait() }()
+	adminURL, _ := url.Parse("http://127.0.0.1:18194")
 	frontendURL, _ := url.Parse("http://127.0.0.1:18193")
 	appURL, _ := url.Parse(app.URL)
-	handler, err := edge.New(edge.Config{Application: appURL, Frontend: frontendURL})
+	handler, err := edge.New(edge.Config{Application: appURL, Frontend: frontendURL, AdminFrontend: adminURL, PageAccount: authentication.Actor})
 	must(t, err)
 	edgeServer := httptest.NewServer(handler)
 	defer edgeServer.Close()

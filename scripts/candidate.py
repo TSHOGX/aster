@@ -17,6 +17,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = "candidate.json"
+FRONTENDS = {"frontend": "", "admin-frontend": "/admin"}
 
 
 def output(*args, cwd=ROOT):
@@ -54,11 +55,18 @@ def verify(root):
     if manifest_path.is_symlink():
         raise ValueError("candidate manifest must be a regular file")
     report = json.loads(manifest_path.read_text())
-    if report.get("format") != 1 or not re.fullmatch(r"[0-9a-f]{40}", report.get("commit", "")):
+    if report.get("format") != 2 or not re.fullmatch(r"[0-9a-f]{40}", report.get("commit", "")):
         raise ValueError("invalid candidate identity")
     if inventory(root) != report["files"]:
         raise ValueError("candidate files, modes or links differ from the recorded inventory")
-    for name in ("bin/orchestrator", "bin/edge-proxy", "frontend/server.js", "frontend/.next/BUILD_ID", "frontend/public/favicon.svg"):
+    if set(report.get("frontends", {})) != set(FRONTENDS):
+        raise ValueError("both frontend identities are required")
+    required = ["bin/orchestrator", "bin/edge-proxy"]
+    for frontend, base in FRONTENDS.items():
+        required.extend(f"{frontend}/{name}" for name in ("server.js", ".next/BUILD_ID", "public/favicon.svg"))
+        if report["frontends"][frontend].get("base_path") != base:
+            raise ValueError("frontend base path mismatch")
+    for name in required:
         if name not in report["files"]:
             raise ValueError(f"missing required artifact: {name}")
     office_pages = list((root / "frontend/public/office").glob("*/document.html"))
@@ -68,19 +76,25 @@ def verify(root):
         for asset in ("document.js", "document.css", "spreadsheet.html", "spreadsheet.js", "spreadsheet.css", "presentation.html", "presentation.js", "presentation.css"):
             if not (page.parent / asset).is_file():
                 raise ValueError("missing required Office viewer entry")
-    if (root / "frontend/.next/BUILD_ID").read_text().strip() != report["frontend_build_id"]:
-        raise ValueError("frontend build identity mismatch")
+    for frontend in FRONTENDS:
+        if (root / frontend / ".next/BUILD_ID").read_text().strip() != report["frontends"][frontend]["build_id"]:
+            raise ValueError("frontend build identity mismatch")
     return report
 
 
 def smoke(root):
-    """Exercise the packaged server, public asset and a referenced JS chunk."""
+    """Exercise both independently packaged servers and their assets."""
+    for frontend, base in FRONTENDS.items():
+        smoke_frontend(root, frontend, base)
+
+
+def smoke_frontend(root, frontend, base):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     env = {**os.environ, "HOSTNAME": "127.0.0.1", "PORT": str(port), "NODE_ENV": "production"}
     with tempfile.TemporaryFile() as log:
-        server = subprocess.Popen(["node", "server.js"], cwd=root / "frontend", env=env, stdout=log, stderr=log)
+        server = subprocess.Popen(["node", "server.js"], cwd=root / frontend, env=env, stdout=log, stderr=log)
         try:
             origin = f"http://127.0.0.1:{port}"
             deadline = time.monotonic() + 30
@@ -88,25 +102,29 @@ def smoke(root):
                 if server.poll() is not None:
                     raise ValueError("packaged frontend exited before readiness")
                 try:
-                    with urllib.request.urlopen(origin, timeout=1) as response:
+                    with urllib.request.urlopen(origin + (base or "/"), timeout=1) as response:
                         html = response.read().decode()
                     break
                 except (urllib.error.URLError, TimeoutError):
                     if time.monotonic() >= deadline:
                         raise ValueError("packaged frontend did not become ready")
                     time.sleep(0.1)
-            chunk = re.search(r'src="(/_next/static/[^" ]+\.js(?:\?[^" ]*)?)"', html)
+            chunk = re.search(r'src="(' + re.escape(base) + r'/_next/static/[^" ]+\.js(?:\?[^" ]*)?)"', html)
             if not chunk:
                 raise ValueError("packaged frontend did not reference a JavaScript chunk")
-            for asset in ("/favicon.svg", chunk.group(1)):
+            for asset in (base + "/favicon.svg", chunk.group(1)):
                 with urllib.request.urlopen(origin + asset, timeout=5) as response:
                     if response.status != 200 or not response.read():
                         raise ValueError(f"empty or unavailable frontend asset: {asset}")
-            for page in (root / "frontend/public/office").glob("*/document.html"):
+            if base:
+                with urllib.request.urlopen(origin + base + "/users/qualification", timeout=5) as response:
+                    if response.status != 200 or not response.read():
+                        raise ValueError("admin deep link unavailable")
+            for page in (root / frontend / "public/office").glob("*/document.html"):
                 for asset in page.parent.iterdir():
                     if not asset.is_file():
                         continue
-                    url = "/" + asset.relative_to(root / "frontend/public").as_posix()
+                    url = "/" + asset.relative_to(root / frontend / "public").as_posix()
                     with urllib.request.urlopen(origin + url, timeout=5) as response:
                         if response.status != 200 or not response.read():
                             raise ValueError("Office viewer asset unavailable")
@@ -143,12 +161,13 @@ def build(destination):
         subprocess.run(["git", "archive", "--format=tar", "-o", str(archive), commit], cwd=ROOT, check=True)
         subprocess.run(["tar", "-xf", str(archive), "-C", str(source)], check=True)
         # The snapshot excludes ignored .env files, private inputs and stale build output.
-        frontend = source / "frontend"
-        subprocess.run(["npm", "ci"], cwd=frontend, check=True)
-        subprocess.run(["npm", "run", "build"], cwd=frontend, check=True)
-        shutil.copytree(frontend / ".next/standalone", destination / "frontend", symlinks=True)
-        shutil.copytree(frontend / ".next/static", destination / "frontend/.next/static")
-        shutil.copytree(frontend / "public", destination / "frontend/public")
+        for frontend in FRONTENDS:
+            directory = source / frontend
+            subprocess.run(["npm", "ci"], cwd=directory, check=True)
+            subprocess.run(["npm", "run", "build"], cwd=directory, check=True)
+            shutil.copytree(directory / ".next/standalone" / frontend, destination / frontend, symlinks=True)
+            shutil.copytree(directory / ".next/static", destination / frontend / ".next/static")
+            shutil.copytree(directory / "public", destination / frontend / "public")
         shutil.copyfile(source / "docs/third-party-notices.md", destination / "THIRD-PARTY-NOTICES.md")
         (destination / "bin").mkdir()
         for binary in ("orchestrator", "edge-proxy"):
@@ -159,12 +178,13 @@ def build(destination):
             ], cwd=source / "orchestrator", env={**os.environ, "CGO_ENABLED": "0"}, check=True)
         smoke(destination)
         report = {
-            "format": 1, "commit": commit, "version": version,
+            "format": 2, "commit": commit, "version": version,
             "platform": output("go", "env", "GOOS") + "/" + output("go", "env", "GOARCH"),
             "go": output("go", "version"), "node": output("node", "--version"),
-            "frontend_build_id": (destination / "frontend/.next/BUILD_ID").read_text().strip(),
+            "frontends": {name: {"build_id": (destination / name / ".next/BUILD_ID").read_text().strip(),
+                                 "lock_sha256": digest(source / name / "package-lock.json"), "base_path": base}
+                          for name, base in FRONTENDS.items()},
             "go_sum_sha256": digest(source / "orchestrator/go.sum"),
-            "npm_lock_sha256": digest(frontend / "package-lock.json"),
             "public_brand": os.environ.get("NEXT_PUBLIC_PROJECT_BRAND_NAME", ""),
             "verification": {"standalone_http_assets": "passed", "runtime_qualification": "not_run"},
             "files": inventory(destination),
@@ -191,7 +211,7 @@ def main():
             # Read-only: the existing command never opens the Store or contacts the engine.
             subprocess.run([str(root / "bin/orchestrator"), "release-identity", "--config", str(args.config.resolve())], check=True)
         else:
-            print(json.dumps({"commit": report["commit"], "platform": report["platform"], "frontend_build_id": report["frontend_build_id"], "verified": True}))
+            print(json.dumps({"commit": report["commit"], "platform": report["platform"], "frontends": report["frontends"], "verified": True}))
 
 
 if __name__ == "__main__":

@@ -37,7 +37,7 @@ func TestProjectLifecycleOnKhora(t *testing.T) {
 	must(t, err)
 	s := testStore(t)
 	loss := &lostReplies{LifecycleBackend: backend, lost: map[string]bool{}}
-	l := &Lifecycle{Store: s, Backend: loss, MaxProjects: 1}
+	l := &Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: s, Backend: loss, MaxProjects: 1}
 	converge := func() {
 		t.Helper()
 		for i := 0; i < 20; i++ {
@@ -59,7 +59,8 @@ func TestProjectLifecycleOnKhora(t *testing.T) {
 	profile.TemplateID = "agent-runtime"
 	profile.MemoryBytes = 1 << 30
 	profile.DiskBytes = 256 << 20
-	must(t, l.EnsureActive(runctx, a, profile))
+	profile = fixtureRuntimeOnKhora(t, runctx, s, backend, profile)
+	must(t, l.EnsureActive(runctx, a, profile.Bindings()))
 	converge()
 	r, err := l.ActiveResources(runctx, a)
 	must(t, err)
@@ -109,7 +110,7 @@ func TestProjectLifecycleOnKhora(t *testing.T) {
 	must(t, err)
 	must(t, l.Pause(runctx, a, p.Revision))
 	converge()
-	must(t, l.EnsureActive(runctx, a, profile))
+	must(t, l.EnsureActive(runctx, a, profile.Bindings()))
 	converge()
 	r, err = l.ActiveResources(runctx, a)
 	must(t, err)
@@ -169,7 +170,7 @@ func TestProjectLifecycleOnKhora(t *testing.T) {
 	if _, err = api.Get(runctx, r.Reference.SandboxID); !sdk.IsNotFound(err) {
 		t.Fatalf("sandbox not reclaimed: %v", err)
 	}
-	for _, id := range []string{r.WorkspaceVolume, r.RuntimeVolume} {
+	for _, id := range []string{r.VolumeForRole("workspace"), r.VolumeForRole("runtime")} {
 		if _, err = api.Volume(runctx, id); !sdk.IsNotFound(err) {
 			t.Fatalf("volume %s not reclaimed: %v", id, err)
 		}

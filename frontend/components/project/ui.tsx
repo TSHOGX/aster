@@ -9,10 +9,26 @@ import {
   useCallback,
   type ButtonHTMLAttributes,
   type ReactNode,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import { MoreHorizontal, X } from "lucide-react";
 import { useT } from "@/lib/i18n";
+
+export function trapDialogFocus(event: ReactKeyboardEvent<HTMLDialogElement>) {
+  if (event.key !== "Tab") return;
+  const node = event.currentTarget;
+  const controls = [...node.querySelectorAll<HTMLElement>(
+    "button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex]:not([tabindex='-1'])",
+  )].filter(control => control.getClientRects().length > 0);
+  const first = controls[0], last = controls.at(-1);
+  if (!first || !last) { event.preventDefault(); node.focus(); return; }
+  if (!node.contains(document.activeElement) || event.shiftKey && document.activeElement === first) {
+    event.preventDefault(); (event.shiftKey ? last : first).focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault(); first.focus();
+  }
+}
 
 export function IconButton({
   label,
@@ -222,6 +238,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
           ref={dialog}
           className="app-dialog"
           aria-labelledby="dialog-title"
+          onKeyDown={trapDialogFocus}
           onCancel={(e) => {
             e.preventDefault();
             done(null);

@@ -19,7 +19,7 @@ func TestIdleAgentQuiescencePreservesNewlyAdmittedQueue(t *testing.T) {
 	backend := newFakePTY()
 	_, err = backend.StartPTY(ctx, sandbox.StartProcessRequest{ProcessReference: i.Reference, IdempotencyKey: i.ID, Command: "/bin/bash"}, 24, 80)
 	must(t, err)
-	agents := NewAgents(ctx, s, nil, backend, testProfile(), 8)
+	agents := NewAgents(ctx, s, nil, backend, testProfile().Bindings(), 8)
 	defer agents.Close()
 	agents.attachments[i.SessionID] = &agentAttachment{projectID: scope.ProjectID, incarnation: i, cancel: func() {}, ready: true}
 	clock := s.now().Add(2 * time.Minute)

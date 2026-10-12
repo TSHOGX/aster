@@ -105,3 +105,23 @@ for (const width of [390,1600]) for (const theme of ["light","dark"] as const)
     await page.waitForTimeout(150);
     await page.screenshot({path:test.info().outputPath("file-view.png")});
   });
+
+test("file grants separate preview, editor saves, upload, export and manage", async ({page}) => {
+  const fixture = await workspaceFixture(page, {deniedActions:["files.upload", "files.export", "files.manage"]});
+  fixture.messages.analysis[1].content = "[Artifact](/workspace/page.html)";
+  fixture.files["page.html"] = "<h1>Readable preview</h1>";
+  await page.goto("/?project=battery&session=analysis");
+  await page.getByRole("link", {name:"Artifact",exact:true}).click();
+  await expect(page.frameLocator(".html-preview").getByRole("heading")).toHaveText("Readable preview");
+  await expect(page.getByRole("link", {name:"Download file",exact:true})).toHaveCount(0);
+  await page.getByLabel("File actions",{exact:true}).click();
+  await expect(page.getByRole("menuitem",{name:"Download",exact:true})).toBeDisabled();
+  await page.getByRole("menuitem",{name:"Edit text",exact:true}).click();
+  await page.getByLabel("Edit page.html",{exact:true}).fill("<h1>Edited</h1>");
+  await page.getByRole("button",{name:"Save file",exact:true}).click();
+  await expect.poll(() => fixture.files["page.html"]).toBe("<h1>Edited</h1>");
+  expect(fixture.calls.filter(call=>call.method==="PUT").map(call=>call.path)).toEqual(["/api/projects/battery/files/editor-content"]);
+  await page.getByLabel("Tree actions",{exact:true}).click();
+  await expect(page.getByRole("menuitem",{name:"Upload",exact:true})).toBeDisabled();
+  await expect(page.getByRole("menuitem",{name:"New folder",exact:true})).toBeDisabled();
+});
