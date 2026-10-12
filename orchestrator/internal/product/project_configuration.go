@@ -21,22 +21,27 @@ type ProjectConfiguration struct {
 	Environment           DefaultEnvironment `json:"environment"`
 }
 
-func projectConfiguration(ctx context.Context, q queryer, project string) (ProjectConfiguration, error) {
+const projectConfigurationQuery = `SELECT c.project_id,c.network_template_id,c.environment_template_id,c.revision,c.network,c.environment,p.title,p.state,p.execution_suspended,n.name,e.name
+ FROM project_configuration c JOIN projects p ON p.id=c.project_id
+ JOIN network_templates n ON n.id=c.network_template_id
+ JOIN environment_templates e ON e.id=c.environment_template_id`
+
+func scanProjectConfiguration(row scanner) (ProjectConfiguration, error) {
 	var out ProjectConfiguration
-	var n, e string
-	err := missing(q.QueryRowContext(ctx, `SELECT project_id,network_template_id,environment_template_id,revision,network,environment FROM project_configuration WHERE project_id=?`, project).Scan(&out.ProjectID, &out.NetworkTemplateID, &out.EnvironmentTemplateID, &out.Revision, &n, &e))
+	var network, environment string
+	err := missing(row.Scan(&out.ProjectID, &out.NetworkTemplateID, &out.EnvironmentTemplateID, &out.Revision, &network, &environment, &out.Title, &out.State, &out.Suspended, &out.NetworkName, &out.EnvironmentName))
 	if err != nil {
 		return out, err
 	}
-	if err = json.Unmarshal([]byte(n), &out.Network); err != nil {
+	if err = json.Unmarshal([]byte(network), &out.Network); err != nil {
 		return out, err
 	}
-	err = json.Unmarshal([]byte(e), &out.Environment)
-	if err != nil {
-		return out, err
-	}
-	err = q.QueryRowContext(ctx, `SELECT p.title,p.state,p.execution_suspended,n.name,e.name FROM projects p JOIN project_configuration c ON c.project_id=p.id JOIN network_templates n ON n.id=c.network_template_id JOIN environment_templates e ON e.id=c.environment_template_id WHERE p.id=?`, project).Scan(&out.Title, &out.State, &out.Suspended, &out.NetworkName, &out.EnvironmentName)
+	err = json.Unmarshal([]byte(environment), &out.Environment)
 	return out, err
+}
+
+func projectConfiguration(ctx context.Context, q queryer, project string) (ProjectConfiguration, error) {
+	return scanProjectConfiguration(q.QueryRowContext(ctx, projectConfigurationQuery+` WHERE p.id=?`, project))
 }
 func saveInitialConfiguration(ctx context.Context, tx *sql.Tx, actor, project string) error {
 	settings, err := configurationSettings(ctx, tx, actor)
@@ -252,38 +257,33 @@ func configurationImpact(ctx context.Context, q queryer) (ConfigurationImpact, e
 	return out, rows.Err()
 }
 func (s *Store) UserProjectConfigurations(ctx context.Context, token string) ([]ProjectConfiguration, error) {
-	login, err := s.normalLogin(ctx, s.reader, token)
+	// Keep authorization, retained configuration and current labels in one snapshot.
+	tx, err := s.reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
-	if err = authorizeAction(ctx, s.reader, login.Account.ID, ActionProjectsRead); err != nil {
-		return nil, err
-	}
-	rows, err := s.reader.QueryContext(ctx, `SELECT id FROM projects WHERE owner_id=? AND state<>'deleted' ORDER BY updated_at DESC`, login.Account.ID)
+	defer tx.Rollback()
+	login, err := s.normalLogin(ctx, tx, token)
 	if err != nil {
 		return nil, err
 	}
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
-			break
-		}
-		ids = append(ids, id)
+	if err = authorizeAction(ctx, tx, login.Account.ID, ActionProjectsRead); err != nil {
+		return nil, err
 	}
-	err = errors.Join(err, rows.Err(), rows.Close())
+	rows, err := tx.QueryContext(ctx, projectConfigurationQuery+` WHERE p.owner_id=? AND p.state<>'deleted' ORDER BY p.updated_at DESC,p.id`, login.Account.ID)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	out := []ProjectConfiguration{}
-	for _, id := range ids {
-		v, e := projectConfiguration(ctx, s.reader, id)
+	for rows.Next() {
+		v, e := scanProjectConfiguration(rows)
 		if e != nil {
 			return nil, e
 		}
 		out = append(out, v)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 func (s *Store) ChangeProjectNetwork(ctx context.Context, token, project string, input ConfigurationEdit) (ProjectConfiguration, error) {
 	var out ProjectConfiguration
