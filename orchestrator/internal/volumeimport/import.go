@@ -5,6 +5,7 @@ package volumeimport
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -46,9 +47,11 @@ type Blob struct {
 	Verified bool   `json:"verified"`
 }
 type Job struct {
-	Identity Identity `json:"identity"`
-	State    string   `json:"state"`
-	Blobs    []Blob   `json:"blobs"`
+	ExportRequest string   `json:"export_request"`
+	Export        *Export  `json:"export,omitempty"`
+	Identity      Identity `json:"identity"`
+	State         string   `json:"state"`
+	Blobs         []Blob   `json:"blobs"`
 }
 
 // Cache has one owner, enforced across processes for its lifetime. The caller
@@ -268,6 +271,10 @@ func (c *Cache) Status() Job {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	j := c.job
+	if c.job.Export != nil {
+		copy := *c.job.Export
+		j.Export = &copy
+	}
 	j.Blobs = append([]Blob(nil), j.Blobs...)
 	return j
 }
@@ -472,4 +479,56 @@ func atomicWrite(root, name string, data []byte) error {
 		return err
 	}
 	return syncDirectory(root)
+}
+
+func (c *Cache) exportState() (*Export, string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.usable(); err != nil {
+		return nil, "", err
+	}
+	var e *Export
+	if c.job.Export != nil {
+		copy := *c.job.Export
+		e = &copy
+	}
+	return e, c.job.ExportRequest, nil
+}
+func (c *Cache) newExportRequest() (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.usable(); err != nil {
+		return "", err
+	}
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	c.job.Export = nil
+	c.job.ExportRequest = "export-" + hex.EncodeToString(b[:])
+	return c.job.ExportRequest, c.persist()
+}
+func (c *Cache) setExport(e *Export) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.usable(); err != nil {
+		return err
+	}
+	copy := *e
+	c.job.Export = &copy
+	return c.persist()
+}
+
+// Descriptor returns a validated copy of the retained manifest for materialization.
+func (c *Cache) Descriptor() (manifest.Descriptor, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.usable(); err != nil {
+		return manifest.Descriptor{}, err
+	}
+	raw, err := c.descriptor.Canonical()
+	if err != nil {
+		return manifest.Descriptor{}, err
+	}
+	return manifest.Decode(bytes.NewReader(raw))
 }
