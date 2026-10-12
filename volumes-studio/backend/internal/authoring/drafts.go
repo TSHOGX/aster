@@ -1,6 +1,7 @@
 package authoring
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -368,10 +369,15 @@ func (s *Store) Diff(ctx context.Context, id, after string, revision int64) ([]C
 	}
 	base := []manifest.Entry{}
 	if l.BaseVersion != "" {
-		base, err = entries(ctx, s.db, "version_entries", "version_id", l.BaseVersion)
+		var raw []byte
+		if err = s.db.QueryRowContext(ctx, "SELECT descriptor FROM versions WHERE id=?", l.BaseVersion).Scan(&raw); err != nil {
+			return nil, "", err
+		}
+		d, err := manifest.Decode(bytes.NewReader(raw))
 		if err != nil {
 			return nil, "", err
 		}
+		base = d.Entries
 	}
 	old := map[string]manifest.Entry{}
 	for _, e := range base {

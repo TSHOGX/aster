@@ -43,6 +43,9 @@ var uploadsSchema string
 //go:embed jobs.sql
 var jobsSchema string
 
+//go:embed distribution.sql
+var distributionSchema string
+
 type Actor struct {
 	Issuer  string `json:"issuer"`
 	Subject string `json:"subject"`
@@ -93,12 +96,17 @@ func Open(ctx context.Context, c Config) (*Store, error) {
 	if !filepath.IsAbs(c.Directory) || c.Directory == "/" || !manifest.ValidID(c.PublisherID) || c.QuotaBytes < 1<<20 {
 		return nil, ErrInvalid
 	}
+	if _, err := os.Lstat(filepath.Join(c.Directory, "backup.incomplete")); err == nil {
+		return nil, fmt.Errorf("incomplete backup cannot be opened")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	for _, dir := range []string{c.Directory, filepath.Join(c.Directory, "blobs"), filepath.Join(c.Directory, "tmp"), filepath.Join(c.Directory, "uploads")} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return nil, err
 		}
 	}
-	db, err := database.Open(ctx, filepath.Join(c.Directory, "authoring.db"), []string{schema, uploadsSchema, jobsSchema})
+	db, err := database.Open(ctx, filepath.Join(c.Directory, "authoring.db"), []string{schema, uploadsSchema, jobsSchema, distributionSchema})
 	if err != nil {
 		return nil, err
 	}
@@ -112,6 +120,11 @@ func Open(ctx context.Context, c Config) (*Store, error) {
 		err = fmt.Errorf("publisher identity differs from retained database")
 	}
 	if err != nil {
+		return fail(err)
+	}
+	// Acquiring the exclusive process lock proves old HTTP readers no longer own
+	// this store. Their durable pins can now be reconciled, never by TTL alone.
+	if _, err = db.ExecContext(ctx, "DELETE FROM reader_pins"); err != nil {
 		return fail(err)
 	}
 	if err = s.reconcile(ctx); err != nil {

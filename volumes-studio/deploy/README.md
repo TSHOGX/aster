@@ -68,3 +68,55 @@ are private credentials needed for introspection. Keep the directory owner-only.
 SQLite uses WAL/FULL, foreign keys, an exclusive owner lock and transactional schema
 steps. Unknown newer schemas fail without reset. A lost callback exchange requires
 a fresh login; durable app sessions survive a normal Studio restart.
+
+## Private distribution and source retirement
+
+Supply a private JSON registration file with `-distribution-config FILE`; the
+separate listener defaults to `127.0.0.1:8084`. Credentials are environment
+references, never literal JSON secrets:
+
+```json
+{"clients":[{"id":"aster","secret_envs":["STUDIO_DISTRIBUTION_SECRET"],
+ "grant_revision":1,"libraries":["*"]}]}
+```
+
+Prefer explicit library IDs over `*` when the consumer should see a subset. Two
+secret references allow rotation; removing a credential stops its new requests.
+Increment `grant_revision` to invalidate all outstanding exports for that client.
+Configuration changes require a Studio restart. Host the loopback listener behind
+an authenticated TLS tunnel for cross-host consumption; never expose it through
+the public proxy. Service requests with Origin or Cookie are refused.
+
+Exports expire after 15 minutes, pin the exact descriptor and require service
+credentials on every request. Reads permit one explicit range of at most 8 MiB
+(or an entire file of at most 8 MiB). A reader has a durable pin until response
+completion; a closed/expired export cannot admit another read. Startup reconciles
+abandoned readers only after acquiring the exclusive process lock.
+
+Archiving stops discovery/new exports and renewal. Admitted exports retain bounded
+access until close/expiry. Retirement waits for export, active-reader and validation
+blockers, then removes the version's blob references. Metadata and immutable labels
+remain retained; drafts and other versions can still pin the same blobs. Consumer
+copies are never deleted or revoked by source retirement.
+
+## Backup and restore
+
+Stop Studio for the supported operator backup command. Its exclusive database
+lock refuses a running writer. Supply a new, empty destination outside the source:
+
+```sh
+go -C volumes-studio/backend build -o /srv/volume-studio/bin/studio-backup ./cmd/studio-backup
+/srv/volume-studio/bin/studio-backup \
+  -state-directory /var/lib/volume-studio -publisher-id deployment-publisher \
+  -output /srv/backups/volume-studio-snapshot
+```
+
+The backup pins metadata, blobs and acknowledged upload files against GC, snapshots
+SQLite with `VACUUM INTO`, copies and fsyncs bytes, and records file digests in
+`backup.json`. An interrupted snapshot retains `backup.incomplete`; startup refuses
+it. Preserve the complete private directory and its inventory, publisher ID and
+configuration. Restore to an independent directory, verify the inventory against
+trusted backup evidence, and start Studio with the original publisher ID. Never
+run a writable restore against the source blob paths. Sessions are intentionally
+excluded: sign in again through central identity after restore. Draft/version
+history and acknowledged uploads are retained independently of those sessions.

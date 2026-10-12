@@ -44,6 +44,7 @@ func NewAuthoringAPI(store *authoring.Store) *AuthoringAPI {
 	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}", a.version)
 	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}/tree", a.versionTree)
 	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}/content", a.content)
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}/retention", a.retention)
 	m.HandleFunc("POST "+apiPrefix+"libraries/{library}/versions/{version}/lifecycle", a.lifecycle)
 	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/uploads", a.uploads)
 	m.HandleFunc("POST "+apiPrefix+"libraries/{library}/uploads", a.uploadStart)
@@ -330,12 +331,30 @@ func (a *AuthoringAPI) lifecycle(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &b) {
 		return
 	}
-	if b.Action != "archive" {
+	if b.Action != "archive" && b.Action != "retire" {
 		writeError(w, 422, "unsupported_lifecycle")
 		return
 	}
-	v, err = a.Store.Operation(r.Context(), actor(r), v.ID, b)
+	if b.Action == "retire" {
+		v, err = a.Store.Retire(r.Context(), actor(r), v.ID, b.RequestID)
+	} else {
+		v, err = a.Store.Operation(r.Context(), actor(r), v.ID, b)
+	}
 	respond(w, 200, v, err)
+}
+
+func (a *AuthoringAPI) retention(w http.ResponseWriter, r *http.Request) {
+	v, err := a.Store.Version(r.Context(), r.PathValue("version"))
+	if err != nil {
+		authoringError(w, err)
+		return
+	}
+	if v.LibraryID != r.PathValue("library") {
+		authoringError(w, authoring.ErrNotFound)
+		return
+	}
+	retention, err := a.Store.Retention(r.Context(), v.ID)
+	respond(w, 200, retention, err)
 }
 
 // Bounded cursor polling is the durable invalidation path. It does not hold a

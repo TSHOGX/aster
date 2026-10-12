@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"volume-studio/backend/internal/authoring"
+	"volume-studio/backend/internal/distribution"
 	"volume-studio/backend/internal/httpapi"
 	"volume-studio/backend/internal/identity"
 )
@@ -29,6 +32,8 @@ func main() {
 	frontend := flag.String("frontend", "http://127.0.0.1:3002", "independent Studio frontend origin")
 	publisher := flag.String("publisher-id", "", "stable publisher instance ID retained through restore")
 	quota := flag.Int64("quota-bytes", 8<<30, "Studio blob and upload reservation budget")
+	distributionConfig := flag.String("distribution-config", "", "private JSON service client registrations")
+	distributionListen := flag.String("distribution-listen", "127.0.0.1:8084", "private distribution listener")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*listen)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
@@ -59,6 +64,33 @@ func main() {
 		log.Fatal(err)
 	}
 	server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 64 << 10}
+	servers := []*http.Server{server}
+	if *distributionConfig != "" {
+		host, _, err := net.SplitHostPort(*distributionListen)
+		if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+			log.Fatal("distribution requires a private loopback listener")
+		}
+		file, err := os.Open(*distributionConfig)
+		if err != nil {
+			log.Fatal("cannot open distribution registrations")
+		}
+		decoder := json.NewDecoder(io.LimitReader(file, 1<<20))
+		decoder.DisallowUnknownFields()
+		var cfg distribution.Config
+		err = decoder.Decode(&cfg)
+		if err == nil && decoder.Decode(new(any)) != io.EOF {
+			err = errors.New("trailing distribution configuration")
+		}
+		_ = file.Close()
+		if err != nil {
+			log.Fatal("invalid distribution registrations")
+		}
+		handler, err := distribution.New(store, cfg)
+		if err != nil {
+			log.Fatal(err)
+		}
+		servers = append(servers, &http.Server{Addr: *distributionListen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10})
+	}
 	var workers sync.WaitGroup
 	workers.Add(1)
 	go func() {
@@ -71,6 +103,7 @@ func main() {
 				return
 			case <-ticker.C:
 				_, _ = store.ExpireUploads(ctx)
+				_ = store.ExpireExports(ctx)
 				_, err := store.ValidateNext(ctx, func(ctx context.Context, actor authoring.Actor) error {
 					if actor.Issuer != *issuer {
 						return identity.ErrUnauthorized
@@ -85,16 +118,25 @@ func main() {
 			}
 		}
 	}()
-	defer func() { stop(); workers.Wait() }()
-	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
+	failures := make(chan error, len(servers))
+	for _, server := range servers {
+		go func() { failures <- server.ListenAndServe() }()
+	}
+	select {
+	case <-ctx.Done():
+	case err := <-failures:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Print("Studio listener stopped: ", err)
+		}
+		stop()
+	}
+	stop()
+	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for _, server := range servers {
 		if err := server.Shutdown(shutdown); err != nil {
 			_ = server.Close()
 		}
-	}()
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatal(err)
 	}
+	workers.Wait()
 }
