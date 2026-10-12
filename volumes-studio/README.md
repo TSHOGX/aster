@@ -8,8 +8,10 @@ sessions but no password store or account directory.
 
 The backend is an independent Go module with no Aster business imports or engine
 dependency. The [v1 contract](contracts/v1/README.md) and its independent consumer
-decoder are implemented. Authoring, identity integration and deployment are not
-yet available; see the [delivery tracker](../docs/volume-studio-delivery.md).
+decoder are implemented. The central identity adapter, independent gateway and
+durable Studio sessions are available; authoring and runtime integration are under
+development. See the [delivery tracker](../docs/volume-studio-delivery.md) and
+[deployment instructions](deploy/README.md).
 
 Run the independent checks from the repository root:
 

@@ -38,3 +38,33 @@ retain cancellation without a whole-response deadline. Each application must
 bound its individual upload/read operations. Stopping either business process
 does not take the other route down. The proxy and sole identity authority remain
 explicit deployment dependencies.
+
+Build and run the independent Studio gateway:
+
+```sh
+go -C volumes-studio/backend build -o /srv/volume-studio/bin/studio ./cmd/studio
+/srv/volume-studio/bin/studio \
+  -state-directory /var/lib/volume-studio \
+  -public-origin https://example.com:8443 \
+  -identity-endpoint http://127.0.0.1:8083 \
+  -identity-client studio -identity-secret-env STUDIO_IDENTITY_CLIENT_SECRET \
+  -frontend http://127.0.0.1:3002
+```
+
+Register the same public issuer/callback and secret environment in Aster's
+[identity adapter](../contracts/v1/identity.md), including its private loopback
+listener. Studio's gateway listens on loopback behind the front door. It never
+receives `project_login`, and never forwards its session cookie to the frontend.
+
+The first implementation performs fresh introspection on every privileged request;
+it does not use a local authorization cache. Identity outages immediately return
+`identity_unavailable`; login and logout can be retried after recovery. Central
+evidence itself is bounded to at most 60 seconds, and no response or local session
+extends that interval. Admitted worker phases use the separate principal check.
+
+`sessions.db` contains only login attempts and app sessions referencing central
+authority. Local cookie tokens are stored as digests; back-channel grant references
+are private credentials needed for introspection. Keep the directory owner-only.
+SQLite uses WAL/FULL, foreign keys, an exclusive owner lock and transactional schema
+steps. Unknown newer schemas fail without reset. A lost callback exchange requires
+a fresh login; durable app sessions survive a normal Studio restart.
