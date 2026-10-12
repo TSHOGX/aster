@@ -4,6 +4,12 @@ set -euo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo"
 case "${1:-all}" in
+  studio)
+    go -C volumes-studio/backend build -mod=readonly ./...
+    go -C volumes-studio/backend vet -mod=readonly ./...
+    go -C volumes-studio/backend test -mod=readonly -race ./...
+    node --test volumes-studio/tests/contract/*.test.mjs
+    ;;
   source)
     python3 scripts/check-public-docs.py
     scripts/check-lockfile-registry.sh
@@ -61,8 +67,9 @@ case "${1:-all}" in
     ;;
   all)
     "$0" source
+    "$0" studio
     "$0" backend
     "$0" frontend
     ;;
-  *) echo 'Usage: scripts/check.sh [source|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|frontend-edge|all]' >&2; exit 2 ;;
+  *) echo 'Usage: scripts/check.sh [source|studio|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|frontend-edge|all]' >&2; exit 2 ;;
 esac

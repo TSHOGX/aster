@@ -7,6 +7,10 @@ read-only publications. Sessions and Terminals are independent children of that
 Project. Closing a browser view leaves its work running.
 
 Source: [TSHOGX/aster](https://github.com/TSHOGX/aster).
+Independent Volume Studio development is tracked in the
+[delivery tracker](docs/volume-studio-delivery.md); its portable
+[distribution contract](volumes-studio/contracts/v1/README.md) has independent
+producer and consumer checks.
 Enterprise deployments can set their own [frontend display name](docs/configuration.md#frontend-display-name).
 Packages, protocols and operational identifiers use functional, brand-neutral names.
 

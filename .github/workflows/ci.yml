@@ -27,6 +27,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  studio:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: volumes-studio/backend/go.mod
+          cache: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - run: scripts/check.sh studio
+
   source:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
