@@ -14,7 +14,7 @@ publication and locally registered runtime artifacts have separate lifecycles.
 | 3. Durable authoring | Pending | SQLite WAL/FULL metadata, digest-addressed fsync blobs, revision conflicts, freeze isolation, resumable chunks, quotas and GC |
 | 4. Publication and distribution | Pending | Frozen versions, durable validation, export grants, range reads, reader/backup pins and source retirement |
 | 5. Authoring interface | Pending | Library/tree/editor, uploads, conflicts, history/diff, restore and publish review/progress |
-| 6. Consumer import and engine adaptation | In progress | Trusted immutable identity admission, resumable durable checkpoints, streamed blob verification and quarantine are implemented; transfer storage, engine materialization, recovery accounting and local provenance remain |
+| 6. Consumer import and engine adaptation | In progress | Trusted immutable identity admission, durable local transfer cache, verified checkpoints, restart reconciliation and quarantine implemented; network acquisition, engine materialization, quota admission and local registration remain |
 | 7. Admin and runtime lifecycle | Pending | Release picker, Environment integration, retained Project bindings, reference-aware retirement and descendant cleanup |
 | 8. Operational qualification and documentation | Pending | Independent release, restore, browser/engine/fault/identity/maximum-size gates and complete operations guidance |
 
