@@ -40,6 +40,9 @@ var schema string
 //go:embed uploads.sql
 var uploadsSchema string
 
+//go:embed jobs.sql
+var jobsSchema string
+
 type Actor struct {
 	Issuer  string `json:"issuer"`
 	Subject string `json:"subject"`
@@ -55,12 +58,13 @@ type Config struct {
 	QuotaBytes  int64
 }
 type Store struct {
-	mu       sync.Mutex
-	db       *database.Database
-	config   Config
-	readers  map[string]int
-	poisoned bool
-	now      func() time.Time
+	mu          sync.Mutex
+	db          *database.Database
+	config      Config
+	readers     map[string]int
+	validations map[string]int
+	poisoned    bool
+	now         func() time.Time
 }
 type Library struct {
 	ID               string `json:"id"`
@@ -72,6 +76,8 @@ type Library struct {
 	Archived         bool   `json:"archived"`
 }
 type Version struct {
+	Generation       int64  `json:"generation"`
+	PublisherID      string `json:"publisher_id"`
 	ID               string `json:"id"`
 	LibraryID        string `json:"library_id"`
 	Label            string `json:"label"`
@@ -92,11 +98,11 @@ func Open(ctx context.Context, c Config) (*Store, error) {
 			return nil, err
 		}
 	}
-	db, err := database.Open(ctx, filepath.Join(c.Directory, "authoring.db"), []string{schema, uploadsSchema})
+	db, err := database.Open(ctx, filepath.Join(c.Directory, "authoring.db"), []string{schema, uploadsSchema, jobsSchema})
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{db: db, config: c, readers: map[string]int{}, now: time.Now}
+	s := &Store{db: db, config: c, readers: map[string]int{}, validations: map[string]int{}, now: time.Now}
 	fail := func(err error) (*Store, error) { s.Close(); return nil, err }
 	var publisher string
 	err = db.QueryRowContext(ctx, "SELECT value FROM metadata WHERE key='publisher_id'").Scan(&publisher)

@@ -44,7 +44,7 @@ Build and run the independent Studio gateway:
 ```sh
 go -C volumes-studio/backend build -o /srv/volume-studio/bin/studio ./cmd/studio
 /srv/volume-studio/bin/studio \
-  -state-directory /var/lib/volume-studio \
+  -state-directory /var/lib/volume-studio -publisher-id deployment-publisher \
   -public-origin https://example.com:8443 \
   -identity-endpoint http://127.0.0.1:8083 \
   -identity-client studio -identity-secret-env STUDIO_IDENTITY_CLIENT_SECRET \

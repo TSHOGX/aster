@@ -236,9 +236,10 @@ func replaceEntries(ctx context.Context, tx *sql.Tx, id string, before, after []
 }
 
 type TreePage struct {
-	Revision int64            `json:"revision"`
-	Entries  []manifest.Entry `json:"entries"`
-	Next     string           `json:"next,omitempty"`
+	DescendantCount int              `json:"descendant_count"`
+	Revision        int64            `json:"revision"`
+	Entries         []manifest.Entry `json:"entries"`
+	Next            string           `json:"next,omitempty"`
 }
 
 func (s *Store) Tree(ctx context.Context, id, parent, after string, revision int64) (TreePage, error) {
@@ -267,6 +268,8 @@ func (s *Store) Tree(ctx context.Context, id, parent, after string, revision int
 	}
 	defer rows.Close()
 	page := TreePage{Revision: current, Entries: []manifest.Entry{}}
+	// Counting while rows are open would contend for the single SQLite connection;
+	// this count uses the same read transaction after the page cursor is closed.
 	for rows.Next() {
 		var e manifest.Entry
 		var n int64
@@ -280,7 +283,12 @@ func (s *Store) Tree(ctx context.Context, id, parent, after string, revision int
 		}
 		page.Entries = append(page.Entries, e)
 	}
-	return page, rows.Err()
+	if err = rows.Err(); err != nil {
+		return page, err
+	}
+	rows.Close()
+	err = tx.QueryRowContext(ctx, "SELECT count(*) FROM draft_entries WHERE library_id=? AND substr(path,1,?)=?", id, len([]rune(prefix)), prefix).Scan(&page.DescendantCount)
+	return page, err
 }
 
 type pinnedFile struct {

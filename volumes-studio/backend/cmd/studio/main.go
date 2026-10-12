@@ -10,9 +10,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
+	"volume-studio/backend/internal/authoring"
 	"volume-studio/backend/internal/httpapi"
 	"volume-studio/backend/internal/identity"
 )
@@ -25,6 +27,8 @@ func main() {
 	clientID := flag.String("identity-client", "studio", "registered central client ID")
 	secretEnv := flag.String("identity-secret-env", "STUDIO_IDENTITY_CLIENT_SECRET", "environment containing the registered client credential")
 	frontend := flag.String("frontend", "http://127.0.0.1:3002", "independent Studio frontend origin")
+	publisher := flag.String("publisher-id", "", "stable publisher instance ID retained through restore")
+	quota := flag.Int64("quota-bytes", 8<<30, "Studio blob and upload reservation budget")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*listen)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
@@ -44,11 +48,44 @@ func main() {
 		log.Fatal(err)
 	}
 	defer sessions.Close()
-	handler, err := (httpapi.Gateway{Sessions: sessions, PublicOrigin: *issuer, Frontend: *frontend}).Handler()
+	store, err := authoring.Open(ctx, authoring.Config{Directory: *directory, PublisherID: *publisher, QuotaBytes: *quota})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer store.Close()
+	api := httpapi.NewAuthoringAPI(store)
+	handler, err := (httpapi.Gateway{Sessions: sessions, PublicOrigin: *issuer, Frontend: *frontend, API: api.Serve}).Handler()
 	if err != nil {
 		log.Fatal(err)
 	}
 	server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 64 << 10}
+	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_, _ = store.ExpireUploads(ctx)
+				_, err := store.ValidateNext(ctx, func(ctx context.Context, actor authoring.Actor) error {
+					if actor.Issuer != *issuer {
+						return identity.ErrUnauthorized
+					}
+					_, err := client.Principal(ctx, actor.Subject)
+					return err
+				})
+				if err != nil && !errors.Is(err, context.Canceled) {
+					log.Print("publication awaiting integrity or principal check; inspect operation state")
+				}
+				_, _ = store.Collect(ctx)
+			}
+		}
+	}()
+	defer func() { stop(); workers.Wait() }()
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)

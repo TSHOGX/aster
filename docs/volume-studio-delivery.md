@@ -10,10 +10,10 @@ publication and locally registered runtime artifacts have separate lifecycles.
 | Stage | Status | Deliverable / exit evidence |
 | --- | --- | --- |
 | 1. Portable content contract | Implemented | Independent Go module; strict producer/consumer decoders; canonical Go/Node vectors; path, identity, digest and profile boundary tests |
-| 2. Shared identity and independent shell | In progress | Central code/PKCE exchange, private introspection/revocation, durable Studio sessions, exact-prefix gateways and cookie filtering implemented; real cross-application browser qualification remains |
+| 2. Shared identity and independent shell | Implemented | Central code/PKCE exchange, private introspection/revocation, durable Studio sessions, exact-prefix gateways and cookie filtering; real separate-process browser login/logout and prefix checks pass |
 | 3. Durable authoring | In progress | SQLite WAL/FULL metadata, immutable blobs, revision/receipt mutations, atomic tree operations, restore, quotas, GC and durable resumable uploads implemented; HTTP/UI and scale qualification remain |
 | 4. Publication and distribution | In progress | Frozen versions and durable integrity validation with principal checks implemented; authenticated export grants, source retirement and backup remain |
-| 5. Authoring interface | Pending | Library/tree/editor, uploads, conflicts, history/diff, restore and publish review/progress |
+| 5. Authoring interface | In progress | Library/tree/editor, uploads/resume, conflicts, history/diff, restore, publish review/progress and source archival implemented; previews and complete source retirement remain |
 | 6. Consumer import and engine adaptation | In progress | Trusted immutable identity admission, durable local transfer cache, verified checkpoints, restart reconciliation and quarantine implemented; network acquisition, engine materialization, quota admission and local registration remain |
 | 7. Admin and runtime lifecycle | Pending | Release picker, Environment integration, retained Project bindings, reference-aware retirement and descendant cleanup |
 | 8. Operational qualification and documentation | Pending | Independent release, restore, browser/engine/fault/identity/maximum-size gates and complete operations guidance |

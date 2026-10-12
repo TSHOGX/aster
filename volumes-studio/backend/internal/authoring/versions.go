@@ -2,6 +2,7 @@ package authoring
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -19,11 +20,11 @@ type PublishInput struct {
 	Note             string `json:"note"`
 }
 
-const versionColumns = "id,library_id,label,note,source_revision,descriptor_digest,state,issuer,subject,error"
+const versionColumns = "id,library_id,label,note,source_revision,descriptor_digest,state,issuer,subject,error,generation,(SELECT value FROM metadata WHERE key='publisher_id')"
 
 func scanVersion(row scanner) (Version, error) {
 	var v Version
-	err := row.Scan(&v.ID, &v.LibraryID, &v.Label, &v.Note, &v.SourceRevision, &v.DescriptorDigest, &v.State, &v.Publisher.Issuer, &v.Publisher.Subject, &v.Error)
+	err := row.Scan(&v.ID, &v.LibraryID, &v.Label, &v.Note, &v.SourceRevision, &v.DescriptorDigest, &v.State, &v.Publisher.Issuer, &v.Publisher.Subject, &v.Error, &v.Generation, &v.PublisherID)
 	return v, normalizeDB(err)
 }
 func (s *Store) Freeze(ctx context.Context, a Actor, id string, input PublishInput) (Version, error) {
@@ -79,7 +80,7 @@ func (s *Store) Freeze(ctx context.Context, a Actor, id string, input PublishInp
 	if err != nil {
 		return v, err
 	}
-	v = Version{ID: versionID, LibraryID: id, Label: input.Label, Note: input.Note, SourceRevision: l.DraftRevision, DescriptorDigest: digest, State: "pending", Publisher: a}
+	v = Version{ID: versionID, LibraryID: id, Label: input.Label, Note: input.Note, SourceRevision: l.DraftRevision, DescriptorDigest: digest, State: "pending", Publisher: a, PublisherID: s.config.PublisherID}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO versions(id,library_id,label,note,source_revision,descriptor,descriptor_digest,state,issuer,subject,created_at) VALUES(?,?,?,?,?,?,?,'pending',?,?,?)`, v.ID, id, v.Label, v.Note, v.SourceRevision, raw, digest, a.Issuer, a.Subject, s.now().Unix()); err != nil {
 		return v, err
 	}
@@ -132,25 +133,38 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 		return true, err
 	}
 	s.mu.Lock()
-	result, err := s.db.ExecContext(ctx, "UPDATE versions SET state='validating',error='' WHERE id=? AND state IN ('pending','validating')", v.ID)
+	var generation int64
+	err = s.db.QueryRowContext(ctx, "UPDATE versions SET state='validating',error='',generation=generation+1 WHERE id=? AND generation=? AND state IN ('pending','validating') RETURNING generation", v.ID, v.Generation).Scan(&generation)
 	if err != nil {
 		s.mu.Unlock()
+		if errors.Is(err, sql.ErrNoRows) {
+			err = ErrConflict
+		}
 		return true, err
 	}
-	n, err := result.RowsAffected()
-	if err != nil || n != 1 {
-		s.mu.Unlock()
-		return true, err
-	}
+	s.validations[v.ID]++
+	defer func() { s.mu.Lock(); s.validations[v.ID]--; s.mu.Unlock() }()
 	frozen, err := entries(ctx, s.db, "version_entries", "version_id", v.ID)
 	s.mu.Unlock()
 	if err != nil {
 		return true, err
 	}
+	// Reconstruct and compare the descriptor identity as well as file hashes.
+	d, err := manifest.New(s.config.PublisherID, v.LibraryID, v.ID, frozen)
+	if err == nil {
+		var digest string
+		digest, err = d.Digest()
+		if err == nil && digest != v.DescriptorDigest {
+			err = fmt.Errorf("frozen descriptor integrity mismatch")
+		}
+	}
 	// Frozen version references are durable GC pins. The validation job can release
 	// the owner mutex while hashing; later draft edits cannot change these blobs.
 	verified := map[string]bool{}
 	for _, e := range frozen {
+		if err != nil {
+			break
+		}
 		if e.Kind != "file" || verified[e.Digest] {
 			continue
 		}
@@ -166,7 +180,7 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 	if err != nil {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		_, persist := s.db.ExecContext(ctx, "UPDATE versions SET state='failed',error='source_integrity_failed' WHERE id=? AND state='validating'", v.ID)
+		_, persist := s.db.ExecContext(ctx, "UPDATE versions SET state='failed',error='source_integrity_failed' WHERE id=? AND state='validating' AND generation=?", v.ID, generation)
 		return true, errors.Join(err, persist)
 	}
 	if err = authorize(ctx, v.Publisher); err != nil {
@@ -179,11 +193,11 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 		return true, err
 	}
 	defer tx.Rollback()
-	result, err = tx.ExecContext(ctx, "UPDATE versions SET state='published',error='' WHERE id=? AND state='validating'", v.ID)
+	result, err := tx.ExecContext(ctx, "UPDATE versions SET state='published',error='' WHERE id=? AND state='validating' AND generation=?", v.ID, generation)
 	if err != nil {
 		return true, err
 	}
-	n, err = result.RowsAffected()
+	n, err := result.RowsAffected()
 	if err != nil {
 		return true, err
 	}

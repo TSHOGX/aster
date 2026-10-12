@@ -294,3 +294,50 @@ func TestQuotaPreservesExistingDraftAndEmptyTreeRejected(t *testing.T) {
 		t.Fatal("replacement damaged prior draft")
 	}
 }
+
+func TestCanceledValidationCannotFinalizeReplacementGeneration(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	l := library(t, s)
+	mutate(t, s, l.ID, Mutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "file", Text: "source"})
+	v := publish(t, s, l.ID, 2)
+	atFinal := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		calls := 0
+		_, err := s.ValidateNext(ctx, func(context.Context, Actor) error {
+			calls++
+			if calls == 2 {
+				close(atFinal)
+				<-release
+			}
+			return nil
+		})
+		done <- err
+	}()
+	<-atFinal
+	if _, err := s.Operation(ctx, testActor, v.ID, OperationInput{RequestID: "cancel", Action: "cancel"}); err != nil {
+		t.Fatal(err)
+	}
+	replacement := Actor{Issuer: testActor.Issuer, Subject: "replacement-admin"}
+	if _, err := s.Operation(ctx, replacement, v.ID, OperationInput{RequestID: "retry", Action: "retry"}); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; !errors.Is(err, ErrConflict) {
+		t.Fatal("old validation finalized", err)
+	}
+	current, err := s.Version(ctx, v.ID)
+	if err != nil || current.State != "pending" || current.Publisher != replacement {
+		t.Fatal(current, err)
+	}
+	if _, err = s.ValidateNext(ctx, func(ctx context.Context, a Actor) error {
+		if a != replacement {
+			t.Fatal("wrong worker principal")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
