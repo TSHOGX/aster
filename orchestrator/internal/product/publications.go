@@ -293,6 +293,13 @@ func (s *Store) QuarantineContentPublication(ctx context.Context, p content.Publ
 // only affect its quarantined staging object; no identity is silently reused.
 func (s *Store) RetryContentPublication(ctx context.Context, store, purpose, digest string) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
+		release, err := releaseState(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if release.Phase != "open" {
+			return ErrDraining
+		}
 		p, err := publicationWith(ctx, tx, store, purpose, digest)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil

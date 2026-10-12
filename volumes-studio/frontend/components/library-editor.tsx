@@ -132,6 +132,14 @@ export function LibraryEditor({ id }: { id: string }) {
     try { const p = await api<{ changes: Change[]; next: string }>(`${root}/draft/diff?revision=${library.draft_revision}&after=${encodeURIComponent(after)}`); setChanges(old => after ? [...old, ...p.changes] : p.changes); setChangeNext(p.next); setTab('changes'); }
     catch (e) { report(e); }
   }
+  async function editLibrary() {
+    if (!library || !session) return;
+    const name = window.prompt('Library name', library.name); if (name === null) return;
+    const description = window.prompt('Library description', library.description); if (description === null) return;
+    setBusy(true); setError('');
+    try { await api(root, { method: 'PATCH', body: JSON.stringify({ request_id: requestID(), expected_revision: library.metadata_revision, name, description, archived: library.archived }) }, session.csrf); await load(); }
+    catch (e) { report(e); } finally { setBusy(false); }
+  }
   async function reviewPublish() {
     if (!session || !library) return;
     if (dirty) { setError('Save or discard the open text edit before reviewing publication.'); return; }
@@ -214,7 +222,7 @@ export function LibraryEditor({ id }: { id: string }) {
   const contentURL = selected ? `${base}/api/v1${root}/${versionID ? `versions/${versionID}` : 'draft'}/content?path=${encodeURIComponent(selected.path)}` : '';
   return <main className="editor-shell">
     <header className="topbar"><Link href="/" className="wordmark">◈ <span>Volume Studio</span></Link><nav><a href="/admin">Aster administration ↗</a><SignOut session={session} /></nav></header>
-    <div className="library-heading"><div><Link href="/" className="muted">Libraries /</Link><h1>{library?.name || 'Loading library…'}</h1><p>{library?.description}</p></div><div className="actions"><span className="badge">{versionID ? selectedVersion?.label || 'Published version' : `Draft · revision ${library?.draft_revision ?? '…'}`}</span><button className="button" disabled={busy || !!progress || !!versionID || activeUploads.length > 0 || !!library?.archived} onClick={() => void reviewPublish()}>Review & publish</button></div></div>
+    <div className="library-heading"><div><Link href="/" className="muted">Libraries /</Link><h1>{library?.name || 'Loading library…'}</h1><p>{library?.description}</p></div><div className="actions"><button className="quiet" disabled={busy} onClick={() => void editLibrary()}>Edit library details</button><span className="badge">{versionID ? selectedVersion?.label || 'Published version' : `Draft · revision ${library?.draft_revision ?? '…'}`}</span><button className="button" disabled={busy || !!progress || !!versionID || activeUploads.length > 0 || !!library?.archived} onClick={() => void reviewPublish()}>Review & publish</button></div></div>
     {error && <div className="notice error" role="alert"><p>{error}</p><button className="quiet" onClick={() => { setError(''); void load().catch(report); }}>Refresh saved state</button></div>}
     {notice && <p className="notice" role="status">{notice}</p>}
     <div className="tabs" role="tablist" aria-label="Library views">{(['files', 'changes', 'history'] as const).map(t => <button key={t} role="tab" aria-selected={tab === t} onClick={() => t === 'changes' ? void loadChanges() : setTab(t)}>{t === 'files' ? 'Files' : t === 'changes' ? 'Draft changes' : `Version history (${versions.length})`}</button>)}<button className="quiet" onClick={() => void load().catch(report)}>↻ Refresh</button></div>

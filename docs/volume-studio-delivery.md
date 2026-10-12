@@ -58,3 +58,14 @@ available through `scripts/check.sh`. Privileged engine qualification uses
 Studio binary; `STUDIO_TEST_MAX_SIZE=1` selects the maximum-size corpus. It never
 addresses a live deployment. Private logs, screenshots and machine-specific
 measurements are excluded from source and release bundles.
+
+## Final regression results
+
+The completed checks include the full backend gate (build, vet, unit tests,
+privileged-test compilation and release predicates), the core product/agent/runtime
+race suite, Studio build/vet/race/protocol checks, all three frontend lint/build/type
+checks, and source/workflow validation. Browser results: 234 workbench cases,
+23 admin UI cases, nine real-edge admin cases and three separate-process Studio
+journeys passed. Twenty-eight existing opt-in workbench profiling cases were not
+selected. The final standalone Studio bundle passed byte inventory and root,
+static-asset and deep-link smoke checks from its packaged files.
