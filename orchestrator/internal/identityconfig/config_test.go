@@ -6,7 +6,7 @@ import (
 )
 
 func TestRegisteredClientValidationAndRotation(t *testing.T) {
-	c := &Config{Issuer: "https://example.com", Clients: []Client{{ID: "studio", Callback: "https://example.com/volumes-studio/auth/callback", SecretEnvs: []string{"IDENTITY_CURRENT", "IDENTITY_PREVIOUS"}}}}
+	c := &Config{Issuer: "https://example.com", Listen: "127.0.0.1:8083", Clients: []Client{{ID: "studio", Callback: "https://example.com/volumes-studio/auth/callback", SecretEnvs: []string{"IDENTITY_CURRENT", "IDENTITY_PREVIOUS"}}}}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}

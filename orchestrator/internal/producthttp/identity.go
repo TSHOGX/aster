@@ -16,10 +16,20 @@ func (a *Authentication) identityRoutes(mux *http.ServeMux) {
 		return
 	}
 	mux.HandleFunc("GET /api/identity/v1/authorize", a.identityAuthorize)
+}
+
+// IdentityServiceHandler is mounted only on the separately configured private
+// listener. The public application edge exposes only authorize, never services.
+func (a *Authentication) IdentityServiceHandler() http.Handler {
+	mux := http.NewServeMux()
+	if a.Config.Identity == nil {
+		return mux
+	}
 	mux.HandleFunc("POST /api/identity/v1/token", a.identityToken)
 	mux.HandleFunc("POST /api/identity/v1/introspect", a.identityIntrospect)
 	mux.HandleFunc("POST /api/identity/v1/revoke", a.identityRevoke)
 	mux.HandleFunc("POST /api/identity/v1/principal", a.identityPrincipal)
+	return mux
 }
 func identityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "private, no-store")

@@ -15,7 +15,7 @@ within a 60-second maximum cache window; outages never extend it.
 Example Aster configuration (credentials live only in the referenced environment):
 
 ```json
-{"identity":{"issuer":"https://example.com","clients":[{
+{"identity":{"issuer":"https://example.com","listen":"127.0.0.1:8083","clients":[{
   "id":"studio",
   "callback":"https://example.com/volumes-studio/auth/callback",
   "secret_envs":["STUDIO_IDENTITY_CLIENT_SECRET"]
@@ -39,7 +39,11 @@ reference, persisted centrally only as a digest. It cannot authenticate to Aster
 `POST /introspect` accepts that grant and returns renewed bounded evidence.
 All POST identity endpoints use Basic client authentication and JSON, refuse Origin
 and Cookie headers, and must use private HTTPS or a protected loopback transport.
-The public front door strips Authorization and never exposes back-channel authority.
+The adapter mounts POST endpoints only on its explicit private loopback listener;
+the public application exposes only `authorize`. The public front door strips
+Authorization. Studio configures the private endpoint, such as
+`http://127.0.0.1:8083`, separately from the public issuer. Cross-host deployment
+needs an authenticated TLS tunnel to that private listener.
 
 `POST /revoke` accepts the client grant and revokes the originating central
 session and all its derived app grants. Ordinary Aster logout uses the same

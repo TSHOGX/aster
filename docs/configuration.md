@@ -25,7 +25,7 @@ tracked example. The example denies guest egress until reachability is declared.
 | `titles` | Optional host-side title model: `base_url`, `model`, `api_key_env` |
 | `tls_cert`, `tls_key` | Optional browser TLS certificate/key pair |
 | `front_door` | Optional independent TLS front door. `public_origin` is the exact HTTPS origin and `peer_ip` is the only trusted proxy peer; forwarded identity/client-address headers from other peers are rejected. |
-| `identity` | Optional shared-identity adapter: HTTPS `issuer` and registered `clients` with `id`, exact Studio `callback`, and one or two `secret_envs` for credential rotation. Uses existing central administrators; no additional account store. |
+| `identity` | Optional shared-identity adapter: HTTPS `issuer`, private loopback `listen`, and registered `clients` with `id`, exact Studio `callback`, and one or two `secret_envs` for credential rotation. Uses existing central administrators; no additional account store. |
 
 First allocation selects the database environment, exact registered sandbox and
 built-in references, and effective user CPU/memory/storage requests in the same

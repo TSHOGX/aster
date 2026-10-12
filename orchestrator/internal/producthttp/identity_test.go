@@ -27,10 +27,11 @@ func TestCentralIdentityHTTPCodeFlowAndSharedLogout(t *testing.T) {
 	secret := strings.Repeat("credential", 4)
 	t.Setenv("TEST_STUDIO_CREDENTIAL", secret)
 	callback := "https://app/volumes-studio/auth/callback"
-	config := &identityconfig.Config{Issuer: "https://app", Clients: []identityconfig.Client{{ID: "studio", Callback: callback, SecretEnvs: []string{"TEST_STUDIO_CREDENTIAL"}}}}
+	config := &identityconfig.Config{Issuer: "https://app", Listen: "127.0.0.1:8083", Clients: []identityconfig.Client{{ID: "studio", Callback: callback, SecretEnvs: []string{"TEST_STUDIO_CREDENTIAL"}}}}
 	must(t, config.CheckCredentials())
 	a := NewAuthentication(store, Config{Identity: config})
 	handler := a.Handler(http.NotFoundHandler())
+	private := a.IdentityServiceHandler()
 	verifier := strings.Repeat("v", 43)
 	sum := sha256.Sum256([]byte(verifier))
 	query := url.Values{"client_id": {"studio"}, "redirect_uri": {callback}, "state": {strings.Repeat("s", 43)}, "code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"}}
@@ -78,7 +79,7 @@ func TestCentralIdentityHTTPCodeFlowAndSharedLogout(t *testing.T) {
 		r.Header.Set("Origin", origin)
 		r.Header.Set("Cookie", ambient)
 		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, r)
+		private.ServeHTTP(w, r)
 		return w
 	}
 	input := map[string]string{"code": code, "redirect_uri": callback, "code_verifier": verifier}

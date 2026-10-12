@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"regexp"
@@ -18,6 +19,7 @@ type Client struct {
 }
 type Config struct {
 	Issuer  string   `json:"issuer"`
+	Listen  string   `json:"listen"`
 	Clients []Client `json:"clients"`
 }
 
@@ -27,6 +29,10 @@ var environment = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 func (c *Config) Validate() error {
 	if c == nil {
 		return nil
+	}
+	host, _, err := net.SplitHostPort(c.Listen)
+	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+		return fmt.Errorf("identity.listen must be a private loopback IP listener")
 	}
 	issuer, err := url.Parse(c.Issuer)
 	if err != nil || issuer.Scheme != "https" || issuer.Hostname() == "" || issuer.User != nil || issuer.Path != "" || issuer.RawQuery != "" || issuer.ForceQuery || issuer.Fragment != "" {
