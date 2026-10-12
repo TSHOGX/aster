@@ -1,52 +1,58 @@
-# Volume Studio delivery tracker
+# Volume Studio delivery and qualification
 
-This tracks implementation and verification of independent authoring at
-`/volumes-studio/`. A completed stage does not imply that later release gates
-passed. The existing application remains the sole account authority. Source
-publication and locally registered runtime artifacts have separate lifecycles.
+The independent authoring application, central identity adapter, authenticated
+distribution, Aster import/engine integration and admin release selector are
+implemented. The final operational scope is documented in
+[Volume Studio](volume-studio.md). The protocol rejects unsupported versions;
+no historical application adapters or shared business/storage dependencies remain.
 
-## Stages
-
-| Stage | Status | Deliverable / exit evidence |
+| Stage | Delivered behavior | Verification |
 | --- | --- | --- |
-| 1. Portable content contract | Implemented | Independent Go module; strict producer/consumer decoders; canonical Go/Node vectors; path, identity, digest and profile boundary tests |
-| 2. Shared identity and independent shell | Implemented | Central code/PKCE exchange, private introspection/revocation, durable Studio sessions, exact-prefix gateways and cookie filtering; real separate-process browser login/logout and prefix checks pass |
-| 3. Durable authoring | In progress | SQLite WAL/FULL metadata, immutable blobs, revision/receipt mutations, atomic tree operations, restore, quotas, GC and durable resumable uploads implemented; HTTP/UI and scale qualification remain |
-| 4. Publication and distribution | In progress | Frozen versions, principal-gated validation, private export grants, bounded range reads, durable reader pins, source retirement and independent backup/restore implemented; cross-service and scale qualification remain |
-| 5. Authoring interface | In progress | Library/tree/editor, uploads/resume, conflicts, history/diff, restore, publish review/progress and source archival implemented; source retirement implemented; richer previews remain |
-| 6. Consumer import and engine adaptation | In progress | Trusted immutable identity admission, durable local transfer cache, verified checkpoints, restart reconciliation and quarantine implemented; network acquisition, engine materialization, quota admission and local registration remain |
-| 7. Admin and runtime lifecycle | Pending | Release picker, Environment integration, retained Project bindings, reference-aware retirement and descendant cleanup |
-| 8. Operational qualification and documentation | Pending | Independent release, restore, browser/engine/fault/identity/maximum-size gates and complete operations guidance |
+| Portable content | Canonical manifests, strict paths/parents/limits, stable source identities | Independent Go producer/consumer, Node vectors, fuzz and boundary tests |
+| One identity | Registered callback/PKCE, one-use codes, private grants/introspection, durable Studio sessions, shared logout | Concurrent code-replay, expiry, credential rotation, disable/demotion and separate-process browser gates |
+| Durable authoring | Immutable blobs, revision/receipt mutations, directories, rename/delete/restore, resumable uploads | Restart, stale-tab/target, changed-chunk, zero-byte, quota, cancellation and expiry tests |
+| Source publication | Frozen versions, principal-gated validation, export grants/ranges, reader pins, retirement | Freeze isolation, generation fencing, service expiry/revocation, active-reader/GC and backup/restore tests |
+| Authoring interface | Libraries/tree/text editor, raster preview, upload resume, changes/history, review/restore/retire | Production Next build and real Go/identity/TLS browser journey; desktop/mobile inspection |
+| Consumer | Trusted source catalog, exact admission receipts, local cache, streamed materialization, profile retention and ready registration | Transfer faults/restart, offline acquired source, quota/receipt/registry tests and real Khora runs |
+| Admin/runtime lifecycle | Release picker, local readiness/provenance, existing Environment selection, retained Project plans and cleanup | Admin browser test, saved unallocated Project pinning, independent owned copies and engine descendant refusal |
+| Independent operations | Studio CI/release inventory, packaged smoke, schema steps and private backup | Committed-source independent bundle build, asset/deep-link smoke, upgrade/refusal and restore checks |
 
-## Ownership and invariants
+## Measured envelope
 
-- Studio has its own process, configuration, database, blob storage and release.
-  An independent front door preserves the fixed prefix and filters cookies.
-- Identity flows through a narrow central adapter; no shared database or signing
-  key lets Studio mint Aster sessions. Authority expires within a bounded window.
-- Draft mutations use expected revisions and durable receipts. Blobs become durable
-  before metadata references them. Publication freezes an exact revision.
-- Aster accepts only operator-configured sources, verifies the exact descriptor,
-  and acquires all bytes locally before engine materialization. Ready runtime
-  artifacts have no Studio availability dependency.
-- Runtime publication retains staging → verification → keyed snapshot → derived
-  verification. Uncertain writes retain quarantined allocations and accounting.
-- Source deletion does not delete copied runtime content. Runtime cleanup honors
-  saved Environment/Project references and observed engine descendants.
-- Historical application adapters and superseded code are removed as replacement
-  stages land. Aster's schema remains an exact-current contract. Studio data
-  retention and its independent backup/upgrade procedures are a separate boundary.
+- Real Studio → Aster → pinned Khora: 32 MiB source, then four 256 MiB files
+  (1 GiB tree). Studio was stopped after acquisition; materialization, streamed
+  readback, local registration, independent snapshot copies and descendant-aware
+  cleanup continued locally. The maximum-size run took about 58 seconds on the
+  qualification host. This is a measured scenario, not a service-level guarantee.
+- A disk-backed 10,000-entry freeze measured p95 about 84 ms across five runs;
+  metadata heap was about 6 MiB at the sample point. This isolates freeze on the
+  local host. Production contention and filesystem behavior can change timing.
+- Directory/API pages are at most 200 entries. Hash/readback buffers, chunks and
+  API concurrency are bounded independently of file size. One-over file/tree/entry
+  cases are refused before registration; unsupported profiles fail closed.
+- Maximum authority evidence is 60 seconds; Studio currently introspects on every
+  privileged request, so an identity outage immediately refuses new privileged
+  actions. Worker principal checks are independent of ordinary browser logout.
 
-## Outstanding release gates
+## Explicit release choices
 
-Real shared login/logout, callback attacks, identity outages, prefix/deep-link
-routing, cookie filtering, uploaded active-content isolation, durable upload
-resume, stale revision/target conflicts, freeze isolation, GC/export/backup races,
-service revocation, import restart and source outages, uncertain engine outcomes,
-aggregate reservation exhaustion, saved Project pinning, owned-copy edits,
-descendant-aware cleanup and restore remain required.
+Studio runs one SQLite owner with WAL/FULL and transactional additive migrations.
+Aster uses its current exact-schema policy (schema 8), with no history conversion.
+The public frontend uses the exact `/volumes-studio/` prefix; private identity and
+distribution listeners are loopback services. Cross-host use requires verified TLS
+termination/tunneling at those private boundaries. Source/API versions are explicit;
+unsupported versions fail rather than adding compatibility adapters.
 
-The target envelope is 256 MiB/file, 1 GiB/tree and 10,000 entries. Manifest
-validation tests alone do not qualify storage, engine throughput or memory.
-Real scale gates must measure bounded buffers with concurrent large uploads and
-imports, plus 10,000-entry freeze under representative SQLite contention.
+The qualified preview set is UTF-8 text and raster images. PDF, SVG, Office and
+other binaries remain exact-byte downloads. Per-team self-service, automatic
+Project upgrades, live shared-volume authoring, archive/Git/URL ingestion and a
+full OIDC-provider replacement remain outside this release.
+
+## Reproducible gates
+
+`studio`, `studio-frontend`, `studio-browser`, `backend`, `race` and `frontend` are
+available through `scripts/check.sh`. Privileged engine qualification uses
+`TestStudioImportOnRealKhora` with the existing disposable substrate and the real
+Studio binary; `STUDIO_TEST_MAX_SIZE=1` selects the maximum-size corpus. It never
+addresses a live deployment. Private logs, screenshots and machine-specific
+measurements are excluded from source and release bundles.

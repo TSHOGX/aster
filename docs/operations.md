@@ -568,3 +568,14 @@ stale. Read current status at `GET /api/admin/operations/{id}` and bounded targe
 progress at `/targets?limit=25&cursor=...`. Intent and terminal outcome are audited.
 A denied resume leaves data and the execution hold intact for a new authorized
 control or explicit owner resume after the blocking condition is resolved.
+
+## Volume Studio imports
+
+See [Volume Studio operations](volume-studio.md) for source authoring and local
+import lifecycles. The independent Studio release/backup does not drain Aster.
+Aster imports participate in release blockers: admitted acquisition, publication
+and cleanup must settle before quiescent owner handoff. Publication intent is
+reserved with import admission so existing transfers can finish during drain.
+A paused/failed job retains its source reservation and any uncertain engine
+allocations; reauthorize/retry or cancel and request local cleanup explicitly.
+Do not delete transfer directories while a worker or reader can still own them.

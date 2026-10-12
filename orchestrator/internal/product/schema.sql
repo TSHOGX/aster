@@ -1088,6 +1088,7 @@ UNION ALL SELECT 'file_write' AS kind,id AS id FROM file_operations INDEXED BY r
 UNION ALL SELECT 'session_cleanup' AS kind,id AS id FROM sessions INDEXED BY release_session_cleanup_pending WHERE deletion_intent=1
 UNION ALL SELECT 'terminal_cleanup' AS kind,id AS id FROM terminals INDEXED BY release_terminal_cleanup_pending WHERE deletion_intent=1
 UNION ALL SELECT 'content_publication' AS kind,revision_digest AS id FROM content_publications INDEXED BY release_content_publication_pending WHERE stage NOT IN ('published','failed')
+UNION ALL SELECT 'volume_import',id FROM volume_imports WHERE state IN ('acquiring','source_acquired','materializing','retiring') OR (state IN ('ready','canceled','retired') AND transfer_reserved>0)
 UNION ALL SELECT 'native_capture' AS kind,path AS id FROM native_captures INDEXED BY release_native_capture_pending WHERE state='guest'
 UNION ALL SELECT 'share_publication' AS kind,id AS id FROM shares INDEXED BY release_share_publication_pending WHERE state='pending' OR (state IN ('revoked','failed') AND cleaned=0)
 UNION ALL SELECT 'model_request' AS kind,audience||':'||slot AS id FROM service_request_slots INDEXED BY release_model_request_pending WHERE closed=0;

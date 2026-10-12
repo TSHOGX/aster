@@ -139,6 +139,20 @@ func (s *Store) AdmitVolumeImport(ctx context.Context, token string, input Volum
 		if err = s.recordImportReceipt(ctx, tx, actor.ID, request, out.ID); err != nil {
 			return err
 		}
+		// Reserve durable publication intent at initial admission, while release
+		// admission is open. An already-admitted transfer can then settle during
+		// drain without trying to admit a new publication after the release fence.
+		encodedEntries, _ := json.Marshal(entries)
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO content_publications(store_id,purpose,revision_digest,capacity,entries,stage,created_at,updated_at,generation) VALUES(?,'authored',?,?,?,'preparing',?,?,(SELECT coalesce(max(generation),-1)+1 FROM content_publication_attempts WHERE store_id=? AND purpose='authored' AND revision_digest=?))`, store, d.TreeDigest, capacity, string(encodedEntries), s.timestamp(), s.timestamp(), store, d.TreeDigest); err != nil {
+			return err
+		}
+		publication, err := publicationWith(ctx, tx, store, "authored", d.TreeDigest)
+		if err != nil {
+			return err
+		}
+		if publication.Capacity != capacity {
+			return ErrConflict
+		}
 		return s.auditEvent(ctx, tx, actor.ID, "volume.import", "volume_import", out.ID, input.RequestID, 1, map[string]any{"source_id": out.SourceID, "manifest_digest": digest, "publisher_actor": publisherActor})
 	})
 	return out, err

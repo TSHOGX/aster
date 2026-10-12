@@ -212,3 +212,22 @@ func TestImportedSavedProjectBindingAndRetirementBlocker(t *testing.T) {
 		t.Fatal("saved source rebound after default change")
 	}
 }
+
+func TestImportAdmissionParticipatesInReleaseFencing(t *testing.T) {
+	s, admin := accountStore(t)
+	token := adminTestToken(t, s, admin)
+	input, raw := importFixture(t)
+	i, err := s.AdmitVolumeImport(ctx, token, input, raw, "engine", "publisher", 1<<30, 1<<30)
+	must(t, err)
+	var importBlock, publicationBlock int
+	must(t, s.reader.QueryRow("SELECT count(*) FROM release_blockers WHERE kind='volume_import' AND id=?", i.ID).Scan(&importBlock))
+	must(t, s.reader.QueryRow("SELECT count(*) FROM release_blockers WHERE kind='content_publication' AND id=?", i.TreeDigest).Scan(&publicationBlock))
+	if importBlock != 1 || publicationBlock != 1 {
+		t.Fatal("admitted source or materialization missing from release fence", importBlock, publicationBlock)
+	}
+	p, err := publicationWith(ctx, s.reader, "engine", "authored", i.TreeDigest)
+	must(t, err)
+	if p.Stage != "preparing" {
+		t.Fatal("publication intent missing before transfer")
+	}
+}
