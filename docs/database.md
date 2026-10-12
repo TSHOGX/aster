@@ -261,7 +261,7 @@ This fresh-schema lineage rejects older databases; no in-place migration is
 provided. Follow [bootstrap](bootstrap.md) and the backup procedures in
 [operations](operations.md) before changing a persistent installation.
 
-## Shared identity (schema 7)
+## Shared identity (schema 8)
 
 `identity_codes` holds hashed, 60-second single-use codes bound to registered
 client/callback/PKCE and the current central session. `identity_grants` holds
@@ -269,3 +269,12 @@ hashed client references to that session. Both cascade when a central session is
 removed. Introspection joins current account status, role, restriction and epoch;
 no derived grant can mint an Aster session. The identity adapter adds no account
 or password directory. Expired codes are reclaimed in bounded retention batches.
+
+## Portable volume imports
+
+`volume_imports` persists the exact descriptor, source identity, content profile,
+importing actor, upstream publisher provenance, engine store/capacity and transfer
+reservation. Local registry finalization and ready state commit together.
+`content_publications` retains a generation and fenced population phases;
+`content_publication_attempts` retains old quarantined allocations until observed
+cleanup. Saved volume sources include `content_profile` for owned-copy verification.

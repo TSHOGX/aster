@@ -326,22 +326,23 @@ CREATE TABLE operator_receipts (
 
 
 CREATE TABLE content_publications (
+ generation INTEGER NOT NULL DEFAULT 0 CHECK(generation>=0),
  store_id TEXT NOT NULL,
- purpose TEXT NOT NULL CHECK(purpose IN ('assets','config','builtin')),
+ purpose TEXT NOT NULL CHECK(purpose IN ('assets','config','builtin','authored')),
  revision_digest TEXT NOT NULL CHECK(revision_digest LIKE 'sha256:%'),
  capacity INTEGER NOT NULL CHECK(capacity>0),
  entries TEXT NOT NULL,
  staging_volume_id TEXT NOT NULL DEFAULT '',
  derived_volume_id TEXT NOT NULL DEFAULT '',
  published_volume_id TEXT NOT NULL DEFAULT '',
- stage TEXT NOT NULL CHECK(stage IN ('preparing','staged','derived','published','failed')),
+ stage TEXT NOT NULL CHECK(stage IN ('preparing','staged','populating','populated','quarantined','derived','published','failed')),
  error TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
  PRIMARY KEY(store_id,purpose,revision_digest),
  CHECK((stage='published') = (published_volume_id<>'')),
  CHECK(published_volume_id='' OR published_volume_id=derived_volume_id),
- CHECK((stage IN ('preparing','staged','failed')) OR derived_volume_id<>''),
+ CHECK((stage IN ('preparing','staged','populating','populated','quarantined','failed')) OR derived_volume_id<>''),
  CHECK((stage IN ('preparing','failed')) OR staging_volume_id<>''),
  CHECK(staging_volume_id='' OR staging_volume_id<>derived_volume_id)
 );
@@ -1675,3 +1676,26 @@ WHEN NEW.disposition IN ('handled','canceled') BEGIN
 END;
 
 CREATE TABLE runtime_store (id INTEGER PRIMARY KEY CHECK(id=1), store_id TEXT NOT NULL CHECK(length(store_id)>0));
+
+CREATE TABLE volume_imports (
+ id TEXT PRIMARY KEY,source_id TEXT NOT NULL,publisher_id TEXT NOT NULL,
+ library_id TEXT NOT NULL,version_id TEXT NOT NULL,manifest_digest TEXT NOT NULL,
+ manifest BLOB NOT NULL,content_profile TEXT NOT NULL CHECK(content_profile='authored-v1'),
+ store_id TEXT NOT NULL,tree_digest TEXT NOT NULL,capacity INTEGER NOT NULL CHECK(capacity>0),
+ actor_id TEXT NOT NULL REFERENCES accounts(id),publisher_actor TEXT NOT NULL DEFAULT '',
+ artifact_id TEXT NOT NULL,artifact_version TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN('acquiring','source_acquired','materializing','ready','paused','failed','canceled','retiring','retired')),
+ resume_state TEXT NOT NULL DEFAULT '',error TEXT NOT NULL DEFAULT '',
+ transfer_reserved INTEGER NOT NULL CHECK(transfer_reserved>=0),
+ created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+ UNIQUE(source_id,version_id,manifest_digest,content_profile,store_id)
+);
+CREATE INDEX volume_import_pending ON volume_imports(state,updated_at);
+CREATE TABLE content_publication_attempts (
+ store_id TEXT NOT NULL,purpose TEXT NOT NULL,revision_digest TEXT NOT NULL,
+ generation INTEGER NOT NULL,capacity INTEGER NOT NULL,
+ staging_volume_id TEXT NOT NULL,derived_volume_id TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN('quarantined','cleanup','absent')),
+ error TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(store_id,purpose,revision_digest,generation)
+);

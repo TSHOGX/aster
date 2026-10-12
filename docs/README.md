@@ -22,3 +22,5 @@
 
 - [Conversational scheduling](scheduling.md): user behavior, tools, bounded checks and deployment contract.
 - [Scheduling implementation and acceptance](conversational-scheduling-implementation.md): authority, invariants and verification limits.
+
+- [Volume Studio: authoring, imports and lifecycle](volume-studio.md)

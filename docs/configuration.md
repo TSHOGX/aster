@@ -284,3 +284,29 @@ Availability reports `available`, `unavailable`, `unknown`, `unchecked`, `disabl
 public engine template/Volume metadata outside the database transaction, within
 a ten-second page budget; unobserved entries remain explicitly unchecked.
 Availability never reserves resources or bypasses allocation checks.
+
+## Trusted Studio sources
+
+Aster imports portable volumes only from operator-configured `volume_imports`
+sources. Each source pins a stable publisher identity, a private HTTP(S) endpoint,
+a service-client ID and a credential environment reference. Browser input cannot
+select a URL, engine handle, content profile override or allocation capacity.
+
+```json
+{"volume_imports":{
+  "transfer_bytes":"4294967296",
+  "engine_bytes":"8589934592",
+  "sources":[{"id":"studio","publisher_id":"deployment-publisher",
+    "endpoint":"http://127.0.0.1:8084","client_id":"aster",
+    "secret_env":"STUDIO_DISTRIBUTION_SECRET","libraries":["*"]}]
+}}
+```
+
+`transfer_bytes` bounds consumer-owned transfer reservations; `engine_bytes`
+bounds aggregate Aster declared engine storage at import/retry admission.
+Staging, derived snapshots and prior uncertain generations are separate charges.
+The existing runtime/engine capacity policy still applies to project allocations.
+Private loopback transport is allowed; remote sources require HTTPS with normal
+certificate verification and no redirect/ambient proxy credential forwarding.
+Removing a source does not remove acquired or ready local artifacts. Removing or
+rotating service grants affects future Studio access, not already copied bytes.

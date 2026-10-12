@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -531,4 +532,45 @@ func (c *Cache) Descriptor() (manifest.Descriptor, error) {
 		return manifest.Descriptor{}, err
 	}
 	return manifest.Decode(bytes.NewReader(raw))
+}
+
+// Purge removes only known cache files while retaining the directory owner lock.
+// Call only after local registry finalization or settled cancellation and after
+// every source reader has closed. Reservations are released by the caller only
+// after this method and directory fsync succeed.
+func (c *Cache) Purge() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.lock == nil {
+		return os.ErrClosed
+	}
+	files, err := os.ReadDir(c.root)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if f.Name() == "owner.lock" {
+			continue
+		}
+		allowed := f.Name() == "job.json" || f.Name() == "manifest.json" || strings.HasPrefix(f.Name(), "metadata-")
+		if strings.HasSuffix(f.Name(), ".blob") {
+			allowed = manifest.ValidDigest("sha256:" + strings.TrimSuffix(f.Name(), ".blob"))
+		}
+		if !allowed || !f.Type().IsRegular() {
+			return fmt.Errorf("unexpected transfer cache entry")
+		}
+		if err = os.Remove(filepath.Join(c.root, f.Name())); err != nil {
+			return err
+		}
+	}
+	return syncDirectory(c.root)
+}
+
+func PurgeCache(root string) error {
+	c, err := lockRoot(root)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.Purge()
 }

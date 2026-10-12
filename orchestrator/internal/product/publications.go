@@ -42,7 +42,10 @@ func (s *Store) ClaimContentPublication(ctx context.Context, p content.Publicati
 	}
 	defer release()
 	defer tx.Rollback()
-	insert, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO content_publications(store_id,purpose,revision_digest,capacity,entries,stage,created_at,updated_at) VALUES(?,?,?,?,?,'preparing',?,?)`, p.StoreID, p.Purpose, p.RevisionDigest, p.Capacity, string(entries), now, now)
+	if err = tx.QueryRowContext(ctx, `SELECT coalesce(max(generation),-1)+1 FROM content_publication_attempts WHERE store_id=? AND purpose=? AND revision_digest=?`, p.StoreID, p.Purpose, p.RevisionDigest).Scan(&p.Generation); err != nil {
+		return empty, err
+	}
+	insert, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO content_publications(store_id,purpose,revision_digest,capacity,entries,stage,created_at,updated_at,generation) VALUES(?,?,?,?,?,'preparing',?,?,?)`, p.StoreID, p.Purpose, p.RevisionDigest, p.Capacity, string(entries), now, now, p.Generation)
 	if err != nil {
 		return empty, releaseFenceError(err)
 	}
@@ -102,7 +105,7 @@ func (s *Store) RecordContentDerivation(ctx context.Context, p content.Publicati
 		}
 		return nil
 	}, func(ctx context.Context, tx *sql.Tx, p content.Publication, now string) error {
-		_, err := tx.ExecContext(ctx, `UPDATE content_publications SET derived_volume_id=?,stage='derived',updated_at=? WHERE store_id=? AND purpose=? AND revision_digest=? AND stage IN ('staged','derived')`, volume, now, p.StoreID, p.Purpose, p.RevisionDigest)
+		_, err := tx.ExecContext(ctx, `UPDATE content_publications SET derived_volume_id=?,stage='derived',updated_at=? WHERE store_id=? AND purpose=? AND revision_digest=? AND stage IN ('populated','derived')`, volume, now, p.StoreID, p.Purpose, p.RevisionDigest)
 		return err
 	})
 }
@@ -147,6 +150,9 @@ func (s *Store) FailContentPublication(ctx context.Context, p content.Publicatio
 	if err != nil {
 		return err
 	}
+	if stored.Generation != p.Generation {
+		return ErrConflict
+	}
 	if stored.Stage == "published" {
 		return fmt.Errorf("published content cannot be marked failed")
 	}
@@ -175,7 +181,7 @@ func (s *Store) FindPublishedContent(ctx context.Context, storeID, purpose, revi
 // revisions are published, which preparation is unresolved, and how much pinned
 // staging content has accumulated.
 func (s *Store) ListContentPublications(ctx context.Context, storeID string) ([]content.Publication, error) {
-	rows, err := s.reader.QueryContext(ctx, `SELECT store_id,purpose,revision_digest,capacity,entries,staging_volume_id,derived_volume_id,published_volume_id,stage,error,created_at,updated_at FROM content_publications WHERE store_id=? ORDER BY purpose,revision_digest LIMIT 500`, storeID)
+	rows, err := s.reader.QueryContext(ctx, `SELECT store_id,purpose,revision_digest,capacity,entries,staging_volume_id,derived_volume_id,published_volume_id,stage,error,created_at,updated_at,generation FROM content_publications WHERE store_id=? ORDER BY purpose,revision_digest LIMIT 500`, storeID)
 	if err != nil {
 		return nil, err
 	}
@@ -204,6 +210,9 @@ func (s *Store) advancePublication(ctx context.Context, p content.Publication, s
 	if err != nil {
 		return empty, err
 	}
+	if stored.Generation != p.Generation {
+		return empty, ErrConflict
+	}
 	if stored.Stage == "failed" {
 		return empty, fmt.Errorf("publication previously failed: %s", stored.Error)
 	}
@@ -229,14 +238,14 @@ func (s *Store) advancePublication(ctx context.Context, p content.Publication, s
 }
 
 func publicationWith(ctx context.Context, db queryer, storeID, purpose, revision string) (content.Publication, error) {
-	row := db.QueryRowContext(ctx, `SELECT store_id,purpose,revision_digest,capacity,entries,staging_volume_id,derived_volume_id,published_volume_id,stage,error,created_at,updated_at FROM content_publications WHERE store_id=? AND purpose=? AND revision_digest=?`, storeID, purpose, revision)
+	row := db.QueryRowContext(ctx, `SELECT store_id,purpose,revision_digest,capacity,entries,staging_volume_id,derived_volume_id,published_volume_id,stage,error,created_at,updated_at,generation FROM content_publications WHERE store_id=? AND purpose=? AND revision_digest=?`, storeID, purpose, revision)
 	return scanPublication(row)
 }
 
 func scanPublication(row scanner) (content.Publication, error) {
 	var p content.Publication
 	var entries, created, updated string
-	if err := row.Scan(&p.StoreID, &p.Purpose, &p.RevisionDigest, &p.Capacity, &entries, &p.StagingVolumeID, &p.DerivedVolumeID, &p.PublishedVolumeID, &p.Stage, &p.Error, &created, &updated); err != nil {
+	if err := row.Scan(&p.StoreID, &p.Purpose, &p.RevisionDigest, &p.Capacity, &entries, &p.StagingVolumeID, &p.DerivedVolumeID, &p.PublishedVolumeID, &p.Stage, &p.Error, &created, &updated, &p.Generation); err != nil {
 		return content.Publication{}, err
 	}
 	if err := json.Unmarshal([]byte(entries), &p.Entries); err != nil {
@@ -245,4 +254,62 @@ func scanPublication(row scanner) (content.Publication, error) {
 	p.CreatedAt = sqlitex.ParseTime(created)
 	p.UpdatedAt = sqlitex.ParseTime(updated)
 	return p, nil
+}
+
+// StartContentPopulation records the uncertain unkeyed effect before sending any
+// byte. A second owner/retry cannot repopulate or seal while an old writer might
+// still act. Lease expiry alone is never evidence a remote writer stopped.
+func (s *Store) StartContentPopulation(ctx context.Context, p content.Publication) (content.Publication, error) {
+	return s.advancePublication(ctx, p, "populating", func(stored content.Publication) error {
+		if stored.Stage != "staged" || stored.StagingVolumeID != p.StagingVolumeID {
+			return content.ErrPublicationQuarantined
+		}
+		return nil
+	}, func(ctx context.Context, tx *sql.Tx, p content.Publication, now string) error {
+		_, err := tx.ExecContext(ctx, `UPDATE content_publications SET stage='populating',updated_at=? WHERE store_id=? AND purpose=? AND revision_digest=? AND stage='staged'`, now, p.StoreID, p.Purpose, p.RevisionDigest)
+		return err
+	})
+}
+func (s *Store) FinishContentPopulation(ctx context.Context, p content.Publication) (content.Publication, error) {
+	return s.advancePublication(ctx, p, "populated", func(stored content.Publication) error {
+		if stored.Stage != "populating" || stored.StagingVolumeID != p.StagingVolumeID {
+			return content.ErrPublicationQuarantined
+		}
+		return nil
+	}, func(ctx context.Context, tx *sql.Tx, p content.Publication, now string) error {
+		_, err := tx.ExecContext(ctx, `UPDATE content_publications SET stage='populated',updated_at=? WHERE store_id=? AND purpose=? AND revision_digest=? AND stage='populating'`, now, p.StoreID, p.Purpose, p.RevisionDigest)
+		return err
+	})
+}
+func (s *Store) QuarantineContentPublication(ctx context.Context, p content.Publication) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE content_publications SET stage='quarantined',error='unsettled_write',updated_at=? WHERE store_id=? AND purpose=? AND revision_digest=? AND stage='populating' AND generation=?`, s.timestamp(), p.StoreID, p.Purpose, p.RevisionDigest, p.Generation)
+		return err
+	})
+}
+
+// RetryContentPublication retains the complete failed attempt and its charges,
+// then admits a new generation with new engine keys. An old remote writer can
+// only affect its quarantined staging object; no identity is silently reused.
+func (s *Store) RetryContentPublication(ctx context.Context, store, purpose, digest string) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		p, err := publicationWith(ctx, tx, store, purpose, digest)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if p.Stage != "quarantined" && p.Stage != "populating" && p.Stage != "failed" {
+			return nil
+		}
+		if p.Generation >= 3 {
+			return Admission("publication_attempt_limit", ErrCapacity)
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO content_publication_attempts VALUES(?,?,?,?,?,?,?,'quarantined',?)`, p.StoreID, p.Purpose, p.RevisionDigest, p.Generation, p.Capacity, p.StagingVolumeID, p.DerivedVolumeID, p.Error); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE content_publications SET generation=generation+1,stage='preparing',staging_volume_id='',derived_volume_id='',published_volume_id='',error='',updated_at=? WHERE store_id=? AND purpose=? AND revision_digest=?`, s.timestamp(), store, purpose, digest)
+		return err
+	})
 }

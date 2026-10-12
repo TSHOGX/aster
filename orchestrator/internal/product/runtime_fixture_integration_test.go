@@ -39,7 +39,7 @@ func fixtureRuntimeOnKhora(t *testing.T, ctx context.Context, store *Store, back
 		p := item.Publication
 		records = append(records, p)
 		sources[p.RevisionDigest] = p.Entries
-		profile.Volumes = append(profile.Volumes, VolumePlan{Key: item.Required.Role, Role: item.Required.Role, Destination: item.Required.Destination, Storage: "shared_readonly", Access: "read_only", CapacityBytes: p.Capacity, Source: &VolumeSource{Reference: ArtifactReference{ID: item.Required.ArtifactID, Version: p.RevisionDigest, Digest: p.RevisionDigest}, VolumeID: p.PublishedVolumeID, MinimumBytes: p.Capacity}})
+		profile.Volumes = append(profile.Volumes, VolumePlan{Key: item.Required.Role, Role: item.Required.Role, Destination: item.Required.Destination, Storage: "shared_readonly", Access: "read_only", CapacityBytes: p.Capacity, Source: &VolumeSource{ContentProfile:"reviewed-v1",Reference: ArtifactReference{ID: item.Required.ArtifactID, Version: p.RevisionDigest, Digest: p.RevisionDigest}, VolumeID: p.PublishedVolumeID, MinimumBytes: p.Capacity}})
 	}
 	must(t, store.write(ctx, func(tx *sql.Tx) error { return testfixture.RecordRuntimePublications(ctx, tx, records) }))
 	fixtureEnvironment(t, store, profile, sources)

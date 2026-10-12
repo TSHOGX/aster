@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -93,6 +94,14 @@ func (e *fakeEngine) WriteVolume(_ context.Context, reference sandbox.VolumeRefe
 	}
 	files[name] = append([]byte(nil), data...)
 	return nil
+}
+
+func (e *fakeEngine) ImportVolume(ctx context.Context, ref sandbox.VolumeReference, name string, r io.Reader, size int64) error {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	return e.WriteVolume(ctx, ref, name, data)
 }
 
 func (e *fakeEngine) SnapshotVolume(_ context.Context, source sandbox.VolumeReference, key string, capacity int64) (sandbox.Volume, error) {
@@ -336,9 +345,9 @@ func TestPublishResumesAfterLostEngineReplies(t *testing.T) {
 			ctx := context.Background()
 			// Fail the keyed call once; the retry must replay onto the same object.
 			if call == "create" {
-				engine.failCall["create:content-staging:assets:"+revision.Digest] = errors.New("lost reply")
+				engine.failCall["create:content-staging:assets:"+revision.Digest+":g0"] = errors.New("lost reply")
 			} else {
-				engine.failCall["snapshot:content-publish:assets:"+revision.Digest] = errors.New("lost reply")
+				engine.failCall["snapshot:content-publish:assets:"+revision.Digest+":g0"] = errors.New("lost reply")
 			}
 			if _, err := publisher.Publish(ctx, "assets", revision, 8<<20); err == nil {
 				t.Fatalf("%s failure reported success", call)
@@ -398,22 +407,27 @@ func TestPublishKeepsDurableWriteFailuresResumable(t *testing.T) {
 	}
 }
 
-func TestPublishKeepsTransientFailuresResumable(t *testing.T) {
-	publisher, engine, repository, revision := fixture(t)
-	ctx := context.Background()
-	engine.failCall["write:AGENTS.md"] = &sandbox.Error{Class: sandbox.Unavailable, Operation: "volume write", Cause: errors.New("engine unreachable")}
-	if _, err := publisher.Publish(ctx, "assets", revision, 8<<20); err == nil {
-		t.Fatal("unavailable engine reported success")
-	}
-	row := repository.rows[engine.store+"|assets|"+revision.Digest]
-	if row.Stage == "failed" {
-		t.Fatal("a transient engine failure was recorded as terminal")
-	}
-	if _, err := publisher.Publish(ctx, "assets", revision, 8<<20); err != nil {
-		t.Fatalf("resume after transient failure: %v", err)
-	}
-	if repository.rows[engine.store+"|assets|"+revision.Digest].Stage != "published" {
-		t.Fatal("publication did not settle after conditions were restored")
+func TestPublishQuarantinesUncertainWritesWithoutRetryOrSnapshot(t *testing.T) {
+	for _, boundary := range []string{"write", "population-commit"} {
+		t.Run(boundary, func(t *testing.T) {
+			publisher, engine, repository, revision := fixture(t)
+			ctx := context.Background()
+			if boundary == "write" {
+				engine.failCall["write:AGENTS.md"] = &sandbox.Error{Class: sandbox.Unavailable, Operation: "volume import", Cause: errors.New("reply lost")}
+			} else {
+				repository.fail["populated"] = errors.New("durable finish reply lost")
+			}
+			if _, err := publisher.Publish(ctx, "assets", revision, 8<<20); err == nil {
+				t.Fatal("unknown outcome reported success")
+			}
+			writes := engine.calls["write:AGENTS.md"]
+			if _, err := publisher.Publish(ctx, "assets", revision, 8<<20); !errors.Is(err, ErrPublicationQuarantined) {
+				t.Fatal("unknown write replayed", err)
+			}
+			if engine.calls["write:AGENTS.md"] != writes || engine.next != 1 {
+				t.Fatal("old writer was replayed or snapshotted")
+			}
+		})
 	}
 }
 
@@ -471,7 +485,7 @@ func TestVerificationBoundsObservedBytesAcrossDirectories(t *testing.T) {
 		engine.dirs[volume][directory] = true
 		engine.volumes[volume][directory+"/file"] = body
 	}
-	err := VerifyVolume(context.Background(), engine, sandbox.VolumeReference{StoreID: engine.store, VolumeID: volume}, "sha256:"+strings.Repeat("a", 64))
+	err := VerifyVolume(context.Background(), engine, sandbox.VolumeReference{StoreID: engine.store, VolumeID: volume}, "sha256:"+strings.Repeat("a", 64), ReviewedProfile)
 	if !errors.Is(err, ErrContentRefused) || !strings.Contains(err.Error(), "exceeds 67108864 bytes") {
 		t.Fatal("observed tree escaped total verification bound", err)
 	}
@@ -488,7 +502,88 @@ func TestPublishRefusesSourceChangedAfterRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = (Publisher{Repository: repository, Backend: engine}).Publish(context.Background(), "assets", revision, 8<<20)
-	if err == nil || !strings.Contains(err.Error(), "changed after its revision") {
+	if !errors.Is(err, ErrContentRefused) {
 		t.Fatalf("source drift should be refused: %v", err)
+	}
+}
+
+func TestAuthoredProfileStreamsBeyondReviewedLimits(t *testing.T) {
+	publisher, engine, _, _ := fixture(t)
+	root := authored(t, map[string]string{"large.bin": strings.Repeat("a", MaxFileBytes+1)})
+	body, err := os.ReadFile(filepath.Join(root, "large.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := []Entry{{Path: "large.bin", Size: int64(len(body)), Digest: contentDigest(body)}}
+	revision := Revision{Reader: directoryReader{root: root}, Profile: AuthoredProfile, Digest: Digest(entries), Entries: entries, TotalBytes: int64(len(body))}
+	capacity, err := MaterializationCapacity(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	volume, err := publisher.Publish(context.Background(), "authored", revision, capacity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := sandbox.VolumeReference{StoreID: engine.store, VolumeID: volume}
+	if err = VerifyVolume(context.Background(), engine, ref, revision.Digest, AuthoredProfile); err != nil {
+		t.Fatal(err)
+	}
+	if err = VerifyVolume(context.Background(), engine, ref, revision.Digest, ReviewedProfile); !errors.Is(err, ErrContentRefused) {
+		t.Fatal("reviewed profile widened", err)
+	}
+	if _, err = publisher.Publish(context.Background(), "assets", revision, capacity); err == nil {
+		t.Fatal("authored source granted system role")
+	}
+}
+
+func (r *memoryRepository) StartContentPopulation(_ context.Context, p Publication) (Publication, error) {
+	row := r.rows[key(p)]
+	if row.Stage != "staged" {
+		return Publication{}, ErrPublicationQuarantined
+	}
+	row.Stage = "populating"
+	return *row, nil
+}
+func (r *memoryRepository) FinishContentPopulation(_ context.Context, p Publication) (Publication, error) {
+	if err := r.step("populated"); err != nil {
+		return Publication{}, err
+	}
+	row := r.rows[key(p)]
+	if row.Stage != "populating" {
+		return Publication{}, ErrPublicationQuarantined
+	}
+	row.Stage = "populated"
+	return *row, nil
+}
+func (r *memoryRepository) QuarantineContentPublication(_ context.Context, p Publication) error {
+	row := r.rows[key(p)]
+	row.Stage = "quarantined"
+	return nil
+}
+
+func TestPublisherRechecksPrincipalBeforeSnapshot(t *testing.T) {
+	publisher, engine, repository, revision := fixture(t)
+	checks := 0
+	denied := errors.New("principal disabled")
+	publisher.Authorize = func(context.Context) error {
+		checks++
+		if checks == 3 {
+			return denied
+		}
+		return nil
+	}
+	if _, err := publisher.Publish(context.Background(), "assets", revision, 8<<20); !errors.Is(err, denied) {
+		t.Fatal(err)
+	}
+	row := repository.rows[engine.store+"|assets|"+revision.Digest]
+	if row.Stage != "populated" || engine.next != 1 {
+		t.Fatal("disabled principal sealed content", row.Stage, engine.next)
+	}
+	publisher.Authorize = nil
+	if _, err := publisher.Publish(context.Background(), "assets", revision, 8<<20); err != nil {
+		t.Fatal(err)
+	}
+	if engine.calls["write:AGENTS.md"] != 1 {
+		t.Fatal("reauthorization rewrote settled source")
 	}
 }

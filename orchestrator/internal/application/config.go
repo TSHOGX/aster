@@ -87,6 +87,7 @@ type ProjectDefaults struct {
 	Reachability   product.Reachability `json:"reachability"`
 }
 type Config struct {
+	VolumeImports     *VolumeImportConfig     `json:"volume_imports,omitempty"`
 	Identity          *identityconfig.Config  `json:"identity,omitempty"`
 	FrontDoor         *edge.FrontDoor         `json:"front_door,omitempty"`
 	HTTPMetrics       bool                    `json:"http_metrics"`
@@ -171,6 +172,9 @@ func LoadConfig(name string) (Config, error) {
 	return cfg, nil
 }
 func (c Config) Validate() error {
+	if err := c.VolumeImports.Validate(); err != nil {
+		return err
+	}
 	if err := c.Identity.Validate(); err != nil {
 		return err
 	}

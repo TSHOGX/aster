@@ -134,6 +134,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	app.Auth = producthttp.NewAuthentication(store, transportConfig)
 	app.Auth.RuntimeInspector = app.Backend
 	app.Auth.ProjectInspector = app.Backend
+	app.Auth.VolumeImports = app.volumeImportHandler()
 	if cfg.Identity != nil {
 		listener, err := net.Listen("tcp", cfg.Identity.Listen)
 		if err != nil {
@@ -225,6 +226,10 @@ func (a *Application) publishPrepared(ctx context.Context, sources []preparedPub
 }
 
 func (a *Application) Run(ctx context.Context) error {
+	if a.Config.VolumeImports != nil {
+		a.group.Add(1)
+		go func() { defer a.group.Done(); a.runVolumeImports(a.ctx) }()
+	}
 	a.group.Add(1)
 	go func() { defer a.group.Done(); a.Workers.Run(a.ctx) }()
 	a.group.Add(1)

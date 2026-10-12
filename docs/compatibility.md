@@ -35,7 +35,7 @@ A deliberate data reset is described in [bootstrap](bootstrap.md). It removes th
 old installation's state and starts a new engine store and application database;
 it does not convert history or restore an old database afterward.
 
-Release identity format 7 declares schema 7, runtime manifest 5, native protocol 4
+Release identity format 7 declares schema 8, runtime manifest 5, native protocol 4
 and schedule platform protocol 1. Conversational scheduling includes immutable
 mutation receipts, one-shot admission, bounded checks and an owner invalidation
 outbox. Old databases and runtime manifests are refused without conversion.

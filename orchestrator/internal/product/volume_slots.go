@@ -17,10 +17,11 @@ import (
 // VolumeSource is a resolved immutable artifact binding, never browser input.
 // Its evidence stays with the saved plan even after the operator changes defaults.
 type VolumeSource struct {
-	Reference    ArtifactReference `json:"reference"`
-	VolumeID     string            `json:"volume_id"`
-	MinimumBytes int64             `json:"minimum_bytes"`
-	CleanRuntime bool              `json:"clean_runtime"`
+	ContentProfile string            `json:"content_profile"`
+	Reference      ArtifactReference `json:"reference"`
+	VolumeID       string            `json:"volume_id"`
+	MinimumBytes   int64             `json:"minimum_bytes"`
+	CleanRuntime   bool              `json:"clean_runtime"`
 }
 type VolumePlan struct {
 	SharedVolumeID string        `json:"shared_volume_id,omitempty"`
@@ -251,11 +252,17 @@ func (l *Lifecycle) materializeSlot(ctx context.Context, r Resources, key string
 	}
 	if slot.State == "initializing" {
 		if plan.Source != nil {
+			if _, err := content.ProfileLimits(plan.Source.ContentProfile); err != nil {
+				return false, ErrInvalid
+			}
+			if plan.Source.ContentProfile == content.AuthoredProfile && (plan.Role != "data" && plan.Role != "workspace" || plan.Source.CleanRuntime) {
+				return false, ErrInvalid
+			}
 			backend, ok := l.Backend.(content.VolumeVerifier)
 			if !ok {
 				return false, Admission("artifact_unavailable", ErrInvalid)
 			}
-			if err := content.VerifyVolume(ctx, backend, sandbox.VolumeReference{StoreID: r.Reference.StoreID, VolumeID: slot.VolumeID}, plan.Source.Reference.Digest); err != nil {
+			if err := content.VerifyVolume(ctx, backend, sandbox.VolumeReference{StoreID: r.Reference.StoreID, VolumeID: slot.VolumeID}, plan.Source.Reference.Digest, plan.Source.ContentProfile); err != nil {
 				return false, err
 			}
 		}
@@ -422,6 +429,12 @@ func validateVolumePlan(plans []VolumePlan) error {
 			return ErrInvalid
 		}
 		if plan.Source != nil {
+			if _, err := content.ProfileLimits(plan.Source.ContentProfile); err != nil {
+				return ErrInvalid
+			}
+			if plan.Source.ContentProfile == content.AuthoredProfile && (plan.Role != "data" && plan.Role != "workspace" || plan.Source.CleanRuntime) {
+				return ErrInvalid
+			}
 			if err := plan.Source.Reference.validate(); err != nil {
 				return err
 			}

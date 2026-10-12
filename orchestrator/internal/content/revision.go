@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // MaxEntries, MaxFileBytes and MaxTotalBytes bound an authored revision. Shared
@@ -36,20 +38,43 @@ const (
 // verified; carrying one in the digest would assert something about published
 // content that nothing checks. Read therefore refuses an executable source file
 // instead of silently publishing it as non-executable.
-//
-// Source is the host path the bytes came from. It is publication input, never part
-// of content identity: the same reviewed bytes must publish identically from any
-// checkout.
 type Entry struct {
 	Path      string `json:"path"`
 	Directory bool   `json:"directory,omitempty"`
 	Size      int64  `json:"size,omitempty"`
 	Digest    string `json:"digest,omitempty"`
-	Source    string `json:"-"`
 }
 
 // Revision is an authored tree with its content identity.
+type Reader interface {
+	ReadFile(string) (io.ReadCloser, error)
+}
+
+type directoryReader struct{ root string }
+
+func (r directoryReader) ReadFile(name string) (io.ReadCloser, error) {
+	if err := ValidPath(name); err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(r.root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	info, err := root.Lstat(filepath.FromSlash(name))
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0111 != 0 {
+		return nil, fmt.Errorf("source must remain an ordinary non-executable file")
+	}
+	return root.Open(filepath.FromSlash(name))
+}
+
+// Revision retains a process-local source reader separately from immutable metadata.
 type Revision struct {
+	Reader     Reader
+	Profile    string
 	Digest     string
 	Entries    []Entry
 	TotalBytes int64
@@ -93,10 +118,13 @@ func Read(root string) (Revision, error) {
 		}
 		switch mode := entry.Type(); {
 		case mode.IsDir():
+			if strings.TrimSpace(path.Base(relative)) != path.Base(relative) {
+				return fmt.Errorf("directory component has edge whitespace")
+			}
 			if strings.Count(relative, "/") >= 16 {
 				return fmt.Errorf("authored content nests deeper than 16 directories")
 			}
-			entries = append(entries, Entry{Path: relative, Directory: true, Source: name})
+			entries = append(entries, Entry{Path: relative, Directory: true})
 			return nil
 		case mode.IsRegular():
 		default:
@@ -120,7 +148,7 @@ func Read(root string) (Revision, error) {
 		if err != nil {
 			return err
 		}
-		entries = append(entries, Entry{Path: relative, Size: stat.Size(), Digest: digest, Source: name})
+		entries = append(entries, Entry{Path: relative, Size: stat.Size(), Digest: digest})
 		return nil
 	})
 	if walkErr != nil {
@@ -129,6 +157,8 @@ func Read(root string) (Revision, error) {
 	if len(entries) == 0 {
 		return result, fmt.Errorf("authored content root is empty")
 	}
+	result.Reader = directoryReader{root: absolute}
+	result.Profile = ReviewedProfile
 	result.Entries = entries
 	result.Digest = Digest(entries)
 	return result, nil
@@ -168,10 +198,22 @@ func ValidDigest(value string) bool {
 // ValidPath constrains a revision-relative path to what both the engine's volume
 // root and the product's own comparison can address unambiguously.
 func ValidPath(value string) error {
-	if value == "" || value != path.Clean(value) || strings.HasPrefix(value, "/") || len(value) > 512 {
+	if strings.Count(value, "/") >= 16 {
+		return fmt.Errorf("authored content nests deeper than 16 components")
+	}
+	if !utf8.ValidString(value) || value == "" || value != path.Clean(value) || strings.HasPrefix(value, "/") || len(value) > 512 {
 		return fmt.Errorf("authored content path %q must be clean and relative", value)
 	}
-	for _, part := range strings.Split(value, "/") {
+	parts := strings.Split(value, "/")
+	for i, part := range parts {
+		if i < len(parts)-1 && strings.TrimSpace(part) != part {
+			return fmt.Errorf("directory component has edge whitespace")
+		}
+		for _, c := range part {
+			if unicode.IsControl(c) {
+				return fmt.Errorf("control characters in content path")
+			}
+		}
 		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, "\x00\\") {
 			return fmt.Errorf("authored content path %q must contain clean components", value)
 		}

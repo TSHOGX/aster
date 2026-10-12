@@ -14,6 +14,7 @@ import (
 const loginCookie = "project_login"
 
 type Authentication struct {
+	VolumeImports    http.Handler
 	ProjectInspector product.ProjectInspector
 	RuntimeInspector product.RuntimeInspector
 	Store            *product.Store
@@ -46,6 +47,12 @@ func (a *Authentication) Handler(next http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	a.adminRoutes(mux)
 	a.identityRoutes(mux)
+	if a.VolumeImports != nil {
+		mux.Handle("/api/admin/volume-sources", a.VolumeImports)
+		mux.Handle("/api/admin/volume-sources/", a.VolumeImports)
+		mux.Handle("/api/admin/volume-imports", a.VolumeImports)
+		mux.Handle("/api/admin/volume-imports/", a.VolumeImports)
+	}
 	a.groupRoutes(mux)
 	mux.HandleFunc("POST /api/auth/login", a.login)
 	mux.HandleFunc("POST /api/auth/logout", a.logout)

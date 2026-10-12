@@ -156,7 +156,7 @@ func TestSeededSlotReadinessSeparatesAllocationAndPreservesUserChanges(t *testin
 	lifecycle, scope, base := lifecycleFixture(t)
 	seed := []byte("immutable seed")
 	entries := []content.Entry{{Path: "sample", Size: int64(len(seed)), Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(seed))}}
-	source := &VolumeSource{Reference: ArtifactReference{ID: "dataset", Version: "v1", Digest: content.Digest(entries)}, VolumeID: "published", MinimumBytes: 1 << 20}
+	source := &VolumeSource{ContentProfile:"reviewed-v1",Reference: ArtifactReference{ID: "dataset", Version: "v1", Digest: content.Digest(entries)}, VolumeID: "published", MinimumBytes: 1 << 20}
 	base.volumes["published"] = sandbox.Volume{VolumeReference: sandbox.VolumeReference{StoreID: "engine", VolumeID: "published"}, Capacity: 1 << 20}
 	backend := &seededLifecycle{fakeLifecycle: base, trees: map[string]map[string][]byte{"published": {"sample": seed}}, refuseVerification: true}
 	lifecycle.Backend = backend
@@ -323,7 +323,7 @@ func TestUnreadyWorkspaceSeedIsNotAnEmptyReadableDirectory(t *testing.T) {
 	profile := testProfile()
 	for index := range profile.Volumes {
 		if profile.Volumes[index].Role == "workspace" {
-			profile.Volumes[index].Source = &VolumeSource{Reference: ArtifactReference{ID: "workspace-seed", Version: "v1", Digest: content.Digest(entries)}, VolumeID: "source", MinimumBytes: 1 << 20}
+			profile.Volumes[index].Source = &VolumeSource{ContentProfile:"reviewed-v1",Reference: ArtifactReference{ID: "workspace-seed", Version: "v1", Digest: content.Digest(entries)}, VolumeID: "source", MinimumBytes: 1 << 20}
 		}
 	}
 	filesBackend := &localFileBackend{root: t.TempDir(), processes: map[string]*localFileProcess{}}

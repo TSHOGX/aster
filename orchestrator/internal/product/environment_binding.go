@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"harness-platform/orchestrator/internal/content"
 
 	"harness-platform/orchestrator/internal/runtimerelease"
 )
@@ -138,7 +139,7 @@ func resolveAllocationProfile(ctx context.Context, q queryer, actor, project str
 				}
 				return Profile{}, err
 			}
-			slot.Source = &VolumeSource{Reference: artifact.Reference, VolumeID: volume, MinimumBytes: artifact.MinimumBytes, CleanRuntime: artifact.CleanRuntime}
+			slot.Source = &VolumeSource{ContentProfile: content.ProfileForPurpose(artifact.PublicationPurpose), Reference: artifact.Reference, VolumeID: volume, MinimumBytes: artifact.MinimumBytes, CleanRuntime: artifact.CleanRuntime}
 			if slot.Storage == "shared_readonly" {
 				slot.CapacityBytes = capacity
 			}

@@ -10,10 +10,12 @@ import (
 // references alias the derivative; registering or mounting it adds no charge.
 // Failed/uncertain publication intents remain charged until explicit retirement.
 type PlatformStorage struct {
-	Owned          ResourceUsage `json:"owned"`
-	Publications   ResourceUsage `json:"publications"`
-	PublishedBytes int64         `json:"published_bytes,string"`
-	Total          ResourceUsage `json:"total"`
+	Transfers        ResourceUsage `json:"transfers"`
+	QuarantinedBytes int64         `json:"quarantined_bytes,string"`
+	Owned            ResourceUsage `json:"owned"`
+	Publications     ResourceUsage `json:"publications"`
+	PublishedBytes   int64         `json:"published_bytes,string"`
+	Total            ResourceUsage `json:"total"`
 }
 
 func platformStorage(ctx context.Context, q queryer) (out PlatformStorage, err error) {
@@ -105,6 +107,68 @@ func platformStorage(ctx context.Context, q queryer) (out PlatformStorage, err e
 	}
 	rows.Close()
 	if err != nil {
+		return out, err
+	}
+	// Previous generations remain charged until observed child-before-parent cleanup.
+	rows, err = q.QueryContext(ctx, `SELECT capacity FROM content_publication_attempts WHERE state<>'absent'`)
+	if err != nil {
+		return out, err
+	}
+	for rows.Next() {
+		var capacity int64
+		if err = rows.Scan(&capacity); err != nil {
+			break
+		}
+		charge, e := checkedProduct(capacity, 2)
+		if e != nil {
+			err = e
+			break
+		}
+		out.QuarantinedBytes, err = checkedSum(out.QuarantinedBytes, charge)
+		if err != nil {
+			break
+		}
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	if err != nil {
+		return out, err
+	}
+	out.Publications.Reserved, err = checkedSum(out.Publications.Reserved, out.QuarantinedBytes)
+	if err != nil {
+		return out, err
+	}
+	// Import admission reserves both future engine objects before a publication row
+	// exists. Shared materialization identities are counted only once.
+	rows, err = q.QueryContext(ctx, `SELECT max(i.capacity) FROM volume_imports i WHERE i.state NOT IN ('retired','canceled') AND NOT EXISTS(SELECT 1 FROM content_publications p WHERE p.store_id=i.store_id AND p.purpose='authored' AND p.revision_digest=i.tree_digest) GROUP BY i.store_id,i.tree_digest`)
+	if err != nil {
+		return out, err
+	}
+	for rows.Next() {
+		var capacity int64
+		if err = rows.Scan(&capacity); err != nil {
+			break
+		}
+		charge, e := checkedProduct(capacity, 2)
+		if e != nil {
+			err = e
+			break
+		}
+		out.Publications.Reserved, err = checkedSum(out.Publications.Reserved, charge)
+		if err != nil {
+			break
+		}
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	if err != nil {
+		return out, err
+	}
+	if err = q.QueryRowContext(ctx, `SELECT coalesce(sum(transfer_reserved),0) FROM volume_imports`).Scan(&out.Transfers.Reserved); err != nil {
 		return out, err
 	}
 	out.Total.Used, err = checkedSum(out.Owned.Used, out.Publications.Used)

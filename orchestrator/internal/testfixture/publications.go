@@ -1,6 +1,7 @@
 package testfixture
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -55,7 +56,7 @@ func RuntimePublications(ctx context.Context, backend content.Backend, required 
 			}
 		}
 		for name, data := range files {
-			if err = backend.WriteVolume(ctx, staged.VolumeReference, name, data); err != nil {
+			if err = backend.ImportVolume(ctx, staged.VolumeReference, name, bytes.NewReader(data), int64(len(data))); err != nil {
 				return nil, err
 			}
 		}
@@ -64,7 +65,7 @@ func RuntimePublications(ctx context.Context, backend content.Backend, required 
 		if err != nil {
 			return nil, err
 		}
-		if err = content.VerifyVolume(ctx, backend, derived.VolumeReference, digest); err != nil {
+		if err = content.VerifyVolume(ctx, backend, derived.VolumeReference, digest, content.ReviewedProfile); err != nil {
 			return nil, err
 		}
 		out = append(out, RuntimePublication{Required: role, Publication: content.Publication{StoreID: identity.StoreID, Purpose: purpose, RevisionDigest: digest, Capacity: 1 << 20, Entries: entries, StagingVolumeID: staged.VolumeID, DerivedVolumeID: derived.VolumeID, PublishedVolumeID: derived.VolumeID, Stage: "published"}})

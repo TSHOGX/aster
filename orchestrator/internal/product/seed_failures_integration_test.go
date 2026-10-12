@@ -93,7 +93,7 @@ func TestProjectSeedFailuresOnKhora(t *testing.T) {
 	for index := range profile.Volumes {
 		if profile.Volumes[index].Role == "workspace" {
 			profile.Volumes[index].Key = "a-workspace"
-			profile.Volumes[index].Source = &VolumeSource{Reference: reference, VolumeID: source.VolumeID, MinimumBytes: 8 << 20}
+			profile.Volumes[index].Source = &VolumeSource{ContentProfile:"reviewed-v1",Reference: reference, VolumeID: source.VolumeID, MinimumBytes: 8 << 20}
 		}
 	}
 	profile = fixtureRuntimeOnKhora(t, runctx, s, backend, profile, map[string][]content.Entry{reference.Digest: entries})
