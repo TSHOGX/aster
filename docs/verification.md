@@ -151,10 +151,9 @@ claim these privileged gates passed.
 - Page, delta, reconnect, rebuild, share and export chronology agree.
 - Exact schema/protocol, executable and runtime identities remain mandatory.
 
-After a separately authorized live activation, record the actual installed
-identities and smoke results. Historical deployment evidence only describes its
-recorded commit. Reset-specific acceptance belongs in [bootstrap](bootstrap.md);
-ordinary current-format updates use [operations](operations.md).
+After a separately authorized activation, keep installed identities and smoke
+results outside the publishable repository. Use [bootstrap](bootstrap.md) for
+reset procedures and [operations](operations.md) for current-format updates.
 
 The admin build uses `/admin` as its Next base path. Workbench and admin assets
 are separate; `/administrator` remains a workbench path. Shared appearance,

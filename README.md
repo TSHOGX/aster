@@ -50,3 +50,7 @@ The supported deployment has one authoritative application owner. Only the exact
 atomically and historical schemas are refused without migration. Khora is the sole execution backend.
 Keep credentials, deployment inventories, databases and operational evidence out
 of source control; see the [publication boundary](docs/delivery/privacy.md).
+
+The project supports one current schema and protocol set, without migrations or
+backward-compatibility adapters. Format changes use a clean redeployment;
+see [the current contract](docs/compatibility.md) and [reset procedure](docs/bootstrap.md).

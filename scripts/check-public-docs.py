@@ -15,6 +15,10 @@ for path in paths:
     relative=path.relative_to(ROOT).as_posix()
     if relative.startswith('private/'):
         errors.append(f'{relative}: private file tracked');continue
+    if relative.startswith('dev/measurements/') or relative in {
+        'docs/fresh-deployment.md', 'docs/queued-prompts-acceptance.md',
+    }:
+        errors.append(f'{relative}: installation-specific evidence is not public source');continue
     if relative.startswith(('docs/proposals/','docs/announcements/','docs/upgrade-')):
         errors.append(f'{relative}: retired documentation archive');continue
     if path.suffix not in ('.md','.mdx'):continue

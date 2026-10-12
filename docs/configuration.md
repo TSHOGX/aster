@@ -154,34 +154,47 @@ operational identities. Documentation uses `/etc/agent-workbench`,
 Existing installations must keep their actual configured paths and template IDs;
 these example names do not require moving data or rebinding existing Projects.
 
-## Network defaults and user overrides
+## Resource templates and project configuration
 
-Direct/DNS policy is seeded once at account bootstrap and then owned by the
-product database. Startup does not rewrite it, and no config watcher or
-`network-reload` command remains. Administrators use the revisioned
-`GET/PATCH /api/admin/network/default` API. Edits require the current administrator
-session, expected configuration revision and request ID; they are audited and
-fenced during release transitions. Unknown fields and malformed complete rules
-fail validation without changing the accepted policy.
+Administration → Resource Center manages network templates, environment templates,
+sandbox inventory and shared directories. Bootstrap seeds the standard templates
+once. Startup does not rewrite them. Use this sequence to make a configuration
+available:
 
-Creation/resume selects the accepted content revision inside its product
-transaction. A paused binding is conditionally updated and its complete mount and
-network projection verified before admission reopens. Running placements retain
-their actual policy; an edit does not stop or rewrite them. Services and host
-mappings remain operator-owned. Administration’s Network page edits the default;
-each account’s Network settings page chooses inheritance or a complete override.
-`GET/PATCH /api/admin/users/{id}/network` exposes the user configuration revision,
-current default configuration revision, default policy and desired policy. Saving
-requires `expected_revision`, `expected_default_revision`, `request_id` and
-`mode` (`inherit` or `override`). Override requires complete `direct` and
-`resolvers` arrays; inheritance omits both. Empty override arrays deny direct
-connections and DNS. Policies allow at most 256 direct rules and 16 resolvers.
+1. Create the network and environment templates. Provision any shared directories
+   first and wait for their state to become `ready` before adding them as mounts.
+2. In a policy, grant at most one network template and one environment template,
+   plus separate read-only or read/write grants for shared directories.
+3. Bind policies to a group and choose its default templates. A group's defaults
+   must be enabled and granted by that group's own policies.
+4. Review the account's effective configuration. Distinct defaults across groups
+   require an administrator selection; an end-user preference cannot resolve
+   that conflict. Clearing an administrator selection restores group inheritance.
 
-User edits validate against that user’s retained service bindings. Default edits
-validate inheriting Projects; existing overrides remain independent. Returning to
-inheritance revalidates current default bindings. The editor preserves unsaved
-edits on stale reload and resolves an uncertain response using the original
-request receipt. A save never performs an implicit apply-now operation.
+The account's available templates are the union of enabled policy grants.
+Environment eligibility also requires access to every shared directory it mounts.
+Shared access is capped by both the environment's access limit and the user's
+policy grants. Granting an environment does not implicitly grant its directories.
+
+Settings → Advanced / Developer allows users to select authorized templates for
+new projects and optionally show mounted shared directories. This visibility
+preference does not alter agent access. Each project snapshots the selected
+network rules and environment at creation. Later template, group-default or
+preference edits do not migrate those snapshots or existing data. Revoking a
+required resource fences execution and schedules a pause. Resumption requires
+restored authority. An explicit network change under Existing projects updates
+that project's network and pauses an active placement before it can resume.
+
+Catalog writes require an impact preview followed by confirmation with the
+preview's dependency fingerprint. The preview includes existing configuration
+issues as well as issues caused by the proposed change. An uncertain save must
+retry the same request ID and body. If a write succeeds but refreshing fails,
+the editor reloads saved data without submitting another write.
+
+Resource Center is the only configuration editor. Network and environment
+catalogs, group defaults, administrator defaults and user preferences use one
+current API and schema. Operator service routes and host mappings remain outside
+editable templates. No config watcher or network reload command remains.
 
 Resolvers authorize UDP/53. Deployments requiring TCP DNS fallback must declare
 an explicit TCP/53 direct rule. Direct permissions are IPv4 CIDR/port/protocol
@@ -238,32 +251,23 @@ allocations; they block incompatible provisioning/resume instead of resizing
 storage. Cleanup and already-admitted settlement remain available. Shared source
 artifacts are not charged repeatedly to user-owned storage.
 
-## Default runtime environment API
+## Environment templates and runtime inventory
 
-`GET /api/admin/runtime/default` returns the revisioned release/mount document,
-required publication metadata and qualified mount bound. Administrators submit
-the complete `sandbox_release` and `mounts` with `expected_revision` to
-`POST /api/admin/runtime/default/preview`. Preview reports all affected accounts,
-the count that cannot fit, and a bounded `limit`/`cursor` page of exact plans,
-resource provenance, usage/overages and saved-plan conflicts. Owned data capacities
-and resolved byte quantities are decimal strings. Workspace/runtime capacities
-use the corresponding resource setting; they have no environment-level override.
+Create an environment in Resource Center from an enabled registered sandbox
+release. Workspace/runtime capacities use their resource settings. Required
+publication destinations and access are fixed by the selected release; choose
+exact registered source versions. Optional data mounts may be project-owned,
+immutable publications, or separately authorized shared directories.
 
-`PATCH /api/admin/runtime/default` adds `request_id` and the preview's
-`expected_dependencies`. Save checks current registry, publication, platform and
-account-resource configuration under the writer transaction, then writes the new
-revision with audit and receipt. Missing/disabled/mismatched artifacts, conflicting
-image paths and stale dependencies are refused. A valid plan can exceed some
-users' allowances; saving it does not raise entitlements or reserve capacity.
-First allocation uses current admission rules. An environment edit never changes
-an already-bound Project's release, paths, storage capacities or sources.
+Template preview and save use the common catalog mutation contract, including
+revision, dependency fingerprint, receipt and audit. Validation rejects missing
+or disabled artifacts, conflicting image paths, and engine-store mismatches.
+A valid environment does not raise entitlements or reserve capacity. Allocation
+checks the selected account's quotas. Editing a template does not rebind an
+existing project's release, paths, capacities or sources.
 
-The Administration Runtime page edits this document with an exact release picker,
-required publication rows, optional data mounts, and per-user capacity provenance
-in the preview. Required roles cannot be removed or moved; shared mounts are
-read-only. Stable slot keys survive ordinary edits. Reload merges changed fields
-with unrelated concurrent edits by slot key; an uncertain save checks the original
-request. Header navigation and page links both protect unsaved edits.
+The engine store is a single bootstrap identity independent of template choice.
+There is no parallel runtime-default document or editor.
 
 `GET /api/admin/runtime/options?kind=sandbox|volume&limit=20&cursor=...` returns
 bounded immutable version metadata without engine handles, host paths or file

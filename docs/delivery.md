@@ -92,7 +92,8 @@ when omitted. Private qualification outputs stay outside CI/public artifacts.
    complete. Verify installed executable/frontend/runtime identities and smoke
    authentication, workspace access, a native reply and relevant browser controls.
    Remove only the disposable smoke resources created by that verification.
-5. Record the exact artifacts, checks, omissions and observed outcomes. A source
+5. Record the exact artifacts, checks, omissions and observed outcomes outside
+   the publishable repository. A source
    branch/archive is not a database or engine-volume backup.
 
 | Change | Required procedure |
@@ -104,6 +105,4 @@ when omitted. Private qualification outputs stay outside CI/public artifacts.
 
 Do not clear state or silently fall back to an old executable after activation
 failure. Repair the selected candidate while admission remains fenced, following
-[operations](operations.md) and [compatibility](compatibility.md). The historical
-queued-prompts reset is evidence for its recorded installation only; future
-updates do not inherit that reset authorization.
+[operations](operations.md) and [compatibility](compatibility.md).

@@ -354,3 +354,36 @@ submission/release/steer, and Terminal start/attachment. Denied Agent submission
 retains editable drafts. Terminal capability loss removes the live view while
 retaining its owned termination/delete controls. Pause, stop, cancel, delete and
 recovery remain available through their separate reduction authority.
+
+
+## Advanced configuration and shared directories
+
+Account settings lazily loads configuration when Advanced / Developer is opened.
+Shared system pickers expose inherited defaults, explicit choices and unavailable saved
+selections. Existing projects have a separate network-change action; choosing a
+preference does not change them. English and Chinese strings cover these flows.
+
+`account-advanced.tsx` coordinates preferences and project configuration;
+`shared-directory-browser.tsx` owns mount-scoped navigation and file operations.
+Listings are keyed by project, mount, path and cursor, so a late or failed request
+cannot expose stale rows in a different directory. Text editing is limited to
+bounded valid UTF-8; other files remain downloadable. Shared uploads explain
+replacement, edits require a discard decision, and uncertain file operations
+require a refreshed view before a new mutation. This editor does not provide
+cross-user merge or compare-and-swap semantics for concurrent file changes.
+
+`web/select-picker.tsx` and `web/picker-popover.ts` provide the shared dropdown
+behavior for scheduling, administration and account settings. `web/select.tsx`
+adapts form options to the same component while retaining a hidden native control
+for form serialization and constraint validation. Visible menus use system
+surfaces, compact selection marks, keyboard navigation, typeahead, disabled options
+and focus restoration. Popovers stay within the viewport and inside an enclosing
+modal's top layer. Checkbox and disclosure controls retain native behavior.
+
+The administration shell lives in the root layout. Route changes preserve account,
+appearance and navigation state while updating the selected content; they do not
+remount the shell or repeat its initial authentication load. Navigation and action
+selection use quiet surface changes without underlines. Responsive spacing and
+wrapping keep controls usable at narrow widths. The deterministic browser suite covers saved
+overrides, single-option network repair, confirmed-write refresh recovery,
+shared-edit discard protection and stale listings.

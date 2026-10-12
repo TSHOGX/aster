@@ -439,7 +439,7 @@ verification, and derivative path. Staging and derivative capacity remains
 charged through an uncertain outcome until observed. Repeating the same request
 is idempotent; a different capacity or content declaration conflicts with the
 existing immutable revision. Successful publication only registers inventory and
-does not select or edit the default environment. `--clean-runtime-seed` requires
+does not select or edit an environment template. `--clean-runtime-seed` requires
 the explicit operator assertion that the source has no user identity, journals,
 live handles, or secrets.
 

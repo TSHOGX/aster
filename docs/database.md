@@ -1,7 +1,7 @@
 # Product database
 
 The canonical SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
-The current fresh lineage has schema version 5. Its exact compiled DDL
+The current fresh lineage has schema version 6. Its exact compiled DDL
 fingerprint is returned by `product.SchemaIdentity`; release manifests must use
 that measured value.
 `product.Open` initializes that schema atomically on a new database
@@ -59,8 +59,7 @@ current ingestion transactions, never by a historical backfill.
 
 For a current installation, a coordinated database/volume backup must include
 all retained application artifacts. A deliberately reset installation starts
-fresh. An incompatible queued-prompts format is discarded during the
-destructive reset documented in [queued-prompts-release.md](queued-prompts-release.md);
+fresh, following the reset procedure in [bootstrap](bootstrap.md);
 no conversion path runs automatically when a Store opens.
 
 The background display projector advances bounded session batches and serves the
@@ -150,18 +149,16 @@ Creating/initializing/deleting slots also participate in release readiness fence
 The canonical DDL contains the final admission triggers, indexes and blocker
 views directly. Migration-only read-command retirement state has been removed.
 
-`account_network_settings` stores a monotonic per-account configuration revision
-and nullable complete policy: null means live inheritance. An absent row is
-revision zero and inheritance. Clearing an override retains the row/revision;
-it cannot reset the concurrency fence. User overrides join the handoff
-configuration digest. Receipts, configuration changes and audit commit together.
+Network policies live in `network_templates` and per-project snapshots in
+`project_configuration`. Group, administrator and user selections reference the
+catalog. The singleton `runtime_store` contains only the bootstrapped engine store
+identity; environment selection never determines which engine owns the registry.
+There are no duplicate global network or runtime configuration documents.
 
-The network-defaults singleton stores only direct rules, resolver order, content
-revision and acceptance time. A lifecycle operation records its selected target
-in durable request JSON. The `network` resume phase commits verified binding
-revision and effective profile together before advancing to `sandbox`, then
-`reachability`; admission remains closed until projection/readiness succeeds.
-An uncertain PATCH is reconciled against the whole original/target binding.
+A lifecycle operation records its selected target in durable request JSON. The
+`network` resume phase commits the verified binding revision and effective profile
+before advancing to sandbox and reachability checks. An uncertain PATCH is
+reconciled against the complete original/target binding.
 
 Scheduled metadata uses a separate owner-scoped outbox capped at 2,048 hints.
 Frontiers survive event pruning and Project/Session retirement, so disconnected
@@ -209,10 +206,10 @@ measured filesystem byte consumption or a promise of available engine capacity.
 Every saved Profile includes positive environment/resource revisions and an exact
 sandbox release reference matching its digest. Canonical schema constraints reject
 profiles without that provenance. Operator registry additions are immutable,
-audited and release-fenced; they do not update default_environment. Direct/DNS
-defaults have a monotonic configuration revision plus a content digest. The admin
-edit transaction checks revision/receipt/retained service constraints and writes
-the audit with the new policy. No startup writer or file watcher replaces it.
+audited and release-fenced; they do not change selected templates. Catalog edits
+carry a monotonic revision and complete document. The admin transaction checks
+revision and review dependencies, then commits the mutation, receipt and audit.
+No startup writer or file watcher substitutes another template.
 
 Platform storage accounting derives from the existing storage-reservation and
 content-publication authorities. Each publication claim reserves two capacities
@@ -247,3 +244,19 @@ suspension from an administrative pause/stop/restart. It travels with the durabl
 execution hold in handoff configuration fencing. Pending Project controls block
 release readiness. The same saved-plan compute admission and lifecycle worker
 serve named administrative authority; no owner session is forged.
+
+
+## Resource catalog (schema 6)
+
+Network/environment templates and shared volumes have revisioned identities.
+`policy_resource_bindings` grants them independently of action permissions;
+`group_configuration_defaults`, `account_configuration_defaults` and
+`account_configuration_preferences` separate group inheritance, administrator
+resolution and user choice. `project_configuration` retains the selected template
+IDs and copied documents. Shared storage has its own provisioning/deletion state;
+project deletion removes bindings without deleting the shared volume. File
+operations and preview snapshots retain their mount scope.
+
+This fresh-schema lineage rejects older databases; no in-place migration is
+provided. Follow [bootstrap](bootstrap.md) and the backup procedures in
+[operations](operations.md) before changing a persistent installation.

@@ -8,8 +8,3 @@ activation procedures are maintained in one place:
 - [Delivery](delivery.md): immutable candidates and executable qualification.
 - [Operations](operations.md): guarded updates within the current contract.
 - [Bootstrap](bootstrap.md): deliberately scoped fresh installations.
-- [Fresh deployment](fresh-deployment.md): latest measured development deployment.
-
-The [2026-09-25 acceptance record](queued-prompts-acceptance.md) describes that
-historical transition only. It does not qualify newer artifacts or provide a
-migration procedure.

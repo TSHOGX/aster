@@ -35,6 +35,7 @@ orchestrator/bin/
 orchestrator/authhash
 # Development source is tracked; local outputs and environments are not.
 dev/logs/
+/dev/measurements/
 dev/orchestrator
 dev/local.env
 .scratch/

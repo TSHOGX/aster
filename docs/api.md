@@ -453,11 +453,42 @@ accounted counts/capacities, not sampled CPU or filesystem utilization. Quota de
 is distinct from temporary platform/engine capacity pressure and is not retried by
 the file-read client. Platform schedule errors preserve the same quota details.
 
-`GET/PATCH /api/admin/network/default` reads or replaces the database direct/DNS
-policy. PATCH requires `request_id`, integer `expected_revision` matching
-`configuration_revision`, complete `direct` and `resolvers` arrays (empty arrays
-explicitly deny direct access/clear DNS). The returned `revision` is the content
-hash used by placements; `configuration_revision` fences administrative edits.
-Replays return the original outcome with `replayed: true`. Edits are audited and
-apply at future creation/resume; operator service routes/hosts are not editable
-through this endpoint. The former `network-reload` CLI/control path is removed.
+## Resource catalog and configuration
+
+| Route | Purpose |
+| --- | --- |
+| `GET/POST /api/admin/resource-templates/{kind}` | List/create `network` or `environment` templates |
+| `PATCH/DELETE /api/admin/resource-templates/{kind}/{id}` | Update/delete a non-built-in template |
+| `GET/POST /api/admin/shared-volumes` | List/provision shared directories |
+| `PATCH/DELETE /api/admin/shared-volumes/{id}` | Edit metadata/availability or request asynchronous deletion |
+| `GET/PUT /api/admin/policies/{id}/resources` | Complete resource grant set, at most one template of each kind |
+| `PUT /api/admin/groups/{id}/configuration-defaults` | Defaults authorized by the group's policies |
+| `GET /api/admin/users/{id}/configuration` | Effective authority, selected defaults and preferences |
+| `PUT /api/admin/users/{id}/configuration-defaults` | Set or clear administrator overrides |
+| `GET/PATCH /api/me/configuration` | Read configuration/save preferences for future projects |
+| `GET /api/me/project-configurations` | Owned projects and their retained configuration |
+| `PATCH /api/me/project-configurations/{id}` | Explicitly change an owned project's authorized network |
+| `GET /api/projects/{project}/mounts` | Mounted shared-directory keys and effective access |
+
+Admin catalog/default/grant mutations accept `preview: true`, `request_id` and
+`expected_revision`. The preview rolls back all proposed changes and returns
+`expected_dependencies`, `proposed`, `users`, and `projects`. Confirm with the
+same payload without `preview`, adding `expected_dependencies`. A stale review
+returns conflict and requires a new preview. Built-in templates are immutable;
+duplicate them to customize. Referenced resources cannot be deleted. Shared
+capacity is a decimal string and cannot change after creation.
+
+Configuration responses distinguish effective `default_network` and
+`default_environment` from the saved `administrator_defaults` IDs. Empty IDs mean
+inheritance; unavailable saved IDs remain visible for repair. `default_revision`
+fences administrator changes. `preferences.revision` fences user preferences.
+Both template ID fields and `show_shared_volumes` form the complete preference
+payload. User preference and project-network writes require `request_id` and
+`expected_revision` but do not use the admin catalog preview. Replay an uncertain
+write with its original ID and unchanged payload.
+
+File routes accept `mount=<declared-key>` for shared-directory operations. The
+server derives storage identity and read/write authority from the owned project;
+a caller cannot submit a volume ID or host path. Omit `mount` for the workspace.
+Downloads, reads, editor writes, uploads, mutations and preview snapshots preserve
+this scope. File action permissions still apply in addition to mount access.
