@@ -37,6 +37,9 @@ var (
 //go:embed schema.sql
 var schema string
 
+//go:embed uploads.sql
+var uploadsSchema string
+
 type Actor struct {
 	Issuer  string `json:"issuer"`
 	Subject string `json:"subject"`
@@ -84,12 +87,12 @@ func Open(ctx context.Context, c Config) (*Store, error) {
 	if !filepath.IsAbs(c.Directory) || c.Directory == "/" || !manifest.ValidID(c.PublisherID) || c.QuotaBytes < 1<<20 {
 		return nil, ErrInvalid
 	}
-	for _, dir := range []string{c.Directory, filepath.Join(c.Directory, "blobs"), filepath.Join(c.Directory, "tmp")} {
+	for _, dir := range []string{c.Directory, filepath.Join(c.Directory, "blobs"), filepath.Join(c.Directory, "tmp"), filepath.Join(c.Directory, "uploads")} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return nil, err
 		}
 	}
-	db, err := database.Open(ctx, filepath.Join(c.Directory, "authoring.db"), []string{schema})
+	db, err := database.Open(ctx, filepath.Join(c.Directory, "authoring.db"), []string{schema, uploadsSchema})
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +109,9 @@ func Open(ctx context.Context, c Config) (*Store, error) {
 		return fail(err)
 	}
 	if err = s.reconcile(ctx); err != nil {
+		return fail(err)
+	}
+	if err = s.reconcileUploads(ctx); err != nil {
 		return fail(err)
 	}
 	return s, nil
@@ -128,7 +134,7 @@ func (s *Store) blobPath(digest string) string {
 }
 func (s *Store) usage(ctx context.Context) (int64, error) {
 	var n int64
-	err := s.db.QueryRowContext(ctx, "SELECT coalesce(sum(size),0) FROM blobs").Scan(&n)
+	err := s.db.QueryRowContext(ctx, "SELECT (SELECT coalesce(sum(size),0) FROM blobs)+(SELECT coalesce(sum(reserved_bytes),0) FROM uploads)").Scan(&n)
 	return n, err
 }
 func (s *Store) checkQuota(ctx context.Context, extra int64) error {

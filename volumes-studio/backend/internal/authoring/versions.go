@@ -52,6 +52,9 @@ func (s *Store) Freeze(ctx context.Context, a Actor, id string, input PublishInp
 	if l.Archived || l.DraftRevision != input.ExpectedRevision {
 		return v, ErrConflict
 	}
+	if err = unfinishedUploads(ctx, tx, id); err != nil {
+		return v, err
+	}
 	var count int
 	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM versions WHERE library_id=? AND (label=? OR state IN ('pending','validating'))", id, input.Label).Scan(&count); err != nil {
 		return v, err
@@ -285,6 +288,9 @@ func (s *Store) Preview(ctx context.Context, id string, expected int64) (manifes
 	}
 	if l.DraftRevision != expected || l.Archived {
 		return manifest.Descriptor{}, ErrConflict
+	}
+	if err = unfinishedUploads(ctx, s.db.DB, id); err != nil {
+		return manifest.Descriptor{}, err
 	}
 	es, err := entries(ctx, s.db, "draft_entries", "library_id", id)
 	if err != nil {
