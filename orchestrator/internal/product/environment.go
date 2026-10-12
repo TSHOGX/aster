@@ -24,10 +24,11 @@ func (r ArtifactReference) validate() error {
 }
 
 type MountSource struct {
-	Kind       string `json:"kind"`
-	ArtifactID string `json:"artifact_id,omitempty"`
-	Version    string `json:"version,omitempty"`
-	Digest     string `json:"digest,omitempty"`
+	SharedVolumeID string `json:"shared_volume_id,omitempty"`
+	Kind           string `json:"kind"`
+	ArtifactID     string `json:"artifact_id,omitempty"`
+	Version        string `json:"version,omitempty"`
+	Digest         string `json:"digest,omitempty"`
 }
 
 func (s MountSource) Reference() ArtifactReference {
@@ -39,13 +40,14 @@ type MountCapacity struct {
 	Bytes   int64             `json:"bytes,string,omitempty"`
 }
 type EnvironmentMount struct {
-	Key         string        `json:"key"`
-	Role        string        `json:"role"`
-	Destination string        `json:"destination"`
-	Storage     string        `json:"storage"`
-	Access      string        `json:"access"`
-	Source      MountSource   `json:"source"`
-	Capacity    MountCapacity `json:"capacity"`
+	sharedCapacity int64
+	Key            string        `json:"key"`
+	Role           string        `json:"role"`
+	Destination    string        `json:"destination"`
+	Storage        string        `json:"storage"`
+	Access         string        `json:"access"`
+	Source         MountSource   `json:"source"`
+	Capacity       MountCapacity `json:"capacity"`
 }
 type DefaultEnvironment struct {
 	Revision       int64              `json:"revision"`
@@ -150,6 +152,19 @@ func ResolveEnvironmentStructure(environment DefaultEnvironment, contract runtim
 		roles[mount.Role]++
 		if mount.Role != "data" && roles[mount.Role] > 1 {
 			return result, environmentError(field + ".role")
+		}
+		if mount.Storage == "shared" {
+			if mount.Role != "data" || mount.Source.Kind != "shared" || !validID(mount.Source.SharedVolumeID) || mount.Source.ArtifactID != "" || mount.Source.Version != "" || mount.Source.Digest != "" || mount.Capacity != (MountCapacity{}) || mount.sharedCapacity <= 0 {
+				return result, environmentError(field + ".source")
+			}
+			if mount.Access != "read_only" && mount.Access != "read_write" {
+				return result, environmentError(field + ".access")
+			}
+			result.MountPlan = append(result.MountPlan, ResolvedMount{EnvironmentMount: mount, CapacityBytes: mount.sharedCapacity})
+			continue
+		}
+		if mount.Source.SharedVolumeID != "" {
+			return result, environmentError(field + ".source")
 		}
 		if mount.Storage != "owned" && mount.Storage != "shared_readonly" {
 			return result, environmentError(field + ".storage")

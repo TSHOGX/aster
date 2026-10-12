@@ -23,13 +23,15 @@ type VolumeSource struct {
 	CleanRuntime bool              `json:"clean_runtime"`
 }
 type VolumePlan struct {
-	Key           string        `json:"key"`
-	Role          string        `json:"role"`
-	Destination   string        `json:"destination"`
-	Storage       string        `json:"storage"`
-	Access        string        `json:"access"`
-	CapacityBytes int64         `json:"capacity_bytes"`
-	Source        *VolumeSource `json:"source,omitempty"`
+	SharedVolumeID string        `json:"shared_volume_id,omitempty"`
+	SharedEngineID string        `json:"shared_engine_id,omitempty"`
+	Key            string        `json:"key"`
+	Role           string        `json:"role"`
+	Destination    string        `json:"destination"`
+	Storage        string        `json:"storage"`
+	Access         string        `json:"access"`
+	CapacityBytes  int64         `json:"capacity_bytes"`
+	Source         *VolumeSource `json:"source,omitempty"`
 }
 type VolumeSlot struct {
 	Key       string `json:"key"`
@@ -86,6 +88,9 @@ func (r Resources) Mounts() ([]sandbox.Mount, error) {
 			return nil, ErrPending
 		}
 		access := "exclusive"
+		if plan.Storage == "shared" {
+			access = "shared-rw"
+		}
 		if plan.Access == "read_only" {
 			access = "shared-ro"
 		}
@@ -142,6 +147,9 @@ func (s *Store) bindVolumePlan(ctx context.Context, tx *sql.Tx, project string, 
 	}
 	for _, plan := range profile.Volumes {
 		id, state := "", "reserved"
+		if plan.Storage == "shared" {
+			id, state = plan.SharedEngineID, "ready"
+		}
 		if plan.Storage == "shared_readonly" {
 			id, state = plan.Source.VolumeID, "ready"
 		}
@@ -394,7 +402,7 @@ func validateVolumePlan(plans []VolumePlan) error {
 		if plan.Access != "read_write" && plan.Access != "read_only" {
 			return ErrInvalid
 		}
-		if plan.Storage != "owned" && plan.Storage != "shared_readonly" {
+		if plan.Storage != "owned" && plan.Storage != "shared_readonly" && plan.Storage != "shared" {
 			return ErrInvalid
 		}
 		if plan.Role == "workspace" || plan.Role == "runtime" {
@@ -404,6 +412,13 @@ func validateVolumePlan(plans []VolumePlan) error {
 			}
 		}
 		if plan.Storage == "shared_readonly" && (plan.Source == nil || plan.Access != "read_only") {
+			return ErrInvalid
+		}
+		if plan.Storage == "shared" {
+			if plan.Role != "data" || !validID(plan.SharedVolumeID) || plan.SharedEngineID == "" || plan.Source != nil {
+				return ErrInvalid
+			}
+		} else if plan.SharedVolumeID != "" || plan.SharedEngineID != "" {
 			return ErrInvalid
 		}
 		if plan.Source != nil {

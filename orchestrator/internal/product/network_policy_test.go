@@ -2,6 +2,8 @@ package product
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"harness-platform/orchestrator/internal/sandbox"
@@ -40,7 +42,7 @@ func TestNetworkPolicyResumeSnapshotSurvivesLostReplyAndRestart(t *testing.T) {
 	first := policyFixture(t, "192.0.2.0/24", "192.0.2.53")
 	second := policyFixture(t, "198.51.100.0/24", "198.51.100.53")
 	third := policyFixture(t, "", "")
-	_, err := l.Store.AcceptNetworkPolicy(ctx, first)
+	_, err := selectFixtureNetwork(t, l.Store, first)
 	must(t, err)
 	must(t, l.EnsureActive(ctx, a, serviceProfile().Bindings()))
 	drive(t, l, a.ProjectID)
@@ -49,7 +51,7 @@ func TestNetworkPolicyResumeSnapshotSurvivesLostReplyAndRestart(t *testing.T) {
 	if original.Profile.NetworkPolicyRevision != first.Revision {
 		t.Fatal(original.Profile)
 	}
-	_, err = l.Store.AcceptNetworkPolicy(ctx, second)
+	_, err = selectFixtureNetwork(t, l.Store, second)
 	must(t, err)
 	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	running, err := l.ActiveResources(ctx, a)
@@ -59,7 +61,7 @@ func TestNetworkPolicyResumeSnapshotSurvivesLostReplyAndRestart(t *testing.T) {
 	}
 	pausePolicyProject(t, l, a)
 	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
-	_, err = l.Store.AcceptNetworkPolicy(ctx, third)
+	_, err = selectFixtureNetwork(t, l.Store, third)
 	must(t, err)
 	f.fail["network"] = 1
 	if err = l.Reconcile(ctx, a.ProjectID); err == nil {
@@ -108,12 +110,12 @@ func TestNetworkPolicyConflictingBindingsNeverResume(t *testing.T) {
 			l, a, f := lifecycleFixture(t)
 			first := policyFixture(t, "", "")
 			second := policyFixture(t, "198.51.100.0/24", "")
-			_, err := l.Store.AcceptNetworkPolicy(ctx, first)
+			_, err := selectFixtureNetwork(t, l.Store, first)
 			must(t, err)
 			must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 			drive(t, l, a.ProjectID)
 			pausePolicyProject(t, l, a)
-			_, err = l.Store.AcceptNetworkPolicy(ctx, second)
+			_, err = selectFixtureNetwork(t, l.Store, second)
 			must(t, err)
 			must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 			r, err := l.Store.Resources(ctx, a)
@@ -148,7 +150,7 @@ func TestNetworkPolicyConflictingBindingsNeverResume(t *testing.T) {
 func TestNetworkPolicyConcurrentAdmissionAndProjectionFailure(t *testing.T) {
 	l, a, f := lifecycleFixture(t)
 	policy := policyFixture(t, "192.0.2.0/24", "192.0.2.53")
-	_, err := l.Store.AcceptNetworkPolicy(ctx, policy)
+	_, err := selectFixtureNetwork(t, l.Store, policy)
 	must(t, err)
 	var wg sync.WaitGroup
 	errs := make(chan error, 20)
@@ -181,7 +183,7 @@ func TestNetworkPolicyFencedDuringHandoffAndCheckedBeforeWriter(t *testing.T) {
 	identity := ApplicationIdentity{ExecutableDigest: "sha256:" + strings.Repeat("a", 64), CompatibilityDigest: "sha256:" + strings.Repeat("c", 64)}
 	s, err := OpenApplication(ctx, path, identity)
 	must(t, err)
-	_, err = s.AcceptNetworkPolicy(ctx, accepted)
+	_, err = selectFixtureNetwork(t, s, accepted)
 	must(t, err)
 	proof := func() GatewayObservation { return GatewayObservation{Started: time.Now()} }
 	target := "sha256:" + strings.Repeat("b", 64)
@@ -190,7 +192,7 @@ func TestNetworkPolicyFencedDuringHandoffAndCheckedBeforeWriter(t *testing.T) {
 	if drain.RuntimeConfigurationDigest == "" {
 		t.Fatal("configuration was not pinned")
 	}
-	_, err = s.AcceptNetworkPolicy(ctx, initial)
+	_, err = selectFixtureNetwork(t, s, initial)
 	wantError(t, err, ErrDraining)
 	_, err = s.TryReleaseReady(ctx, drain.Owner, drain.Generation, proof())
 	must(t, err)
@@ -201,7 +203,7 @@ func TestNetworkPolicyFencedDuringHandoffAndCheckedBeforeWriter(t *testing.T) {
 	s, err = OpenApplication(ctx, path, identity)
 	must(t, err)
 	defer s.Close()
-	current, err := s.NetworkDefaults(ctx)
+	current, err := fixtureNetwork(ctx, s.reader)
 	must(t, err)
 	if current.Revision != accepted.Revision {
 		t.Fatal("candidate replaced accepted database policy", current)
@@ -213,17 +215,17 @@ func TestNetworkPolicyFencedDuringHandoffAndCheckedBeforeWriter(t *testing.T) {
 func TestNetworkPolicySnapshotIsValidatedAndDetached(t *testing.T) {
 	p := policyFixture(t, "192.0.2.0/24", "192.0.2.53")
 	s, _, _ := fixture(t)
-	_, err := s.AcceptNetworkPolicy(context.Background(), p)
+	_, err := selectFixtureNetwork(t, s, p)
 	must(t, err)
 	p.Direct[0].Port = 80
-	_, err = s.AcceptNetworkPolicy(ctx, p)
+	_, err = selectFixtureNetwork(t, s, p)
 	wantError(t, err, ErrInvalid)
-	got, err := s.NetworkDefaults(ctx)
+	got, err := fixtureNetwork(ctx, s.reader)
 	must(t, err)
 	if got.Direct[0].Port != 443 {
 		t.Fatal("published policy mutated")
 	}
-	_, err = s.AcceptNetworkPolicy(ctx, NetworkPolicy{})
+	_, err = selectFixtureNetwork(t, s, NetworkPolicy{})
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatal(err)
 	}
@@ -233,12 +235,12 @@ func TestNetworkPolicyDeletionAfterLostPatchSettlesOriginalResources(t *testing.
 	l, a, f := lifecycleFixture(t)
 	first := policyFixture(t, "", "")
 	second := policyFixture(t, "192.0.2.0/24", "")
-	_, err := l.Store.AcceptNetworkPolicy(ctx, first)
+	_, err := selectFixtureNetwork(t, l.Store, first)
 	must(t, err)
 	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	pausePolicyProject(t, l, a)
-	_, err = l.Store.AcceptNetworkPolicy(ctx, second)
+	_, err = selectFixtureNetwork(t, l.Store, second)
 	must(t, err)
 	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	f.fail["network"] = 1
@@ -260,13 +262,13 @@ func TestNetworkPolicyRecoveryAndRestartSelectLatestDefaults(t *testing.T) {
 	l, a, f := lifecycleFixture(t)
 	first := policyFixture(t, "", "")
 	second := policyFixture(t, "192.0.2.0/24", "")
-	_, err := l.Store.AcceptNetworkPolicy(ctx, first)
+	_, err := selectFixtureNetwork(t, l.Store, first)
 	must(t, err)
 	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
 	drive(t, l, a.ProjectID)
 	original, err := l.ActiveResources(ctx, a)
 	must(t, err)
-	_, err = l.Store.AcceptNetworkPolicy(ctx, second)
+	_, err = selectFixtureNetwork(t, l.Store, second)
 	must(t, err)
 	p, err := l.Store.Project(ctx, a)
 	must(t, err)
@@ -277,7 +279,7 @@ func TestNetworkPolicyRecoveryAndRestartSelectLatestDefaults(t *testing.T) {
 	if r.Profile.NetworkPolicyRevision != second.Revision || r.VolumeForRole("workspace") != original.VolumeForRole("workspace") {
 		t.Fatal(r)
 	}
-	_, err = l.Store.AcceptNetworkPolicy(ctx, first)
+	_, err = selectFixtureNetwork(t, l.Store, first)
 	must(t, err)
 	delete(f.sandboxes, r.Reference.SandboxID)
 	must(t, l.Observe(ctx, a.ProjectID))
@@ -293,7 +295,7 @@ func TestNetworkPolicyReloadAndActivationNeverMixRevisions(t *testing.T) {
 	l, scope, _ := lifecycleFixture(t)
 	l.MaxProjects = 32
 	policies := []NetworkPolicy{policyFixture(t, "192.0.2.0/24", "192.0.2.53"), policyFixture(t, "198.51.100.0/24", "198.51.100.53")}
-	_, err := l.Store.AcceptNetworkPolicy(ctx, policies[0])
+	_, err := selectFixtureNetwork(t, l.Store, policies[0])
 	must(t, err)
 	var wg sync.WaitGroup
 	errs := make(chan error, 33)
@@ -301,7 +303,7 @@ func TestNetworkPolicyReloadAndActivationNeverMixRevisions(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 32; i++ {
-			if _, err := l.Store.AcceptNetworkPolicy(ctx, policies[i%2]); err != nil {
+			if _, err := selectFixtureNetwork(t, l.Store, policies[i%2]); err != nil {
 				errs <- err
 				return
 			}
@@ -328,4 +330,54 @@ func TestNetworkPolicyReloadAndActivationNeverMixRevisions(t *testing.T) {
 			t.Fatal("mixed policy", r.Profile)
 		}
 	}
+}
+
+// Lifecycle tests explicitly select a project network. Updating a catalog
+// template alone no longer changes a retained project's network snapshot.
+func selectFixtureNetwork(t *testing.T, s *Store, p NetworkPolicy) (NetworkPolicy, error) {
+	t.Helper()
+	checked, err := NewNetworkPolicy(Reachability{Direct: p.Direct, Resolvers: p.Resolvers})
+	if err != nil || checked.Revision != p.Revision {
+		return NetworkPolicy{}, ErrInvalid
+	}
+	defaults := checked
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return defaults, err
+	}
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		state, err := releaseState(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if state.Phase != "open" {
+			return ErrDraining
+		}
+		var count int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM network_templates`).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO network_templates(id,name,policy,created_at,updated_at) VALUES('fixture-network','Fixture network',?,'','')`, string(raw)); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE network_templates SET policy=?,revision=revision+1 WHERE id IN ('fixture-network','network-default')`, string(raw)); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE project_configuration SET network=?,revision=revision+1`, string(raw))
+		return err
+	})
+	return defaults, err
+}
+
+func fixtureNetwork(ctx context.Context, q queryer) (NetworkPolicy, error) {
+	var raw string
+	err := q.QueryRowContext(ctx, `SELECT policy FROM network_templates WHERE id IN ('fixture-network','network-default') ORDER BY id LIMIT 1`).Scan(&raw)
+	if err != nil {
+		return NetworkPolicy{}, err
+	}
+	var policy NetworkPolicy
+	err = json.Unmarshal([]byte(raw), &policy)
+	return policy, err
 }

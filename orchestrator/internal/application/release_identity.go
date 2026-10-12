@@ -17,16 +17,15 @@ import (
 // inputs. Matching compatibility is necessary, not sufficient, for a live owner
 // handoff: admission, durable work and stable gateway checks remain mandatory.
 type ReleaseIdentity struct {
-	Version               int    `json:"version"`
-	ExecutableDigest      string `json:"executable_digest"`
-	SchemaVersion         int    `json:"schema_version"`
-	SchemaDigest          string `json:"schema_digest"`
-	ConfigurationDigest   string `json:"configuration_digest"`
-	OwnerProtocol         int    `json:"owner_protocol"`
-	PlatformProtocol      int    `json:"platform_protocol"`
-	GatewayProtocol       int    `json:"gateway_protocol"`
-	CompatibilityDigest   string `json:"compatibility_digest"`
-	NetworkPolicyRevision string `json:"network_policy_revision,omitempty"`
+	Version             int    `json:"version"`
+	ExecutableDigest    string `json:"executable_digest"`
+	SchemaVersion       int    `json:"schema_version"`
+	SchemaDigest        string `json:"schema_digest"`
+	ConfigurationDigest string `json:"configuration_digest"`
+	OwnerProtocol       int    `json:"owner_protocol"`
+	PlatformProtocol    int    `json:"platform_protocol"`
+	GatewayProtocol     int    `json:"gateway_protocol"`
+	CompatibilityDigest string `json:"compatibility_digest"`
 }
 
 type preparedPublication struct {
@@ -96,7 +95,6 @@ func InspectRelease(cfg Config) (id ReleaseIdentity, err error) {
 	}
 	contract := id
 	contract.ExecutableDigest = ""
-	contract.NetworkPolicyRevision = ""
 	id.CompatibilityDigest, err = digestJSON(contract)
 	return id, err
 }

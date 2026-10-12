@@ -161,6 +161,79 @@ CREATE TABLE permission_policies (
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL
 );
+
+-- Reusable administrator-managed capability templates.
+CREATE TABLE network_templates (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL UNIQUE,
+ description TEXT NOT NULL DEFAULT '',
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ policy TEXT NOT NULL CHECK(json_valid(policy)),
+ builtin INTEGER NOT NULL DEFAULT 0 CHECK(builtin IN (0,1)),
+ enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE environment_templates (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL UNIQUE,
+ description TEXT NOT NULL DEFAULT '',
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ document TEXT NOT NULL CHECK(json_valid(document)),
+ builtin INTEGER NOT NULL DEFAULT 0 CHECK(builtin IN (0,1)),
+ enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE shared_volumes (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL UNIQUE,
+ description TEXT NOT NULL DEFAULT '',
+ volume_id TEXT NOT NULL DEFAULT '',
+ store_id TEXT NOT NULL DEFAULT '',
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','ready','deleting','deleted')),
+ error TEXT NOT NULL DEFAULT '',
+ capacity INTEGER NOT NULL CHECK(capacity>0),
+ enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE policy_resource_bindings (
+ policy_id TEXT NOT NULL REFERENCES permission_policies(id) ON DELETE CASCADE,
+ resource_kind TEXT NOT NULL CHECK(resource_kind IN ('network_template','environment_template','shared_volume')),
+ resource_id TEXT NOT NULL,
+ access TEXT NOT NULL DEFAULT 'read_only' CHECK(access IN ('read_only','read_write')),
+ PRIMARY KEY(policy_id,resource_kind,resource_id)
+);
+CREATE TABLE group_configuration_defaults (
+ group_id TEXT PRIMARY KEY REFERENCES account_groups(id) ON DELETE CASCADE,
+ network_template_id TEXT,
+ environment_template_id TEXT
+);
+CREATE TABLE account_configuration_preferences (
+ account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ network_template_id TEXT,
+ environment_template_id TEXT,
+ show_shared_volumes INTEGER NOT NULL DEFAULT 0 CHECK(show_shared_volumes IN (0,1)),
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE account_configuration_defaults (
+ account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ network_template_id TEXT,
+ environment_template_id TEXT,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE project_configuration (
+ project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+ network_template_id TEXT NOT NULL REFERENCES network_templates(id),
+ environment_template_id TEXT NOT NULL REFERENCES environment_templates(id),
+ network TEXT NOT NULL CHECK(json_valid(network)),
+ environment TEXT NOT NULL CHECK(json_valid(environment)),
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0)
+);
 CREATE TABLE group_policy_bindings (
  group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
  policy_id TEXT NOT NULL REFERENCES permission_policies(id) ON DELETE CASCADE,
@@ -232,12 +305,6 @@ CREATE TABLE operator_receipts (
  created_at TEXT NOT NULL
 );
 
-CREATE TABLE default_environment (
- id INTEGER PRIMARY KEY CHECK(id=1),
- revision INTEGER NOT NULL CHECK(revision>0),
- document TEXT NOT NULL CHECK(json_valid(document)),
- updated_at TEXT NOT NULL
-);
 
 CREATE TABLE content_publications (
  store_id TEXT NOT NULL,
@@ -378,6 +445,7 @@ CREATE TABLE events (
 );
 
 CREATE TABLE file_operations (
+ mount_key TEXT NOT NULL DEFAULT '',
  action TEXT NOT NULL CHECK(action IN ('files.upload','files.edit','files.manage')),
  id TEXT PRIMARY KEY,
  project_id TEXT NOT NULL REFERENCES projects(id),
@@ -424,20 +492,7 @@ CREATE TABLE native_captures (
  state TEXT NOT NULL DEFAULT 'guest' CHECK(state IN ('guest','exported','archived'))
 );
 
-CREATE TABLE network_defaults (
- configuration_revision INTEGER NOT NULL DEFAULT 1 CHECK(configuration_revision>0),
- id INTEGER PRIMARY KEY CHECK(id=1),
- revision TEXT NOT NULL,
- policy TEXT NOT NULL,
- accepted_at TEXT NOT NULL
-);
 
-CREATE TABLE account_network_settings (
- account_id TEXT PRIMARY KEY REFERENCES accounts(id),
- revision INTEGER NOT NULL CHECK(revision>0),
- policy TEXT,
- updated_at TEXT NOT NULL
-);
 
 CREATE TABLE notification_reads (
  notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
@@ -518,7 +573,7 @@ CREATE TABLE project_volume_slots (
  project_id TEXT NOT NULL REFERENCES project_resources(project_id),
  slot_key TEXT NOT NULL,
  store_id TEXT NOT NULL,
- storage TEXT NOT NULL CHECK(storage IN ('owned','shared_readonly')),
+ storage TEXT NOT NULL CHECK(storage IN ('owned','shared_readonly','shared')),
  intent_key TEXT NOT NULL UNIQUE,
  volume_id TEXT NOT NULL DEFAULT '',
  state TEXT NOT NULL CHECK(state IN ('reserved','creating','initializing','ready','deleting','deleted')),
@@ -1599,3 +1654,5 @@ WHEN NEW.disposition IN ('handled','canceled') BEGIN
  INSERT OR IGNORE INTO notifications(id,audience,project_id,session_id,title,body,created_at)
  SELECT * FROM schedule_check_attention WHERE id IN (SELECT 'schedule/'||schedule_id FROM schedule_runs WHERE turn_id=NEW.id);
 END;
+
+CREATE TABLE runtime_store (id INTEGER PRIMARY KEY CHECK(id=1), store_id TEXT NOT NULL CHECK(length(store_id)>0));

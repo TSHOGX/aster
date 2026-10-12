@@ -11,12 +11,12 @@ func TestRegistryStateRetainsReferencesAndImmutableRetirement(t *testing.T) {
 	l, scope, _ := lifecycleFixture(t)
 	s := l.Store
 	token := suspensionAdmin(t, s)
-	current, err := s.AdminEnvironment(ctx, token)
+	current, _, err := testEnvironment(ctx, s.reader)
 	must(t, err)
 	reference := current.SandboxRelease
 	state, err := s.OperatorRegistryState(ctx, "sandbox", reference)
 	must(t, err)
-	if state.Revision != 1 || !state.Enabled || !state.DefaultReferenced {
+	if state.Revision != 1 || !state.Enabled || !state.TemplateReferenced {
 		t.Fatal(state)
 	}
 	must(t, l.EnsureActive(ctx, scope, testProfile().Bindings()))
@@ -52,17 +52,16 @@ func TestRegistryStateRetainsReferencesAndImmutableRetirement(t *testing.T) {
 	must(t, err)
 	replacement.Reference.Version = "replacement"
 	must(t, s.RegisterSandbox(ctx, replacement))
-	change := EnvironmentChange{ExpectedRevision: current.Revision, SandboxRelease: replacement.Reference, Mounts: current.Mounts}
-	preview, err := s.PreviewEnvironment(ctx, token, change, "", 10)
-	must(t, err)
-	_, err = s.EditEnvironment(ctx, token, EnvironmentEdit{EnvironmentChange: change, RequestID: "select-replacement", ExpectedDependencies: preview.ExpectedDependencies})
-	must(t, err)
+	current.SandboxRelease = replacement.Reference
+	saveFixtureEnvironment(t, s, token, current)
+
 	p, err := s.Project(ctx, scope)
 	must(t, err)
 	must(t, s.DeleteProject(ctx, scope, p.Revision))
 	_, err = s.EditRegistryState(ctx, input)
 	wantError(t, err, ErrConflict)
 	drive(t, l, scope.ProjectID)
+	retireUnboundFixtureProject(t, l)
 	retired, err := s.EditRegistryState(ctx, input)
 	must(t, err)
 	if retired.RetiredAt == "" || retired.Enabled || retired.ProjectReferences != 0 || retired.PendingReferences != 0 {
@@ -108,7 +107,7 @@ func TestVolumeRetirementChecksOwnedSeedAndSharedReferences(t *testing.T) {
 			must(t, l.EnsureActive(ctx, scope, profile.Bindings()))
 			state, err := s.OperatorRegistryState(ctx, "volume", reference)
 			must(t, err)
-			if !state.DefaultReferenced || state.ProjectReferences != 1 || state.PendingReferences != 1 {
+			if !state.TemplateReferenced || state.ProjectReferences != 1 || state.PendingReferences != 1 {
 				t.Fatal(state)
 			}
 			disabled, err := s.EditRegistryState(ctx, RegistryStateEdit{RequestID: "disable", Kind: "volume", Reference: reference, ExpectedRevision: 1, Action: "disable"})
@@ -117,7 +116,7 @@ func TestVolumeRetirementChecksOwnedSeedAndSharedReferences(t *testing.T) {
 			wantError(t, err, ErrConflict)
 			// Remove only the new default's slot. Pending saved copies and shared mounts
 			// both keep their source registered until Project cleanup releases them.
-			current, err := s.AdminEnvironment(ctx, token)
+			current, _, err := testEnvironment(ctx, s.reader)
 			must(t, err)
 			mounts := []EnvironmentMount{}
 			for _, mount := range current.Mounts {
@@ -125,17 +124,16 @@ func TestVolumeRetirementChecksOwnedSeedAndSharedReferences(t *testing.T) {
 					mounts = append(mounts, mount)
 				}
 			}
-			change := EnvironmentChange{ExpectedRevision: current.Revision, SandboxRelease: current.SandboxRelease, Mounts: mounts}
-			preview, err := s.PreviewEnvironment(ctx, token, change, "", 10)
-			must(t, err)
-			_, err = s.EditEnvironment(ctx, token, EnvironmentEdit{EnvironmentChange: change, RequestID: "no-data-default", ExpectedDependencies: preview.ExpectedDependencies})
-			must(t, err)
+			current.Mounts = mounts
+			saveFixtureEnvironment(t, s, token, current)
+
 			_, err = s.EditRegistryState(ctx, RegistryStateEdit{RequestID: "retire", Kind: "volume", Reference: reference, ExpectedRevision: disabled.Revision, Action: "retire"})
 			wantError(t, err, ErrConflict)
 			p, err := s.Project(ctx, scope)
 			must(t, err)
 			must(t, s.DeleteProject(ctx, scope, p.Revision))
 			drive(t, l, scope.ProjectID)
+			retireUnboundFixtureProject(t, l)
 			retired, err := s.EditRegistryState(ctx, RegistryStateEdit{RequestID: "retire", Kind: "volume", Reference: reference, ExpectedRevision: disabled.Revision, Action: "retire"})
 			must(t, err)
 			if retired.RetiredAt == "" {
@@ -150,8 +148,8 @@ func TestVolumeRetirementChecksOwnedSeedAndSharedReferences(t *testing.T) {
 }
 func TestRegistryMutationsFenceAuditAndDependencyRoundTrips(t *testing.T) {
 	s, admin := accountStore(t)
-	token := adminTestToken(t, s, admin)
-	environment, err := s.AdminEnvironment(ctx, token)
+	_ = admin
+	environment, _, err := testEnvironment(ctx, s.reader)
 	must(t, err)
 	before, err := runtimeConfigurationDigest(ctx, s.reader)
 	must(t, err)
@@ -200,4 +198,13 @@ func TestRegistryMutationsFenceAuditAndDependencyRoundTrips(t *testing.T) {
 	if result["project_references"] != "0" {
 		t.Fatal(result)
 	}
+}
+
+func retireUnboundFixtureProject(t *testing.T, l *Lifecycle) {
+	t.Helper()
+	scope := Scope{Actor: "bob", ProjectID: "b"}
+	p, err := l.Store.Project(ctx, scope)
+	must(t, err)
+	must(t, l.Store.DeleteProject(ctx, scope, p.Revision))
+	drive(t, l, scope.ProjectID)
 }

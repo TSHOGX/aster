@@ -50,7 +50,7 @@ func registeredSandbox(ctx context.Context, q queryer, reference ArtifactReferen
 	return out, nil
 }
 
-func resolveAllocationProfile(ctx context.Context, q queryer, actor string, bindings RuntimeBindings) (Profile, error) {
+func resolveAllocationProfile(ctx context.Context, q queryer, actor, project string, bindings RuntimeBindings) (Profile, error) {
 	if err := bindings.validate(); err != nil {
 		return Profile{}, err
 	}
@@ -58,14 +58,12 @@ func resolveAllocationProfile(ctx context.Context, q queryer, actor string, bind
 	if err != nil {
 		return Profile{}, err
 	}
-	environment, artifacts, err := currentEnvironment(ctx, q)
+	config, err := authorizeProjectConfiguration(ctx, q, actor, project)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return Profile{}, ErrArtifactUnavailable
-		}
 		return Profile{}, err
 	}
-	release, err := registeredSandbox(ctx, q, environment.SandboxRelease, true)
+	environment := config.Environment
+	release, artifacts, err := validateTemplateEnvironment(ctx, q, environment)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -85,6 +83,30 @@ func resolveAllocationProfile(ctx context.Context, q queryer, actor string, bind
 	profile := Profile{EnvironmentRevision: environment.Revision, ResourceRevision: settings.AuthorizationRevision, SandboxRelease: release.Reference, ReleaseDigest: release.Reference.Digest, StoreID: release.StoreID, TemplateID: release.TemplateID, CPUMillis: value(ResourceCPU), MemoryBytes: value(ResourceMemory), DiskBytes: value(ResourceOverlay), Reachability: Reachability{Services: bindings.Services, Hosts: bindings.Hosts}, Volumes: []VolumePlan{}}
 	for _, mount := range plan.MountPlan {
 		slot := VolumePlan{Key: mount.Key, Role: mount.Role, Destination: mount.Destination, Storage: mount.Storage, Access: mount.Access, CapacityBytes: mount.CapacityBytes}
+		if mount.Source.Kind == "shared" {
+			v, e := sharedVolume(ctx, q, mount.Source.SharedVolumeID)
+			if e != nil {
+				return Profile{}, e
+			}
+			settings, e := configurationSettings(ctx, q, actor)
+			if e != nil {
+				return Profile{}, e
+			}
+			allowed := ""
+			for _, grant := range settings.SharedVolumes {
+				if grant.Volume.ID == v.ID {
+					allowed = grant.Access
+				}
+			}
+			if allowed == "" {
+				return Profile{}, Admission("volume_not_authorized", ErrForbidden)
+			}
+			if allowed == "read_only" {
+				slot.Access = "read_only"
+			}
+			slot.SharedVolumeID = v.ID
+			slot.SharedEngineID = v.VolumeID
+		}
 		if mount.Source.Kind == "builtin" {
 			var artifact BuiltinVolume
 			found := false
@@ -123,7 +145,7 @@ func resolveAllocationProfile(ctx context.Context, q queryer, actor string, bind
 		}
 		profile.Volumes = append(profile.Volumes, slot)
 	}
-	profile, _, err = selectedNetworkProfile(ctx, q, actor, profile)
+	profile, _, err = selectedNetworkProfile(ctx, q, actor, profile, project)
 	if err != nil {
 		return Profile{}, err
 	}

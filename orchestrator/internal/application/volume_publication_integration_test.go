@@ -25,12 +25,12 @@ func TestReleasedBuiltinVolumePublication(t *testing.T) {
 	measured := a.cli("volume", "inspect-source", "--source", source)
 	digest := measured["digest"].(string)
 	args := []string{"volume", "publish", "--socket", socket, "--source", source, "--id", "examples", "--version", "v1", "--digest", digest, "--capacity-bytes", "8388608", "--minimum-bytes", "4194304", "--roles", "workspace,data"}
-	before := a.request("GET", "/api/admin/runtime/default", nil, 200)
+	before := a.resourceTemplate("environment", "environment-default")
 	first := a.cli(args...)
 	if replay := a.cli(args...); !reflect.DeepEqual(first, replay) || replay["default_changed"] != false {
 		t.Fatal(first, replay)
 	}
-	after := a.request("GET", "/api/admin/runtime/default", nil, 200)
+	after := a.resourceTemplate("environment", "environment-default")
 	if !reflect.DeepEqual(before, after) {
 		t.Fatal("publication selected a new default")
 	}
@@ -55,16 +55,14 @@ func TestReleasedBuiltinVolumePublication(t *testing.T) {
 	if !found {
 		t.Fatal(options)
 	}
-	for _, raw := range after["mounts"].([]any) {
+	environment := after["environment"].(map[string]any)
+	for _, raw := range environment["mounts"].([]any) {
 		mount := raw.(map[string]any)
 		if mount["role"] == "workspace" {
 			mount["source"] = map[string]any{"kind": "builtin", "artifact_id": "examples", "version": "v1", "digest": digest}
 		}
 	}
-	body := map[string]any{"expected_revision": after["revision"], "sandbox_release": after["sandbox_release"], "mounts": after["mounts"]}
-	preview := a.request("POST", "/api/admin/runtime/default/preview", body, 200)
-	body["request_id"], body["expected_dependencies"] = "select-published-workspace", preview["expected_dependencies"]
-	a.request("PATCH", "/api/admin/runtime/default", body, 200)
+	a.saveResourceTemplate("environment", after, environment, "select-published-workspace")
 	read := func(base string) string {
 		t.Helper()
 		response, err := a.client.Get(a.origin + base + "/files/content?path=example.txt")

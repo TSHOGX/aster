@@ -34,7 +34,7 @@ func TestFirstAllocationSelectsDatabaseEnvironmentAndUserRequests(t *testing.T) 
 	release.TemplateID = "second-template"
 	must(t, s.RegisterSandbox(ctx, release))
 	// Registration alone does not select a new default or alter saved Profiles.
-	selected, _, err := currentEnvironment(ctx, s.reader)
+	selected, _, err := testEnvironment(ctx, s.reader)
 	must(t, err)
 	if selected.SandboxRelease == release.Reference {
 		t.Fatal("registration selected a default")
@@ -47,7 +47,7 @@ func TestFirstAllocationSelectsDatabaseEnvironmentAndUserRequests(t *testing.T) 
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE default_environment SET revision=?,document=? WHERE id=1`, selected.Revision, string(raw))
+		_, err = tx.ExecContext(ctx, `UPDATE environment_templates SET revision=?,document=? WHERE id='environment-default'`, selected.Revision, string(raw))
 		return err
 	}))
 	settings, err := s.UserResourceSettings(ctx, token, admin.ID)
@@ -80,13 +80,13 @@ func TestFirstAllocationSelectsDatabaseEnvironmentAndUserRequests(t *testing.T) 
 	must(t, s.ValidateReleasedBindings(ctx, "engine"))
 }
 func TestDatabaseAllocationHasNoMissingRegistryOrDefaultFallback(t *testing.T) {
-	for _, fault := range []string{"default", "release", "disabled", "digest", "store"} {
+	for _, fault := range []string{"selection", "release", "disabled", "digest", "store"} {
 		t.Run(fault, func(t *testing.T) {
 			lifecycle, scope, backend := lifecycleFixture(t)
 			s := lifecycle.Store
 			switch fault {
-			case "default":
-				_, err := s.db.Exec(`DELETE FROM default_environment`)
+			case "selection":
+				_, err := s.db.Exec(`DELETE FROM project_configuration`)
 				must(t, err)
 			case "release":
 				_, err := s.db.Exec(`DELETE FROM registered_sandboxes`)
@@ -105,7 +105,11 @@ func TestDatabaseAllocationHasNoMissingRegistryOrDefaultFallback(t *testing.T) {
 			if fault == "store" {
 				wantError(t, err, ErrConflict)
 			} else {
-				wantError(t, err, ErrArtifactUnavailable)
+				if fault == "selection" {
+					wantError(t, err, ErrNotFound)
+				} else {
+					wantError(t, err, ErrArtifactUnavailable)
+				}
 			}
 			_, err = s.Resources(ctx, scope)
 			wantError(t, err, ErrNotFound)
@@ -139,10 +143,10 @@ func TestStorageFirstDatabaseBindingDoesNotReserveCompute(t *testing.T) {
 	}
 }
 
-func TestFirstBindingSelectsConfigurationAfterWaitingForWriter(t *testing.T) {
+func TestFirstBindingRetainsSelectedEnvironmentAndReadsCurrentQuotas(t *testing.T) {
 	lifecycle, scope, _ := lifecycleFixture(t)
 	s := lifecycle.Store
-	environment, _, err := currentEnvironment(ctx, s.reader)
+	environment, _, err := testEnvironment(ctx, s.reader)
 	must(t, err)
 	environment.Revision++
 	environment.Mounts = append(environment.Mounts, EnvironmentMount{Key: "late-data", Role: "data", Destination: "/late-data", Storage: "owned", Access: "read_write", Source: MountSource{Kind: "empty"}, Capacity: MountCapacity{Bytes: 16 << 20}})
@@ -154,7 +158,7 @@ func TestFirstBindingSelectsConfigurationAfterWaitingForWriter(t *testing.T) {
 		writer <- s.write(ctx, func(tx *sql.Tx) error {
 			close(entered)
 			<-release
-			if _, err := tx.ExecContext(ctx, `UPDATE default_environment SET revision=?,document=? WHERE id=1`, environment.Revision, string(raw)); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE environment_templates SET revision=?,document=? WHERE id='fixture-environment'`, environment.Revision, string(raw)); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO account_resource_settings(account_id,revision,updated_at) VALUES(?,1,?)`, scope.Actor, s.timestamp()); err != nil {
@@ -175,12 +179,12 @@ func TestFirstBindingSelectsConfigurationAfterWaitingForWriter(t *testing.T) {
 	must(t, <-bound)
 	snapshot, err := s.Resources(ctx, scope)
 	must(t, err)
-	if snapshot.Profile.EnvironmentRevision != environment.Revision || snapshot.Profile.CapacityForRole("workspace") != 16<<20 || len(snapshot.Volumes) != 3 {
+	if snapshot.Profile.EnvironmentRevision != environment.Revision-1 || snapshot.Profile.CapacityForRole("workspace") != 16<<20 || len(snapshot.Volumes) != 2 {
 		t.Fatal(snapshot.Profile)
 	}
 	usage, err := storageUsage(ctx, s.reader, scope.Actor)
 	must(t, err)
-	if usage.Reserved != 64<<20 || usage.Allocated != 0 {
+	if usage.Reserved != 48<<20 || usage.Allocated != 0 {
 		t.Fatal(usage)
 	}
 }

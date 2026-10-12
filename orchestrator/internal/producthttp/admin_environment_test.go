@@ -36,19 +36,21 @@ func TestEnvironmentHTTPAdminAuthorityAndExactArtifactInputs(t *testing.T) {
 	if status != 200 || len(options["options"].([]any)) != 1 {
 		t.Fatal(status, options)
 	}
-	path := "/api/admin/runtime/default"
-	status, current := perform("GET", path, token, "https://app", nil)
+	collection := "/api/admin/resource-templates/environment"
+	path := collection + "/environment-default"
+	status, current := perform("GET", collection, token, "https://app", nil)
 	if status != 200 {
 		t.Fatal(status, current)
 	}
-	change := map[string]any{"expected_revision": current["revision"], "sandbox_release": current["sandbox_release"], "mounts": current["mounts"]}
-	mounts := change["mounts"].([]any)
+	current = current["templates"].([]any)[0].(map[string]any)
+	change := map[string]any{"expected_revision": current["revision"], "name": current["name"], "enabled": true, "environment": current["environment"], "request_id": "environment-edit", "preview": true}
+	mounts := change["environment"].(map[string]any)["mounts"].([]any)
 	mounts[0].(map[string]any)["destination"] = "/workspaces/project"
-	status, preview := perform("POST", path+"/preview", token, "https://app", change)
-	if status != 200 || preview["affected_accounts"] != "1" {
+	status, preview := perform("PATCH", path, token, "https://app", change)
+	if status != 200 || len(preview["users"].([]any)) != 1 {
 		t.Fatal(status, preview)
 	}
-	change["request_id"] = "runtime-edit"
+	delete(change, "preview")
 	change["expected_dependencies"] = preview["expected_dependencies"]
 	status, _ = perform("PATCH", path, token, "https://foreign", change)
 	if status != 403 {
@@ -59,7 +61,7 @@ func TestEnvironmentHTTPAdminAuthorityAndExactArtifactInputs(t *testing.T) {
 		t.Fatal(status, result)
 	}
 	status, result = perform("PATCH", path, token, "https://app", change)
-	if status != 200 || result["replayed"] != true {
+	if status != 200 || result["revision"] != float64(2) {
 		t.Fatal(status, result)
 	}
 	change["template_id"] = "forged-engine-handle"
@@ -83,7 +85,7 @@ func TestEnvironmentHTTPAdminAuthorityAndExactArtifactInputs(t *testing.T) {
 		if status != want {
 			t.Fatal(status)
 		}
-		status, _ = perform("GET", path, credential, "https://app", nil)
+		status, _ = perform("GET", collection, credential, "https://app", nil)
 		if status != want {
 			t.Fatal(status)
 		}

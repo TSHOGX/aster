@@ -146,6 +146,9 @@ func (s *Store) CreateProject(ctx context.Context, actor, id, title string) (Pro
 		if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id,owner_id,title,creation_digest,created_at,updated_at) VALUES(?,?,?,?,?,?)`, id, actor, title, creationDigest(title), now, now); err != nil {
 			return err
 		}
+		if err := saveInitialConfiguration(ctx, tx, actor, id); err != nil {
+			return err
+		}
 		if err := s.event(ctx, tx, id, "", "", "project.created", 1); err != nil {
 			return err
 		}

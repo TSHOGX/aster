@@ -221,7 +221,6 @@ func (a *Application) controlHandler() http.Handler {
 		identity := a.releaseIdentity
 		if network, err := a.networkReport(r.Context()); err == nil {
 			out["network"] = network
-			identity.NetworkPolicyRevision = network.Defaults.Revision
 		}
 		out["release_identity"] = identity
 		release, err := a.Store.ReleaseState(r.Context())
@@ -263,8 +262,7 @@ func (a *Application) controlHandler() http.Handler {
 		report := map[string]any{"project": project, "blockers": blockers}
 		if resourceErr == nil {
 			report["resources"] = resources
-			if network, err := a.Store.OperatorUserNetwork(r.Context(), project.OwnerID); err == nil {
-				report["default_network_policy_revision"] = network.Default.Revision
+			if network, err := a.Store.OperatorProjectNetwork(r.Context(), project.ID); err == nil {
 				report["desired_network_policy_revision"] = network.Desired.Revision
 				report["network_policy_mode"] = network.Mode
 				report["effective_network_policy_revision"] = resources.Profile.NetworkPolicyRevision

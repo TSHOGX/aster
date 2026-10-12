@@ -70,11 +70,8 @@ func (a *Authentication) adminRoutes(mux *http.ServeMux) {
 	for _, action := range []string{"pause", "stop", "restart", "apply-network"} {
 		mux.HandleFunc("POST /api/admin/projects/{id}/"+action, a.adminControlProject)
 	}
-	a.environmentRoutes(mux)
-	mux.HandleFunc("GET /api/admin/users/{id}/network", a.adminUserNetwork)
-	mux.HandleFunc("PATCH /api/admin/users/{id}/network", a.editUserNetwork)
-	mux.HandleFunc("GET /api/admin/network/default", a.adminNetworkDefaults)
-	mux.HandleFunc("PATCH /api/admin/network/default", a.editNetworkDefaults)
+	mux.HandleFunc("GET /api/admin/runtime/options", a.runtimeOptions)
+	a.templateRoutes(mux)
 	mux.HandleFunc("POST /api/admin/users/{id}/conversations/{session}/inspect", a.adminConversation)
 	mux.HandleFunc("GET /api/admin/users", a.adminUsers)
 	mux.HandleFunc("POST /api/admin/users", a.adminCreateUser)

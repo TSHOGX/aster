@@ -83,7 +83,7 @@ func (s *Store) Resources(ctx context.Context, scope Scope) (Resources, error) {
 
 type LifecycleBackend interface {
 	InspectConfiguration(context.Context, sandbox.Reference) (sandbox.Configuration, error)
-	UpdateNetwork(context.Context, sandbox.Reference, sandbox.Network) (sandbox.Configuration, error)
+	UpdateConfiguration(context.Context, sandbox.Reference, sandbox.Network, []sandbox.Mount) (sandbox.Configuration, error)
 	Identity(context.Context) (sandbox.Identity, error)
 	CreateVolume(context.Context, string, int64) (sandbox.Volume, error)
 	Create(context.Context, sandbox.CreateRequest) (sandbox.Observation, error)
@@ -120,6 +120,7 @@ type operationRequest struct {
 	Restart       bool
 	Force         bool
 	NetworkPolicy *NetworkPolicy `json:",omitempty"`
+	Volumes       []VolumePlan   `json:",omitempty"`
 }
 type operation struct{ ID, ProjectID, Kind, State, Phase, Request, Error string }
 
@@ -153,10 +154,15 @@ func (l *Lifecycle) newOperation(ctx context.Context, tx *sql.Tx, project, kind,
 		if err := validateRetainedProfile(ctx, tx, r.Profile); err != nil {
 			return err
 		}
-		target, policy, err := selectedNetworkProfile(ctx, tx, actor, r.Profile)
+		target, policy, err := selectedNetworkProfile(ctx, tx, actor, r.Profile, project)
 		if err != nil {
 			return err
 		}
+		target.Volumes, err = authorizedVolumePlan(ctx, tx, actor, project, r.Profile.Volumes)
+		if err != nil {
+			return err
+		}
+		request.Volumes = target.Volumes
 		request.NetworkPolicy = policy
 		if kind == "create" {
 			raw, err := json.Marshal(target)
@@ -212,6 +218,14 @@ func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, bindings Runt
 			return err
 		}
 		if p.ExecutionSuspended {
+			if p.ExecutionHoldReason == "configuration_revoked" || p.ExecutionHoldReason == "configuration_changed" {
+				if p.State != "paused" && p.State != "created" {
+					return Admission("suspension_pending", ErrConflict)
+				}
+				if _, err := authorizeProjectConfiguration(ctx, tx, scope.Actor, p.ID); err != nil {
+					return err
+				}
+			}
 			if !requireManage {
 				return Admission("project_suspended", ErrForbidden)
 			}
@@ -244,7 +258,7 @@ func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, bindings Runt
 func (l *Lifecycle) admitProjectActivation(ctx context.Context, tx *sql.Tx, p Project, bindings RuntimeBindings) error {
 	r, err := resources(ctx, tx, p.ID)
 	if errors.Is(err, ErrNotFound) {
-		profile, err := resolveAllocationProfile(ctx, tx, p.OwnerID, bindings)
+		profile, err := resolveAllocationProfile(ctx, tx, p.OwnerID, p.ID, bindings)
 		if err != nil {
 			return err
 		}

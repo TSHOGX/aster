@@ -11,7 +11,7 @@ import (
 
 func TestOperatorRuntimeRegistrationIsImmutableFencedAndDoesNotSelect(t *testing.T) {
 	s, _ := accountStore(t)
-	before, _, err := currentEnvironment(ctx, s.reader)
+	before, _, err := testEnvironment(ctx, s.reader)
 	must(t, err)
 	release, err := registeredSandbox(ctx, s.reader, before.SandboxRelease, false)
 	must(t, err)
@@ -20,7 +20,7 @@ func TestOperatorRuntimeRegistrationIsImmutableFencedAndDoesNotSelect(t *testing
 	release.TemplateID = "second-template"
 	must(t, s.RegisterSandbox(ctx, release))
 	must(t, s.RegisterSandbox(ctx, release))
-	current, _, err := currentEnvironment(ctx, s.reader)
+	current, _, err := testEnvironment(ctx, s.reader)
 	must(t, err)
 	if current.SandboxRelease != before.SandboxRelease || current.Revision != before.Revision {
 		t.Fatal("registration mutated default", current)

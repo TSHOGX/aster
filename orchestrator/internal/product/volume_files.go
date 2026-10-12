@@ -38,7 +38,7 @@ func (w *WorkspaceReader) pausedVolume(ctx context.Context, scope Scope) (Resour
 	if err != nil {
 		return Resources{}, nil, nil, nil, true, err
 	}
-	if p.State != "paused" && p.State != "created" {
+	if p.State != "paused" && p.State != "created" && fileMount(ctx) == "" {
 		return Resources{}, nil, nil, nil, false, nil
 	}
 	releaseWork, err := w.Store.beginRuntimeWork(ctx, runtimeRead)
@@ -72,7 +72,7 @@ func (w *WorkspaceReader) pausedVolume(ctx context.Context, scope Scope) (Resour
 	if err != nil {
 		return fail(err)
 	}
-	if p.State != "paused" && p.State != "created" {
+	if p.State != "paused" && p.State != "created" && fileMount(ctx) == "" {
 		return fail(ErrPending)
 	}
 	r, err := w.Store.Resources(ctx, scope)
@@ -83,7 +83,11 @@ func (w *WorkspaceReader) pausedVolume(ctx context.Context, scope Scope) (Resour
 	if err != nil {
 		return fail(err)
 	}
-	if r.Reference.SandboxID != "" {
+	r, err = fileResourceView(ctx, w.Store.reader, scope, r, false)
+	if err != nil {
+		return fail(err)
+	}
+	if r.Reference.SandboxID != "" && fileMount(ctx) == "" {
 		observed, e := w.Lifecycle.Backend.Inspect(ctx, r.Reference)
 		if e != nil {
 			return fail(e)
@@ -175,6 +179,10 @@ func (w *WorkspaceReader) validateVolume(ctx context.Context, scope Scope, r Res
 		return ErrDeleting
 	}
 	current, err := w.Store.Resources(ctx, scope)
+	if err != nil {
+		return err
+	}
+	current, err = fileResourceView(ctx, w.Store.reader, scope, current, false)
 	if err != nil {
 		return err
 	}

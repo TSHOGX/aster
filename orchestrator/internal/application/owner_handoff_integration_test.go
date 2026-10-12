@@ -45,8 +45,8 @@ func TestReleasedOwnerHandoff(t *testing.T) {
 	})
 	// Change database policy without editing the deployment file used by the
 	// replacement's candidate inspection. The live placement remains unchanged.
-	network := a.request("GET", "/api/admin/network/default", nil, 200)
-	changedNetwork := a.request("PATCH", "/api/admin/network/default", map[string]any{"request_id": "handoff-network-edit", "expected_revision": network["configuration_revision"], "direct": []any{map[string]any{"cidr": "198.51.100.0/24", "port": 443, "protocol": "tcp"}}, "resolvers": []string{}}, 200)
+	network := a.resourceTemplate("network", "network-default")
+	changedNetwork := a.saveResourceTemplate("network", network, map[string]any{"direct": []any{map[string]any{"cidr": "198.51.100.0/24", "port": 443, "protocol": "tcp"}}, "resolvers": []string{}}, "handoff-network-edit")
 	if changedNetwork["revision"] == network["revision"] {
 		t.Fatal("network fixture did not change policy")
 	}
@@ -107,7 +107,7 @@ func TestReleasedOwnerHandoff(t *testing.T) {
 	if gateway["pid"] != initialGateway["pid"] || gateway["active"] != float64(1) {
 		t.Fatal("update did not retain the original active gateway stream", gateway, initialGateway)
 	}
-	afterNetwork := a.request("GET", "/api/admin/network/default", nil, 200)
+	afterNetwork := a.resourceTemplate("network", "network-default")
 	if afterNetwork["revision"] != changedNetwork["revision"] {
 		t.Fatal("handoff replaced DB network with bootstrap config", afterNetwork)
 	}

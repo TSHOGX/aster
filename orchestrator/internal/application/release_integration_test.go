@@ -259,9 +259,7 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	}
 	a.start()
 	current := a.cli("diagnostics", "--socket", filepath.Join(root, "state/control.sock"))["release_identity"].(map[string]any)
-	// Live diagnostics add DB policy state; candidate inspection is read-only
-	// deployment measurement and does not guess it from bootstrap declarations.
-	delete(current, "network_policy_revision")
+	// Catalog state is separate from the executable deployment identity.
 	candidateJSON, _ := json.Marshal(candidate)
 	currentJSON, _ := json.Marshal(current)
 	liveCandidate := a.cli("release-identity", "--config", a.config)
@@ -486,4 +484,25 @@ func TestReleasedActivationTarget(t *testing.T) {
 	if len(rows) != 1 || rows[0].(map[string]any)["id"] != original["id"] || rows[0].(map[string]any)["state"] != "held" {
 		t.Fatal(rows)
 	}
+}
+
+func (a *releaseApp) resourceTemplate(kind, id string) map[string]any {
+	a.t.Helper()
+	for _, value := range a.request("GET", "/api/admin/resource-templates/"+kind, nil, 200)["templates"].([]any) {
+		item := value.(map[string]any)
+		if item["id"] == id {
+			return item
+		}
+	}
+	a.t.Fatalf("missing %s template %s", kind, id)
+	return nil
+}
+func (a *releaseApp) saveResourceTemplate(kind string, before, document map[string]any, requestID string) map[string]any {
+	a.t.Helper()
+	path := "/api/admin/resource-templates/" + kind + "/" + before["id"].(string)
+	body := map[string]any{"preview": true, "request_id": requestID, "expected_revision": before["revision"], "name": before["name"], "description": before["description"], "enabled": before["enabled"], kind: document}
+	preview := a.request("PATCH", path, body, 200)
+	delete(body, "preview")
+	body["expected_dependencies"] = preview["expected_dependencies"]
+	return a.request("PATCH", path, body, 200)
 }

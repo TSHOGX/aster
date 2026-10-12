@@ -112,7 +112,8 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 	deletedProjects := float64(1)
 	editPaths := func(workspace, runtimeRoot, requestID string) {
 		t.Helper()
-		current := a.request("GET", "/api/admin/runtime/default", nil, 200)
+		template := a.resourceTemplate("environment", "environment-default")
+		current := template["environment"].(map[string]any)
 		mounts := current["mounts"].([]any)
 		for _, raw := range mounts {
 			mount := raw.(map[string]any)
@@ -123,14 +124,10 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 				mount["destination"] = runtimeRoot
 			}
 		}
-		body := map[string]any{"expected_revision": current["revision"], "sandbox_release": current["sandbox_release"], "mounts": mounts}
 		if nextRelease != nil {
-			body["sandbox_release"] = nextRelease
+			current["sandbox_release"] = nextRelease
 		}
-		preview := a.request("POST", "/api/admin/runtime/default/preview", body, 200)
-		body["request_id"] = requestID
-		body["expected_dependencies"] = preview["expected_dependencies"]
-		a.request("PATCH", "/api/admin/runtime/default", body, 200)
+		a.saveResourceTemplate("environment", template, current, requestID)
 	}
 	editPaths(workspace, runtimeRoot, "non-default-paths")
 	base := "/api/projects/network"
@@ -205,7 +202,7 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 			t.Fatal(registered)
 		}
 		// Registration alone cannot select the new image.
-		unchanged := a.request("GET", "/api/admin/runtime/default", nil, 200)
+		unchanged := a.resourceTemplate("environment", "environment-default")["environment"].(map[string]any)
 		if unchanged["sandbox_release"].(map[string]any)["digest"] == digest {
 			t.Fatal("registration changed default")
 		}
@@ -217,7 +214,7 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 		originalRelease := original["resources"].(map[string]any)["profile"].(map[string]any)["sandbox_release"].(map[string]any)
 		originalRegistryArgs = []string{"--socket", socket, "--kind", "sandbox", "--id", originalRelease["id"].(string), "--version", originalRelease["version"].(string), "--digest", originalRelease["digest"].(string)}
 		state := a.cli(append([]string{"runtime", "inspect"}, originalRegistryArgs...)...)
-		if state["default_referenced"] != false || state["project_references"] != "1" {
+		if state["template_referenced"] != false || state["project_references"] != "1" {
 			t.Fatal(state)
 		}
 		disableArgs := append(append([]string{"runtime", "disable"}, originalRegistryArgs...), "--expected-revision", fmt.Sprint(state["revision"]), "--request-id", "disable-retained-runtime")
@@ -287,13 +284,13 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 	apply := func() any {
 		t.Helper()
 		change++
-		current := a.request("GET", "/api/admin/network/default", nil, 200)
-		result := a.request("PATCH", "/api/admin/network/default", map[string]any{"request_id": fmt.Sprintf("network-change-%d", change), "expected_revision": current["configuration_revision"], "direct": reach["direct"], "resolvers": reach["resolvers"]}, 200)
-		return result["revision"]
+		current := a.resourceTemplate("network", "network-default")
+		result := a.saveResourceTemplate("network", current, map[string]any{"direct": reach["direct"], "resolvers": reach["resolvers"]}, fmt.Sprintf("network-change-%d", change))
+		return result["network"].(map[string]any)["revision"]
 	}
 	accepted := apply()
 	same, current := inspect()
-	if same != ref || current["network_policy_pending"] != true {
+	if same != ref || current["network_policy_pending"] != false {
 		t.Fatal("running placement changed", same, current)
 	}
 	shell("assert open('/etc/resolv.conf').read()==''")
@@ -304,6 +301,13 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 			a.request("POST", fmt.Sprintf("%s/pause?revision=%.0f", base, p["revision"]), nil, 202)
 		}
 		a.await(25*time.Second, "paused", func() bool { return a.request("GET", base, nil, 200)["state"] == "paused" })
+		configurations := a.request("GET", "/api/me/project-configurations", nil, 200)["projects"].([]any)
+		for _, item := range configurations {
+			config := item.(map[string]any)
+			if config["project_id"] == "network" {
+				a.request("PATCH", "/api/me/project-configurations/network", map[string]any{"request_id": fmt.Sprintf("select-network-%d", change), "expected_revision": config["revision"], "network_template_id": "network-default"}, 200)
+			}
+		}
 		a.request("POST", base+"/resume", nil, 202)
 		a.await(25*time.Second, "resumed", func() bool { return a.request("GET", base, nil, 200)["state"] == "active" })
 		ref, current = inspect()
@@ -337,15 +341,13 @@ print('DNS TLS PACKAGE DENIAL OK')`, certificate, port, len(payload))
 	a.stop()
 	a.start()
 	restarted, retained := inspect()
-	if restarted != ref || retained["default_network_policy_revision"] != accepted || retained["effective_network_policy_revision"] != accepted {
+	if restarted != ref || retained["desired_network_policy_revision"] != accepted || retained["effective_network_policy_revision"] != accepted {
 		t.Fatal("restart replaced database network authority", retained)
 	}
 	shell(code)
 
-	identity := a.request("GET", "/api/auth/session", nil, 200)
-	userPath := "/api/admin/users/" + identity["id"].(string) + "/network"
-	userNetwork := a.request("GET", userPath, nil, 200)
-	userNetwork = a.request("PATCH", userPath, map[string]any{"request_id": "override-internet", "expected_revision": userNetwork["configuration_revision"], "expected_default_revision": userNetwork["default_configuration_revision"], "mode": "override", "direct": []any{map[string]any{"cidr": "0.0.0.0/0", "port": port, "protocol": "tcp"}}, "resolvers": []string{"192.0.2.1"}}, 200)
+	reach["direct"] = []any{map[string]any{"cidr": "0.0.0.0/0", "port": port, "protocol": "tcp"}}
+	apply()
 	pauseResume()
 	shell(code)
 	internetRef, _ := inspect()
@@ -356,9 +358,11 @@ print('DNS TLS PACKAGE DENIAL OK')`, certificate, port, len(payload))
 			t.Fatal("wildcard allow reached Khora", tuple)
 		}
 	}
-	userNetwork = a.request("PATCH", userPath, map[string]any{"request_id": "override-deny", "expected_revision": userNetwork["configuration_revision"], "expected_default_revision": userNetwork["default_configuration_revision"], "mode": "override", "direct": []any{}, "resolvers": []string{}}, 200)
+	reach["direct"] = []any{}
+	reach["resolvers"] = []string{}
+	apply()
 	_, pending := inspect()
-	if pending["network_policy_pending"] != true || pending["network_policy_mode"] != "override" {
+	if pending["network_policy_pending"] != false || pending["network_policy_mode"] != "project" {
 		t.Fatal(pending)
 	}
 	// The live placement still has the previously selected permission.
@@ -366,16 +370,17 @@ print('DNS TLS PACKAGE DENIAL OK')`, certificate, port, len(payload))
 	pauseResume()
 	shell(fmt.Sprintf("import socket\nassert open('/etc/resolv.conf').read()==''\ntry:\n socket.create_connection(('192.0.2.1',%d),timeout=1)\nexcept OSError: pass\nelse: raise Exception('removed access remains')", port))
 
-	// Override and default are distinct across owner replacement. Inheritance
-	// restores the current default only on a later verified resume.
+	// The saved project policy survives owner replacement. An explicit selection
+	// applies the new template snapshot on the next verified resume.
 	a.stop()
 	a.start()
 	_, overridden := inspect()
-	if overridden["network_policy_pending"] != false || overridden["default_network_policy_revision"] != accepted || overridden["effective_network_policy_revision"] == accepted {
+	if overridden["network_policy_pending"] != false || overridden["effective_network_policy_revision"] == accepted {
 		t.Fatal(overridden)
 	}
-	userNetwork = a.request("GET", userPath, nil, 200)
-	a.request("PATCH", userPath, map[string]any{"request_id": "restore-inheritance", "expected_revision": userNetwork["configuration_revision"], "expected_default_revision": userNetwork["default_configuration_revision"], "mode": "inherit"}, 200)
+	reach["direct"] = []any{map[string]any{"cidr": "192.0.2.1/32", "port": port, "protocol": "tcp"}}
+	reach["resolvers"] = []string{"192.0.2.1"}
+	accepted = apply()
 	shell("assert open('/etc/resolv.conf').read()==''")
 	pauseResume()
 	shell(code)

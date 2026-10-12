@@ -24,9 +24,9 @@ func TestHandoffConfigurationIncludesPersistedAuthorityAndExcludesTraffic(t *tes
 		t.Fatal("credential/display traffic changed runtime contract")
 	}
 	statements := []string{
-		`UPDATE network_defaults SET configuration_revision=configuration_revision+1`,
-		`UPDATE default_environment SET revision=revision+1`,
-		`INSERT INTO account_network_settings(account_id,revision,policy,updated_at) VALUES('alice',1,NULL,'test')`,
+		`UPDATE network_templates SET revision=revision+1`,
+		`UPDATE environment_templates SET revision=revision+1`,
+		`INSERT INTO account_configuration_defaults(account_id,revision,network_template_id,updated_at) VALUES('alice',1,'fixture-network','test')`,
 		`UPDATE registered_sandboxes SET enabled=0`,
 		`UPDATE platform_resource_limits SET revision=revision+1 WHERE dimension='projects'`,
 		`UPDATE group_resource_policy SET default_value=default_value-1 WHERE dimension='projects'`,
@@ -70,7 +70,7 @@ func TestHandoffRejectsChangedConfigurationBeforeActivationAndWriterOpen(t *test
 				must(t, err)
 			}
 			// Simulate an out-of-band mutation; normal services fence this edit already.
-			_, err = s.db.Exec(`UPDATE network_defaults SET configuration_revision=configuration_revision+1`)
+			_, err = s.db.Exec(`UPDATE network_templates SET revision=revision+1`)
 			must(t, err)
 			switch boundary {
 			case "readiness":

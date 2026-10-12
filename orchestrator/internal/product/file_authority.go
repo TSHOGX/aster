@@ -64,5 +64,14 @@ func (w *authorizedFileWatch) Next() (sandbox.FileInvalidation, error) {
 	if _, err = projectAction(w.ctx, w.store.reader, w.scope, ActionFilesList); err != nil {
 		return sandbox.FileInvalidation{}, err
 	}
+	if fileMount(w.ctx) != "" {
+		r, err := w.store.Resources(w.ctx, w.scope)
+		if err != nil {
+			return sandbox.FileInvalidation{}, err
+		}
+		if _, err = fileResourceView(w.ctx, w.store.reader, w.scope, r, false); err != nil {
+			return sandbox.FileInvalidation{}, err
+		}
+	}
 	return event, nil
 }

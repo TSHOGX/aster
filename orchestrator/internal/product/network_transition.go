@@ -34,6 +34,11 @@ func (l *Lifecycle) prepareNetwork(ctx context.Context, o operation, r Resources
 		return ErrConflict
 	}
 	target := policy.Apply(r.Profile)
+	if request.Volumes != nil {
+		target.Volumes = request.Volumes
+	}
+	targetResources := r
+	targetResources.Profile = target
 	if err = target.Validate(); err != nil {
 		return err
 	}
@@ -49,7 +54,7 @@ func (l *Lifecycle) prepareNetwork(ctx context.Context, o operation, r Resources
 		return ErrConflict
 	}
 	sourceMatches := profileConfiguration(observed, r.Profile, r)
-	targetMatches := profileConfiguration(observed, target, r)
+	targetMatches := profileConfiguration(observed, target, targetResources)
 	if observed.Reference != ref {
 		// Accept an uncertain successful PATCH only when it changed the complete
 		// source declaration into exactly the recorded target on this placement.
@@ -60,11 +65,15 @@ func (l *Lifecycle) prepareNetwork(ctx context.Context, o operation, r Resources
 		if !sourceMatches {
 			return ErrConflict
 		}
-		observed, err = l.Backend.UpdateNetwork(ctx, ref, target.Reachability.Declaration())
+		mounts, e := targetResources.Mounts()
+		if e != nil {
+			return e
+		}
+		observed, err = l.Backend.UpdateConfiguration(ctx, ref, target.Reachability.Declaration(), mounts)
 		if err != nil {
 			return err
 		}
-		if !validPlacement(observed) || !profileConfiguration(observed, target, r) {
+		if !validPlacement(observed) || !profileConfiguration(observed, target, targetResources) {
 			return ErrConflict
 		}
 	}

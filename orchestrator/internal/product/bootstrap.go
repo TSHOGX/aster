@@ -186,17 +186,8 @@ func (s *Store) insertBootstrapSeed(ctx context.Context, tx *sql.Tx, seed Bootst
 			return err
 		}
 	}
-	environment, err := json.Marshal(seed.Environment)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO runtime_store(id,store_id) VALUES(1,?)`, seed.Sandbox.StoreID); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO default_environment(id,revision,document,updated_at) VALUES(1,1,?,?)`, string(environment), now); err != nil {
-		return err
-	}
-	network, err := json.Marshal(seed.Network)
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO network_defaults(id,revision,policy,accepted_at) VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,policy=excluded.policy,accepted_at=excluded.accepted_at`, seed.Network.Revision, string(network), now)
-	return err
+	return s.seedResourceTemplates(ctx, tx, seed)
 }

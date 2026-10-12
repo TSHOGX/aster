@@ -29,8 +29,10 @@ type AccountEdit struct {
 	Role             *string `json:"role,omitempty"`
 }
 type AccountRevision struct {
-	RequestID        string `json:"request_id"`
-	ExpectedRevision int64  `json:"expected_revision"`
+	Preview              bool   `json:"preview,omitempty"`
+	ExpectedDependencies string `json:"expected_dependencies,omitempty"`
+	RequestID            string `json:"request_id"`
+	ExpectedRevision     int64  `json:"expected_revision"`
 }
 type AdminOperation struct {
 	ID         string `json:"id"`

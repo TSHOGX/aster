@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"harness-platform/orchestrator/internal/product"
@@ -37,7 +38,7 @@ func TestNetworkConfigurationIsDatabaseOwnedAndReloadRouteIsAbsent(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if before.Defaults.Revision != after.Defaults.Revision {
+	if !reflect.DeepEqual(before.Templates, after.Templates) {
 		t.Fatal("configuration file overwrote database network")
 	}
 	response := httptest.NewRecorder()

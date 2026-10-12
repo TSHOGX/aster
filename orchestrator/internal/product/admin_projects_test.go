@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"harness-platform/orchestrator/internal/sandbox"
-	"net/netip"
 	"strings"
 	"testing"
 )
@@ -83,9 +82,9 @@ func TestAdminProjectMetadataDoesNotProvisionOrDisclosePrivateContent(t *testing
 	if active.Observation.NetworkRevision != active.SavedNetworkRevision || active.Observation.MatchesSavedBinding == nil || !*active.Observation.MatchesSavedBinding || active.ReservedBytes != 0 {
 		t.Fatal(active)
 	}
-	settings, err := s.AdminUserNetwork(ctx, token, scope.Actor)
+	editedNetwork, err := selectFixtureNetwork(t, s, policyFixture(t, "", "192.0.2.53"))
 	must(t, err)
-	_, err = s.EditUserNetwork(ctx, token, scope.Actor, UserNetworkEdit{RequestID: "new-network", ExpectedRevision: settings.ConfigurationRevision, ExpectedDefaultRevision: settings.DefaultConfigurationRevision, Mode: "override", Direct: []DirectRule{}, Resolvers: []netip.Addr{netip.MustParseAddr("192.0.2.53")}})
+	_, err = selectFixtureNetwork(t, s, editedNetwork)
 	must(t, err)
 	changed, err := s.AdminProject(ctx, token, scope.ProjectID, inspector)
 	must(t, err)

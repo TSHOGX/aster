@@ -6,7 +6,7 @@ import (
 )
 
 type NetworkReport struct {
-	Defaults product.NetworkDefaults `json:"defaults"`
+	Templates []product.ResourceTemplate `json:"templates"`
 }
 
 func fixedConfiguration(cfg Config) Config {
@@ -25,6 +25,6 @@ func fixedConfiguration(cfg Config) Config {
 	return cfg
 }
 func (a *Application) networkReport(ctx context.Context) (NetworkReport, error) {
-	defaults, err := a.Store.NetworkDefaults(ctx)
-	return NetworkReport{Defaults: defaults}, err
+	defaults, err := a.Store.OperatorNetworkTemplates(ctx)
+	return NetworkReport{Templates: defaults}, err
 }

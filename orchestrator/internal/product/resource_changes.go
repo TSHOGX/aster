@@ -101,6 +101,11 @@ const resourceAffectedAccounts = `SELECT a.id FROM accounts a WHERE (?='user' AN
 
 func resourceDependencies(ctx context.Context, q queryer, input ResourceChange) (string, error) {
 	hash := sha256.New()
+	configuration, err := runtimeConfigurationDigest(ctx, q)
+	if err != nil {
+		return "", err
+	}
+	hash.Write([]byte(configuration))
 	// The scope is derived from the target, never from a browser list of users.
 	// Usage is excluded: it is observed again at actual allocation, not locked by
 	// the preview. Stream rows into a fixed-size digest rather than retaining them.
@@ -115,9 +120,6 @@ func resourceDependencies(ctx context.Context, q queryer, input ResourceChange) 
 		{`SELECT group_id,dimension,default_value,ceiling FROM group_resource_policy WHERE group_id=? OR group_id IN (SELECT group_id FROM account_memberships WHERE account_id IN (` + affected + `)) ORDER BY group_id,dimension`, []any{input.TargetID, input.Kind, input.TargetID, input.Kind, input.TargetID}},
 		{`SELECT account_id,dimension,requested FROM account_resource_overrides WHERE account_id IN (` + affected + `) ORDER BY account_id,dimension`, []any{input.Kind, input.TargetID, input.Kind, input.TargetID}},
 		{`SELECT dimension,maximum,revision FROM platform_resource_limits ORDER BY dimension`, nil},
-		{`SELECT revision,document FROM default_environment WHERE id=1`, nil},
-		{`SELECT r.id,r.version,r.digest,r.manifest,r.enabled,r.revision,r.retired_at FROM registered_sandboxes r JOIN default_environment e ON r.id=json_extract(e.document,'$.sandbox_release.id') AND r.version=json_extract(e.document,'$.sandbox_release.version')`, nil},
-		{`SELECT v.id,v.version,v.digest,v.minimum_bytes,v.roles,v.clean_runtime,v.enabled,v.revision,v.retired_at FROM builtin_volumes v WHERE EXISTS(SELECT 1 FROM default_environment e,json_each(e.document,'$.mounts') m WHERE json_extract(m.value,'$.source.artifact_id')=v.id AND json_extract(m.value,'$.source.version')=v.version) ORDER BY v.id,v.version`, nil},
 	}
 	for _, statement := range statements {
 		rows, err := q.QueryContext(ctx, statement.sql, statement.args...)
@@ -250,14 +252,6 @@ func (s *Store) PreviewResourceChange(ctx context.Context, token string, input R
 		out.Users = out.Users[:limit]
 		out.NextCursor = nextAdminCursor(out.Users[limit-1].AccountID, scope)
 	}
-	environment, artifacts, err := currentEnvironment(ctx, tx)
-	if err != nil {
-		return out, err
-	}
-	release, err := registeredSandbox(ctx, tx, environment.SandboxRelease, false)
-	if err != nil {
-		return out, err
-	}
 	platform, err := platformResourceLimits(ctx, tx)
 	if err != nil {
 		return out, err
@@ -293,11 +287,11 @@ func (s *Store) PreviewResourceChange(ctx context.Context, token string, input R
 		if err != nil {
 			return out, err
 		}
-		_, user.BeforePlan, err = EnvironmentResourceFit(environment, release.Manifest.Mounts, artifacts, user.Before, platform[ResourceMounts])
+		user.BeforePlan, err = selectedEnvironmentIssues(ctx, tx, user.AccountID, user.Before, platform[ResourceMounts])
 		if err != nil {
 			return out, err
 		}
-		_, user.AfterPlan, err = EnvironmentResourceFit(environment, release.Manifest.Mounts, artifacts, user.After, platform[ResourceMounts])
+		user.AfterPlan, err = selectedEnvironmentIssues(ctx, tx, user.AccountID, user.After, platform[ResourceMounts])
 		if err != nil {
 			return out, err
 		}

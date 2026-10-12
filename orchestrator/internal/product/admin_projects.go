@@ -174,7 +174,7 @@ func (s *Store) AdminProject(ctx context.Context, token, id string, inspector Pr
 	if err = tx.QueryRowContext(ctx, `SELECT failure FROM projects WHERE id=?`, id).Scan(&out.Failure); err != nil {
 		return out, err
 	}
-	network, err := userNetworkSettings(ctx, tx, out.OwnerID)
+	network, err := projectNetworkSettings(ctx, tx, out.ID)
 	if err != nil {
 		return out, err
 	}

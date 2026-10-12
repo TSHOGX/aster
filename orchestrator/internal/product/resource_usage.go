@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 )
 
 type SavedPlanConflict struct {
@@ -22,7 +23,7 @@ type UserUsage struct {
 	Overages          []ResourceFitIssue                  `json:"overages"`
 	DefaultPlanIssues []ResourceFitIssue                  `json:"default_plan_issues"`
 	SavedPlans        SavedPlanConflicts                  `json:"saved_plan_conflicts"`
-	Network           UserNetworkSettings                 `json:"network"`
+	Network           NetworkSelection                    `json:"network"`
 }
 
 func accountResourceUsage(ctx context.Context, q queryer, actor string) (map[ResourceDimension]ResourceUsage, error) {
@@ -142,19 +143,30 @@ func userUsage(ctx context.Context, q queryer, actor string) (out UserUsage, err
 	if err != nil {
 		return
 	}
-	environment, artifacts, err := currentEnvironment(ctx, q)
-	if err != nil {
-		return out, err
-	}
-	release, err := registeredSandbox(ctx, q, environment.SandboxRelease, false)
-	if err != nil {
-		return out, err
-	}
-	_, out.DefaultPlanIssues, err = EnvironmentResourceFit(environment, release.Manifest.Mounts, artifacts, out.Settings.Effective, out.Settings.Effective[ResourceMounts].PlatformLimit)
+	out.DefaultPlanIssues, err = selectedEnvironmentIssues(ctx, q, actor, out.Settings.Effective, out.Settings.Effective[ResourceMounts].PlatformLimit)
 	if err != nil {
 		return
 	}
-	out.Network, err = userNetworkSettings(ctx, q, actor)
+	configuration, e := configurationSettings(ctx, q, actor)
+	if errors.Is(e, ErrForbidden) || errors.Is(e, ErrUnauthorized) {
+		return out, nil
+	}
+	if e != nil {
+		return out, e
+	}
+	out.Network.Mode = "unresolved"
+	out.Network.Desired, err = NewNetworkPolicy(Reachability{})
+	if err != nil {
+		return
+	}
+	if !configuration.NeedsAdminResolution && configuration.SelectedNetwork != nil {
+		template, e := readTemplate(ctx, q, "network", configuration.SelectedNetwork.ID)
+		if e != nil {
+			return out, e
+		}
+		out.Network = NetworkSelection{Mode: "template", Desired: *template.Network, ConfigurationRevision: template.Revision}
+	}
+
 	return
 }
 func (s *Store) AdminUserUsage(ctx context.Context, token, actor string) (UserUsage, error) {
@@ -187,4 +199,32 @@ func (s *Store) OwnUsage(ctx context.Context, token string) (UserUsage, error) {
 		return UserUsage{}, err
 	}
 	return out, tx.Commit()
+}
+
+// Quota diagnostics must use the same selected template as future allocation,
+// using the same catalog authority as project creation.
+func selectedEnvironmentIssues(ctx context.Context, q queryer, actor string, values map[ResourceDimension]EffectiveResource, maxMounts int64) ([]ResourceFitIssue, error) {
+	settings, err := configurationSettings(ctx, q, actor)
+	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrUnauthorized) {
+		return []ResourceFitIssue{{Code: "account_suspended", Reason: "This account cannot start projects."}}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if settings.NeedsAdminResolution || settings.SelectedEnvironment == nil {
+		return []ResourceFitIssue{{Code: "configuration_required", Reason: "An administrator needs to finish the project configuration."}}, nil
+	}
+	template, err := readTemplate(ctx, q, "environment", settings.SelectedEnvironment.ID)
+	if err != nil {
+		return nil, err
+	}
+	release, artifacts, err := validateTemplateEnvironment(ctx, q, *template.Environment)
+	if errors.Is(err, ErrArtifactUnavailable) {
+		return []ResourceFitIssue{{Code: "artifact_unavailable", Reason: "The selected environment has an unavailable resource."}}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	_, issues, err := EnvironmentResourceFit(*template.Environment, release.Manifest.Mounts, artifacts, values, maxMounts)
+	return issues, err
 }

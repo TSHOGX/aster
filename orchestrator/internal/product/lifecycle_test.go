@@ -457,7 +457,7 @@ func (f *fakeLifecycle) InspectConfiguration(_ context.Context, ref sandbox.Refe
 	r := f.configurations[ref.SandboxID]
 	return sandbox.Configuration{Observation: o, Network: r.Network, Mounts: r.Mounts, TemplateID: r.TemplateID, CPUMillis: r.CPUMillis, MemoryBytes: r.MemoryBytes, DiskCapacityBytes: r.DiskBytes, IdleTimeout: "0s", Retention: "0s"}, nil
 }
-func (f *fakeLifecycle) UpdateNetwork(ctx context.Context, ref sandbox.Reference, network sandbox.Network) (sandbox.Configuration, error) {
+func (f *fakeLifecycle) UpdateConfiguration(ctx context.Context, ref sandbox.Reference, network sandbox.Network, mounts []sandbox.Mount) (sandbox.Configuration, error) {
 	f.mu.Lock()
 	o := f.sandboxes[ref.SandboxID]
 	if o.Reference != ref || o.State != "paused" {
@@ -466,6 +466,8 @@ func (f *fakeLifecycle) UpdateNetwork(ctx context.Context, ref sandbox.Reference
 	}
 	r := f.configurations[ref.SandboxID]
 	r.Network = network
+	r.Mounts = mounts
+	f.mounts[ref.SandboxID] = mounts
 	f.configurations[ref.SandboxID] = r
 	o.MutationRevision += "n"
 	f.sandboxes[ref.SandboxID] = o

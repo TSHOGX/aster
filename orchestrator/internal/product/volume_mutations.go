@@ -46,7 +46,7 @@ func (f *Files) ensureWorkspaceStorage(ctx context.Context, scope Scope, action 
 		}
 		r, err = resources(ctx, tx, p.ID)
 		if errors.Is(err, ErrNotFound) {
-			profile, e := resolveAllocationProfile(ctx, tx, scope.Actor, f.Bindings)
+			profile, e := resolveAllocationProfile(ctx, tx, scope.Actor, p.ID, f.Bindings)
 			if e != nil {
 				return e
 			}

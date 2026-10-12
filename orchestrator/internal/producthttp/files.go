@@ -182,3 +182,9 @@ func (s *Server) releasePreviewSnapshot(w http.ResponseWriter, r *http.Request) 
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func fileMountHandler(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		next(w, r.WithContext(product.WithFileMount(r.Context(), r.URL.Query().Get("mount"))))
+	}
+}

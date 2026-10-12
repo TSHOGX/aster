@@ -79,22 +79,16 @@ func TestEnvironmentPreviewUsesPublishedCapacityInsteadOfCopyMinimum(t *testing.
 	must(t, s.RegisterBuiltinVolume(ctx, BuiltinVolume{Reference: reference, StoreID: "engine", PublicationPurpose: "assets", MinimumBytes: 1 << 20, Roles: []string{"data"}, Entries: entries}))
 	_, err = s.db.Exec(`UPDATE group_resource_policy SET default_value=3 WHERE dimension='mount_count'`)
 	must(t, err)
-	before, err := s.AdminEnvironment(ctx, token)
+	before, _, err := testEnvironment(ctx, s.reader)
 	must(t, err)
-	change := EnvironmentChange{ExpectedRevision: before.Revision, SandboxRelease: before.SandboxRelease, Mounts: append(before.Mounts, EnvironmentMount{Key: "dataset", Role: "data", Destination: "/datasets/reference", Storage: "shared_readonly", Access: "read_only", Source: MountSource{Kind: "builtin", ArtifactID: reference.ID, Version: reference.Version, Digest: reference.Digest}})}
-	preview, err := s.PreviewEnvironment(ctx, token, change, "", 10)
-	must(t, err)
-	if preview.Users[0].Plan.MountPlan[2].CapacityBytes != 8<<20 {
-		t.Fatal(preview.Users[0].Plan)
-	}
-	_, err = s.EditEnvironment(ctx, token, EnvironmentEdit{EnvironmentChange: change, RequestID: "shared", ExpectedDependencies: preview.ExpectedDependencies})
-	must(t, err)
+	before.Mounts = append(before.Mounts, EnvironmentMount{Key: "dataset", Role: "data", Destination: "/datasets/reference", Storage: "shared_readonly", Access: "read_only", Source: MountSource{Kind: "builtin", ArtifactID: reference.ID, Version: reference.Version, Digest: reference.Digest}})
+	saveFixtureEnvironment(t, s, token, before)
 	usage, err := s.OwnUsage(ctx, token)
 	must(t, err)
 	if len(usage.DefaultPlanIssues) != 0 {
 		t.Fatal(usage.DefaultPlanIssues)
 	}
-	environment, artifacts, err := currentEnvironment(ctx, s.reader)
+	environment, artifacts, err := testEnvironment(ctx, s.reader)
 	must(t, err)
 	if artifacts[0].SourceCapacityBytes != 8<<20 || artifacts[0].MinimumBytes != 1<<20 {
 		t.Fatal(artifacts)

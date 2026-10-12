@@ -2,7 +2,6 @@ package product
 
 import (
 	"errors"
-	"net/netip"
 	"reflect"
 	"testing"
 	"time"
@@ -106,9 +105,11 @@ func TestAdminApplyNetworkPinsReviewedSelectionAndRechecksResumeQuotas(t *testin
 	worker := &Workers{Store: s, Lifecycle: l}
 	must(t, l.EnsureActive(ctx, scope, testProfile().Bindings()))
 	drive(t, l, scope.ProjectID)
-	network, err := s.NetworkDefaults(ctx)
+	network, err := fixtureNetwork(ctx, s.reader)
 	must(t, err)
-	edited, err := s.EditNetworkDefaults(ctx, token, NetworkDefaultEdit{RequestID: "network-edit", ExpectedRevision: network.ConfigurationRevision, Direct: []DirectRule{}, Resolvers: []netip.Addr{netip.MustParseAddr("192.0.2.53")}})
+	edited, err := selectFixtureNetwork(t, s, policyFixture(t, "", "192.0.2.53"))
+	must(t, err)
+	_, err = selectFixtureNetwork(t, s, edited)
 	must(t, err)
 	p, err := s.OperatorProject(ctx, scope.ProjectID)
 	must(t, err)
@@ -238,11 +239,13 @@ func TestAdminNetworkChangeDuringStopRequiresNewReviewedRequest(t *testing.T) {
 	drive(t, l, scope.ProjectID)
 	p, err := s.OperatorProject(ctx, scope.ProjectID)
 	must(t, err)
-	network, err := s.NetworkDefaults(ctx)
+	network, err := fixtureNetwork(ctx, s.reader)
 	must(t, err)
 	request, err := s.AdminControlProject(ctx, token, p.ID, "apply_network", AdminProjectControl{RequestID: "reviewed-old-network", ExpectedRevision: p.Revision, ExpectedNetworkRevision: network.Revision, InterruptionAcknowledged: true})
 	must(t, err)
-	_, err = s.EditNetworkDefaults(ctx, token, NetworkDefaultEdit{RequestID: "changed-while-stopping", ExpectedRevision: network.ConfigurationRevision, Direct: []DirectRule{}, Resolvers: []netip.Addr{netip.MustParseAddr("192.0.2.53")}})
+	changedNetwork, err := selectFixtureNetwork(t, s, policyFixture(t, "", "192.0.2.53"))
+	must(t, err)
+	_, err = selectFixtureNetwork(t, s, changedNetwork)
 	must(t, err)
 	_, err = w.adminProjectStep(ctx, p)
 	wantError(t, err, ErrConflict)

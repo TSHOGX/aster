@@ -22,6 +22,7 @@ var ErrFileOperationFailed = errors.New("file operation failed")
 var ErrFileOutcomeUnknown = errors.New("file operation outcome unknown; inspect workspace before a new operation")
 
 type FileOperation struct {
+	MountKey    string                   `json:"mount_key,omitempty"`
 	Action      ProductAction            `json:"action"`
 	ID          string                   `json:"id"`
 	ProjectID   string                   `json:"project_id"`
@@ -36,7 +37,7 @@ type FileOperation struct {
 
 func fileOperation(ctx context.Context, q queryer, id string) (o FileOperation, err error) {
 	var raw string
-	err = missing(q.QueryRowContext(ctx, `SELECT id,project_id,request,store_id,sandbox_id,epoch,handle,state,settled,error,volume_id,staging_path,action FROM file_operations WHERE id=?`, id).Scan(&o.ID, &o.ProjectID, &raw, &o.Reference.StoreID, &o.Reference.SandboxID, &o.Reference.Epoch, &o.Reference.Handle, &o.State, &o.Settled, &o.Error, &o.VolumeID, &o.StagingPath, &o.Action))
+	err = missing(q.QueryRowContext(ctx, `SELECT id,project_id,request,store_id,sandbox_id,epoch,handle,state,settled,error,volume_id,staging_path,action,mount_key FROM file_operations WHERE id=?`, id).Scan(&o.ID, &o.ProjectID, &raw, &o.Reference.StoreID, &o.Reference.SandboxID, &o.Reference.Epoch, &o.Reference.Handle, &o.State, &o.Settled, &o.Error, &o.VolumeID, &o.StagingPath, &o.Action, &o.MountKey))
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &o.Request)
 	}
@@ -80,7 +81,7 @@ func (s *Store) reserveFileKind(ctx context.Context, scope Scope, id string, act
 		}
 		if e == nil {
 			saved, _ := json.Marshal(old.Request)
-			if old.Action != action || string(saved) != string(raw) {
+			if old.MountKey != fileMount(ctx) || old.Action != action || string(saved) != string(raw) {
 				return ErrConflict
 			}
 			o = old
@@ -101,7 +102,11 @@ func (s *Store) reserveFileKind(ctx context.Context, scope Scope, id string, act
 		if e != nil {
 			return e
 		}
-		o = FileOperation{Action: action, ID: id, ProjectID: scope.ProjectID, Request: r, State: "running", Reference: sandbox.ProcessReference{StoreID: resources.Reference.StoreID, SandboxID: resources.Reference.SandboxID, Epoch: resources.Reference.Epoch, Handle: "file-" + uuid.NewString()}}
+		resources, e = fileResourceView(ctx, tx, scope, resources, true)
+		if e != nil {
+			return e
+		}
+		o = FileOperation{MountKey: fileMount(ctx), Action: action, ID: id, ProjectID: scope.ProjectID, Request: r, State: "running", Reference: sandbox.ProcessReference{StoreID: resources.Reference.StoreID, SandboxID: resources.Reference.SandboxID, Epoch: resources.Reference.Epoch, Handle: "file-" + uuid.NewString()}}
 		kind := "files"
 		if p.State != "active" {
 			var pending int
@@ -122,7 +127,7 @@ func (s *Store) reserveFileKind(ctx context.Context, scope Scope, id string, act
 			kind = "files"
 		}
 		now := s.timestamp()
-		if _, e = tx.ExecContext(ctx, `INSERT INTO file_operations(id,project_id,request,store_id,sandbox_id,epoch,handle,state,created_at,updated_at,volume_id,staging_path,action) VALUES(?,?,?,?,?,?,?,'running',?,?,?,?,?)`, id, scope.ProjectID, string(raw), o.Reference.StoreID, o.Reference.SandboxID, o.Reference.Epoch, o.Reference.Handle, now, now, o.VolumeID, o.StagingPath, action); e != nil {
+		if _, e = tx.ExecContext(ctx, `INSERT INTO file_operations(id,project_id,request,store_id,sandbox_id,epoch,handle,state,created_at,updated_at,volume_id,staging_path,action,mount_key) VALUES(?,?,?,?,?,?,?,'running',?,?,?,?,?,?)`, id, scope.ProjectID, string(raw), o.Reference.StoreID, o.Reference.SandboxID, o.Reference.Epoch, o.Reference.Handle, now, now, o.VolumeID, o.StagingPath, action, o.MountKey); e != nil {
 			return e
 		}
 		if _, e = tx.ExecContext(ctx, `INSERT INTO project_activity(id,project_id,kind,state,detail,created_at,updated_at) VALUES(?,?,?,'active',?,?,?)`, "file:"+id, scope.ProjectID, kind, r.Operation+" "+r.Path, now, now); e != nil {
@@ -220,7 +225,7 @@ func (f *Files) execute(ctx context.Context, scope Scope, id string, action Prod
 	if err == nil {
 		a, _ := json.Marshal(old.Request)
 		b, _ := json.Marshal(r)
-		if old.Action != action || string(a) != string(b) {
+		if old.MountKey != fileMount(ctx) || old.Action != action || string(a) != string(b) {
 			return old, ErrConflict
 		}
 		return old, fileResult(old)
@@ -234,13 +239,17 @@ func (f *Files) execute(ctx context.Context, scope Scope, id string, action Prod
 	}
 	if p, e := ownedProject(ctx, f.Store.reader, scope); e != nil {
 		return FileOperation{}, e
-	} else if p.State == "paused" || p.State == "created" {
+	} else if (p.State == "paused" || p.State == "created") && fileMount(ctx) == "" {
 		return f.executeVolume(ctx, scope, id, action, r, input)
 	}
 	if err := f.Lifecycle.EnsureActive(ctx, scope, f.Bindings); err != nil {
 		return FileOperation{}, err
 	}
 	active, err := f.Lifecycle.ActiveResources(ctx, scope)
+	if err != nil {
+		return FileOperation{}, err
+	}
+	active, err = fileResourceView(ctx, f.Store.reader, scope, active, true)
 	if err != nil {
 		return FileOperation{}, err
 	}
@@ -516,6 +525,10 @@ func (f *Files) Watch(ctx context.Context, scope Scope, after uint64) (sandbox.F
 		return nil, err
 	}
 	r, err := f.Lifecycle.ActiveResources(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	r, err = fileResourceView(ctx, f.Store.reader, scope, r, false)
 	if err != nil {
 		return nil, err
 	}

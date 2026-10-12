@@ -16,17 +16,13 @@ func TestBootstrapSeedsRollbackAndSingleInitialization(t *testing.T) {
 	}
 	defer s.Close()
 	seed := bootstrapSeedFixture(t)
-	// A no-account owner can already have its explicitly declared network state.
-	if _, err = s.AcceptNetworkPolicy(ctx, seed.Network); err != nil {
-		t.Fatal(err)
-	}
 	if _, err = s.db.ExecContext(ctx, `CREATE TEMP TRIGGER fail_bootstrap_audit BEFORE INSERT ON audit_events BEGIN SELECT RAISE(ABORT,'injected audit failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.BootstrapAccount(ctx, "admin", "administrator-password", seed); err == nil {
 		t.Fatal("injected audit failure ignored")
 	}
-	for _, table := range []string{"accounts", "account_groups", "permission_policies", "account_memberships", "group_resource_policy", "platform_resource_limits", "default_environment", "registered_sandboxes"} {
+	for _, table := range []string{"accounts", "account_groups", "permission_policies", "account_memberships", "group_resource_policy", "platform_resource_limits", "environment_templates", "network_templates", "runtime_store", "registered_sandboxes"} {
 		var count int
 		if err = s.reader.QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != 0 {
 			t.Fatal("partial bootstrap", table, count, err)

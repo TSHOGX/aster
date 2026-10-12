@@ -41,8 +41,8 @@ func TestCurrentSchemaInitializesAndReopensWithoutConversion(t *testing.T) {
 		t.Fatal("migration-only cleanup table remains")
 	}
 }
-func TestHistoricalAndUnknownSchemaVersionsAreRefusedWithoutWrites(t *testing.T) {
-	for _, version := range []int{0, 1, 12, 13, 14, 15, 999} {
+func TestNonCurrentSchemaIsRefusedWithoutWrites(t *testing.T) {
+	for _, version := range []int{SchemaVersion - 1, SchemaVersion + 1} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "old.db")
 			s, err := openFixtureStore(ctx, path)
@@ -57,7 +57,7 @@ func TestHistoricalAndUnknownSchemaVersionsAreRefusedWithoutWrites(t *testing.T)
 			must(t, err)
 			if opened, err := openFixtureStore(ctx, path); err == nil {
 				opened.Close()
-				t.Fatal("historical version accepted")
+				t.Fatal("non-current schema accepted")
 			}
 			after, err := os.ReadFile(path)
 			must(t, err)

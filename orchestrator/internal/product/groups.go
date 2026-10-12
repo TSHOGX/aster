@@ -12,12 +12,14 @@ import (
 )
 
 type Group struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Revision    int64    `json:"revision"`
-	MemberCount int64    `json:"member_count"`
-	PolicyIDs   []string `json:"policy_ids"`
+	NetworkTemplateID     string   `json:"network_template_id"`
+	EnvironmentTemplateID string   `json:"environment_template_id"`
+	ID                    string   `json:"id"`
+	Name                  string   `json:"name"`
+	Description           string   `json:"description"`
+	Revision              int64    `json:"revision"`
+	MemberCount           int64    `json:"member_count"`
+	PolicyIDs             []string `json:"policy_ids"`
 }
 type GroupChange struct {
 	RequestID        string  `json:"request_id"`
@@ -26,6 +28,7 @@ type GroupChange struct {
 	Description      *string `json:"description,omitempty"`
 }
 type PolicyChange struct {
+	Resources        *[]PolicyResourceBinding        `json:"resources,omitempty"`
 	RequestID        string                          `json:"request_id"`
 	ExpectedRevision int64                           `json:"expected_revision"`
 	Name             *string                         `json:"name,omitempty"`
@@ -66,6 +69,9 @@ func readGroup(ctx context.Context, q queryer, id string) (g Group, err error) {
 		err = json.Unmarshal([]byte(raw), &g.PolicyIDs)
 		sort.Strings(g.PolicyIDs)
 	}
+	if err == nil {
+		err = q.QueryRowContext(ctx, `SELECT coalesce((SELECT network_template_id FROM group_configuration_defaults WHERE group_id=?),''),coalesce((SELECT environment_template_id FROM group_configuration_defaults WHERE group_id=?),'')`, id, id).Scan(&g.NetworkTemplateID, &g.EnvironmentTemplateID)
+	}
 	return
 }
 func readPolicy(ctx context.Context, q queryer, id string) (p PermissionPolicy, err error) {
@@ -104,6 +110,9 @@ func (s *Store) policyMutation(ctx context.Context, token string, request adminR
 		}
 		result, err = apply(tx, actor)
 		if err != nil {
+			return err
+		}
+		if err := s.reconcileConfigurationAuthority(ctx, tx); err != nil {
 			return err
 		}
 		raw, err = json.Marshal(result)
@@ -216,6 +225,9 @@ func (s *Store) SaveGroup(ctx context.Context, token, id string, input GroupChan
 	})
 }
 func (s *Store) SavePolicy(ctx context.Context, token, id string, input PolicyChange) (PolicyResult, error) {
+	if id != "" && input.Resources != nil {
+		return PolicyResult{}, ErrInvalid
+	}
 	action := "policy.update"
 	if id == "" {
 		action = "policy.create"
@@ -275,6 +287,11 @@ func (s *Store) SavePolicy(ctx context.Context, token, id string, input PolicyCh
 		}
 		if err != nil {
 			return PolicyResult{}, err
+		}
+		if input.Resources != nil {
+			if err = replacePolicyResources(ctx, tx, after.ID, *input.Resources); err != nil {
+				return PolicyResult{}, err
+			}
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE accounts SET authorization_revision=authorization_revision+1,revision=revision+1 WHERE id IN (SELECT m.account_id FROM account_memberships m JOIN group_policy_bindings b ON b.group_id=m.group_id WHERE b.policy_id=?)`, after.ID); err != nil {
 			return PolicyResult{}, err

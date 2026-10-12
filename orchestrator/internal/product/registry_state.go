@@ -10,14 +10,14 @@ import (
 // handles. Retirement keeps a tombstone so immutable identity/version cannot be
 // rebound to different content or silently revived by publication replay.
 type RegistryState struct {
-	Kind              string            `json:"kind"`
-	Reference         ArtifactReference `json:"reference"`
-	Revision          int64             `json:"revision"`
-	Enabled           bool              `json:"enabled"`
-	RetiredAt         string            `json:"retired_at,omitempty"`
-	DefaultReferenced bool              `json:"default_referenced"`
-	ProjectReferences int64             `json:"project_references,string"`
-	PendingReferences int64             `json:"pending_references,string"`
+	Kind               string            `json:"kind"`
+	Reference          ArtifactReference `json:"reference"`
+	Revision           int64             `json:"revision"`
+	Enabled            bool              `json:"enabled"`
+	RetiredAt          string            `json:"retired_at,omitempty"`
+	TemplateReferenced bool              `json:"template_referenced"`
+	ProjectReferences  int64             `json:"project_references,string"`
+	PendingReferences  int64             `json:"pending_references,string"`
 }
 type RegistryStateEdit struct {
 	RequestID        string            `json:"request_id"`
@@ -65,7 +65,7 @@ func registryState(ctx context.Context, q queryer, kind string, reference Artifa
 		profileMatch = `EXISTS(SELECT 1 FROM json_each(r.profile,'$.volumes') m WHERE json_extract(m.value,'$.source.reference.id')=? AND json_extract(m.value,'$.source.reference.version')=? AND json_extract(m.value,'$.source.reference.digest')=?)`
 	}
 	args := []any{reference.ID, reference.Version, reference.Digest}
-	if err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM default_environment e WHERE `+defaultMatch+`)`, args...).Scan(&out.DefaultReferenced); err != nil {
+	if err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM (SELECT document FROM environment_templates UNION ALL SELECT c.environment AS document FROM project_configuration c JOIN projects p ON p.id=c.project_id WHERE p.state<>'deleted') e WHERE `+defaultMatch+`)`, args...).Scan(&out.TemplateReferenced); err != nil {
 		return out, err
 	}
 	// Deleting Projects still own references until cleanup is confirmed. Pending
@@ -136,7 +136,7 @@ func (s *Store) EditRegistryState(ctx context.Context, input RegistryStateEdit) 
 		enabled := input.Action == "enable"
 		retired := ""
 		if input.Action == "retire" {
-			if before.DefaultReferenced || before.ProjectReferences > 0 || before.PendingReferences > 0 {
+			if before.TemplateReferenced || before.ProjectReferences > 0 || before.PendingReferences > 0 {
 				return Admission("artifact_referenced", ErrConflict)
 			}
 			if before.Enabled {

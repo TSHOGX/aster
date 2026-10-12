@@ -55,7 +55,7 @@ func SetRuntime(ctx context.Context, tx *sql.Tx, raw []byte, manifest runtimerel
 		return err
 	}
 	var revision int64
-	if err = tx.QueryRowContext(ctx, `SELECT coalesce((SELECT revision FROM default_environment WHERE id=1),0)+1`).Scan(&revision); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT coalesce((SELECT revision FROM environment_templates WHERE id='fixture-environment'),0)+1`).Scan(&revision); err != nil {
 		return err
 	}
 	mounts := []map[string]any{}
@@ -96,7 +96,7 @@ func SetRuntime(ctx context.Context, tx *sql.Tx, raw []byte, manifest runtimerel
 		mounts = append(mounts, map[string]any{"key": volume.Key, "role": volume.Role, "destination": volume.Destination, "storage": volume.Storage, "access": volume.Access, "source": source, "capacity": capacity})
 	}
 	document, _ := json.Marshal(map[string]any{"revision": revision, "sandbox_release": map[string]string{"id": "fixture-runtime", "version": version, "digest": digest}, "mounts": mounts})
-	if _, err = tx.ExecContext(ctx, `INSERT INTO default_environment(id,revision,document,updated_at) VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,document=excluded.document,updated_at=excluded.updated_at`, revision, string(document), now); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO runtime_store(id,store_id) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET store_id=excluded.store_id`, profile.StoreID); err != nil {
 		return err
 	}
 	for dimension, value := range defaults {
@@ -104,15 +104,32 @@ func SetRuntime(ctx context.Context, tx *sql.Tx, raw []byte, manifest runtimerel
 			return err
 		}
 	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO environment_templates(id,name,document,created_at,updated_at) VALUES('fixture-environment','Fixture environment',?,?,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document,revision=revision+1`, string(document), now, now); err != nil {
+		return err
+	}
 	if len(network) > 0 {
-		var value struct{ Revision string }
-		if err = json.Unmarshal(network, &value); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO network_defaults(id,revision,policy,accepted_at) VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,policy=excluded.policy,accepted_at=excluded.accepted_at`, value.Revision, string(network), now); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO network_templates(id,name,policy,created_at,updated_at) VALUES('fixture-network','Fixture network',?,?,?) ON CONFLICT(id) DO UPDATE SET policy=excluded.policy,revision=revision+1`, string(network), now, now); err != nil {
 			return err
 		}
 	}
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO policy_resource_bindings(policy_id,resource_kind,resource_id) VALUES('fixture-policy','network_template','fixture-network'),('fixture-policy','environment_template','fixture-environment')`); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO group_configuration_defaults(group_id,network_template_id,environment_template_id) VALUES('fixture-users','fixture-network','fixture-environment')`); err != nil {
+		return err
+	}
+
+	// Fixture setup may occur after metadata creation. Explicitly author the
+	// unbound test project's selection; production template edits never do this.
+	if _, err = tx.ExecContext(ctx, `UPDATE project_configuration SET environment=? WHERE project_id NOT IN (SELECT project_id FROM project_resources) AND environment_template_id='fixture-environment'`, string(document)); err != nil {
+		return err
+	}
+	if len(network) > 0 {
+		if _, err = tx.ExecContext(ctx, `UPDATE project_configuration SET network=? WHERE project_id NOT IN (SELECT project_id FROM project_resources) AND network_template_id='fixture-network'`, string(network)); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 func seedDefaultRuntime(ctx context.Context, tx *sql.Tx) error {

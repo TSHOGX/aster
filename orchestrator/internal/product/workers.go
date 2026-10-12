@@ -63,6 +63,12 @@ func (w *Workers) Run(ctx context.Context) {
 		}()
 	}
 	loop("runtime", interval, w.Step)
+	loop("shared volumes", time.Second, func(ctx context.Context) error {
+		if w.Lifecycle == nil {
+			return nil
+		}
+		return w.Lifecycle.ReconcileSharedVolumes(ctx)
+	})
 	loop("suspension completion", interval, w.suspensionOperations)
 	loop("release deadline", time.Second, w.Store.ExpireReleaseDrain)
 	loop("conversation display", 100*time.Millisecond, w.displayStep)

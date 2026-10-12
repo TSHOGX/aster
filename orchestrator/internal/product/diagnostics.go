@@ -10,18 +10,14 @@ import (
 // Retained Projects are checked against their exact registered contract. A new
 // operator default never substitutes for their template or manifest identity.
 func (s *Store) ValidateReleasedBindings(ctx context.Context, engine string) error {
-	environment, _, err := currentEnvironment(ctx, s.reader)
+	store, err := runtimeStore(ctx, s.reader)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return ErrArtifactUnavailable
 		}
 		return err
 	}
-	selected, err := registeredSandbox(ctx, s.reader, environment.SandboxRelease, false)
-	if err != nil {
-		return err
-	}
-	if selected.StoreID != engine {
+	if store != engine {
 		return Admission("engine_store_mismatch", ErrConflict)
 	}
 	rows, err := s.reader.QueryContext(ctx, `SELECT r.store_id,r.profile FROM project_resources r JOIN projects p ON p.id=r.project_id WHERE p.state<>'deleted'`)

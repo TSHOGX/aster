@@ -72,11 +72,7 @@ func (s *Store) AdminRuntimeOptions(ctx context.Context, token, kind, cursor str
 	if _, err = s.adminSession(ctx, tx, token); err != nil {
 		return out, err
 	}
-	current, _, err := currentEnvironment(ctx, tx)
-	if err != nil {
-		return out, err
-	}
-	selected, err := registeredSandbox(ctx, tx, current.SandboxRelease, false)
+	engine, err := runtimeStore(ctx, tx)
 	if err != nil {
 		return out, err
 	}
@@ -127,7 +123,7 @@ func (s *Store) AdminRuntimeOptions(ctx context.Context, token, kind, cursor str
 				option.SourceCapacityBytes = &size
 			}
 		}
-		if option.storeID != selected.StoreID {
+		if option.storeID != engine {
 			option.Availability = "other_store"
 		}
 		if !option.Enabled {

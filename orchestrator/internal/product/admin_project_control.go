@@ -100,7 +100,7 @@ func (s *Store) AdminControlProject(ctx context.Context, token, project, action 
 				return err
 			}
 		}
-		network, err := userNetworkSettings(ctx, tx, p.OwnerID)
+		network, err := projectNetworkSettings(ctx, tx, p.ID)
 		if err != nil {
 			return err
 		}
@@ -277,7 +277,7 @@ func (w *Workers) adminProjectStep(ctx context.Context, p Project) (bool, error)
 				return e
 			}
 			if o.network != "" {
-				settings, e := userNetworkSettings(ctx, tx, project.OwnerID)
+				settings, e := projectNetworkSettings(ctx, tx, project.ID)
 				if e != nil {
 					return e
 				}
