@@ -74,6 +74,7 @@ export function Schedules({
     locale = useLocale();
   const [syncHealth, setSyncHealth] = useState<WatchHealth>("connecting"),
     [notice, setNotice] = useState("");
+  const syncHealthRef = useRef<WatchHealth>("connecting");
   const [query, setQuery] = useState(nav.scheduleQuery || ""),
     [composing, setComposing] = useState(false);
   const [detail, setDetail] = useState<{
@@ -194,7 +195,10 @@ export function Schedules({
           relevant && (reset || event.resource_kind.startsWith("run."));
         if (!timer) timer = setTimeout(flush, 200);
       },
-      setSyncHealth,
+      (health) => {
+        syncHealthRef.current = health;
+        setSyncHealth(health);
+      },
     );
     return () => {
       unsubscribe();
@@ -206,6 +210,9 @@ export function Schedules({
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout>;
     const retry = () => {
+      // Transport events can precede React effect cleanup, especially during
+      // rotation. Never poll a connection that has already recovered.
+      if (syncHealthRef.current === "live" || syncHealthRef.current === "closed") return;
       if (!document.hidden) {
         void list.controller.refresh();
         setDetailRefresh((n) => n + 1);

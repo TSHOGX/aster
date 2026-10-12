@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/agentwire"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // Real SQLite ingestion/projector/control concurrency, with bounded legal frames.
@@ -84,6 +86,12 @@ func TestProductPressure40And80MiB(t *testing.T) {
 				for projectorCtx.Err() == nil {
 					for _, i := range incarnations {
 						e := s.ProjectConversation(projectorCtx, i.SessionID)
+						// Cancellation during row iteration may surface the driver's
+						// SQLite interruption instead of context.Canceled.
+						var interrupted *sqlite.Error
+						if projectorCtx.Err() != nil && errors.As(e, &interrupted) && interrupted.Code() == sqlite3.SQLITE_INTERRUPT {
+							return
+						}
 						if e != nil && !errors.Is(e, ErrPending) && !errors.Is(e, ErrConflict) && !errors.Is(e, context.Canceled) {
 							errs <- e
 							return
