@@ -1,0 +1,40 @@
+name: Independent Studio release
+on:
+  push:
+    tags: ['studio-v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: studio-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: volumes-studio/backend/go.mod
+          cache-dependency-path: volumes-studio/backend/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: volumes-studio/frontend/package-lock.json
+      - name: Build and verify independent source-only bundle
+        run: |
+          python3 volumes-studio/scripts/release.py build "$RUNNER_TEMP/studio"
+          python3 volumes-studio/scripts/release.py verify "$RUNNER_TEMP/studio"
+          tar -czf "$RUNNER_TEMP/studio.tar.gz" -C "$RUNNER_TEMP/studio" .
+          cd "$RUNNER_TEMP"
+          sha256sum studio.tar.gz > studio.tar.gz.sha256
+      - uses: actions/upload-artifact@v7
+        with:
+          name: studio-linux-amd64-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/studio.tar.gz
+            ${{ runner.temp }}/studio.tar.gz.sha256
+          retention-days: 14
+          if-no-files-found: error

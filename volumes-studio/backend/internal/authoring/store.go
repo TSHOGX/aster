@@ -27,11 +27,12 @@ import (
 )
 
 var (
-	ErrInvalid  = errors.New("invalid_input")
-	ErrConflict = errors.New("revision_or_request_conflict")
-	ErrNotFound = errors.New("not_found")
-	ErrQuota    = errors.New("storage_quota_exceeded")
-	ErrBusy     = errors.New("unfinished_work")
+	ErrInvalid   = errors.New("invalid_input")
+	ErrConflict  = errors.New("revision_or_request_conflict")
+	ErrNotFound  = errors.New("not_found")
+	ErrQuota     = errors.New("storage_quota_exceeded")
+	ErrBusy      = errors.New("unfinished_work")
+	ErrAuthority = errors.New("principal_authority_required")
 )
 
 //go:embed schema.sql

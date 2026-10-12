@@ -109,6 +109,9 @@ func main() {
 						return identity.ErrUnauthorized
 					}
 					_, err := client.Principal(ctx, actor.Subject)
+					if errors.Is(err, identity.ErrUnauthorized) {
+						return authoring.ErrAuthority
+					}
 					return err
 				})
 				if err != nil && !errors.Is(err, context.Canceled) {

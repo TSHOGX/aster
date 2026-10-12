@@ -120,3 +120,30 @@ trusted backup evidence, and start Studio with the original publisher ID. Never
 run a writable restore against the source blob paths. Sessions are intentionally
 excluded: sign in again through central identity after restore. Draft/version
 history and acknowledged uploads are retained independently of those sessions.
+
+## Independent release
+
+Studio releases are built from the committed `volumes-studio/` tree only. They do
+not build Aster, download Khora, drain runtime work, or include local credentials,
+databases and ignored files. Build into a new directory outside the checkout:
+
+```sh
+python3 volumes-studio/scripts/release.py build /srv/candidates/studio-new
+python3 volumes-studio/scripts/release.py verify /srv/candidates/studio-new
+```
+
+The bundle contains `bin/studio`, `bin/front-door`, `bin/studio-backup`, the
+standalone frontend with its static assets, contracts, deployment guidance and
+`studio-release.json`. The inventory binds source commit, dependency locks,
+frontend build ID, file digests/modes and safe internal symlinks. Verification
+refuses changed, missing or extra files. Checksums require trusted release evidence;
+they do not authenticate an arbitrary downloaded bundle.
+
+Run the packaged frontend from the bundle with
+`HOSTNAME=127.0.0.1 PORT=3002 node frontend/server.js`. Supervise frontend, Studio
+and front door independently. The `studio-v*` workflow creates an independent
+artifact; it neither publishes to a deployment nor invokes Aster's update lifecycle.
+Stop Studio and take a verified private backup before schema upgrades. Ordered
+transactional Studio migrations preserve author history; unknown newer schemas
+are refused. After upgrade check shared login, draft history, a resumed upload,
+a published descriptor and the private service catalog before restoring traffic.

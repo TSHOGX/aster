@@ -341,3 +341,48 @@ func TestCanceledValidationCannotFinalizeReplacementGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRevokedPublisherPausesWithoutStarvingOtherLibrary(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	first := library(t, s)
+	mutate(t, s, first.ID, Mutation{RequestID: "one", ExpectedRevision: 1, Action: "text", Path: "file", Text: "one"})
+	v := publish(t, s, first.ID, 2)
+	other := Actor{Issuer: testActor.Issuer, Subject: "other-admin"}
+	second, err := s.Create(ctx, other, CreateInput{RequestID: "other-library", Name: "Other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Mutate(ctx, other, second.ID, Mutation{RequestID: "two", ExpectedRevision: 1, Action: "text", Path: "file", Text: "two"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Freeze(ctx, other, second.ID, PublishInput{RequestID: "publish", ExpectedRevision: 2, Label: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	check := func(ctx context.Context, a Actor) error {
+		if a == testActor {
+			return ErrAuthority
+		}
+		return nil
+	}
+	for n := 0; n < 2; n++ {
+		_, err = s.ValidateNext(ctx, check)
+		if err != nil && !errors.Is(err, ErrAuthority) {
+			t.Fatal(err)
+		}
+	}
+	firstVersion, err := s.Version(ctx, v.ID)
+	if err != nil || firstVersion.Error != "principal_authority_required" {
+		t.Fatal(firstVersion, err)
+	}
+	others, err := s.Versions(ctx, second.ID, "")
+	if err != nil || others[0].State != "published" {
+		t.Fatal("revoked first job blocked other authors", others, err)
+	}
+	if _, err = s.Operation(ctx, other, v.ID, OperationInput{RequestID: "adopt", Action: "retry"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ValidateNext(ctx, check); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -121,7 +121,7 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 		return false, ErrInvalid
 	}
 	s.mu.Lock()
-	v, err := scanVersion(s.db.QueryRowContext(ctx, "SELECT "+versionColumns+" FROM versions WHERE state IN ('pending','validating') ORDER BY created_at,id LIMIT 1"))
+	v, err := scanVersion(s.db.QueryRowContext(ctx, "SELECT "+versionColumns+" FROM versions WHERE state IN ('pending','validating') AND error!='principal_authority_required' ORDER BY created_at,id LIMIT 1"))
 	s.mu.Unlock()
 	if errors.Is(err, ErrNotFound) {
 		return false, nil
@@ -130,6 +130,12 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 		return false, err
 	}
 	if err = authorize(ctx, v.Publisher); err != nil {
+		if errors.Is(err, ErrAuthority) {
+			s.mu.Lock()
+			_, persist := s.db.ExecContext(ctx, "UPDATE versions SET error='principal_authority_required' WHERE id=? AND generation=?", v.ID, v.Generation)
+			s.mu.Unlock()
+			err = errors.Join(err, persist)
+		}
 		return true, err
 	}
 	s.mu.Lock()
@@ -184,6 +190,12 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 		return true, errors.Join(err, persist)
 	}
 	if err = authorize(ctx, v.Publisher); err != nil {
+		if errors.Is(err, ErrAuthority) {
+			s.mu.Lock()
+			_, persist := s.db.ExecContext(ctx, "UPDATE versions SET error='principal_authority_required' WHERE id=? AND generation=?", v.ID, generation)
+			s.mu.Unlock()
+			err = errors.Join(err, persist)
+		}
 		return true, err
 	}
 	s.mu.Lock()
