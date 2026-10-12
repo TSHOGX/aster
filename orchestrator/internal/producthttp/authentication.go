@@ -45,6 +45,7 @@ func (a *Authentication) Actor(r *http.Request) (string, error) {
 func (a *Authentication) Handler(next http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	a.adminRoutes(mux)
+	a.identityRoutes(mux)
 	a.groupRoutes(mux)
 	mux.HandleFunc("POST /api/auth/login", a.login)
 	mux.HandleFunc("POST /api/auth/logout", a.logout)

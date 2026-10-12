@@ -25,6 +25,7 @@ tracked example. The example denies guest egress until reachability is declared.
 | `titles` | Optional host-side title model: `base_url`, `model`, `api_key_env` |
 | `tls_cert`, `tls_key` | Optional browser TLS certificate/key pair |
 | `front_door` | Optional independent TLS front door. `public_origin` is the exact HTTPS origin and `peer_ip` is the only trusted proxy peer; forwarded identity/client-address headers from other peers are rejected. |
+| `identity` | Optional shared-identity adapter: HTTPS `issuer` and registered `clients` with `id`, exact Studio `callback`, and one or two `secret_envs` for credential rotation. Uses existing central administrators; no additional account store. |
 
 First allocation selects the database environment, exact registered sandbox and
 built-in references, and effective user CPU/memory/storage requests in the same
@@ -91,7 +92,10 @@ or content publication and requires no original manifest/source file. Candidate
 inspection also measures host configuration independently of bootstrap inputs.
 
 Accounts and hashed credentials live in the product database. There is no authentication
-configuration block. Before starting a fresh owner, use the protected offline
+password-file configuration block. The optional `identity` adapter delegates
+existing central authority to Studio through a registered code exchange; see the
+[identity contract](../volumes-studio/contracts/v1/identity.md).
+Before starting a fresh owner, use the protected offline
 `account bootstrap` command described in [operations](operations.md). An empty
 account database permits no product login. Sessions reference immutable account IDs
 and revocation revisions; password changes and resets revoke earlier sessions.

@@ -14,6 +14,7 @@ import (
 
 	"harness-platform/orchestrator/internal/edge"
 	"harness-platform/orchestrator/internal/engineconfig"
+	"harness-platform/orchestrator/internal/identityconfig"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/titler"
 )
@@ -86,6 +87,7 @@ type ProjectDefaults struct {
 	Reachability   product.Reachability `json:"reachability"`
 }
 type Config struct {
+	Identity          *identityconfig.Config  `json:"identity,omitempty"`
 	FrontDoor         *edge.FrontDoor         `json:"front_door,omitempty"`
 	HTTPMetrics       bool                    `json:"http_metrics"`
 	Version           int                     `json:"version"`
@@ -169,6 +171,9 @@ func LoadConfig(name string) (Config, error) {
 	return cfg, nil
 }
 func (c Config) Validate() error {
+	if err := c.Identity.Validate(); err != nil {
+		return err
+	}
 	if err := c.FrontDoor.Validate(); err != nil {
 		return err
 	}

@@ -48,6 +48,9 @@ type Application struct {
 }
 
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application, result error) {
+	if err := cfg.Identity.CheckCredentials(); err != nil {
+		return nil, err
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -121,7 +124,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	recovery := &product.AgentRecovery{Store: store, Lifecycle: lifecycle, Backend: backend}
 	retirement := &product.ChildRetirement{Store: store, Lifecycle: lifecycle, Backend: backend, Captures: captures, Shares: shares}
 	app.Workers = &product.Workers{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Captures: captures, Recovery: recovery, Retirement: retirement, Titles: cfg.titleGenerator(), IdleAfter: time.Duration(cfg.Limits.IdleAfter), IdleAgentAfter: time.Duration(cfg.Limits.IdleAgentAfter), Interval: time.Duration(cfg.Limits.Interval), Report: func(kind string, err error) { logger.Warn("application work pending", "scope", kind, "error", err) }}
-	transportConfig := producthttp.Config{TrustForwardedHost: true}
+	transportConfig := producthttp.Config{TrustForwardedHost: true, Identity: cfg.Identity}
 	if cfg.HTTPMetrics {
 		transportConfig.ObserveHTTP = func(o producthttp.HTTPObservation) {
 			logger.Info("http timing", "category", o.Category, "status", o.Status, "bytes", o.Bytes, "duration_ms", o.Duration.Milliseconds())

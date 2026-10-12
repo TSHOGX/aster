@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"harness-platform/orchestrator/internal/identityconfig"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/projectfiles"
 )
@@ -36,6 +37,7 @@ func (f AuthenticatorFunc) Actor(r *http.Request) (string, error) { return f(r) 
 
 // Config is the transport's deployment policy. Nothing here is user input.
 type Config struct {
+	Identity *identityconfig.Config
 	// ObserveHTTP enables timing. The callback must be concurrency-safe and bounded.
 	ObserveHTTP func(HTTPObservation)
 	// AllowedOrigins are the exact origins a browser may use. Empty means

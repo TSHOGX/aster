@@ -92,6 +92,25 @@ CREATE TABLE auth_sessions (
 );
 CREATE INDEX auth_sessions_account ON auth_sessions(account_id);
 
+-- Narrow federation adapter. Neither codes nor derived grants contain a raw
+-- browser credential. Revocation follows the one central session via cascades.
+CREATE TABLE identity_codes (
+ code_digest TEXT PRIMARY KEY,
+ client_id TEXT NOT NULL,
+ redirect_uri TEXT NOT NULL,
+ challenge TEXT NOT NULL,
+ session_digest TEXT NOT NULL REFERENCES auth_sessions(token_digest) ON DELETE CASCADE,
+ expires_at TEXT NOT NULL
+);
+CREATE INDEX identity_codes_session ON identity_codes(session_digest);
+CREATE INDEX identity_codes_expiry ON identity_codes(expires_at);
+CREATE TABLE identity_grants (
+ grant_digest TEXT PRIMARY KEY,
+ client_id TEXT NOT NULL,
+ session_digest TEXT NOT NULL REFERENCES auth_sessions(token_digest) ON DELETE CASCADE
+);
+CREATE INDEX identity_grants_session ON identity_grants(session_digest);
+
 CREATE TABLE audit_events (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  actor_id TEXT NOT NULL,
