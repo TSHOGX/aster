@@ -1,4 +1,5 @@
 "use client";
+import { Select } from "@web/select";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
@@ -19,8 +20,8 @@ export function UserList() {
     <header className="page-heading"><div><h1 id="users-title">Users</h1><p>Manage identities, memberships and account security.</p></div><Link className="primary button" href="/users/new">Create user</Link></header>
     <form className="filters" onSubmit={event => { event.preventDefault(); setLoading(true); setFilter({ ...filter, search }); setCursors([""]); }}>
       <label>Search users<input value={search} onChange={event => setSearch(event.target.value)} placeholder="Username or display name" /></label>
-      <label>Status<select value={filter.status} onChange={event => { setLoading(true); setFilter({ ...filter, status: event.target.value }); setCursors([""]); }}><option value="">All statuses</option><option value="active">Active</option><option value="disabled">Disabled</option></select></label>
-      <label>Role<select value={filter.role} onChange={event => { setLoading(true); setFilter({ ...filter, role: event.target.value }); setCursors([""]); }}><option value="">All roles</option><option value="admin">Administrator</option><option value="user">User</option></select></label>
+      <label>Status<Select aria-label="Status" value={filter.status} onChange={event => { setLoading(true); setFilter({ ...filter, status: event.target.value }); setCursors([""]); }}><option value="">All statuses</option><option value="active">Active</option><option value="disabled">Disabled</option></Select></label>
+      <label>Role<Select aria-label="Role" value={filter.role} onChange={event => { setLoading(true); setFilter({ ...filter, role: event.target.value }); setCursors([""]); }}><option value="">All roles</option><option value="admin">Administrator</option><option value="user">User</option></Select></label>
       <button type="submit">Search</button><button type="button" onClick={() => { setLoading(true); setRefresh(v => v + 1); }}>Refresh</button>
     </form>
     {error && <p className="error" role="alert">{error}</p>}

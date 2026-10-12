@@ -1,4 +1,5 @@
 "use client";
+import { Select } from "@web/select";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -84,10 +85,10 @@ export function UserEditor({ id, onDirty }: { id?: string; onDirty: (dirty: bool
       <fieldset disabled={loading || busy || !!pending}>
         {!user && <label>Username<input required maxLength={64} autoComplete="off" pattern="[A-Za-z0-9_-]{1,64}" value={username} onChange={event => setUsername(event.target.value)} /></label>}
         <label>Display name<input required maxLength={256} value={name} onChange={event => setName(event.target.value)} /></label>
-        <label>Management role<select value={role} onChange={event => setRole(event.target.value)}><option value="user">User</option><option value="admin">Platform administrator</option></select></label>
+        <label>Management role<Select aria-label="Management role" value={role} onChange={event => setRole(event.target.value)}><option value="user">User</option><option value="admin">Platform administrator</option></Select></label>
         <p className="hint">Management authority does not grant private-content access. Changing the role signs this account out.</p>
         {!user && <>
-          <label>Membership<select value={membership} onChange={event => setMembership(event.target.value)}><option value="default">Default group</option><option value="custom">Choose groups</option><option value="none">No groups</option></select></label>
+          <label>Membership<Select aria-label="Membership" value={membership} onChange={event => setMembership(event.target.value)}><option value="default">Default group</option><option value="custom">Choose groups</option><option value="none">No groups</option></Select></label>
           {membership === "custom" && <fieldset className="group-options"><legend>Groups</legend>{groups.map(group => <label key={group.id}><input type="checkbox" checked={selected.includes(group.id)} onChange={event => setSelected(values => event.target.checked ? [...values, group.id] : values.filter(value => value !== group.id))} />{group.name}</label>)}
             {groupCursor && <button type="button" onClick={() => void api<{groups: Group[]; next_cursor?: string}>(`/api/admin/groups?limit=100&cursor=${encodeURIComponent(groupCursor)}`).then(value => { setGroups(values => [...values, ...value.groups]); setGroupCursor(value.next_cursor || ""); }).catch(error => setError(String(error)))}>More groups</button>}
           </fieldset>}
@@ -111,7 +112,7 @@ export function UserEditor({ id, onDirty }: { id?: string; onDirty: (dirty: bool
 
       <Link className="inline-link" href={`/projects?owner_id=${encodeURIComponent(user.id)}`}>Projects and Volumes</Link>
       <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/resources`}>Resources and usage</Link>
-      <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/network`}>Network settings</Link>
+      <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/configuration`}>Effective configuration</Link>
       <Link className="inline-link" href={`/audit?target=${encodeURIComponent(user.id)}`}>View account audit</Link>
     </section>}
     {user && <><EffectiveAccessView accountID={user.id} /><ContentInspection accountID={user.id}/></>}

@@ -1,3 +1,4 @@
+import { chooseValue } from "./picker";
 import { expect, test } from "@playwright/test";
 import { adminFixture } from "./fixture";
 const account = { id: "admin-id", username: "admin", display_name: "Administrator", role: "admin", status: "active", revision: 1, session_revision: 1, must_change_password: false };
@@ -26,7 +27,7 @@ for (const width of [390, 1440]) test(`create, edit and one-time credential form
   await page.goto("/admin/users/new");
   await page.getByLabel("Username", { exact: true }).fill("u".repeat(64));
   await page.getByLabel("Display name", { exact: true }).fill("N".repeat(128));
-  await page.getByRole("combobox", { name: "Membership", exact: true }).selectOption("none");
+  await chooseValue(page.getByRole("combobox", { name: "Membership", exact: true }), "none");
   await page.getByRole("button", { name: "Create account", exact: true }).click();
   const dialog = page.getByRole("dialog"); await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel("Temporary password", { exact: true })).toHaveValue("temporary-password-value");
@@ -59,7 +60,7 @@ test("stale edits retain the changed field and preserve an unrelated new role", 
   await page.goto("/admin/users/user-id"); await page.getByLabel("Display name", { exact: true }).fill("Reapplied name");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(page.locator("main").getByRole("alert")).toContainText("changed elsewhere");
-  await expect(page.getByRole("combobox", { name: "Management role", exact: true })).toHaveValue("admin");
+  await expect(page.getByRole("combobox", { name: "Management role", exact: true })).toHaveAttribute("data-value", "admin");
   await expect(page.getByLabel("Display name", { exact: true })).toHaveValue("Reapplied name");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   const calls = fixture.calls.filter(call => call.method === "PATCH"); expect(calls[1].body).toMatchObject({ expected_revision: 2, display_name: "Reapplied name" }); expect(calls[1].body).not.toHaveProperty("role");
@@ -81,7 +82,7 @@ for(const width of [390,1440]) test(`group policy bindings, membership and delet
   await expect(page.getByRole("heading",{level:1})).toHaveText("Researchers");
   await page.getByLabel("Standard operations",{exact:true}).check();
   await page.getByRole("button",{name:"Save policy bindings",exact:true}).click();
-  await page.getByRole("combobox",{name:"Account to add",exact:true}).selectOption("user-id");
+  await chooseValue(page.getByRole("combobox",{name:"Account to add",exact:true}), "user-id");
   await page.getByRole("button",{name:"Add member",exact:true}).click();
   await expect(page.getByRole("button",{name:"Remove ordinary",exact:true})).toBeVisible();
   await page.getByRole("button",{name:"Preview deletion",exact:true}).click();
@@ -104,10 +105,10 @@ test("policy creation retries original intent and stale edits retain only change
   const fixture=await adminFixture(page);fixture.controls.losePolicyReply=true;
   await page.goto("/admin/policies/new");
   await page.getByRole("textbox",{name:"Name",exact:true}).fill("Export denial");
-  await page.getByRole("combobox",{name:"files.export",exact:true}).selectOption("deny");
+  await chooseValue(page.getByRole("combobox",{name:"files.export",exact:true}), "deny");
   await page.getByRole("button",{name:"Save policy",exact:true}).click();
   await page.getByRole("button",{name:"Check original request",exact:true}).click();
-  await expect(page.getByRole("status")).toHaveText("Original change confirmed.");
+  await expect(page.getByRole("status").filter({hasText:"Original change confirmed."})).toHaveText("Original change confirmed.");
   expect(fixture.policies.filter(policy=>policy.name==="Export denial")).toHaveLength(1);
   const creates=fixture.calls.filter(call=>call.path==="/api/admin/policies"&&call.method==="POST");expect(creates).toHaveLength(2);expect(creates[1].body).toEqual(creates[0].body);
   fixture.controls.conflictPolicy=true;
@@ -145,41 +146,32 @@ test("revoked inspection cannot display a late content response",async({page})=>
   await expect(panel).toContainText("An explicit admin.content.read grant is required");await expect(panel).not.toContainText("Late private content");
 });
 
-test("runtime editor locks required publications and keeps optional mounts within the bound", async ({ page }, info) => {
-  await adminFixture(page); await page.setViewportSize({ width: 390, height: 900 });
-  const digest = `sha256:${"a".repeat(64)}`;
-  const reference = { id: "runtime", version: "v1", digest };
-  const required = [{ role: "agent_config", destination: "/opt/agent-config", artifact_id: "agent_config" }, { role: "shared_assets", destination: "/opt/shared-assets", artifact_id: "shared_assets" }];
-  const mounts = [
-    { key: "workspace", role: "workspace", destination: "/workspace", storage: "owned", access: "read_write", source: { kind: "empty" }, capacity: { setting: "workspace_bytes" } },
-    { key: "runtime", role: "runtime", destination: "/runtime", storage: "owned", access: "read_write", source: { kind: "empty" }, capacity: { setting: "runtime_bytes" } },
-    ...required.map(item => ({ key: item.role, role: item.role, destination: item.destination, storage: "shared_readonly", access: "read_only", source: { kind: "builtin", artifact_id: item.artifact_id, version: "v1", digest }, capacity: {} })),
-  ];
-  await page.route("**/api/admin/runtime/**", route => {
-    const url = new URL(route.request().url());
-    if (url.pathname.endsWith("/default") && route.request().method() === "PATCH") return route.fulfill({ status: 503, json: { code: "artifact_unavailable", error: "registered runtime artifact unavailable" } });
-    if (url.pathname.endsWith("/preview")) return route.fulfill({ json: { affected_accounts: "1", accounts_with_plan_conflicts: "1", expected_dependencies: "fingerprint", users: [] } });
-    if (url.pathname.endsWith("/default")) return route.fulfill({ json: { revision: 1, sandbox_release: reference, mounts, required_publications: required, max_mounts: "5" } });
-    return route.fulfill({ json: { max_mounts: "5", options: url.searchParams.get("kind") === "sandbox" ? [{ reference, kind: "sandbox", enabled: true, availability: "available", required_publications: required, protected_roots: ["/etc", "/proc"], blocked_path_count: 2 }] : required.map(item => ({ reference: { id: item.artifact_id, version: "v1", digest }, kind: "volume", roles: [item.role], enabled: true, availability: "available", minimum_bytes: "1048576", source_capacity_bytes: "8388608" })) } });
-  });
-  await page.goto("/admin/runtime");
-  await expect(page.getByLabel("Mount 3 destination", { exact: true })).toHaveAttribute("readonly", "");
-  await expect(page.getByLabel("Mount 3 storage", { exact: true })).toBeDisabled();
-  await expect(page.getByLabel("Mount 4 access", { exact: true })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Remove agent_config", exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Add data mount", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Add data mount", exact: true })).toBeDisabled();
-  await page.getByLabel("Mount 5 capacity in bytes", { exact: true }).fill("9007199254740993");
-  await expect(page.getByLabel("Mount 5 capacity in bytes", { exact: true })).toHaveValue("9007199254740993");
-  await page.getByRole("button", { name: "Preview environment changes", exact: true }).click();
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Save default environment", exact: true }).click();
-  await expect(page.locator("main").getByRole("alert")).toContainText("registered runtime artifact unavailable");
-  await expect(page.getByLabel("Mount 5 capacity in bytes", { exact: true })).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Check original request", exact: true })).toHaveCount(0);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-  await page.getByLabel("Mount 3 destination", { exact: true }).scrollIntoViewIfNeeded();
-  await page.screenshot({ path: info.outputPath("required-runtime-mounts-mobile.png") });
+test("environment templates use registered inventory and lock required publications", async ({ page }, info) => {
+ await adminFixture(page); await page.setViewportSize({width:390,height:900});
+ const digest=`sha256:${"a".repeat(64)}`,reference={id:"runtime",version:"v1",digest};
+ const required=[{role:"agent_config",destination:"/opt/agent-config",artifact_id:"agent_config"},{role:"shared_assets",destination:"/opt/shared-assets",artifact_id:"shared_assets"}];
+ await page.route("**/api/admin/runtime/options?*",route=>route.fulfill({json:{max_mounts:"5",options:new URL(route.request().url()).searchParams.get("kind")==="sandbox"?[{reference,kind:"sandbox",enabled:true,availability:"available",required_publications:required}]:required.map(item=>({reference:{id:item.artifact_id,version:"v1",digest},kind:"volume",roles:[item.role],enabled:true,availability:"available"}))}}));
+ await page.goto("/admin/resources/environment");
+ await page.getByRole("button",{name:"Create template",exact:true}).click();
+ await expect(page.getByLabel("Mount path",{exact:true}).nth(2)).toHaveAttribute("readonly","");
+ await expect(page.getByRole("button",{name:"Remove directory",exact:true})).toHaveCount(0);
+ await page.getByRole("button",{name:"Add data directory",exact:true}).click();
+ await expect(page.getByRole("button",{name:"Add data directory",exact:true})).toBeDisabled();
+ await chooseValue(page.getByRole("combobox",{name:"Storage",exact:true}), "owned");
+ await page.getByLabel("Capacity (bytes)",{exact:true}).fill("9007199254740993");
+ await expect(page.getByLabel("Capacity (bytes)",{exact:true})).toHaveValue("9007199254740993");
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+ await page.screenshot({path:info.outputPath("environment-template-mobile.png"),fullPage:true});
+ await page.getByLabel("Name",{exact:true}).fill("Shared configuration");
+ await chooseValue(page.getByRole("combobox",{name:"Storage",exact:true}),"shared");
+ await page.getByRole("button",{name:"Validate and review",exact:true}).click();
+ await expect(page.getByRole("combobox",{name:"Shared volume",exact:true})).toBeFocused();
+ await expect(page.getByRole("combobox",{name:"Shared volume",exact:true})).toHaveAttribute("aria-invalid","true");
+ const source=page.getByRole("combobox",{name:"Initial contents",exact:true}).nth(2);
+ await source.click();
+ await expect(page.getByRole("option",{name:"Select an initialization source",exact:true})).toHaveAttribute("aria-disabled","true");
+ await page.keyboard.press("Home");await page.keyboard.press("Enter");
+ await expect(source).toHaveAttribute("data-value",JSON.stringify(["agent_config","v1",digest]));
 });
 
 test("Project Volume metadata distinguishes allocated initialization from reservation on mobile", async ({ page }, info) => {
@@ -201,4 +193,104 @@ test("Project Volume metadata distinguishes allocated initialization from reserv
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   await page.getByRole("heading", { name: "Volume slots", exact: true }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: info.outputPath("partial-volume-metadata-mobile.png") });
+});
+
+for (const width of [390, 1440]) test(`resource templates use shared pickers and preserve reviewed intent at ${width}px`, async ({ page }, info) => {
+  await adminFixture(page);
+  await page.setViewportSize({ width, height: 900 });
+  const writes: Record<string, unknown>[] = [];
+  let saved = false, failRefresh = true;
+  await page.route("**/api/admin/resource-templates/network", route => {
+    if (route.request().method() === "GET") {
+      if (saved && failRefresh) { failRefresh = false; return route.fulfill({ status: 503, json: { error: "Refresh unavailable" } }); }
+      return route.fulfill({ json: { templates: [] } });
+    }
+    const body = route.request().postDataJSON(); writes.push(body);
+    if (body.preview) return route.fulfill({ json: { expected_dependencies: "reviewed", projects: [], users: [], proposed: {} } });
+    saved = true; return route.fulfill({ json: { id: "new-network" } });
+  });
+  await page.goto("/admin/resources/network");
+  await page.getByRole("button", { name: "Create template", exact: true }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Research network");
+  await page.getByRole("button", { name: "Add destination", exact: true }).click();
+  await page.getByLabel("IPv4 CIDR", { exact: true }).fill("192.0.2.0/24");
+  await page.getByLabel("DNS resolvers", { exact: true }).fill(" 1.1.1.1 \n\n");
+  expect(await page.getByRole("combobox", { name: "Protocol", exact: true }).evaluate(node => node.tagName)).toBe("BUTTON");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await page.screenshot({ path: info.outputPath("resource-template.png"), fullPage: true });
+  await page.getByRole("button", { name: "Validate and review", exact: true }).click();
+  expect(writes[0].network).toMatchObject({ resolvers: ["1.1.1.1"] });
+  await page.getByRole("button", { name: "Confirm and save", exact: true }).click();
+  await expect(page.getByText("Changes were saved. Reload the current data before editing again.")).toBeVisible();
+  await expect(page.getByLabel("Name", { exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Reload saved data", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Create template", exact: true })).toBeVisible();
+  expect(writes).toHaveLength(2);
+  expect(writes[1].request_id).toBe(writes[0].request_id);
+  expect(writes[1].expected_dependencies).toBe("reviewed");
+});
+
+test("administrator configuration preserves an untouched override and supports clearing it", async ({ page }) => {
+  await adminFixture(page);
+  const network = { id: "network-one", name: "Network one", enabled: true, description: "", sources: ["group"] };
+  const environment = { ...network, id: "environment-one", name: "Environment one" };
+  const value = { default_revision: 3, administrator_defaults: { network_template_id: network.id, environment_template_id: environment.id }, default_network: network, default_environment: environment, networks: [network], environments: [environment], shared_volumes: [], needs_admin_resolution: false };
+  await page.route("**/api/admin/users/user-id/configuration", route => route.fulfill({ json: value }));
+  let body: Record<string, unknown> = {};
+  await page.route("**/api/admin/users/user-id/configuration-defaults", route => { body = route.request().postDataJSON(); return route.fulfill({ json: { expected_dependencies: "review", projects: [], users: [] } }); });
+  await page.goto("/admin/users/user-id/configuration");
+  await expect(page.getByRole("combobox", { name: "Network default", exact: true })).toHaveAttribute("data-value", network.id);
+  await expect(page.getByRole("button", { name: "Review administrator defaults", exact: true })).toBeDisabled();
+  await chooseValue(page.getByRole("combobox", { name: "Network default", exact: true }), "");
+  await page.getByRole("button", { name: "Review administrator defaults", exact: true }).click();
+  expect(body).toMatchObject({ network_template_id: "", environment_template_id: environment.id, expected_revision: 3, preview: true });
+});
+
+test("settings navigation keeps the admin shell and theme mounted without reauthentication", async ({page}) => {
+  const fixture = await adminFixture(page);
+  let documents = 0;
+  page.on("request", request => { if (request.isNavigationRequest() && request.frame() === page.mainFrame()) documents++; });
+  await page.goto("/admin/resources/network");
+  await expect(page.getByRole("heading", {name:"Resource Center",exact:true})).toBeVisible();
+  const header = await page.locator(".admin-header").elementHandle();
+  const tabs = await page.locator(".catalog-tabs").elementHandle();
+  const reads = fixture.calls.filter(call => call.path === "/api/auth/session").length;
+  await page.route("**/api/admin/resource-templates/environment", async route => {
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await route.fulfill({json:{templates:[]}});
+  });
+  for (const name of ["Environment templates", "Network templates"]) {
+    await page.getByRole("navigation",{name:"Resource categories"}).getByRole("link",{name,exact:true}).click();
+    await expect(page.getByRole("navigation",{name:"Resource categories"}).getByRole("link",{name,exact:true})).toHaveAttribute("aria-current","page");
+    expect(await header!.evaluate(node => node.isConnected)).toBe(true);
+    expect(await tabs!.evaluate(node => node.isConnected)).toBe(true);
+    await expect(page.getByText("Opening administration…",{exact:true})).toHaveCount(0);
+  }
+  for(const name of ["Users","Groups","Policies"]){
+    await page.getByRole("navigation",{name:"Administration",exact:true}).getByRole("link",{name,exact:true}).click();
+    await expect(page.getByRole("heading",{level:1})).toHaveText(name);
+    expect(await header!.evaluate(node => node.isConnected)).toBe(true);
+  }
+  expect(fixture.calls.filter(call => call.path === "/api/auth/session")).toHaveLength(reads);
+  expect(documents).toBe(1);
+});
+
+for(const width of [390,1440]) test(`shared dropdown keyboard and minimal selected state at ${width}px`,async({page},info)=>{
+ await adminFixture(page);await page.setViewportSize({width,height:900});await page.goto("/admin/users/new");
+ const role=page.getByRole("combobox",{name:"Management role",exact:true});
+ await role.focus();await page.keyboard.press("ArrowDown");
+ const list=page.getByRole("listbox",{name:"Management role",exact:true});await expect(list).toBeVisible();
+ await page.keyboard.press("End");await page.keyboard.press("Enter");
+ await expect(role).toHaveAttribute("data-value","admin");await expect(role).toBeFocused();
+ await role.click();await page.keyboard.press("u");await page.keyboard.press("Enter");await expect(role).toHaveAttribute("data-value","user");
+ await role.click();await page.keyboard.press("Escape");await expect(list).toHaveCount(0);await expect(role).toBeFocused();
+ await role.click();await page.keyboard.press("Tab");await expect(page.getByRole("combobox",{name:"Membership",exact:true})).toBeFocused();
+ await role.click();expect(await list.evaluate(node=>{const r=node.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.bottom<=innerHeight})).toBe(true);
+ await page.screenshot({path:info.outputPath("shared-dropdown.png")});
+ await page.keyboard.press("Escape");
+ expect(await role.evaluate(node=>getComputedStyle(node).textDecorationLine)).toBe("none");
+ await page.getByRole("navigation",{name:"Administration",exact:true}).getByRole("link",{name:"Resource Center",exact:true}).click();
+ const active=page.getByRole("navigation",{name:"Resource categories"}).getByRole("link",{name:"Network templates",exact:true});
+ expect(await active.evaluate(node=>getComputedStyle(node).boxShadow)).toBe("none");
+ expect(await active.evaluate(node=>getComputedStyle(node).textDecorationLine)).toBe("none");
 });

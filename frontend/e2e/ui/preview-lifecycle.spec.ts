@@ -1,3 +1,4 @@
+import { chooseValue } from "../picker";
 import { expect, test } from "@playwright/test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -129,7 +130,7 @@ test("fifty preview, session, fullscreen and theme cycles release owned resource
       ).toBeFocused();
       await page.getByRole("button", { name: "Account", exact: true }).click();
       await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-      await page.getByRole("combobox", { name: "Theme mode", exact: true }).selectOption("dark");
+      await chooseValue(page.getByRole("combobox", { name: "Theme mode", exact: true }), "dark");
       await expect(page.getByRole("combobox", { name: "Theme mode", exact: true })).toBeEnabled();
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       await page.getByLabel("Close file preview", { exact: true }).click();

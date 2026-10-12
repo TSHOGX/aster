@@ -27,6 +27,9 @@ export async function adminFixture(page: Page, role: "admin" | "user" = "admin")
       const accountID=path.split("/")[4];
       return route.fulfill({json:{account_id:accountID,account_status:"active",management_role:"user",revision:1,actions:Object.fromEntries(productActions.map(action=>{const sources=groups.filter(group=>memberships.get(group.id)?.includes(accountID)).flatMap(group=>policies.filter(policy=>group.policy_ids.includes(policy.id)&&policy.statements[action]&&policy.statements[action]!=="unset").map(policy=>({group_id:group.id,group_name:group.name,policy_id:policy.id,policy_name:policy.name,effect:policy.statements[action]})));return[action,{allowed:sources.some(source=>source.effect==="allow")&&!sources.some(source=>source.effect==="deny"),sources}];}))}});
     }
+    if (path.startsWith("/api/admin/resource-templates/")) return route.fulfill({ json: { templates: [] } });
+    if (path === "/api/admin/shared-volumes") return route.fulfill({ json: { volumes: [] } });
+    if (/^\/api\/admin\/policies\/[^/]+\/resources$/.test(path) && method === "GET") return route.fulfill({ json: { resources: [] } });
     if (path.startsWith("/api/admin/groups") || path.startsWith("/api/admin/policies")) {
       const parts=path.split("/"), kind=parts[3], id=parts[4], sub=parts[5], collection=kind==="groups"?groups:policies;
       const target=collection.find(item=>item.id===id);

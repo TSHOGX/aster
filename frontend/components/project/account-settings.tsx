@@ -1,4 +1,5 @@
 "use client";
+import { Select } from "@web/select";
 import type { Identity } from "@web/identity";
 
 import { useEffect, useRef, useState } from "react";
@@ -7,6 +8,7 @@ import { api, APIError, command } from "@/lib/project-api";
 import type { Accent, ThemeMode } from "@web/appearance";
 import { useT } from "@/lib/i18n";
 import { IconButton, trapDialogFocus, useDialog } from "./ui";
+import { AccountAdvanced } from "./account-advanced";
 import { AccountUsage } from "./account-usage";
 import type { AccountAppearance } from "./account-appearance";
 import "./account-settings.css";
@@ -23,6 +25,7 @@ export function AccountSettings({ identity, appearance, onIdentity, onProfile, o
   const tr = useT(), ask = useDialog();
   const dialog = useRef<HTMLDialogElement>(null);
   const [usageOpen, setUsageOpen] = useState(false);
+ const [advancedOpen,setAdvancedOpen]=useState(false),[advancedDirty,setAdvancedDirty]=useState(false);
   const [profile, setProfile] = useState<Profile>(identity);
   const [name, setName] = useState(identity.display_name);
   const [profileLoading, setProfileLoading] = useState(true);
@@ -42,9 +45,9 @@ export function AccountSettings({ identity, appearance, onIdentity, onProfile, o
     return () => { controller.abort(); node.close(); previous?.focus(); };
   }, []);
   const discard = async () => {
-    if (!currentPassword && !newPassword && name === profile.display_name) return true;
+    if (!advancedDirty && !currentPassword && !newPassword && name === profile.display_name) return true;
     return await ask({ title: tr("Discard unsaved account changes?"),
-      description: tr("Typed passwords and unsaved display name changes will be cleared."),
+      description: tr("Unsaved account and advanced settings will be discarded."),
       choices: [{ label: tr("Discard changes"), value: "discard", danger: true }] }) === "discard";
   };
   const close = async () => {
@@ -63,17 +66,17 @@ export function AccountSettings({ identity, appearance, onIdentity, onProfile, o
         <h3 id="appearance-title">{tr("Appearance")}</h3>
         <div className="appearance-fields">
           <label>{tr("Theme mode")}
-            <select value={appearance.preview.theme_mode} disabled={!appearance.loaded || appearance.pending}
+            <Select aria-label={tr("Theme mode")} value={appearance.preview.theme_mode} disabled={!appearance.loaded || appearance.pending}
               onChange={event => void appearance.save({ theme_mode: event.target.value as ThemeMode })}>
               <option value="system">{tr("System")}</option><option value="light">{tr("Light")}</option><option value="dark">{tr("Dark")}</option>
-            </select>
+            </Select>
           </label>
           <label>{tr("Accent color")}
-            <select value={appearance.preview.accent} disabled={!appearance.loaded || appearance.pending}
+            <Select aria-label={tr("Accent color")} value={appearance.preview.accent} disabled={!appearance.loaded || appearance.pending}
               onChange={event => void appearance.save({ accent: event.target.value as Accent })}>
               <option value="neutral">{tr("Neutral")}</option><option value="blue">{tr("Blue")}</option>
               <option value="green">{tr("Green")}</option><option value="violet">{tr("Violet")}</option>
-            </select>
+            </Select>
           </label>
         </div>
         <p className="settings-status" role="status">{appearance.pending ? tr("Saving…") : !appearance.loaded ? tr("Loading settings…") : dirtyAppearance ? tr("Unsaved appearance") : appearance.error ? tr("Settings unavailable") : tr("Saved")}</p>
@@ -86,6 +89,7 @@ export function AccountSettings({ identity, appearance, onIdentity, onProfile, o
         </div>}
       </section>
       <section><details onToggle={event => setUsageOpen(event.currentTarget.open)}><summary>{tr("Resources and usage")}</summary>{usageOpen && <AccountUsage />}</details></section>
+      <section><details onToggle={event=>{if(event.currentTarget.open)setAdvancedOpen(true)}}><summary>{tr("Advanced / Developer")}</summary>{advancedOpen&&<AccountAdvanced onDirty={setAdvancedDirty}/>}</details></section>
       <section aria-labelledby="account-security-title">
         <h3 id="account-security-title">{tr("Account and security")}</h3>
         <form onSubmit={event => {

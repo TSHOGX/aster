@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { api, APIError } from "@/lib/api";
 import type { Identity } from "@web/identity";
 import { displayName } from "@web/brand";
@@ -11,11 +12,13 @@ import { GroupEditor } from "./group-editor";
 import { ProjectList, ProjectView } from "./project-views";
 import { UserList } from "./user-list";
 import { ResourceEditor } from "./resource-editor";
-import { RuntimeEditor } from "./runtime-editor";
-import { NetworkEditor } from "./network-editor";
+import { UserConfiguration } from "./configuration-controls";
+import { ResourceCenter } from "./resource-center";
 import { UserEditor } from "./user-editor";
 import { AuditView, OperationView } from "./audit-view";
-export function Administration({ route }: { route: string[] }) {
+export function Administration() {
+  const pathname = usePathname();
+  const route = pathname.replace(/^\/admin(?=\/|$)/, "").split("/").filter(Boolean).map(decodeURIComponent);
   const [identity, setIdentity] = useState<Identity | null>(null), [status, setStatus] = useState("loading"), [dirty, setDirty] = useState(false), [error, setError] = useState("");
   const generation = useRef(0);
   const dirtyRef = useRef(false);
@@ -68,14 +71,21 @@ export function Administration({ route }: { route: string[] }) {
     if (dirtyRef.current && !window.confirm("Leave without saving these changes? An unconfirmed request may already have completed.")) return false;
     dirtyRef.current = false; setDirty(false); return true;
   };
+  const guardNavigation = (event: MouseEvent<HTMLElement>) => {
+    const link = (event.target as Element).closest("a");
+    if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || link.target === "_blank" || link.hasAttribute("download")) return;
+    const destination = new URL(link.href, location.href);
+    if (destination.origin === location.origin && destination.pathname === location.pathname && destination.search === location.search) return;
+    if (!mayLeave()) { event.preventDefault(); event.stopPropagation(); }
+  };
   const logout = async () => {
     if (!mayLeave()) return;
     try { await api("/api/auth/logout", { method: "POST" }); clearAppearanceBinding(); location.assign(new URL("/", location.origin).href); }
     catch (error) { setError(String(error)); }
   };
   return <div className="admin-shell">
-    <header className="admin-header"><strong>{displayName} <span>Administration</span></strong><nav aria-label="Administration" onClickCapture={event => { if ((event.target as Element).closest("a") && !mayLeave()) { event.preventDefault(); event.stopPropagation(); } }}>
-      {status === "ready" && <><Link href="/users" aria-current={!route.length || route[0] === "users" ? "page" : undefined}>Users</Link><Link href="/groups" aria-current={route[0] === "groups" ? "page" : undefined}>Groups</Link><Link href="/policies" aria-current={route[0] === "policies" ? "page" : undefined}>Policies</Link><Link href="/projects" aria-current={route[0] === "projects" ? "page" : undefined}>Projects</Link><Link href="/runtime" aria-current={route[0] === "runtime" ? "page" : undefined}>Runtime</Link><Link href="/network" aria-current={route[0] === "network" ? "page" : undefined}>Network</Link><Link href="/audit" aria-current={route[0] === "audit" ? "page" : undefined}>Audit</Link></>}
+    <header className="admin-header"><strong>{displayName} <span>Administration</span></strong><nav aria-label="Administration" onClickCapture={guardNavigation}>
+      {status === "ready" && <><Link href="/users" aria-current={!route.length || route[0] === "users" ? "page" : undefined}>Users</Link><Link href="/groups" aria-current={route[0] === "groups" ? "page" : undefined}>Groups</Link><Link href="/policies" aria-current={route[0] === "policies" ? "page" : undefined}>Policies</Link><Link href="/projects" aria-current={route[0] === "projects" ? "page" : undefined}>Projects</Link><Link href="/resources/network" aria-current={route[0] === "resources" ? "page" : undefined}>Resource Center</Link><Link href="/audit" aria-current={route[0] === "audit" ? "page" : undefined}>Audit</Link></>}
       <WorkbenchLink />{identity && <button onClick={() => void logout()}>Sign out</button>}
     </nav></header>
     <main>
@@ -83,21 +93,17 @@ export function Administration({ route }: { route: string[] }) {
       {status === "loading" && <p role="status">Opening administration…</p>}
       {status === "denied" && <><h1>Access denied</h1><p>A platform administrator role is required.</p></>}
       {status === "unavailable" && <><p role="alert">Account access is unavailable.</p><button onClick={() => void reloadIdentity()}>Retry access check</button></>}
-      {status === "ready" && identity && <div key={identity.id} onClickCapture={event => {
-        const link = (event.target as Element).closest("a");
-        if (link && !mayLeave()) { event.preventDefault(); event.stopPropagation(); }
-      }}>
+      {status === "ready" && identity && <div key={identity.id} onClickCapture={guardNavigation}>
         {(!route.length || route[0] === "users" && route.length === 1) ? <UserList />
           : route[0] === "users" && route.length === 2 ? <UserEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : (route[0] === "groups" || route[0] === "policies") && route.length === 1 ? <PolicyList key={route[0]} kind={route[0]} />
           : route[0] === "groups" && route.length === 2 ? <GroupEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : route[0] === "policies" && route.length === 2 ? <PolicyEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
+          : route[0] === "users" && route.length === 3 && route[2] === "configuration" ? <UserConfiguration key={route[1]} id={route[1]} onDirty={setEditorDirty} />
           : (route[0] === "users" || route[0] === "groups") && route.length === 3 && route[2] === "resources" ? <ResourceEditor key={`${route[0]}-${route[1]}-resources`} kind={route[0] === "users" ? "user" : "group"} id={route[1]} onDirty={setEditorDirty} />
           : route[0] === "projects" && route.length === 1 ? <ProjectList />
           : route[0] === "projects" && route.length === 2 ? <ProjectView key={route[1]} id={route[1]} onDirty={setEditorDirty} />
-          : route[0] === "runtime" && route.length === 1 ? <RuntimeEditor onDirty={setEditorDirty} />
-          : route[0] === "network" && route.length === 1 ? <NetworkEditor key="default-network" onDirty={setEditorDirty} />
-          : route[0] === "users" && route.length === 3 && route[2] === "network" ? <NetworkEditor key={`network-${route[1]}`} id={route[1]} onDirty={setEditorDirty} />
+          : route[0] === "resources" ? <ResourceCenter section={route[1]} onDirty={setEditorDirty} />
           : route[0] === "audit" && route.length === 1 ? <AuditView />
           : route[0] === "operations" && route.length === 2 ? <OperationView id={route[1]} />
           : <><h1>Page not found</h1><Link href="/users">Open users</Link></>}

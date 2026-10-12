@@ -1,7 +1,7 @@
 import type { ProductAction, EffectiveAccess } from "@web/capabilities";
 export type PolicyEffect = "unset" | "allow" | "deny";
 export type Policy = { id: string; name: string; description: string; revision: number; statements: Partial<Record<ProductAction, PolicyEffect>> };
-export type GroupDetail = { id: string; name: string; description: string; revision: number; member_count: number; policy_ids: string[] };
+export type GroupDetail = { network_template_id?: string; environment_template_id?: string; id: string; name: string; description: string; revision: number; member_count: number; policy_ids: string[] };
 export type GroupSummary = Omit<GroupDetail, "policy_ids"> & { policy_count: number };
 export type PolicyResult = { group?: GroupDetail; policy?: Policy; deleted_id?: string; replayed: boolean };
 export type AccessSource = { group_id: string; group_name: string; policy_id: string; policy_name: string; effect: PolicyEffect };

@@ -1,20 +1,59 @@
-import { describe, expect, it } from "vitest";
-import { mergeEnvironment, type EnvironmentBody, type Mount } from "./runtime-models";
-const data = (key: string): Mount => ({ key, role: "data", destination: `/data/${key}`, storage: "owned", access: "read_write", source: { kind: "empty" }, capacity: { bytes: "9007199254740993" } });
-const reference = { id: "runtime", version: "v1", digest: "digest" };
-describe("runtime reload merge", () => {
-  it("preserves edited fields, server additions and exact byte strings", () => {
-    const base: EnvironmentBody = { sandbox_release: reference, mounts: [data("first"), data("removed")] };
-    const draft = { ...base, mounts: [{ ...data("first"), destination: "/changed" }, data("local")] };
-    const remote = { ...base, sandbox_release: { ...reference, version: "v2" }, mounts: [{ ...data("first"), access: "read_only" as const }, data("removed"), data("remote")] };
-    const merged = mergeEnvironment(base, draft, remote);
-    expect(merged.sandbox_release.version).toBe("v2");
-    expect(merged.mounts.map(mount => mount.key)).toEqual(["first", "remote", "local"]);
-    expect(merged.mounts[0]).toMatchObject({ destination: "/changed", access: "read_only", capacity: { bytes: "9007199254740993" } });
+import { expect, it } from "vitest";
+import { environmentForRelease, type RuntimeOption } from "./runtime-models";
+const release: RuntimeOption = {
+  kind: "sandbox",
+  reference: { id: "runtime", version: "v1", digest: "digest" },
+  enabled: true,
+  availability: "available",
+  required_publications: [
+    { role: "agent_config", destination: "/opt/config", artifact_id: "config" },
+  ],
+};
+const source: RuntimeOption = {
+  kind: "volume",
+  reference: { id: "config", version: "v1", digest: "source" },
+  enabled: true,
+  availability: "available",
+  roles: ["agent_config"],
+};
+it("creates an environment from exact current inventory without a default document", () => {
+  const env = environmentForRelease(release, [source]);
+  expect(env.mounts.map((m) => m.role)).toEqual([
+    "workspace",
+    "runtime",
+    "agent_config",
+  ]);
+  expect(env.mounts[2]).toMatchObject({
+    destination: "/opt/config",
+    storage: "shared_readonly",
+    access: "read_only",
+    source: { artifact_id: "config", version: "v1", digest: "source" },
   });
-  it("honors a remote deletion unless the user edited that slot", () => {
-    const base = { sandbox_release: reference, mounts: [data("first"), data("second")] };
-    const draft = { ...base, mounts: [data("first"), { ...data("second"), access: "read_only" as const }] };
-    expect(mergeEnvironment(base, draft, { ...base, mounts: [] }).mounts.map(mount => mount.key)).toEqual(["second"]);
-  });
+});
+it("preserves user storage and exact required sources while honoring a new release's destinations", () => {
+  const before = environmentForRelease(release, [source]);
+  before.mounts[0].destination = "/work";
+  const next = environmentForRelease(
+    {
+      ...release,
+      required_publications: [
+        {
+          role: "agent_config",
+          destination: "/opt/new-config",
+          artifact_id: "config",
+        },
+      ],
+    },
+    [{ ...source, reference: { ...source.reference, version: "v2" } }, source],
+    before,
+  );
+  expect(next.mounts[0].destination).toBe("/work");
+  expect(next.mounts[2].source.version).toBe("v1");
+  expect(next.mounts[2].destination).toBe("/opt/new-config");
+});
+it("leaves unavailable sources unselected instead of inventing a usable reference", () => {
+  expect(
+    environmentForRelease(release, [{ ...source, availability: "other_store" }])
+      .mounts[2].source.version,
+  ).toBeUndefined();
 });

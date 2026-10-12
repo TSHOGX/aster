@@ -1,4 +1,5 @@
 "use client";
+import { Select } from "@web/select";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, APIError, mutate } from "@/lib/api";
@@ -64,7 +65,7 @@ export function ResourceEditor({ kind, id, onDirty }: { kind: "group" | "user"; 
     {pending && !busy && <div className="notice"><p>The outcome is unconfirmed. Resolve the original request before editing again.</p><button onClick={() => void save(pending)}>Check original request</button></div>}
     {current && <><form className="account-form resource-form" onSubmit={event => { event.preventDefault(); void inspect(); }}><fieldset disabled={blocked}>
       {resourceDimensions.map(([dimension, label, unit]) => { const value = selected(dimension), offered = value !== null, entitlement = typeof value === "object" ? value : null; return <div className="resource-row" key={dimension}>
-        <label>{label} ({unit})<select aria-label={`${label} mode`} value={offered ? "explicit" : "inherit"} onChange={event => edit(dimension, event.target.value === "inherit" ? null : kind === "group" ? { default: "0", ceiling: "0" } : "0")}><option value="inherit">{kind === "group" ? "Not offered" : "Inherit"}</option><option value="explicit">{kind === "group" ? "Offer entitlement" : "Explicit value"}</option></select></label>
+        <label>{label} ({unit})<Select aria-label={`${label} mode`} value={offered ? "explicit" : "inherit"} onChange={event => edit(dimension, event.target.value === "inherit" ? null : kind === "group" ? { default: "0", ceiling: "0" } : "0")}><option value="inherit">{kind === "group" ? "Not offered" : "Inherit"}</option><option value="explicit">{kind === "group" ? "Offer entitlement" : "Explicit value"}</option></Select></label>
         {offered && (kind === "group" ? <><label>Default<input aria-label={`${label} default`} inputMode="numeric" maxLength={19} value={entitlement?.default ?? "0"} onChange={event => edit(dimension, { default: event.target.value, ceiling: entitlement?.ceiling ?? "0" })} /></label><label>Ceiling<input aria-label={`${label} ceiling`} inputMode="numeric" maxLength={19} value={entitlement?.ceiling ?? "0"} onChange={event => edit(dimension, { default: entitlement?.default ?? "0", ceiling: event.target.value })} /></label></> : <label>Requested<input aria-label={`${label} requested`} inputMode="numeric" maxLength={19} value={typeof value === "string" ? value : ""} onChange={event => edit(dimension, event.target.value)} /></label>)}
       </div>; })}
       <p className="hint">Enter whole nonnegative integers in the shown units. Group defaults must not exceed ceilings. Platform limits always cap effective values.</p>

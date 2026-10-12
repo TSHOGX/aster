@@ -279,7 +279,7 @@ export const upload = (project: string, path: string, bytes: Blob) =>
   writeFileBytes(fileURL(project, path), bytes);
 export const saveEditorFile = (project: string, path: string, bytes: Blob) =>
   writeFileBytes(`${projectURL(project)}/files/editor-content?path=${encode(path)}`, bytes);
-async function writeFileBytes(url: string, bytes: Blob) {
+export async function writeFileBytes(url: string, bytes: Blob) {
   if (bytes.size > 256 * 1024 * 1024)
     throw new Error("Uploads are limited to 256 MiB.");
   const digest = Array.from(

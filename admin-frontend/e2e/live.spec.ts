@@ -1,3 +1,4 @@
+import { chooseValue } from "./picker";
 import { expect, test } from "@playwright/test";
 
 test("real owner authenticates both builds and preserves administrative request identity", async ({ page, browser, baseURL }) => {
@@ -20,7 +21,7 @@ test("real owner authenticates both builds and preserves administrative request 
   await page.getByRole("link", { name: "Create user", exact: true }).click();
   await page.getByLabel("Username", { exact: true }).fill("browser-user");
   await page.getByLabel("Display name", { exact: true }).fill("Browser user");
-  await page.getByRole("combobox", { name: "Membership", exact: true }).selectOption("none");
+  await chooseValue(page.getByRole("combobox", { name: "Membership", exact: true }), "none");
   await page.getByRole("button", { name: "Create account", exact: true }).click();
   await page.getByRole("button", { name: "Check original request", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("password cannot be shown again");
@@ -78,8 +79,8 @@ test("real group and policy UI resolves provenance and fences deletion impact", 
   await page.getByRole("link",{name:"Policies",exact:true}).click();
   await page.getByRole("link",{name:"Create policy",exact:true}).click();
   await page.getByRole("textbox",{name:"Name",exact:true}).fill("Read without export");
-  await page.getByRole("combobox",{name:"files.read",exact:true}).selectOption("allow");
-  await page.getByRole("combobox",{name:"files.export",exact:true}).selectOption("deny");
+  await chooseValue(page.getByRole("combobox",{name:"files.read",exact:true}), "allow");
+  await chooseValue(page.getByRole("combobox",{name:"files.export",exact:true}), "deny");
   let lost=false;
   await page.route("**/api/admin/policies",async route=>{
     if(route.request().method()==="POST"&&!lost){lost=true;const response=await route.fetch();expect(response.ok()).toBe(true);await response.dispose();await route.abort("failed");return;}
@@ -87,7 +88,7 @@ test("real group and policy UI resolves provenance and fences deletion impact", 
   });
   await page.getByRole("button",{name:"Save policy",exact:true}).click();
   await page.getByRole("button",{name:"Check original request",exact:true}).click();
-  await expect(page.getByRole("status")).toHaveText("Original change confirmed.");
+  await expect(page.getByRole("status").filter({ hasText: "Original change confirmed." })).toHaveText("Original change confirmed.");
   const policies=(await (await page.request.get("/api/admin/policies?limit=100")).json()).policies;
   const matches=policies.filter((p:{name:string})=>p.name==="Read without export");expect(matches).toHaveLength(1);let policy=matches[0];
   await page.getByRole("link",{name:"Groups",exact:true}).click();
@@ -97,7 +98,7 @@ test("real group and policy UI resolves provenance and fences deletion impact", 
   await expect(page.getByRole("heading",{level:1})).toHaveText("Read reviewers");
   await page.getByLabel("Read without export",{exact:true}).check();
   await page.getByRole("button",{name:"Save policy bindings",exact:true}).click();
-  await page.getByRole("combobox",{name:"Account to add",exact:true}).selectOption(account.id);
+  await chooseValue(page.getByRole("combobox",{name:"Account to add",exact:true}), account.id);
   await page.getByRole("button",{name:"Add member",exact:true}).click();
   await expect(page.getByRole("button",{name:"Remove policy-reader",exact:true})).toBeVisible();
   const groups=(await(await page.request.get("/api/admin/groups?limit=100")).json()).groups;
@@ -150,61 +151,20 @@ test("private inspection requires an explicit grant and records its purpose",asy
   await panel.getByRole("button",{name:"Clear inspected content",exact:true}).click();await expect(panel.getByRole("heading",{name:"Inspection conversation",exact:true})).toHaveCount(0);
 });
 
-test("real network editors preserve overrides, stale edits and lost-reply identity", async ({ page }, info) => {
-  await page.setViewportSize({ width: 390, height: 900 });
-  await page.goto("/admin/network");
-  await page.getByLabel("Username", { exact: true }).fill("administrator");
-  await page.getByLabel("Password", { exact: true }).fill("web-test-permanent-password");
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Default network settings" })).toBeVisible();
-  const identity = await (await page.request.get("/api/auth/session")).json();
-  const before = await (await page.request.get("/api/admin/network/default")).json();
-  await page.getByRole("button", { name: "Add resolver", exact: true }).click();
-  await page.getByLabel(`Resolver ${before.resolvers.length + 1}`, { exact: true }).fill("192.0.2.53");
-  await page.getByRole("button", { name: "Save network settings" }).click();
-  await expect(page.getByRole("status")).toContainText("Saved.");
-  const path = `/api/admin/users/${identity.id}/network`;
-  await page.goto(`/admin/users/${identity.id}/network`);
-  await expect(page.getByRole("combobox", { name: "Network policy" })).toHaveValue("inherit");
-  await expect(page.getByRole("button", { name: "Add resolver", exact: true })).toBeDisabled();
-  await page.getByRole("combobox", { name: "Network policy" }).selectOption("override");
-  await page.getByLabel("Resolver 1", { exact: true }).fill("198.51.100.53");
-  let lost = false;
-  const requests: unknown[] = [];
-  await page.route(`**${path}`, async route => {
-    if (route.request().method() === "PATCH") {
-      requests.push(route.request().postDataJSON());
-      if (!lost) { lost = true; const response = await route.fetch(); expect(response.ok()).toBe(true); await response.dispose(); await route.abort("failed"); return; }
-    }
-    await route.continue();
-  });
-  await page.getByRole("button", { name: "Save network settings" }).click();
-  await page.getByRole("button", { name: "Check original request" }).click();
-  await expect(page.getByRole("status")).toContainText("Original change confirmed");
-  expect(requests).toHaveLength(2); expect(requests[0]).toEqual(requests[1]);
-  await page.getByLabel("Resolver 1", { exact: true }).fill("203.0.113.53");
-  const current = await (await page.request.get("/api/admin/network/default")).json();
-  expect((await page.request.patch("/api/admin/network/default", { data: { request_id: crypto.randomUUID(), expected_revision: current.configuration_revision, direct: [], resolvers: ["192.0.2.54"] } })).ok()).toBe(true);
-  await page.getByRole("button", { name: "Save network settings" }).click();
-  await expect(page.locator("main").getByRole("alert")).toContainText("Settings changed");
-  await page.getByRole("button", { name: "Reload current settings" }).click();
-  await expect(page.getByRole("status")).toContainText("Current settings loaded");
-  await expect(page.getByLabel("Resolver 1", { exact: true })).toHaveValue("203.0.113.53");
-  await page.getByRole("button", { name: "Save network settings" }).click();
-  await expect(page.getByRole("status")).toContainText("Saved.");
-  await page.getByRole("combobox", { name: "Network policy" }).selectOption("inherit");
-  await expect(page.getByLabel("Resolver 1", { exact: true })).toHaveValue("192.0.2.54");
-  page.once("dialog", dialog => dialog.dismiss());
-  await page.getByRole("link", { name: "Back to account", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/admin/users/${identity.id}/network$`));
-  await page.getByRole("button", { name: "Save network settings" }).click();
-  await expect(page.getByRole("status")).toContainText("Saved.");
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-  await page.screenshot({ path: info.outputPath("user-network-mobile.png") });
-  const saved = await (await page.request.get(path)).json();
-  expect(saved.mode).toBe("inherit"); expect(saved.override).toBeNull(); expect(saved.desired.resolvers).toEqual(["192.0.2.54"]);
-  const audit = await (await page.request.get(`/api/admin/audit-events?target=${identity.id}`)).json();
-  expect(JSON.stringify(audit)).toContain("network.user.update");
+test("real network templates preserve lost-reply identity and account defaults", async ({ page },info) => {
+ await page.setViewportSize({width:390,height:900});await page.goto("/admin/resources/network");
+ await page.getByLabel("Username",{exact:true}).fill("administrator");await page.getByLabel("Password",{exact:true}).fill("web-test-permanent-password");await page.getByRole("button",{name:"Sign in",exact:true}).click();
+ const card=page.locator("article").filter({has:page.getByRole("heading",{name:"Standard network",exact:true})});await card.getByRole("button",{name:"Edit",exact:true}).click();
+ await page.getByLabel("DNS resolvers",{exact:true}).fill("192.0.2.53");
+ await page.getByRole("button",{name:"Validate and review",exact:true}).click();
+ let lost=false;const requests:unknown[]=[];
+ await page.route("**/api/admin/resource-templates/network/network-default",async route=>{
+  const body=route.request().postDataJSON();if(route.request().method()==="PATCH"&&!body.preview){requests.push(body);if(!lost){lost=true;const response=await route.fetch();expect(response.ok()).toBe(true);await response.dispose();await route.abort("failed");return;}}await route.continue();
+ });
+ await page.getByRole("button",{name:"Confirm and save",exact:true}).click();await page.getByRole("button",{name:"Check original request",exact:true}).click();await expect(page.getByRole("button",{name:"Create template",exact:true})).toBeVisible();expect(requests).toHaveLength(2);expect(requests[0]).toEqual(requests[1]);
+ const templates=(await(await page.request.get("/api/admin/resource-templates/network")).json()).templates;expect(templates.find((t:{id:string})=>t.id==="network-default").network.resolvers).toEqual(["192.0.2.53"]);
+ const identity=await(await page.request.get("/api/auth/session")).json();await page.goto(`/admin/users/${identity.id}/configuration`);await chooseValue(page.getByRole("combobox",{name:"Network default",exact:true}), "network-default");await page.getByRole("button",{name:"Review administrator defaults",exact:true}).click();await page.getByRole("button",{name:"Confirm and save",exact:true}).click();await expect(page.getByRole("button",{name:"Review administrator defaults",exact:true})).toBeDisabled();await page.reload();await expect(page.getByRole("combobox",{name:"Network default",exact:true})).toHaveAttribute("data-value", "network-default");
+ await page.screenshot({path:info.outputPath("configuration-defaults-mobile.png")});
 });
 
 test("real resource editors preserve exact quantities and show retained usage to the owner", async ({ page, browser, baseURL }, info) => {
@@ -230,7 +190,7 @@ test("real resource editors preserve exact quantities and show retained usage to
     await expect(owner.getByRole("button", { name: "Open navigation", exact: true })).toBeVisible();
     for (let i = 0; i < 4; i++) expect((await owner.request.post("/api/projects", { data: { id: `resource-project-${i}`, title: `Resource ${i}` } })).status()).toBe(201);
     await page.goto(`/admin/groups/${group.id}/resources`);
-    await page.getByLabel("Persistent storage mode", { exact: true }).selectOption("explicit");
+    await chooseValue(page.getByRole("combobox", { name:"Persistent storage mode", exact: true }), "explicit");
     await page.getByLabel("Persistent storage default", { exact: true }).fill("9007199254740993");
     await page.getByLabel("Persistent storage ceiling", { exact: true }).fill("9007199254740994");
     await page.getByRole("button", { name: "Preview resource changes", exact: true }).click();
@@ -243,7 +203,7 @@ test("real resource editors preserve exact quantities and show retained usage to
     expect(policy.dimensions.persistent_bytes).toEqual({ default: "9007199254740993", ceiling: "9007199254740994" });
     const userPath = `/api/admin/users/${user.id}/resource-settings`;
     await page.goto(`/admin/users/${user.id}/resources`);
-    await page.getByLabel("Projects mode", { exact: true }).selectOption("explicit");
+    await chooseValue(page.getByRole("combobox", { name:"Projects mode", exact: true }), "explicit");
     await page.getByLabel("Projects requested", { exact: true }).fill("2");
     await page.getByRole("button", { name: "Preview resource changes", exact: true }).click();
     await expect(page.getByText("Usage overages: 0 → 1", { exact: true })).toBeVisible();
@@ -292,55 +252,13 @@ test("real resource editors preserve exact quantities and show retained usage to
   } finally { await ownerContext.close(); }
 });
 
-test("real runtime editor preserves concurrent slots and resolves the original save", async ({ page }, info) => {
-  await page.setViewportSize({ width: 390, height: 900 });
-  await page.goto("/admin/runtime");
-  await page.getByLabel("Username", { exact: true }).fill("administrator");
-  await page.getByLabel("Password", { exact: true }).fill("web-test-permanent-password");
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Default runtime environment", exact: true })).toBeVisible();
-  await page.getByLabel("Mount 1 destination", { exact: true }).fill("/etc/blocked");
-  await page.getByRole("button", { name: "Preview environment changes", exact: true }).click();
-  await expect(page.locator("main").getByRole("alert")).toContainText("Mount 1 destination: mount overlaps protected runtime path");
-  await page.getByLabel("Mount 1 destination", { exact: true }).fill("/workspaces/browser");
-  await page.getByRole("button", { name: "Preview environment changes", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Environment preview", exact: true })).toBeVisible();
-  const current = await (await page.request.get("/api/admin/runtime/default")).json();
-  const remote = { expected_revision: current.revision, sandbox_release: current.sandbox_release, mounts: [...current.mounts, { key: "remote-data", role: "data", destination: "/data/remote", storage: "owned", access: "read_write", source: { kind: "empty" }, capacity: { bytes: "1048576" } }] };
-  const impact = await page.request.post("/api/admin/runtime/default/preview", { data: remote }); expect(impact.ok()).toBe(true);
-  expect((await page.request.patch("/api/admin/runtime/default", { data: { ...remote, request_id: crypto.randomUUID(), expected_dependencies: (await impact.json()).expected_dependencies } })).ok()).toBe(true);
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Save default environment", exact: true }).click();
-  await expect(page.locator("main").getByRole("alert")).toContainText("dependencies changed");
-  await page.getByRole("button", { name: "Reload current environment", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Changed fields are retained");
-  await expect(page.getByLabel("Mount 1 destination", { exact: true })).toHaveValue("/workspaces/browser");
-  await expect(page.getByLabel("Mount 3 destination", { exact: true })).toHaveValue("/data/remote");
-  await page.getByRole("button", { name: "Preview environment changes", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Environment preview", exact: true })).toBeVisible();
-  let lost = false;
-  const requests: unknown[] = [];
-  await page.route("**/api/admin/runtime/default", async route => {
-    if (route.request().method() === "PATCH") {
-      requests.push(route.request().postDataJSON());
-      if (!lost) { lost = true; const response = await route.fetch(); expect(response.ok()).toBe(true); await response.dispose(); await route.abort("failed"); return; }
-    }
-    await route.continue();
-  });
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Save default environment", exact: true }).click();
-  await page.getByRole("button", { name: "Check original request", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Original environment change confirmed");
-  expect(requests).toHaveLength(2); expect(requests[0]).toEqual(requests[1]);
-  const saved = await (await page.request.get("/api/admin/runtime/default")).json();
-  expect(saved.mounts[0].destination).toBe("/workspaces/browser"); expect(saved.mounts[2].key).toBe("remote-data"); expect(saved.mounts[2].capacity.bytes).toBe("1048576");
-  await page.getByRole("button", { name: "Add data mount", exact: true }).click();
-  page.once("dialog", dialog => dialog.dismiss());
-  await page.getByRole("link", { name: "Users", exact: true }).click();
-  await expect(page).toHaveURL(/\/admin\/runtime$/);
-  await page.getByRole("button", { name: "Discard edits", exact: true }).click();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-  await page.screenshot({ path: info.outputPath("runtime-environment-mobile.png") });
+test("real environment templates validate mount paths and preserve reviewed saves", async ({page},info)=>{
+ await page.setViewportSize({width:390,height:900});await page.goto("/admin/resources/environment");await page.getByLabel("Username",{exact:true}).fill("administrator");await page.getByLabel("Password",{exact:true}).fill("web-test-permanent-password");await page.getByRole("button",{name:"Sign in",exact:true}).click();
+ await page.locator("article").filter({has:page.getByRole("heading",{name:"Standard environment",exact:true})}).getByRole("button",{name:"Edit",exact:true}).click();
+ await page.getByLabel("Mount path",{exact:true}).first().fill("/etc/blocked");await page.getByRole("button",{name:"Validate and review",exact:true}).click();await expect(page.locator("main").getByRole("alert")).toBeVisible();
+ await page.getByLabel("Mount path",{exact:true}).first().fill("/workspaces/browser");await page.getByRole("button",{name:"Validate and review",exact:true}).click();await page.getByRole("button",{name:"Confirm and save",exact:true}).click();await expect(page.getByRole("button",{name:"Create template",exact:true})).toBeVisible();
+ const templates=(await(await page.request.get("/api/admin/resource-templates/environment")).json()).templates;expect(templates.find((t:{id:string})=>t.id==="environment-default").environment.mounts[0].destination).toBe("/workspaces/browser");
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);await page.screenshot({path:info.outputPath("environment-templates-mobile.png")});
 });
 
 test("real Project administration is metadata-only and leaves an unbound Project cold", async ({ page }, info) => {

@@ -1,4 +1,4 @@
-/* Quiet text actions retain a persistent underline and keyboard focus. */
+/* Quiet actions use surface changes and keyboard focus without underlines. */
 :is(.project-shell, .public-share) :is(.schedules-page, .schedule-tool-card) :where(button:not(.selection-picker-trigger), .schedule-card-actions a) {
   min-height: 36px;
   max-width: 100%;
@@ -12,7 +12,7 @@
   line-height: 1.5;
   white-space: normal;
   overflow-wrap: anywhere;
-  text-decoration: underline;
+  text-decoration: none;
   text-decoration-color: color-mix(in srgb, var(--color-foreground) 30%, transparent);
   text-underline-offset: 4px;
   text-decoration-thickness: 1px;
@@ -54,8 +54,8 @@
 .schedule-sync-time { font-variant-numeric: tabular-nums; }
 .schedule-filters { padding: 0 20px 20px; display: grid; gap: 12px; }
 .schedule-status-filters { display: flex; flex-wrap: wrap; gap: 2px 14px; border-bottom: 1px solid var(--color-border); }
-.project-shell .schedules-page .schedule-status-filters button { min-width: 0; padding: 8px 0; border-radius: 0; border-bottom: 2px solid transparent; color: var(--color-foreground-muted); text-decoration: none; }
-.project-shell .schedules-page .schedule-status-filters button[aria-pressed="true"] { border-bottom-color: var(--color-foreground); color: var(--color-foreground); background: transparent; }
+.project-shell .schedules-page .schedule-status-filters button { min-width: 0; padding: 8px 10px; border-radius: 6px; border: 0; color: var(--color-foreground-muted); text-decoration: none; }
+.project-shell .schedules-page .schedule-status-filters button[aria-pressed="true"] { color: var(--color-foreground); background: var(--color-surface-muted); }
 .schedule-filters input { width: 100%; }
 .schedule-filter { display: flex; margin: 0; }
 .schedule-filter > :first-child { flex: 1; min-width: 0; }

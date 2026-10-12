@@ -33,7 +33,7 @@ export function AccountUsage() {
       <details><summary>{tr("Usage overages")} ({value.overages.length})</summary>{issues(value.overages)}</details>
       <details><summary>{tr("Default environment conflicts")} ({value.default_plan_issues.length})</summary>{issues(value.default_plan_issues)}</details>
       <details><summary>{tr("Saved Project conflicts")} ({value.saved_plan_conflicts.count})</summary>{value.saved_plan_conflicts.projects.map(project => <div key={project.project_id}><p>{project.project_id}</p>{issues(project.issues)}</div>)}{value.saved_plan_conflicts.truncated && <p>{tr("Showing the first 20 conflicting Projects.")}</p>}</details>
-      <details><summary>{tr("Network policy")}: {value.network.mode === "inherit" ? tr("Inherit") : tr("Complete override")}</summary><p>{tr("These rules apply on the next creation or resume. Running Projects retain their current policy.")}</p><ul>{value.network.desired.direct.map(rule => <li key={`${rule.cidr}-${rule.port}-${rule.protocol}`}>{rule.cidr} · {rule.port}/{rule.protocol.toUpperCase()}</li>)}</ul><p>{tr("DNS resolvers")}: {value.network.desired.resolvers.join(", ") || tr("None")}</p></details>
+      <details><summary>{tr("Network policy")}: {value.network.mode === "unresolved" ? tr("Not configured") : tr("Network for new projects")}</summary><p>{tr("Optional settings for new projects. Existing projects keep their configuration.")}</p><ul>{value.network.desired.direct.map(rule => <li key={`${rule.cidr}-${rule.port}-${rule.protocol}`}>{rule.cidr} · {rule.port}/{rule.protocol.toUpperCase()}</li>)}</ul><p>{tr("DNS resolvers")}: {value.network.desired.resolvers.join(", ") || tr("None")}</p></details>
     </>}
   </div>;
 }

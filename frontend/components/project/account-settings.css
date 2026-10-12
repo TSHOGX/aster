@@ -31,3 +31,46 @@
 .account-settings input, .account-settings select { font-size: 1rem; }
 
 .account-usage { overflow-wrap: anywhere; }.account-usage details { border-top: 1px solid var(--border); padding: .8rem 0; }.account-usage summary { cursor: pointer; line-height: 1.5; }.account-usage dl { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; font-size: .85rem; }.account-usage dd { margin: 0; }.account-usage ul { padding-left: 1.3rem; font-size: .85rem; }
+.advanced-settings { display: grid; gap: 1rem; margin-top: 1rem; }
+.advanced-settings fieldset { display: grid; gap: 1rem; border: 0; padding: 0; min-width: 0; }
+.account-settings .advanced-check { display: flex; align-items: center; gap: .6rem; }
+.account-settings .advanced-check input { width: auto; min-height: auto; }
+.advanced-settings details { margin-top: .75rem; }
+.advanced-settings summary { cursor: pointer; }
+.advanced-files ul { list-style: none; padding: 0; }
+.advanced-files li { display: flex; justify-content: space-between; gap: .5rem; padding: .25rem 0; }
+.advanced-files textarea { width: 100%; resize: vertical; font-family: monospace; background: var(--surface); color: var(--foreground); border: 1px solid var(--border); border-radius: .4rem; padding: .6rem; }
+
+.account-settings select { appearance: auto; padding-inline-end: 1.75rem; max-width: 100%; }
+.account-settings summary { cursor: pointer; line-height: 1.5; padding-block: .25rem; }
+.account-settings .settings-actions { align-items: center; }
+.account-settings .settings-actions > button { flex: 0 1 auto; width: auto; }
+.account-settings button { line-height: 1.4; }
+.advanced-settings { min-width: 0; }
+.advanced-settings > p:first-child { margin-top: 0; }
+.advanced-settings fieldset { margin: 0; }
+.advanced-settings > details { padding-top: 1rem; border-top: 1px solid var(--border); }
+.advanced-settings details > summary { font-weight: 500; margin-bottom: .75rem; }
+.advanced-settings details > label + label { margin-top: .85rem; }
+.account-settings .advanced-check { align-items: flex-start; line-height: 1.5; }
+.account-settings .advanced-check input { flex: 0 0 1.1rem; width: 1.1rem; height: 1.1rem; margin-top: .15rem; padding: 0; accent-color: var(--accent); }
+.account-settings .advanced-files { display: grid; gap: .9rem; padding-top: 1.25rem; margin-top: 1.25rem; border-top: 1px solid var(--border); min-width: 0; }
+.advanced-files ul { margin: 0; }
+.advanced-files li { flex-wrap: wrap; align-items: center; padding: .8rem 0; border-bottom: 1px solid var(--border); }
+.advanced-files li:first-child { border-top: 1px solid var(--border); }
+.advanced-files .advanced-file-name { justify-content: flex-start; min-width: 0; text-align: start; overflow-wrap: anywhere; max-width: 100%; }
+.advanced-files li > .settings-actions { margin-inline-start: auto; }
+.advanced-files a { display: inline-flex; align-items: center; min-height: 2.5rem; padding: .3rem .5rem; text-decoration: none; border-radius: .4rem; }
+.advanced-files .advanced-path { overflow-wrap: anywhere; font-family: ui-monospace, monospace; padding: .65rem .8rem; background: var(--surface-muted); border-radius: .4rem; margin: 0; }
+.account-settings .advanced-upload { min-width: 0; flex: 1 1 13rem; }
+.account-settings input[type="file"] { min-width: 0; max-width: 100%; padding: .35rem; font-size: .85rem; }
+.account-settings input[type="file"]::file-selector-button { font: inherit; border: 1px solid var(--border); border-radius: .3rem; padding: .35rem .6rem; margin-inline-end: .5rem; background: var(--surface-muted); color: var(--foreground); }
+.advanced-files textarea { font-size: .9rem; line-height: 1.6; }
+@media (max-width: 420px) {
+  .appearance-fields { grid-template-columns: minmax(0, 1fr); gap: .85rem; }
+  .account-settings > header { padding-inline: 1rem; }
+  .account-settings-body { padding-inline: 1rem; }
+  .advanced-files li > .settings-actions { margin-inline-start: 0; }
+}
+
+.advanced-files a:hover { background: var(--surface-muted); }

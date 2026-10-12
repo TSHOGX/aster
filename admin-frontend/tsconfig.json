@@ -30,6 +30,9 @@
       {
         "name": "next"
       }
+    ],
+    "typeRoots": [
+      "./node_modules/@types"
     ]
   },
   "include": [

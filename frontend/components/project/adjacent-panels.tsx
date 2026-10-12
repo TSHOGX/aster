@@ -1,4 +1,5 @@
 "use client";
+import { Select } from "@web/select";
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -89,14 +90,14 @@ export function SharePanel({
       )}
       <label>
         {tr("Agent Session")}
-        <select value={session} onChange={(e) => { setSession(e.target.value); setReader(""); setReaderAfter(""); setLink(""); }}>
+        <Select aria-label={tr("Agent Session")} value={session} onChange={(e) => { setSession(e.target.value); setReader(""); setReaderAfter(""); setLink(""); }}>
           <option value="">{tr("Choose a Session")}</option>
           {sessions.map((s) => (
             <option key={s.id} value={s.id}>
               {s.title}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
       <form onSubmit={event => {
         event.preventDefault();
@@ -107,10 +108,10 @@ export function SharePanel({
           <input value={query} maxLength={128} disabled={!canShare} onChange={event => { setQuery(event.target.value); setReader(""); }} />
         </label>
         <label>{tr("Reader account")}
-          <select value={reader} required disabled={!canShare} onChange={event => setReader(event.target.value)}>
+          <Select aria-label={tr("Reader account")} value={reader} required disabled={!canShare} onChange={event => setReader(event.target.value)}>
             <option value="">{tr("Choose an account")}</option>
             {candidates.map(account => <option key={account.id} value={account.id}>{account.display_name} (@{account.username})</option>)}
-          </select>
+          </Select>
         </label>
         <button disabled={!session || !canShare || !reader}>{tr("Grant conversation access")}</button>
       </form>
