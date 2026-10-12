@@ -1,4 +1,5 @@
 "use client";
+import { VolumeImports } from "./volume-imports";
 import { Select } from "@web/select";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -63,6 +64,8 @@ export function ResourceCenter({
   onDirty: (value: boolean) => void;
 }) {
   const section = sections.find((s) => s.id === raw) || sections[0];
+	const [importDirty,setImportDirty]=useState(false),[sharedDirty,setSharedDirty]=useState(false);
+	useEffect(()=>{if(section.id!=="volumes")return;onDirty(importDirty||sharedDirty);return()=>onDirty(false)},[section.id,importDirty,sharedDirty,onDirty]);
   return (
     <section>
       <header className="page-heading">
@@ -86,7 +89,8 @@ export function ResourceCenter({
         <Inventory kind="sandbox" />
       ) : section.id === "volumes" ? (
         <>
-          <SharedVolumes onDirty={onDirty} />
+          <VolumeImports onDirty={setImportDirty} />
+          <SharedVolumes onDirty={setSharedDirty} />
           <details className="panel">
             <summary>Initialization sources</summary>
             <Inventory kind="volume" />

@@ -13,7 +13,8 @@ buffers, then transfer sequential chunks; selecting the same file resumes an
 unfinished server session. Folder uploads report individual failures.
 
 Source content is always served as a download with `nosniff` and CSP sandbox.
-Text is decoded as inert editor data. Unsupported/binary files use download.
+Text is decoded as inert editor data. PNG/JPEG/GIF/WebP images up to 16 MiB use
+inert blob-backed image previews. PDF, SVG and other unsupported files use download.
 The application never renders uploaded HTML as a same-origin document.
 
 ```sh
