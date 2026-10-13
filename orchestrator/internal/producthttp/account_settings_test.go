@@ -73,6 +73,24 @@ func TestSelfSettingsRejectPrivilegesRestrictedSessionsAndStaleUpdates(t *testin
 	if got = perform("PATCH", "/api/me/preferences", token, "https://app", map[string]any{"expected_revision": 0, "accent": "green"}); got.Code != 409 {
 		t.Fatal(got.Code)
 	}
+	for _, language := range []string{"", "fr", "zh-CN"} {
+		if got := perform("PATCH", "/api/me/preferences", token, "https://app", map[string]any{"expected_revision": 1, "language": language}); got.Code != 422 {
+			t.Fatal(language, got.Code, got.Body.String())
+		}
+	}
+	got = perform("PATCH", "/api/me/preferences", token, "https://app", map[string]any{"expected_revision": 1, "language": "zh"})
+	if got.Code != 200 || !strings.Contains(got.Body.String(), `"language":"zh"`) || !strings.Contains(got.Body.String(), `"theme_mode":"dark"`) || !strings.Contains(got.Body.String(), `"accent":"blue"`) {
+		t.Fatal(got.Code, got.Body.String())
+	}
+	if got := perform("PATCH", "/api/me/preferences", token, "https://foreign", map[string]any{"expected_revision": 2, "language": "en"}); got.Code != 403 {
+		t.Fatal(got.Code)
+	}
+	if got := perform("PATCH", "/api/me/preferences", token, "https://app", map[string]any{"language": "en"}); got.Code != 422 {
+		t.Fatal(got.Code)
+	}
+	if got := perform("PATCH", "/api/me/preferences", token, "https://app", map[string]any{"expected_revision": 1, "language": "en"}); got.Code != 409 {
+		t.Fatal(got.Code)
+	}
 	got = perform("PATCH", "/api/me/profile", token, "https://app", map[string]any{"expected_revision": admin.Revision, "display_name": "Example Administrator"})
 	if got.Code != 200 || !strings.Contains(got.Body.String(), "Example Administrator") {
 		t.Fatal(got.Code, got.Body.String())

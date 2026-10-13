@@ -6,6 +6,10 @@ Aster supports one current application schema and protocol set. A historical or
 mismatched database is refused; startup does not migrate, convert or delete it.
 An unsupported transition needs an explicitly planned fresh installation.
 
+The account language preference is part of the current product schema. Builds
+without that field have a different schema identity; upgrading such an installation
+requires a separately planned fresh installation under the same compatibility policy.
+
 ## Inspect before upgrading
 
 Run the selected executable's `release-identity` with the intended configuration,

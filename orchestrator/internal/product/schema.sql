@@ -80,7 +80,8 @@ CREATE TABLE account_preferences (
  account_id TEXT PRIMARY KEY REFERENCES accounts(id),
  revision INTEGER NOT NULL CHECK(revision>0),
  theme_mode TEXT NOT NULL CHECK(theme_mode IN ('system','light','dark')),
- accent TEXT NOT NULL CHECK(accent IN ('neutral','blue','green','violet'))
+ accent TEXT NOT NULL CHECK(accent IN ('neutral','blue','green','violet')),
+ language TEXT NOT NULL DEFAULT 'system' CHECK(language IN ('system','zh','en'))
 );
 
 CREATE TABLE auth_sessions (

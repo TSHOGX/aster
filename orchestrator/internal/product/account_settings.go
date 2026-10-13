@@ -10,10 +10,12 @@ type AccountPreferences struct {
 	Revision  int64  `json:"revision"`
 	ThemeMode string `json:"theme_mode"`
 	Accent    string `json:"accent"`
+	Language  string `json:"language"`
 }
 type PreferenceChanges struct {
 	ThemeMode *string `json:"theme_mode,omitempty"`
 	Accent    *string `json:"accent,omitempty"`
+	Language  *string `json:"language,omitempty"`
 }
 type SelfProfile struct {
 	ID          string `json:"id"`
@@ -26,8 +28,8 @@ func profileOf(a Account) SelfProfile {
 	return SelfProfile{a.ID, a.Username, a.DisplayName, a.Revision}
 }
 func preferences(ctx context.Context, q queryer, account string) (AccountPreferences, error) {
-	p := AccountPreferences{ThemeMode: "system", Accent: "neutral"}
-	err := q.QueryRowContext(ctx, `SELECT revision,theme_mode,accent FROM account_preferences WHERE account_id=?`, account).Scan(&p.Revision, &p.ThemeMode, &p.Accent)
+	p := AccountPreferences{ThemeMode: "system", Accent: "neutral", Language: "system"}
+	err := q.QueryRowContext(ctx, `SELECT revision,theme_mode,accent,language FROM account_preferences WHERE account_id=?`, account).Scan(&p.Revision, &p.ThemeMode, &p.Accent, &p.Language)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, nil
 	}
@@ -51,7 +53,7 @@ func (s *Store) AccountPreferences(ctx context.Context, token string) (AccountPr
 	return preferences(ctx, s.reader, session.Account.ID)
 }
 func (s *Store) UpdateAccountPreferences(ctx context.Context, token string, expected int64, changes PreferenceChanges) (AccountPreferences, error) {
-	if expected < 0 || changes.ThemeMode == nil && changes.Accent == nil {
+	if expected < 0 || changes.ThemeMode == nil && changes.Accent == nil && changes.Language == nil {
 		return AccountPreferences{}, Admission("preferences_invalid", ErrInvalid)
 	}
 	if changes.ThemeMode != nil && *changes.ThemeMode != "system" && *changes.ThemeMode != "light" && *changes.ThemeMode != "dark" {
@@ -59,6 +61,9 @@ func (s *Store) UpdateAccountPreferences(ctx context.Context, token string, expe
 	}
 	if changes.Accent != nil && *changes.Accent != "neutral" && *changes.Accent != "blue" && *changes.Accent != "green" && *changes.Accent != "violet" {
 		return AccountPreferences{}, Admission("accent_invalid", ErrInvalid)
+	}
+	if changes.Language != nil && *changes.Language != "system" && *changes.Language != "zh" && *changes.Language != "en" {
+		return AccountPreferences{}, Admission("language_invalid", ErrInvalid)
 	}
 	var result AccountPreferences
 	err := s.write(ctx, func(tx *sql.Tx) error {
@@ -79,8 +84,11 @@ func (s *Store) UpdateAccountPreferences(ctx context.Context, token string, expe
 		if changes.Accent != nil {
 			result.Accent = *changes.Accent
 		}
+		if changes.Language != nil {
+			result.Language = *changes.Language
+		}
 		result.Revision++
-		_, err = tx.ExecContext(ctx, `INSERT INTO account_preferences(account_id,revision,theme_mode,accent) VALUES(?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET revision=excluded.revision,theme_mode=excluded.theme_mode,accent=excluded.accent`, session.Account.ID, result.Revision, result.ThemeMode, result.Accent)
+		_, err = tx.ExecContext(ctx, `INSERT INTO account_preferences(account_id,revision,theme_mode,accent,language) VALUES(?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET revision=excluded.revision,theme_mode=excluded.theme_mode,accent=excluded.accent,language=excluded.language`, session.Account.ID, result.Revision, result.ThemeMode, result.Accent, result.Language)
 		return err
 	})
 	return result, err

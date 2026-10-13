@@ -15,7 +15,7 @@ func TestPreferencesInitializeOnceAndPreserveUnrelatedFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial, err := s.AccountPreferences(ctx, token)
-	if err != nil || initial != (AccountPreferences{ThemeMode: "system", Accent: "neutral"}) {
+	if err != nil || initial != (AccountPreferences{ThemeMode: "system", Accent: "neutral", Language: "system"}) {
 		t.Fatal(initial, err)
 	}
 	dark, violet := "dark", "violet"
@@ -104,5 +104,43 @@ func TestSelfSettingsUseCurrentSessionAndAreIndependentOfMembership(t *testing.T
 	}
 	if _, err = s.UpdateSelfProfile(ctx, token, profile.Revision, "Forged name"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatal(err)
+	}
+}
+
+func TestLanguagePreferencesValidateAndPreserveAppearance(t *testing.T) {
+	ctx := context.Background()
+	s, _ := accountStore(t)
+	_, token, err := s.Authenticate(ctx, "admin", "permanent-admin-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, language := range []string{"", "zh-CN", "fr", "SYSTEM"} {
+		if _, err := s.UpdateAccountPreferences(ctx, token, 0, PreferenceChanges{Language: &language}); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("accepted language %q: %v", language, err)
+		}
+	}
+	dark, violet, zh, en, system := "dark", "violet", "zh", "en", "system"
+	first, err := s.UpdateAccountPreferences(ctx, token, 0, PreferenceChanges{ThemeMode: &dark, Accent: &violet, Language: &zh})
+	if err != nil || first.Language != zh {
+		t.Fatal(first, err)
+	}
+	second, err := s.UpdateAccountPreferences(ctx, token, first.Revision, PreferenceChanges{Language: &en})
+	if err != nil || second.Language != en || second.ThemeMode != dark || second.Accent != violet {
+		t.Fatal(second, err)
+	}
+	if _, err := s.UpdateAccountPreferences(ctx, token, first.Revision, PreferenceChanges{Language: &zh}); !errors.Is(err, ErrConflict) {
+		t.Fatal("stale language update", err)
+	}
+	third, err := s.UpdateAccountPreferences(ctx, token, second.Revision, PreferenceChanges{Accent: &violet})
+	if err != nil || third.Language != en {
+		t.Fatal("appearance update lost language", third, err)
+	}
+	last, err := s.UpdateAccountPreferences(ctx, token, third.Revision, PreferenceChanges{Language: &system})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.AccountPreferences(ctx, token)
+	if err != nil || stored != last || stored.Language != system {
+		t.Fatal(stored, err)
 	}
 }

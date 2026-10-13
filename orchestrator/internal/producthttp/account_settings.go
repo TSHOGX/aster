@@ -36,6 +36,7 @@ func (a *Authentication) preferences(w http.ResponseWriter, r *http.Request) {
 		ExpectedRevision *int64  `json:"expected_revision"`
 		ThemeMode        *string `json:"theme_mode"`
 		Accent           *string `json:"accent"`
+		Language         *string `json:"language"`
 	}
 	if !decode(w, r, 4096, &body) {
 		return
@@ -44,7 +45,7 @@ func (a *Authentication) preferences(w http.ResponseWriter, r *http.Request) {
 		settingsFailure(w, product.ErrInvalid)
 		return
 	}
-	result, err := a.Store.UpdateAccountPreferences(r.Context(), requestToken(r), *body.ExpectedRevision, product.PreferenceChanges{ThemeMode: body.ThemeMode, Accent: body.Accent})
+	result, err := a.Store.UpdateAccountPreferences(r.Context(), requestToken(r), *body.ExpectedRevision, product.PreferenceChanges{ThemeMode: body.ThemeMode, Accent: body.Accent, Language: body.Language})
 	if err != nil {
 		settingsFailure(w, err)
 		return
