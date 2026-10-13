@@ -33,6 +33,11 @@ func TestFrozenSharesFrontierFilesRotationAndCleanup(t *testing.T) {
 	_, err := s.CreateSession(ctx, scope, "shared", "Conversation")
 	must(t, err)
 	seedMessage(t, s, scope, "shared", "before", "before publication")
+	var completedTurn string
+	must(t, s.reader.QueryRow(`SELECT turn_id FROM messages WHERE id='before'`).Scan(&completedTurn))
+	summary, _ := json.Marshal(TurnSummary{ID: completedTurn, State: "completed", Sequence: 1})
+	_, err = s.db.Exec(`INSERT INTO conversation_turns(session_id,turn_id,sequence,revision,data) VALUES('shared',?,1,1,?)`, completedTurn, string(summary))
+	must(t, err)
 	must(t, os.WriteFile(filepath.Join(backend.root, "selected"), []byte("frozen bytes"), 0600))
 	service := &Shares{Store: s, Files: files, Directory: t.TempDir()}
 	share, token, err := service.Create(ctx, scope, "shared", []string{"selected"}, time.Now().Add(time.Hour))

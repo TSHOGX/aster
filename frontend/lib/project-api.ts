@@ -13,6 +13,7 @@ export type Project = {
   failure?: string;
 };
 export type AgentSession = {
+ imported_files?: Record<string,string>;
   control_revision: number;
   id: string;
   project_id: string;
@@ -163,6 +164,8 @@ export type Conversation = {
   revision: number;
 };
 export type Share = {
+ allow_download?: boolean;
+ access_revision?: number;
  suspended?: boolean;
   id: string;
   title: string;

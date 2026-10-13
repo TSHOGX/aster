@@ -2,10 +2,12 @@ package product
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 )
 
 type ConversationReader struct {
+	ReaderAccess
 	Suspended   bool   `json:"suspended"`
 	ID          string `json:"id"`
 	Username    string `json:"username"`
@@ -54,7 +56,7 @@ func (s *Store) ConversationReaders(ctx context.Context, scope Scope, session, a
 	if len(after) > 256 {
 		return nil, ErrInvalid
 	}
-	rows, err := s.reader.QueryContext(ctx, `SELECT a.id,a.username,a.display_name,a.status,g.suspended FROM conversation_grants g JOIN accounts a ON a.id=g.reader_id WHERE g.session_id=? AND g.revoked=0 AND a.id>? ORDER BY a.id LIMIT ?`, session, after, pageSize(limit))
+	rows, err := s.reader.QueryContext(ctx, `SELECT a.id,a.username,a.display_name,a.status,g.suspended,g.revision,g.paths,g.allow_download FROM conversation_grants g JOIN accounts a ON a.id=g.reader_id WHERE g.session_id=? AND g.revoked=0 AND a.id>? ORDER BY a.id LIMIT ?`, session, after, pageSize(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +64,11 @@ func (s *Store) ConversationReaders(ctx context.Context, scope Scope, session, a
 	out := []ConversationReader{}
 	for rows.Next() {
 		var reader ConversationReader
-		if err := rows.Scan(&reader.ID, &reader.Username, &reader.DisplayName, &reader.Status, &reader.Suspended); err != nil {
+		var paths string
+		if err := rows.Scan(&reader.ID, &reader.Username, &reader.DisplayName, &reader.Status, &reader.Suspended, &reader.Revision, &paths, &reader.AllowDownload); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(paths), &reader.Paths); err != nil {
 			return nil, err
 		}
 		out = append(out, reader)

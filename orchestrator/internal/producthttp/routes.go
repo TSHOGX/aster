@@ -52,6 +52,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/search", s.search)
 	mux.HandleFunc("GET /api/notifications", s.notifications)
 	mux.HandleFunc("POST /api/notifications/{notification}/read", s.readNotification)
+	s.receivedRoutes(mux)
 	mux.HandleFunc("GET /api/conversations", s.sharedConversations)
 	mux.HandleFunc("GET /api/conversations/{session}", s.sharedConversation)
 	mux.HandleFunc("GET /api/conversations/{session}/messages", s.conversationMessages)
@@ -64,6 +65,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/projects/{project}/sessions/{session}/readers/{reader}", s.revokeConversation)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/shares", s.createShare)
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/shares", s.listShares)
+	mux.HandleFunc("PATCH /api/projects/{project}/shares/{share}", s.updatePublicPolicy)
 	mux.HandleFunc("DELETE /api/projects/{project}/shares/{share}", s.revokeShare)
 	mux.HandleFunc("POST /api/projects/{project}/shares/{share}/reactivate", s.reactivateShare)
 	mux.HandleFunc("POST /api/projects/{project}/shares/{share}/rotate", s.rotateShare)
@@ -126,6 +128,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{project}/terminals/{terminal}/attach", s.attachTerminal)
 
 	public := http.NewServeMux()
+	s.publicViewRoutes(public)
 	public.HandleFunc("GET /api/shared/{token}", s.publicShare)
 	public.HandleFunc("GET /api/shared/{token}/messages", s.publicMessages)
 	public.HandleFunc("GET /api/shared/{token}/files", s.publicFile)

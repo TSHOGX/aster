@@ -134,6 +134,7 @@ export function TurnView({
   targetMessage,
   targetItem = "",
   targetItemOpen = false,
+  shared = false,
 }: {
   turn: ConversationTurn;
   files: readonly string[];
@@ -146,6 +147,7 @@ export function TurnView({
   targetMessage: string;
   targetItem?: string;
   targetItemOpen?: boolean;
+  shared?: boolean;
 }) {
   const tr = useT();
   const final = finalItems(turn);
@@ -175,8 +177,8 @@ export function TurnView({
     return value === "up" || value === "down" ? value : null;
   });
   const users = turn.items.filter((i) => i.kind === "user");
-  const receipts=turn.items.flatMap(item=>{const id=scheduleReceiptID(item,project);return id ? [{key:item.id,id}] : [];});
-  const body = turn.items.filter((i) => i.kind !== "user" && !scheduleReceiptID(i,project));
+  const receipts=shared ? [] : turn.items.flatMap(item=>{const id=scheduleReceiptID(item,project);return id ? [{key:item.id,id}] : [];});
+  const body = turn.items.filter((i) => i.kind !== "user" && (shared || !scheduleReceiptID(i,project)));
   const finalIDs = new Set(final.map((i) => i.id));
   const intermediate = body.filter((i) => !finalIDs.has(i.id));
   const targetInHistory = intermediate.some(

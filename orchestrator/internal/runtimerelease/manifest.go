@@ -31,10 +31,13 @@ const NodeVersion = "24.15.0"
 // ReaderProtocol is the workspace reader capability required by this release.
 // Keep release inspection independent of guest filesystem implementation.
 const ReaderProtocol = 3
+const HistoryProtocol = 1
+const ManifestVersion = 6
 const ManifestPath = "/etc/project-runtime/manifest.json"
 const NativeRoot = "/usr/local/lib/node_modules"
 
 type Manifest struct {
+	HistoryProtocol  int               `json:"history_protocol"`
 	Mounts           MountContract     `json:"mounts"`
 	ScheduleProtocol int               `json:"schedule_protocol"`
 	Version          int               `json:"version"`
@@ -97,7 +100,7 @@ func Load(reader io.Reader, expected string) (Manifest, error) {
 	if err != nil || !ValidDigest(expected) || digest != expected {
 		return manifest, errors.New("runtime manifest does not match its release digest")
 	}
-	if manifest.Version != 5 || manifest.ScheduleProtocol != ScheduleProtocol || manifest.NativeProtocol != NativeProtocol || manifest.ReaderProtocol != ReaderProtocol || manifest.EngineModule != EngineModule || manifest.EngineRevision != EngineRevision || manifest.AgentProtocol != agentwire.Version || manifest.PiPackage != PiPackage || manifest.PiVersion != PiVersion || manifest.PiIntegrity != PiIntegrity || manifest.NodeVersion != NodeVersion || !ValidDigest(manifest.NativeTree) {
+	if manifest.Version != ManifestVersion || manifest.HistoryProtocol != HistoryProtocol || manifest.ScheduleProtocol != ScheduleProtocol || manifest.NativeProtocol != NativeProtocol || manifest.ReaderProtocol != ReaderProtocol || manifest.EngineModule != EngineModule || manifest.EngineRevision != EngineRevision || manifest.AgentProtocol != agentwire.Version || manifest.PiPackage != PiPackage || manifest.PiVersion != PiVersion || manifest.PiIntegrity != PiIntegrity || manifest.NodeVersion != NodeVersion || !ValidDigest(manifest.NativeTree) {
 		return manifest, errors.New("incompatible Project runtime release")
 	}
 	if err = manifest.Mounts.Validate(); err != nil {
@@ -269,7 +272,7 @@ func Generate(root string) (Manifest, error) {
 	if err = mounts.ValidateDestination("runtime", "/runtime"); err != nil {
 		return Manifest{}, err
 	}
-	manifest := Manifest{Version: 5, Mounts: mounts, ScheduleProtocol: ScheduleProtocol, NativeProtocol: NativeProtocol, ReaderProtocol: ReaderProtocol, EngineModule: EngineModule, EngineRevision: EngineRevision, AgentProtocol: agentwire.Version, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: PiPackage, PiVersion: PiVersion, PiIntegrity: PiIntegrity, NodeVersion: NodeVersion, Files: map[string]string{}}
+	manifest := Manifest{Version: ManifestVersion, HistoryProtocol: HistoryProtocol, Mounts: mounts, ScheduleProtocol: ScheduleProtocol, NativeProtocol: NativeProtocol, ReaderProtocol: ReaderProtocol, EngineModule: EngineModule, EngineRevision: EngineRevision, AgentProtocol: agentwire.Version, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: PiPackage, PiVersion: PiVersion, PiIntegrity: PiIntegrity, NodeVersion: NodeVersion, Files: map[string]string{}}
 	packagePath, err := resolve(root, NativeRoot+"/"+PiPackage+"/package.json")
 	if err != nil {
 		return manifest, err

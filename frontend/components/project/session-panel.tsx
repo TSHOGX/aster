@@ -12,9 +12,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import { ArrowDown, ArrowUp, CornerUpRight, Pause, Play, Square, X } from "lucide-react";
+import { ownedFileSource } from "@/lib/file-source";
 import { ConversationRepository } from "@/lib/conversation-repository";
 import { TurnNavigator } from "./turn-navigator";
-import { TurnView } from "./turn-view";
+import { ConversationReader } from "./conversation-reader";
 import { conversationTurns } from "@/lib/conversation-turns";
 import {
   latestReadingBookmark,
@@ -508,6 +509,8 @@ export function SessionPanel({
     remember(key, draft);
   }, [draft, key]);
   const current = view.head?.session || session;
+  const importedMapKey=JSON.stringify(current.imported_files||{});
+  const fileSource=useMemo(()=>ownedFileSource(session.project_id,JSON.parse(importedMapKey)),[session.project_id,importedMapKey]);
   const appliedFrontier = view.applied_source_frontier;
   const loadQueue = useCallback(async (after = 0) => {
     const request = ++queueRequest.current;
@@ -793,6 +796,7 @@ export function SessionPanel({
       aria-label={`Agent ${current.title}`}
       data-session-id={session.id}
     >
+      {current.imported_files && Object.entries(current.imported_files).some(([,destination])=>!destination) && <p className="list-hint">{tr("Not copied")}: {Object.entries(current.imported_files).filter(([,destination])=>!destination).map(([path])=>path).join(", ")}</p>}
       {error || view.error || current.failure ? (
         <p className="notice error" role="alert">
           {error || view.error || current.failure}
@@ -970,7 +974,9 @@ export function SessionPanel({
               }
               if (path) {
                 event.preventDefault();
-                onFile(path);
+                const mapped=current.imported_files?.[path];
+                if (mapped === "") setError(tr("This file was not copied."));
+                else onFile(mapped || path);
               }
             }
           }}
@@ -997,10 +1003,9 @@ export function SessionPanel({
                 </p>
               </div>
             )}
-            {turns.map((turn) => (
-              <TurnView
-                key={turn.id}
-                turn={turn}
+            {<ConversationReader
+                fileSource={fileSource}
+                turns={turns}
                 files={workspaceFiles}
                 activeRuns={activeRuns}
                 loadMessage={(id) => repository.messageText(id)}
@@ -1015,8 +1020,7 @@ export function SessionPanel({
                 targetItemOpen={
                   !initialBookmark.follow && initialBookmark.expanded
                 }
-              />
-            ))}
+              />}
             {loadingNewer && (
               <p className="history-loading" role="status">
                 {tr("Loading…")}

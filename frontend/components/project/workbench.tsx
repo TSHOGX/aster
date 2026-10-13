@@ -57,7 +57,8 @@ import { useWorkspaceData } from "./workspace-data";
 import { ProjectPicker } from "./project-picker";
 import { ProjectWorkspace } from "./workspace";
 import { Inbox, SearchPanel } from "./adjacent-panels";
-import { SharedConversations } from "./shared-conversations";
+import { SharedWorkspace } from "./shared-workspace";
+import { SharedNavigation } from "./shared-navigation";
 import { Schedules } from "./schedules";
 import "./workbench.css";
 import "./schedules.css";
@@ -394,7 +395,7 @@ function Application({
         )
           void navigate(
             nav.session
-              ? globalNavigation("shared", nav.session)
+              ? { ...globalNavigation("shared", nav.session), message: nav.message }
               : readNavigation(""),
             true,
           );
@@ -406,7 +407,7 @@ function Application({
   const selected = data.sessions[nav.project]?.find(
     (s) => s.id === nav.session,
   );
-  const open = (project: string, session = "", message = "") => {
+  const open = useCallback((project: string, session = "", message = "") => {
     const pref = readWorkspace(actor, project);
     const target = session || pref.activeSessionId;
     if (target) {
@@ -423,7 +424,7 @@ function Application({
       draft: !target,
       history: false,
     });
-  };
+  },[actor,navigate]);
   const act = async (fn: () => Promise<unknown>) => {
     data.setError("");
     try {
@@ -696,14 +697,9 @@ function Application({
             <Clock3 size={18} />
             {tr("Scheduled")}
           </button>
-          <button
-            aria-current={nav.view === "shared" ? "page" : undefined}
-            onClick={() => page("shared")}
-          >
-            <MessageSquare size={18} />
-            {tr("Shared with me")}
-          </button>
+
         </nav>
+        <SharedNavigation onOpenCopy={open} selected={nav.view === "shared" ? nav.conversation || "" : ""} reveal={nav.view === "shared"} onSelect={id => void navigate(globalNavigation("shared", id))} />
         <div className="sidebar-label">
           <span>{tr("Projects")}</span>
           <IconButton
@@ -920,10 +916,7 @@ function Application({
         ) : nav.view === "inbox" ? (
           <Inbox onOpen={open} />
         ) : nav.view === "shared" ? (
-          <SharedConversations
-            selected={nav.conversation || ""}
-            onSelect={(id) => void navigate(globalNavigation("shared", id))}
-          />
+          <SharedWorkspace onCopied={open} key={nav.conversation} selected={nav.conversation || ""} actor={actor} targetMessage={nav.message} />
         ) : nav.view === "schedules" ? (
           <Schedules
             projects={data.projects}

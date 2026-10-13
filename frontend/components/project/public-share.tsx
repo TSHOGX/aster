@@ -1,102 +1,89 @@
 "use client";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { displayName } from "@web/brand";
+import { api, encode } from "@/lib/project-api";
 import { useT } from "@/lib/i18n";
-import { useEffect, useState } from "react";
-import { api, encode, type Message, type Share } from "@/lib/project-api";
-import { MarkdownView } from "@/components/workbench/markdown-view";
-import { FilePreview } from "./file-preview";
+import type { ConversationSource } from "@/lib/conversation-source";
 import { ResourceProvider } from "./resource-provider";
+import { SharedReader } from "./shared-workspace";
 import "./workbench.css";
-import "./schedules.css";
 export function PublicShare({ token }: { token: string }) {
-  return <ResourceProvider key={token} actor="public-share"><ShareContent token={token} /></ResourceProvider>;
+  return (
+    <ResourceProvider key={token} actor="public-share">
+      <ShareContent token={token} />
+    </ResourceProvider>
+  );
 }
 function ShareContent({ token }: { token: string }) {
   const tr = useT();
-  const [share, setShare] = useState<Share | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [after, setAfter] = useState(0);
-  const [selected, setSelected] = useState("");
+  const [metadata, setMetadata] = useState<{
+    id: string;
+    can_copy?: boolean;
+    title: string;
+    files: { path: string }[];
+    allow_download: boolean;
+    access_revision: number;
+    expires_at: string;
+  }>();
+  const [attempt, setAttempt] = useState(0);
   const [error, setError] = useState("");
+  const reload = useCallback(() => setAttempt((n) => n + 1), []);
   useEffect(() => {
     const abort = new AbortController();
-    void Promise.all([
-      api<Share>(`/api/shared/${encode(token)}`, { signal: abort.signal }),
-      api<{
-        messages: Message[];
-      }>(`/api/shared/${encode(token)}/messages?after=${after}&limit=100`, {
-        signal: abort.signal,
-      }),
-    ])
-      .then(([share, response]) => {
-        setShare(share);
-        setMessages(response.messages);
+    void api<NonNullable<typeof metadata>>(`/api/shared/${encode(token)}`, {
+      signal: abort.signal,
+    })
+      .then((value) => {
+        if (!abort.signal.aborted) setMetadata(value);
       })
       .catch((e) => {
         if (!abort.signal.aborted) {
-          setShare(null);
-          setMessages([]);
-          setError(
-            e instanceof Error ? e.message : "This share is unavailable.",
-          );
+          setMetadata(undefined);
+          setError(String(e));
         }
       });
     return () => abort.abort();
-  }, [token, after]);
-  const url = `/api/shared/${encode(token)}/files?path=${encode(selected)}`;
+  }, [token, attempt]);
+  const source = useMemo<ConversationSource | undefined>(
+    () =>
+      metadata
+        ? {
+            kind: "publicSnapshot",
+            authorityRevision: metadata.access_revision,
+            key: `public:${metadata.id}:${metadata.access_revision}`,
+            session: metadata.id,
+            base: `/api/shared/${encode(token)}`,
+            events: `/api/shared/${encode(token)}/events`,
+            capabilities: {
+              read: true,
+              edit: false,
+              run: false,
+              copy: metadata.can_copy !== false,
+              download: metadata.allow_download,
+            },
+          }
+        : undefined,
+    [metadata, token],
+  );
   return (
-    <main className="public-share">
-      <header>
-        <small>
-          {displayName} · {tr("Shared snapshot")}
-        </small>
-        <h1>{share?.title || tr("Shared conversation")}</h1>
-        <p>{tr("A frozen conversation and its selected files.")}</p>
+    <main className="public-share-reader">
+      <header className="public-share-brand">
+        <small>{displayName}</small>
       </header>
-      {error && (
-        <p className="notice error" role="alert">
-          {error}
-        </p>
-      )}
-      {messages.map((message) => (
-        <article className={`chat-message ${message.role}`} key={message.id}>
-          <small>{message.role}</small>
-          <MarkdownView content={message.content} />
-        </article>
-      ))}
-      <div className="row-actions">
-        {after > 0 && (
-          <button onClick={() => setAfter(0)}>{tr("First messages")}</button>
-        )}
-        {messages.length === 100 && (
-          <button onClick={() => setAfter(messages.at(-1)?.sequence || 0)}>
-            {tr("Next messages")}
-          </button>
-        )}
-      </div>
-      {share?.files.length ? (
-        <section>
-          <h2>{tr("Frozen files")}</h2>
-          <div className="row-actions">
-            {share.files.map((file) => (
-              <button key={file.path} onClick={() => setSelected(file.path)}>
-                {file.path}
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
-      {selected && share && (
-        <section className="selected-file">
-          <header className="panel-heading">
-            <strong>{selected}</strong>
-            <a href={url} download>
-              {tr("Download")}
-            </a>
-            <button onClick={() => setSelected("")}>{tr("Close file")}</button>
-          </header>
-          <FilePreview key={selected} project={`shared:${token}`} path={selected} href={url} downloadHref={url} />
-        </section>
+      {metadata && source ? (
+        <SharedReader
+          actor="public"
+          source={source}
+          title={metadata.title}
+          attribution={`${tr("Shared snapshot")} · ${tr("Expires")} ${new Date(metadata.expires_at).toLocaleString()}`}
+          paths={metadata.files.map((f) => f.path)}
+          onMetadata={reload}
+        />
+      ) : (
+        <div className="empty-state" role={error ? "alert" : "status"}>
+          {error || tr("Loading…")}
+          {error && <button onClick={reload}>{tr("Retry")}</button>}
+        </div>
       )}
     </main>
   );

@@ -72,6 +72,13 @@ func (c *ChildRetirement) Step(ctx context.Context, child Child) error {
 		for _, statement := range []string{
 			`DELETE FROM notification_reads WHERE notification_id IN (SELECT id FROM notifications WHERE session_id=?)`,
 			`DELETE FROM notifications WHERE session_id=?`,
+			`DELETE FROM conversation_bundles WHERE id IN (SELECT bundle_id FROM shares WHERE session_id=?)`,
+			`DELETE FROM bundle_items WHERE bundle_id IN (SELECT bundle_id FROM session_imports WHERE session_id=?)`,
+			`DELETE FROM bundle_messages WHERE bundle_id IN (SELECT bundle_id FROM session_imports WHERE session_id=?)`,
+			`DELETE FROM bundle_turns WHERE bundle_id IN (SELECT bundle_id FROM session_imports WHERE session_id=?)`,
+			`UPDATE conversation_bundles SET title='Deleted conversation' WHERE id IN (SELECT bundle_id FROM session_imports WHERE session_id=?)`,
+			`DELETE FROM session_imports WHERE session_id=?`,
+			`UPDATE conversation_copies SET state='canceled',title='',paths='[]',source_paths='[]',files='[]',error='' WHERE target_session=?`,
 			`DELETE FROM share_files WHERE share_id IN (SELECT id FROM shares WHERE session_id=?)`,
 			`DELETE FROM shares WHERE session_id=?`,
 			`DELETE FROM schedule_runs WHERE session_id=?`,

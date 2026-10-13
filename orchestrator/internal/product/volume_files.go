@@ -34,7 +34,7 @@ type volumePage struct {
 // No reader starts compute or adds a durable activity row. The lane is released
 // once a capture is complete, independently of its HTTP consumer's lifetime.
 func (w *WorkspaceReader) pausedVolume(ctx context.Context, scope Scope) (Resources, context.Context, func(), func(), bool, error) {
-	p, err := ownedProject(ctx, w.Store.reader, scope)
+	p, err := fileReadProject(ctx, w.Store.reader, scope)
 	if err != nil {
 		return Resources{}, nil, nil, nil, true, err
 	}
@@ -68,14 +68,14 @@ func (w *WorkspaceReader) pausedVolume(ctx context.Context, scope Scope) (Resour
 		releaseWork()
 		return Resources{}, nil, nil, nil, true, err
 	}
-	p, err = ownedProject(ctx, w.Store.reader, scope)
+	p, err = fileReadProject(ctx, w.Store.reader, scope)
 	if err != nil {
 		return fail(err)
 	}
 	if p.State != "paused" && p.State != "created" && fileMount(ctx) == "" {
 		return fail(ErrPending)
 	}
-	r, err := w.Store.Resources(ctx, scope)
+	r, err := w.readResources(ctx, scope)
 	if errors.Is(err, ErrNotFound) {
 		r = Resources{ProjectID: scope.ProjectID}
 		err = nil
@@ -171,14 +171,14 @@ func volumeFileError(err error) error {
 	return err
 }
 func (w *WorkspaceReader) validateVolume(ctx context.Context, scope Scope, r Resources) error {
-	p, err := ownedProject(ctx, w.Store.reader, scope)
+	p, err := fileReadProject(ctx, w.Store.reader, scope)
 	if err != nil {
 		return err
 	}
 	if p.State == "deleting" || p.State == "deleted" {
 		return ErrDeleting
 	}
-	current, err := w.Store.Resources(ctx, scope)
+	current, err := w.readResources(ctx, scope)
 	if err != nil {
 		return err
 	}
@@ -317,7 +317,7 @@ func (w *WorkspaceReader) capturePaused(ctx context.Context, scope Scope, r Reso
 			free()
 		}
 	}()
-	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesRead); err != nil {
+	if _, err := fileReadAction(ctx, w.Store.reader, scope, ActionFilesRead); err != nil {
 		return nil, err
 	}
 	if r.VolumeForRole("workspace") == "" {
@@ -383,7 +383,7 @@ func (w *WorkspaceReader) capturePaused(ctx context.Context, scope Scope, r Reso
 	if err = w.validateVolume(ctx, scope, r); err != nil {
 		return nil, err
 	}
-	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesRead); err != nil {
+	if _, err := fileReadAction(ctx, w.Store.reader, scope, ActionFilesRead); err != nil {
 		return nil, err
 	}
 	captured, err := os.Open(fmt.Sprintf("/proc/self/fd/%d", file.Fd()))

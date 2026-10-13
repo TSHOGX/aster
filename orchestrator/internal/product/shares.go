@@ -21,16 +21,19 @@ import (
 )
 
 type Share struct {
-	Suspended bool         `json:"suspended"`
-	ID        string       `json:"id"`
-	ProjectID string       `json:"project_id"`
-	SessionID string       `json:"session_id"`
-	Title     string       `json:"title"`
-	Frontier  int64        `json:"frontier"`
-	State     string       `json:"state"`
-	ExpiresAt string       `json:"expires_at"`
-	CreatedAt string       `json:"created_at"`
-	Files     []SharedFile `json:"files"`
+	AllowDownload  bool         `json:"allow_download"`
+	AccessRevision int64        `json:"access_revision"`
+	BundleID       string       `json:"-"`
+	Suspended      bool         `json:"suspended"`
+	ID             string       `json:"id"`
+	ProjectID      string       `json:"project_id"`
+	SessionID      string       `json:"session_id"`
+	Title          string       `json:"title"`
+	Frontier       int64        `json:"frontier"`
+	State          string       `json:"state"`
+	ExpiresAt      string       `json:"expires_at"`
+	CreatedAt      string       `json:"created_at"`
+	Files          []SharedFile `json:"files"`
 }
 type SharedFile struct {
 	Path   string `json:"path"`
@@ -38,10 +41,10 @@ type SharedFile struct {
 	Size   int64  `json:"size"`
 }
 
-const shareColumns = `id,project_id,session_id,title,frontier,state,expires_at,created_at,suspended`
+const shareColumns = `id,project_id,session_id,title,frontier,state,expires_at,created_at,suspended,allow_download,access_revision,bundle_id`
 
 func scanShare(row scanner) (s Share, err error) {
-	err = missing(row.Scan(&s.ID, &s.ProjectID, &s.SessionID, &s.Title, &s.Frontier, &s.State, &s.ExpiresAt, &s.CreatedAt, &s.Suspended))
+	err = missing(row.Scan(&s.ID, &s.ProjectID, &s.SessionID, &s.Title, &s.Frontier, &s.State, &s.ExpiresAt, &s.CreatedAt, &s.Suspended, &s.AllowDownload, &s.AccessRevision, &s.BundleID))
 	s.Files = []SharedFile{}
 	return
 }
@@ -59,6 +62,7 @@ type Shares struct {
 	Files     *Files
 	Directory string
 	mu        sync.Mutex
+	copyMu    sync.Mutex
 	active    map[string]bool
 }
 
@@ -72,6 +76,9 @@ func (sh *Shares) directory(id string) (string, error) {
 // Create publishes only after every selected file has been frozen. Public links
 // expose an immutable conversation frontier and these exact host-owned bytes.
 func (sh *Shares) Create(ctx context.Context, scope Scope, session string, paths []string, expires time.Time) (Share, string, error) {
+	return sh.CreateWithPolicy(ctx, scope, session, paths, expires, false)
+}
+func (sh *Shares) CreateWithPolicy(ctx context.Context, scope Scope, session string, paths []string, expires time.Time, allowDownload bool) (Share, string, error) {
 	var out Share
 	if len(paths) > 16 || expires.Before(sh.Store.now().Add(time.Minute)) || expires.After(sh.Store.now().Add(90*24*time.Hour)) {
 		return out, "", ErrInvalid
@@ -117,16 +124,16 @@ func (sh *Shares) Create(ctx context.Context, scope Scope, session string, paths
 		if err := authorizeAction(ctx, tx, scope.Actor, ActionPublicSharesCreate); err != nil {
 			return err
 		}
-		var frontier int64
-		if err = tx.QueryRowContext(ctx, `SELECT coalesce(max(sequence),0) FROM messages WHERE session_id=?`, session).Scan(&frontier); err != nil {
+		frontier, err := freezeConversation(ctx, tx, id, session, child.Title, sh.Store.timestamp())
+		if err != nil {
 			return err
 		}
 		raw, _ := json.Marshal(paths)
 		stamp := sqlitex.FormatTime(expires)
-		if _, err = tx.ExecContext(ctx, `INSERT INTO shares(id,project_id,session_id,token_digest,title,frontier,paths,state,expires_at,created_at) VALUES(?,?,?,?,?,?,?,'pending',?,?)`, id, scope.ProjectID, session, tokenDigest(token), child.Title, frontier, string(raw), stamp, sh.Store.timestamp()); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO shares(id,project_id,session_id,token_digest,title,frontier,paths,state,expires_at,created_at,allow_download,bundle_id) VALUES(?,?,?,?,?,?,?,'pending',?,?,?,?)`, id, scope.ProjectID, session, tokenDigest(token), child.Title, frontier, string(raw), stamp, sh.Store.timestamp(), allowDownload, id); err != nil {
 			return err
 		}
-		out = Share{ID: id, ProjectID: scope.ProjectID, SessionID: session, Title: child.Title, Frontier: frontier, State: "pending", ExpiresAt: stamp, CreatedAt: sh.Store.timestamp(), Files: []SharedFile{}}
+		out = Share{AllowDownload: allowDownload, AccessRevision: 1, BundleID: id, ID: id, ProjectID: scope.ProjectID, SessionID: session, Title: child.Title, Frontier: frontier, State: "pending", ExpiresAt: stamp, CreatedAt: sh.Store.timestamp(), Files: []SharedFile{}}
 		return nil
 	})
 	if err != nil {
@@ -226,10 +233,21 @@ func (s *Store) RevokeShare(ctx context.Context, scope Scope, id string) error {
 		if err := activeAccount(ctx, tx, scope.Actor); err != nil {
 			return err
 		}
-		if err := changed(tx.ExecContext(ctx, `UPDATE shares SET state='revoked' WHERE id=? AND project_id=?`, id, scope.ProjectID)); err != nil {
+		if err := changed(tx.ExecContext(ctx, `UPDATE shares SET state='revoked',access_revision=access_revision+1 WHERE id=? AND project_id=?`, id, scope.ProjectID)); err != nil {
 			return err
 		}
 		return s.bumpProject(ctx, tx, scope.ProjectID, "share.revoked")
+	})
+}
+func (s *Store) SetPublicDownload(ctx context.Context, scope Scope, id string, revision int64, allow bool) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
+			return err
+		}
+		if err := authorizeAction(ctx, tx, scope.Actor, ActionPublicSharesCreate); err != nil {
+			return err
+		}
+		return changed(tx.ExecContext(ctx, `UPDATE shares SET allow_download=?,access_revision=access_revision+1 WHERE id=? AND project_id=? AND state='published' AND access_revision=?`, allow, id, scope.ProjectID, revision))
 	})
 }
 func (s *Store) RotateShare(ctx context.Context, scope Scope, id string) (string, error) {
@@ -248,7 +266,7 @@ func (s *Store) RotateShare(ctx context.Context, scope Scope, id string) (string
 		if err := authorizeAction(ctx, tx, scope.Actor, ActionPublicSharesCreate); err != nil {
 			return err
 		}
-		return changed(tx.ExecContext(ctx, `UPDATE shares SET token_digest=? WHERE id=? AND project_id=? AND state='published' AND expires_at>?`, tokenDigest(token), id, scope.ProjectID, s.timestamp()))
+		return changed(tx.ExecContext(ctx, `UPDATE shares SET token_digest=?,access_revision=access_revision+1 WHERE id=? AND project_id=? AND state='published' AND expires_at>?`, tokenDigest(token), id, scope.ProjectID, s.timestamp()))
 	})
 	return token, err
 }
@@ -280,23 +298,22 @@ func (s *Store) PublicMessages(ctx context.Context, token string, after int64, l
 	if err != nil {
 		return nil, err
 	}
-	messages, err := s.messages(ctx, share.ProjectID, share.SessionID, after, limit)
+	rows, err := s.reader.QueryContext(ctx, `SELECT id,role,content,sequence,created_at FROM bundle_messages WHERE bundle_id=? AND sequence>? ORDER BY sequence LIMIT ?`, share.BundleID, after, pageSize(limit))
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	out := []Message{}
-	for _, m := range messages {
-		if m.Sequence > share.Frontier {
-			break
+	for rows.Next() {
+		var m Message
+		if err = rows.Scan(&m.ID, &m.Role, &m.Content, &m.Sequence, &m.CreatedAt); err != nil {
+			return nil, err
 		}
-		m.Native = nil
-		m.ProjectID = ""
-		m.SessionID = ""
-		m.TurnID = ""
 		out = append(out, m)
 	}
-	return out, nil
+	return out, rows.Err()
 }
+
 func (sh *Shares) OpenFile(ctx context.Context, token, path string) (*os.File, SharedFile, error) {
 	share, err := sh.Store.PublicShare(ctx, token)
 	if err != nil {
@@ -380,6 +397,9 @@ func (sh *Shares) Reconcile(ctx context.Context, limit int) error {
 		}
 		err = sh.Store.write(ctx, func(tx *sql.Tx) error {
 			if _, err := tx.ExecContext(ctx, `DELETE FROM share_files WHERE share_id=?`, id); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM conversation_bundles WHERE id=(SELECT bundle_id FROM shares WHERE id=?)`, id); err != nil {
 				return err
 			}
 			_, err := tx.ExecContext(ctx, `UPDATE shares SET cleaned=1 WHERE id=?`, id)

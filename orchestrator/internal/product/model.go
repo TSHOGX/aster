@@ -51,16 +51,17 @@ const (
 )
 
 type Session struct {
-	ControlRevision int64    `json:"control_revision"`
-	ID              string   `json:"id"`
-	ProjectID       string   `json:"project_id"`
-	Title           string   `json:"title"`
-	State           string   `json:"state"`
-	Deletion        Deletion `json:"deletion"`
-	Revision        int64    `json:"revision"`
-	Failure         string   `json:"failure,omitempty"`
-	CreatedAt       string   `json:"created_at"`
-	UpdatedAt       string   `json:"updated_at"`
+	ImportedFiles   map[string]string `json:"imported_files,omitempty"`
+	ControlRevision int64             `json:"control_revision"`
+	ID              string            `json:"id"`
+	ProjectID       string            `json:"project_id"`
+	Title           string            `json:"title"`
+	State           string            `json:"state"`
+	Deletion        Deletion          `json:"deletion"`
+	Revision        int64             `json:"revision"`
+	Failure         string            `json:"failure,omitempty"`
+	CreatedAt       string            `json:"created_at"`
+	UpdatedAt       string            `json:"updated_at"`
 }
 
 type Terminal struct {

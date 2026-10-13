@@ -1,8 +1,8 @@
 "use client";
 
-import { memo, useState, type ComponentPropsWithoutRef } from "react";
+import { createContext, useContext, memo, useState, type ComponentPropsWithoutRef } from "react";
 import type { PluggableList } from "unified";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { Check, Copy } from "lucide-react";
@@ -14,6 +14,8 @@ import { cn } from "@/lib/cn";
 import { useT } from "@/lib/i18n";
 import { isNumericText } from "@/lib/table-cells";
 import { richMarkdownAllowed } from "@/lib/markdown-budget";
+
+export const WorkspaceImageSource = createContext<((url: string) => string) | undefined>(undefined);
 
 /*
   Minimal structural view of the hast nodes react-markdown hands to component
@@ -182,6 +184,7 @@ function MarkdownViewImpl({
   workspaceFiles?: readonly string[];
 }) {
   const tr = useT();
+  const resolveImage = useContext(WorkspaceImageSource);
   if (!richMarkdownAllowed(content))
     return (
       <div
@@ -199,6 +202,7 @@ function MarkdownViewImpl({
   return (
     <div className={cn("markdown-body", className)} data-markdown-mode="rich">
       <ReactMarkdown
+        urlTransform={(url, key) => key === "src" && resolveImage ? resolveImage(defaultUrlTransform(url)) : defaultUrlTransform(url)}
         remarkPlugins={
           workspaceFiles
             ? [remarkGfm, [workspaceLinkPlugin, { known: workspaceFiles }]]

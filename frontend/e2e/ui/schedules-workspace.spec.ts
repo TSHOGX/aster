@@ -220,7 +220,7 @@ test("weekly and monthly controls retain the draft across resize and guard Escap
   await expect(page).toHaveURL(/mode=create/);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page
-    .getByRole("button", { name: "Shared with me", exact: true })
+    .getByRole("button", { name: "Inbox", exact: true })
     .click();
   await page
     .getByRole("dialog")

@@ -35,6 +35,7 @@ export async function workspaceFixture(
       onerror: (() => void) | null = null;
       private rotation: ReturnType<typeof setTimeout> | undefined;
       private emit = (payload: Record<string, unknown>) => {
+        if(this.url.startsWith("/api/conversations")||this.url.startsWith("/api/shared")) return;
         if (payload.resource_kind === "ready") ready.add(this);
         this.dispatchEvent(
           new MessageEvent("resource", {
@@ -61,10 +62,16 @@ export async function workspaceFixture(
           if (!this.readyState) return;
           this.onopen?.();
           this.emit({ resource_kind: "ready" });
+          this.dispatchEvent(new MessageEvent("ready",{data:"{}"}));
         } else this.emit({ resource_kind: "files", payload });
+      };
+      private sharedEvent = (event: Event) => {
+        const payload=(event as CustomEvent).detail;
+        if(!payload.url || this.url.includes(payload.url)) this.dispatchEvent(new MessageEvent(payload.type,{data:"{}"}));
       };
       constructor(public url: string) {
         super();
+        window.addEventListener("fixture-shared-event", this.sharedEvent);
         window.addEventListener("fixture-file-event", this.fileEvent);
         window.addEventListener("fixture-resource-event", this.resourceEvent);
         setTimeout(() => {
@@ -74,6 +81,7 @@ export async function workspaceFixture(
           }
           this.onopen?.();
           this.emit({ resource_kind: "ready" });
+          this.dispatchEvent(new MessageEvent("ready",{data:"{}"}));
         }, 0);
         this.rotation = setTimeout(
           () => this.dispatchEvent(new MessageEvent("rotate", { data: "{}" })),
@@ -82,6 +90,7 @@ export async function workspaceFixture(
       }
       close() {
         ready.delete(this);
+        window.removeEventListener("fixture-shared-event",this.sharedEvent);
         clearTimeout(this.rotation);
         window.removeEventListener("fixture-file-event", this.fileEvent);
         window.removeEventListener(
@@ -274,6 +283,8 @@ export async function workspaceFixture(
         ],
       });
     if (path === "/api/notifications") return json({ notifications: [] });
+    if (path === "/api/conversation-copies") return json({copies:[]});
+    if (path === "/api/conversations/sources") return json({sources:[]});
     if (path === "/api/conversations") return json({ conversations: [] });
     const parts = path.split("/").filter(Boolean),
       project = parts[2],

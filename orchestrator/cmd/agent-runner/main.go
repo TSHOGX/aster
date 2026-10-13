@@ -13,6 +13,7 @@ import (
 
 func main() {
 	var c agentrunner.Config
+	flag.StringVar(&c.HistoryDigest, "history-digest", "", "verified imported history digest")
 	flag.StringVar(&c.Session, "session", "", "Agent Session identity")
 	flag.StringVar(&c.Incarnation, "incarnation", "", "process incarnation identity")
 	flag.StringVar(&c.StateRoot, "state-root", "", "Project retained runtime root")
