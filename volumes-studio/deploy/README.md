@@ -1,149 +1,214 @@
-# Independent public front door
+# Deploy and back up Volume Studio
 
-Build the proxy separately from Aster and Studio:
+Volume Studio serves `/volumes-studio/` behind an independent HTTPS front door.
+It uses central Aster administrator accounts and keeps its own authoring state,
+blobs and application sessions. Aster imports source versions into separate local
+storage. Ready Aster imports remain usable while Studio is offline.
 
-```sh
-go -C volumes-studio/backend build -o /srv/volume-studio/bin/front-door ./cmd/front-door
-/srv/volume-studio/bin/front-door \
-  -listen 0.0.0.0:8443 -public-origin https://example.com:8443 \
-  -application http://127.0.0.1:8080 -studio http://127.0.0.1:8082 \
-  -cert /etc/volume-studio/public.crt -key /etc/volume-studio/public.key
-```
+This guide also ships in the independent Studio bundle. Commands below use example
+paths: replace origins, paths, publisher identity and secret references with your
+reviewed installation values. Store actual configuration and operation records in
+`private/` or protected storage outside the repository.
 
-Origins and certificate paths are operator configuration, never browser input.
-Remote upstreams require verified HTTPS; loopback IPs may use HTTP. Both business
-listeners must be private and accept traffic only from the front door. Studio's
-distribution listener is separate and never exposed by this proxy.
+## Prepare the bundle and services
 
-When Aster sits behind this TLS terminator, add the following to its configuration:
-
-```json
-{"front_door":{"public_origin":"https://example.com:8443","peer_ip":"127.0.0.1"}}
-```
-
-Aster rejects other peers/hosts and reconstructs the original HTTPS authority from
-configuration. Only that peer supplies the client IP. Direct Aster deployments
-omit `front_door`. Keep the peer address aligned with the proxy's actual source
-IP, and include this change in the normal Aster release configuration review.
-
-The front door preserves query, ranges, conditional headers and event streaming,
-checks the public Host, strips spoofed identity/forwarding headers, and filters
-request cookies for each destination. Studio responses may set only its session
-and login cookies with `Secure; HttpOnly; SameSite=Lax; Path=/volumes-studio/` and
-no Domain. Unexpected cookies fail the entire upstream response. Aster receives
-only `project_login`. Public `/distribution/` routes are refused.
-
-The proxy has request-header/idle/upstream-header deadlines; streaming bodies
-retain cancellation without a whole-response deadline. Each application must
-bound its individual upload/read operations. Stopping either business process
-does not take the other route down. The proxy and sole identity authority remain
-explicit deployment dependencies.
-
-Build and run the independent Studio gateway:
-
-```sh
-go -C volumes-studio/backend build -o /srv/volume-studio/bin/studio ./cmd/studio
-/srv/volume-studio/bin/studio \
-  -state-directory /var/lib/volume-studio -publisher-id deployment-publisher \
-  -public-origin https://example.com:8443 \
-  -identity-endpoint http://127.0.0.1:8083 \
-  -identity-client studio -identity-secret-env STUDIO_IDENTITY_CLIENT_SECRET \
-  -frontend http://127.0.0.1:3002
-```
-
-Register the same public issuer/callback and secret environment in Aster's
-[identity adapter](../contracts/v1/identity.md), including its private loopback
-listener. Studio's gateway listens on loopback behind the front door. It never
-receives `project_login`, and never forwards its session cookie to the frontend.
-
-The first implementation performs fresh introspection on every privileged request;
-it does not use a local authorization cache. Identity outages immediately return
-`identity_unavailable`; login and logout can be retried after recovery. Central
-evidence itself is bounded to at most 60 seconds, and no response or local session
-extends that interval. Admitted worker phases use the separate principal check.
-
-`sessions.db` contains only login attempts and app sessions referencing central
-authority. Local cookie tokens are stored as digests; back-channel grant references
-are private credentials needed for introspection. Keep the directory owner-only.
-SQLite uses WAL/FULL, foreign keys, an exclusive owner lock and transactional schema
-steps. Unknown newer schemas fail without reset. A lost callback exchange requires
-a fresh login; durable app sessions survive a normal Studio restart.
-
-## Private distribution and source retirement
-
-Supply a private JSON registration file with `-distribution-config FILE`; the
-separate listener defaults to `127.0.0.1:8084`. Credentials are environment
-references, never literal JSON secrets:
-
-```json
-{"clients":[{"id":"aster","secret_envs":["STUDIO_DISTRIBUTION_SECRET"],
- "grant_revision":1,"libraries":["*"]}]}
-```
-
-Prefer explicit library IDs over `*` when the consumer should see a subset. Two
-secret references allow rotation; removing a credential stops its new requests.
-Increment `grant_revision` to invalidate all outstanding exports for that client.
-Configuration changes require a Studio restart. Host the loopback listener behind
-an authenticated TLS tunnel for cross-host consumption; never expose it through
-the public proxy. Service requests with Origin or Cookie are refused.
-
-Exports expire after 15 minutes, pin the exact descriptor and require service
-credentials on every request. Reads permit one explicit range of at most 8 MiB
-(or an entire file of at most 8 MiB). A reader has a durable pin until response
-completion; a closed/expired export cannot admit another read. Startup reconciles
-abandoned readers only after acquiring the exclusive process lock.
-
-Archiving stops discovery/new exports and renewal. Admitted exports retain bounded
-access until close/expiry. Retirement waits for export, active-reader and validation
-blockers, then removes the version's blob references. Metadata and immutable labels
-remain retained; drafts and other versions can still pin the same blobs. Consumer
-copies are never deleted or revoked by source retirement.
-
-## Backup and restore
-
-Stop Studio for the supported operator backup command. Its exclusive database
-lock refuses a running writer. Supply a new, empty destination outside the source:
-
-```sh
-go -C volumes-studio/backend build -o /srv/volume-studio/bin/studio-backup ./cmd/studio-backup
-/srv/volume-studio/bin/studio-backup \
-  -state-directory /var/lib/volume-studio -publisher-id deployment-publisher \
-  -output /srv/backups/volume-studio-snapshot
-```
-
-The backup pins metadata, blobs and acknowledged upload files against GC, snapshots
-SQLite with `VACUUM INTO`, copies and fsyncs bytes, and records file digests in
-`backup.json`. An interrupted snapshot retains `backup.incomplete`; startup refuses
-it. Preserve the complete private directory and its inventory, publisher ID and
-configuration. Restore to an independent directory, verify the inventory against
-trusted backup evidence, and start Studio with the original publisher ID. Never
-run a writable restore against the source blob paths. Sessions are intentionally
-excluded: sign in again through central identity after restore. Draft/version
-history and acknowledged uploads are retained independently of those sessions.
-
-## Independent release
-
-Studio releases are built from the committed `volumes-studio/` tree only. They do
-not build Aster, download Khora, drain runtime work, or include local credentials,
-databases and ignored files. Build into a new directory outside the checkout:
+Use a trusted bundle matching the host platform. To build from a committed checkout
+into a new directory outside the checkout:
 
 ```sh
 python3 volumes-studio/scripts/release.py build /srv/candidates/studio-new
 python3 volumes-studio/scripts/release.py verify /srv/candidates/studio-new
 ```
 
-The bundle contains `bin/studio`, `bin/front-door`, `bin/studio-backup`, the
-standalone frontend with its static assets, contracts, deployment guidance and
-`studio-release.json`. The inventory binds source commit, dependency locks,
-frontend build ID, file digests/modes and safe internal symlinks. Verification
-refuses changed, missing or extra files. Checksums require trusted release evidence;
-they do not authenticate an arbitrary downloaded bundle.
+The bundle provides `bin/studio`, `bin/front-door`, `bin/studio-backup`, the
+standalone frontend, deployment guidance and `studio-release.json`. Verification
+rejects changed, missing or extra files. Preserve the trusted source/artifact
+identity; an inventory checksum alone does not authenticate an arbitrary bundle.
+Building from a checkout does not include uncommitted work or private configuration.
 
-Run the packaged frontend from the bundle with
-`HOSTNAME=127.0.0.1 PORT=3002 node frontend/server.js`. Supervise frontend, Studio
-and front door independently. The `studio-v*` workflow creates an independent
-artifact; it neither publishes to a deployment nor invokes Aster's update lifecycle.
-Stop Studio and take a verified private backup before schema upgrades. Ordered
-transactional Studio migrations preserve author history; unknown newer schemas
-are refused. After upgrade check shared login, draft history, a resumed upload,
-a published descriptor and the private service catalog before restoring traffic.
+Supervise frontend, Studio and front door independently. Keep the Studio state
+directory owner-only and preserve its publisher ID across restarts and restores.
+
+| Setting | Purpose / default |
+| --- | --- |
+| `-state-directory` | Required absolute private persistent directory |
+| `-publisher-id` | Required stable publisher identity |
+| `-public-origin` | Public HTTPS origin, also the central identity issuer |
+| `-listen` | Private Studio gateway, `127.0.0.1:8082` |
+| `-frontend` | Private frontend origin, `http://127.0.0.1:3002` |
+| `-identity-endpoint` | Private central identity origin |
+| `-identity-client` | Registered client ID, default `studio` |
+| `-identity-secret-env` | Environment name for the central client credential |
+| `-quota-bytes` | Blob/upload reservation budget, default 8 GiB |
+| `-distribution-config` | Optional private JSON file of service-client registrations |
+| `-distribution-listen` | Private distribution address, `127.0.0.1:8084` |
+
+## Register central identity
+
+Add an identity registration to Aster's private configuration. This example uses
+`https://example.com:8443`; the origin must match all services exactly:
+
+```json
+{
+  "identity": {
+    "issuer": "https://example.com:8443",
+    "listen": "127.0.0.1:8083",
+    "clients": [{
+      "id": "studio",
+      "callback": "https://example.com:8443/volumes-studio/auth/callback",
+      "secret_envs": ["STUDIO_IDENTITY_CLIENT_SECRET"]
+    }]
+  },
+  "front_door": {
+    "public_origin": "https://example.com:8443",
+    "peer_ip": "127.0.0.1"
+  }
+}
+```
+
+This is a configuration fragment. Supply the referenced credential to the central
+service and Studio through their protected environments. Secrets must be 32–1024
+bytes. During rotation, central registration can accept two secret references;
+update the client and then remove the previous credential. Include Aster configuration
+changes in its normal service-upgrade procedure.
+
+Callbacks must match exactly. The identity adapter is private and is not a general
+OIDC provider. Keep its loopback listener private; cross-host access requires an
+authenticated TLS tunnel. Studio authoring requires an active, unrestricted central
+administrator. Studio cannot grant that permission locally.
+
+Identity outages deny privileged operations rather than extending cached authority.
+Retry sign-in after service recovery. A lost callback exchange needs a fresh login.
+Ordinary logout does not cancel admitted publication work; account disable/demotion
+can pause its next phase for reassignment.
+
+## Start the frontend and Studio
+
+From the verified bundle root, start the frontend as a supervised service:
+
+```sh
+HOSTNAME=127.0.0.1 PORT=3002 node frontend/server.js
+```
+
+Start Studio separately, with its credential available in the named environment:
+
+```sh
+bin/studio \
+  -state-directory /var/lib/volume-studio \
+  -publisher-id deployment-publisher \
+  -public-origin https://example.com:8443 \
+  -identity-endpoint http://127.0.0.1:8083 \
+  -identity-client studio \
+  -identity-secret-env STUDIO_IDENTITY_CLIENT_SECRET \
+  -frontend http://127.0.0.1:3002
+```
+
+Studio's business listener requires loopback behind the front door. Its application
+sessions survive a normal restart, but ongoing browser uploads stop when the browser
+closes; users can reselect the same file to resume acknowledged data.
+
+## Start the public front door
+
+With both business services reachable privately:
+
+```sh
+bin/front-door \
+  -listen 0.0.0.0:8443 -public-origin https://example.com:8443 \
+  -application http://127.0.0.1:8080 -studio http://127.0.0.1:8082 \
+  -cert /etc/volume-studio/public.crt -key /etc/volume-studio/public.key
+```
+
+Set Aster's trusted peer to the proxy's actual source address. Restrict business
+listeners to the front door. Remote upstreams require verified HTTPS; loopback IPs
+may use HTTP. Do not publish Studio distribution through this proxy.
+
+The front door preserves streaming and file ranges, checks the public Host and
+filters cookies for each application. Unexpected upstream cookies fail the response.
+Studio receives only its own cookies, scoped to `/volumes-studio/`; it does not
+receive the Aster login cookie. Stopping Studio does not stop the Aster route, but
+the shared proxy and central identity remain deployment dependencies.
+
+Before enabling access, check central login, Studio library creation, save/upload,
+publication, logout and the Aster route. Confirm assets and deep links load under
+`/volumes-studio/`, including on the browsers used by your organization.
+
+## Private distribution
+
+To permit Aster imports, create a private JSON registration file:
+
+```json
+{
+  "clients": [{
+    "id": "aster",
+    "secret_envs": ["STUDIO_DISTRIBUTION_SECRET"],
+    "grant_revision": 1,
+    "libraries": ["*"]
+  }]
+}
+```
+
+Prefer explicit library IDs over `*` for restricted consumers. Supply the secret
+in Studio's environment and start it with the additional arguments:
+
+```sh
+-distribution-config /etc/volume-studio/distribution.json \
+-distribution-listen 127.0.0.1:8084
+```
+
+These are arguments to the `bin/studio` command, not a separate command. Register
+the same client/secret and exact publisher ID in Aster's `volume_imports` settings.
+The consumer endpoint must be reachable from Aster's service UID; use a reviewed
+TLS tunnel where loopback access is unavailable or hosts differ. Distribution
+itself requires a private loopback listener. Never expose it through the public proxy.
+
+Two secret references permit rotation. Remove a credential to stop its new requests;
+increment `grant_revision` to invalidate all outstanding exports for that client.
+Registration changes require a Studio restart. Service requests carrying browser
+Origin or Cookie headers are refused.
+
+Exports expire after 15 minutes and require service credentials for every read.
+Archiving stops new discovery, exports and renewals; admitted readers can finish
+within their bounded access. Retirement waits for readers/validation and removes
+source references. It does not delete or revoke consumer copies already imported.
+
+## Backup and restore
+
+Stop Studio before taking its supported backup. The command refuses a running
+writer. Choose a new empty destination outside the source state directory:
+
+```sh
+bin/studio-backup \
+  -state-directory /var/lib/volume-studio \
+  -publisher-id deployment-publisher \
+  -output /srv/backups/volume-studio-snapshot
+```
+
+The snapshot contains authoring metadata, blobs and acknowledged uploads, with file
+digests in `backup.json`. An interrupted backup retains `backup.incomplete` and
+cannot be started as a restored instance. Preserve the complete private backup,
+publisher identity and matching configuration; do not copy just the database.
+
+Restore to an independent directory and verify the inventory against trusted backup
+evidence. Start with the original publisher ID and the restored paths. Never run a
+writable restore against the source blob directory. Application sessions are excluded:
+users sign in again through central identity. Draft/version history and acknowledged
+uploads are retained independently of sessions.
+
+## Upgrade Studio
+
+1. Prepare and verify the selected independent Studio bundle.
+2. Stop Studio under supervision and take a complete verified private backup.
+3. Activate the bundle's backend/frontend as a matched set. Replace the front door
+   separately if required, planning its effect on both applications' browser access.
+4. Start Studio with the same publisher ID and reviewed state/configuration.
+5. Check central login, draft/version history, resumed upload, published content and
+   the private distribution catalog before restoring normal traffic.
+
+Studio applies ordered transactional authoring migrations. Unknown newer schemas
+are refused. An older binary cannot reopen a newer schema; rollback requires the
+corresponding complete backup, not just an executable downgrade. Do not delete state
+to force a schema mismatch to disappear.
+
+Studio's independent release does not require draining Aster. Aster-side imports
+and publication work still participate in Aster's own maintenance blockers. Ready
+local imports remain available during a Studio update.

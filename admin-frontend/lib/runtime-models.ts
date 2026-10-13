@@ -21,6 +21,7 @@ export type Mount = {
 };
 export type EnvironmentBody = { sandbox_release: Artifact; mounts: Mount[] };
 export type RuntimeOption = {
+ library_name?: string; version_label?: string; version_note?: string;
   kind: "sandbox" | "volume";
   reference: Artifact;
   enabled: boolean;

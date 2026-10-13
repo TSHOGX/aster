@@ -25,7 +25,7 @@ func TestImportAdmissionReceiptsBudgetsAndReadyRegistry(t *testing.T) {
 	ctx := context.Background()
 	token := adminTestToken(t, s, admin)
 	input, raw := importFixture(t)
-	i, err := s.AdmitVolumeImport(ctx, token, input, raw, "engine", "issuer/publisher", 1<<30, 1<<30)
+	i, err := s.AdmitVolumeImport(ctx, token, input, raw, "engine", "issuer/publisher", 1<<30, 1<<30, VolumeImportLabels{LibraryName: "Research library", VersionLabel: "Autumn release", VersionNote: "Reviewed references"})
 	must(t, err)
 	if i.State != "acquiring" || i.PublisherID != "publisher" || i.ActorID != admin.ID || i.Capacity != 64<<20 {
 		t.Fatal(i)
@@ -80,6 +80,17 @@ func TestImportAdmissionReceiptsBudgetsAndReadyRegistry(t *testing.T) {
 	must(t, err)
 	if artifact.PublicationPurpose != "authored" || artifact.CleanRuntime || len(artifact.Roles) != 2 {
 		t.Fatal("import escalated capabilities", artifact)
+	}
+	options, e := s.AdminRuntimeOptions(ctx, token, "volume", "", 100, nil)
+	must(t, e)
+	foundLabel := false
+	for _, option := range options.Options {
+		if option.Reference == i.Artifact {
+			foundLabel = option.LibraryName == "Research library" && option.VersionLabel == "Autumn release" && option.VersionNote == "Reviewed references"
+		}
+	}
+	if !foundLabel {
+		t.Fatal("import labels unavailable without Studio")
 	}
 	must(t, s.SettleVolumeTransfer(ctx, i.ID))
 	usage, err = s.OperatorStorageUsage(ctx)

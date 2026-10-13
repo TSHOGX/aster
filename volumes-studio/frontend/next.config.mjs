@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-const root = fileURLToPath(new URL('.', import.meta.url));
+const root = fileURLToPath(new URL('../../', import.meta.url));
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   basePath: '/volumes-studio', trailingSlash: true, poweredByHeader: false, output: 'standalone',

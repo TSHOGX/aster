@@ -1,241 +1,1253 @@
-'use client';
-import Link from 'next/link';
-import Image from 'next/image';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, APIError, base, bytes, Entry, Library, requestID, Upload, Version } from '../lib/api';
-import { hashChunk, hashFile } from '../lib/hash-file';
-import { SessionGate, SignOut, useSession } from './session';
-
-type Tree = { revision: number; entries: Entry[]; next: string };
-type Change = { path: string; change: string };
-type UploadProgress = { path: string; message: string; progress: number };
+/* eslint-disable react-hooks/immutability -- Workspace buffers are imperative controller objects; mutations publish through the Studio provider. */
+/* eslint-disable react-hooks/set-state-in-effect -- Hydrate browser navigation and synchronize external workspace snapshots. */
+"use client";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  PanelLeft,
+  Plus,
+  Save,
+  X,
+  FileText,
+  List,
+  UploadCloud,
+} from "lucide-react";
+import {
+  api,
+  bytes,
+  Entry,
+  Library,
+  requestID,
+  Upload,
+  Version,
+} from "../lib/api";
+import { storageRead, storageWrite } from "../lib/workbench";
+import { Page, parentPath, query, encodeText } from "../lib/workbench";
+import { deleteRecovery } from "../lib/recovery";
+import { ShellHeader, LibraryDetails, contentURL } from "./shell";
+import { BufferFile, useStudio } from "./studio-provider";
+import { Menu, Modal, TextDialog } from "./ui";
+import { FileTree } from "./file-tree";
+import { CodeEditor } from "./code-editor";
+import { ImagePreview, MarkdownPreview } from "./preview";
+import { Changes, TextDiff } from "./changes";
+import { VersionPicker, Versions } from "./versions";
+type Form = {
+  title: string;
+  label: string;
+  initial?: string;
+  submit?: string;
+  action: (v: string) => Promise<void>;
+};
 export function LibraryEditor({ id }: { id: string }) {
-  const root = `/libraries/${encodeURIComponent(id)}`;
-  const { session, error: sessionError, loading } = useSession();
-  const [library, setLibrary] = useState<Library | null>(null);
-  const [tree, setTree] = useState<Tree>({ revision: 0, entries: [], next: '' });
-  const [parent, setParent] = useState('');
-  const [versions, setVersions] = useState<Version[]>([]);
-  const [versionNext, setVersionNext] = useState('');
-  const [versionID, setVersionID] = useState('');
-  const [uploads, setUploads] = useState<Upload[]>([]);
-  const [selected, setSelected] = useState<Entry | null>(null);
-  const [text, setText] = useState('');
-  const [saved, setSaved] = useState('');
-  const [editRevision, setEditRevision] = useState(0);
-  const [editable, setEditable] = useState(false);
-  const [imageURL, setImageURL] = useState('');
-  useEffect(() => () => { if (imageURL) URL.revokeObjectURL(imageURL); }, [imageURL]);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<'files' | 'history' | 'changes'>('files');
-  const [changes, setChanges] = useState<Change[]>([]);
-  const [changeNext, setChangeNext] = useState('');
-  const [publishing, setPublishing] = useState(false);
-  const [label, setLabel] = useState('');
-  const [note, setNote] = useState('');
-  const [preview, setPreview] = useState<{ entry_count: number; total_bytes: string; revision: number } | null>(null);
-  const [progress, setProgress] = useState<UploadProgress | null>(null);
-  const input = useRef<HTMLInputElement>(null);
-  const folderInput = useRef<HTMLInputElement>(null);
-  const controller = useRef<AbortController | null>(null);
-  const selectionGeneration = useRef(0);
-  const dirty = text !== saved;
-  const readState = useCallback(async (signal?: AbortSignal) => {
-    const [l, v, u] = await Promise.all([
-      api<Library>(root, { signal }), api<{ versions: Version[]; next: string }>(`${root}/versions`, { signal }), api<{ uploads: Upload[] }>(`${root}/uploads`, { signal }),
-    ]);
-    const treePath = versionID ? `${root}/versions/${versionID}/tree` : `${root}/draft/tree?parent=${encodeURIComponent(parent)}`;
-    const t = await api<Tree>(treePath, { signal });
-    return { l, v, u, t: { ...t, revision: versionID ? 0 : t.revision } };
-  }, [root, parent, versionID]);
-  const applyState = useCallback((data: Awaited<ReturnType<typeof readState>>) => {
-    setLibrary(data.l); setVersions(data.v.versions); setVersionNext(data.v.next); setUploads(data.u.uploads); setTree(data.t);
-    return data.l;
+  const studio = useStudio();
+  const [library, setLibrary] = useState<Library | null>(null),
+    [version, setVersion] = useState(""),
+    [versionLabel, setVersionLabel] = useState("Draft"),
+    [view, setView] = useState("files"),
+    [selected, setSelected] = useState(""),
+    [directory, setDirectory] = useState(""),
+    [error, setError] = useState(""),
+    [form, setForm] = useState<Form | null>(null),
+    [details, setDetails] = useState(false),
+    [sidebar, setSidebar] = useState(true),
+    [mobile, setMobile] = useState(false),
+    [width, setWidth] = useState(260),
+    [wrap, setWrap] = useState(true),
+    [mode, setMode] = useState("edit"),
+    [position, setPosition] = useState([1, 1]),
+    [ready, setReady] = useState(false),
+    [drag, setDrag] = useState(false),
+    [publish, setPublish] = useState(false),
+    [preview, setPreview] = useState<{
+      entry_count: number;
+      total_bytes: string;
+      revision: number;
+      base_version: string;
+    } | null>(null),
+    [label, setLabel] = useState(""),
+    [note, setNote] = useState(""),
+    [publishing, setPublishing] = useState(false),
+    [reviewing, setReviewing] = useState(false),
+    [activePublication, setActivePublication] = useState(false),
+    [opened, setOpened] = useState(false),
+    [moveEntry, setMoveEntry] = useState<Entry | null>(null);
+  const input = useRef<HTMLInputElement>(null),
+    folderInput = useRef<HTMLInputElement>(null),
+    search = useRef<HTMLInputElement>(null),
+    root = `/libraries/${id}`;
+  const [refs] = useState(() => ({ current: studio }));
+  refs.current = studio;
+  const run = async (action: () => Promise<unknown>) => {
+    try {
+      setError("");
+      await action();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+  const refreshGeneration = useRef(0);
+  const openGeneration = useRef(0);
+  const refresh = useCallback(
+    async (signal?: AbortSignal) => {
+      const turn = ++refreshGeneration.current;
+      const [l, u, v] = await Promise.all([
+        api<Library>(`${root}?mode=workbench`, { signal }),
+        api<{ uploads: Upload[] }>(`${root}/uploads`, { signal }),
+        api<Page<Version>>(`${root}/versions?mode=workbench&limit=50`, {
+          signal,
+        }),
+      ]);
+      if (signal?.aborted || turn !== refreshGeneration.current) return;
+      setLibrary(l);
+      setActivePublication(
+        v.items.some((x) => x.state === "pending" || x.state === "validating"),
+      );
+      refs.current.model.libraries[id] = l;
+      refs.current.model.uploads[id] = u.uploads;
+      refs.current.notify();
+    },
+    [id, root, refs],
+  );
+  useEffect(() => {
+    const media = matchMedia("(max-width: 767px)");
+    const resize = () => {
+      setMobile(media.matches);
+      setSidebar(!media.matches);
+    };
+    resize();
+    media.addEventListener("change", resize);
+    return () => media.removeEventListener("change", resize);
   }, []);
-  const load = useCallback(async () => applyState(await readState()), [applyState, readState]);
   useEffect(() => {
-    if (!session) return;
+    const p = new URLSearchParams(location.search);
+    setVersion(p.get("version") || "");
+    setView(
+      ["files", "changes", "versions"].includes(p.get("view") || "")
+        ? p.get("view")!
+        : "files",
+    );
+    setSelected(
+      p.get("path") ||
+        refs.current.model.buffers.find(
+          (b) => b.key === refs.current.model.active[id],
+        )?.entry.path ||
+        "",
+    );
+    setWidth(
+      Math.max(
+        220,
+        Math.min(
+          420,
+          Number(storageRead("local", "studio-sidebar-width") || 260),
+        ),
+      ),
+    );
+    setSidebar(innerWidth >= 768);
+    setReady(true);
+    setOpened(false);
+  }, [id, refs]);
+  useEffect(() => {
     const abort = new AbortController();
-    const refresh = () => readState(abort.signal).then(applyState).catch(e => { if (!abort.signal.aborted) setError(String(e)); });
-    void refresh();
-    const timer = setInterval(() => { void refresh(); }, 5000);
-    return () => { abort.abort(); clearInterval(timer); };
-  }, [session, readState, applyState]);
+    const update = () => {
+      if (!document.hidden && !refs.current.model.expired)
+        void refresh(abort.signal).catch((e) => {
+          if (!abort.signal.aborted) setError(String(e));
+        });
+    };
+    update();
+    const timer = setInterval(update, activePublication ? 2000 : 5000);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      abort.abort();
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, [refresh, activePublication, studio.model.epoch, refs]);
   useEffect(() => {
-    const beforeUnload = (event: BeforeUnloadEvent) => { if (dirty || progress) event.preventDefault(); };
-    window.addEventListener('beforeunload', beforeUnload);
-    return () => window.removeEventListener('beforeunload', beforeUnload);
-  }, [dirty, progress]);
-  useEffect(() => () => { controller.current?.abort(); }, []);
-  const report = (e: unknown) => setError(e instanceof APIError && e.status === 409 ? 'The draft or file changed. Your text is still here. Reload and review the latest saved version before retrying.' : String(e));
-  const confirmDiscard = () => !dirty || window.confirm('Discard your unsaved text and open another file?');
-  async function choose(entry: Entry) {
-    if (!confirmDiscard()) return;
-    const generation = ++selectionGeneration.current;
-    setError(''); setText(''); setSaved(''); setEditable(false); setImageURL(''); setSelected(null);
-    if (entry.kind === 'directory' && !versionID) { setParent(entry.path); return; }
-    setSelected(entry); setEditRevision(tree.revision);
-    const image = /\.(png|jpe?g|gif|webp)$/i.test(entry.path);
-    const limit = image ? 16 << 20 : 1 << 20;
-    if (entry.kind === 'directory' || Number(entry.size) > limit) return;
-    try {
-      const response = await fetch(`${base}/api/v1${root}/${versionID ? `versions/${versionID}` : 'draft'}/content?path=${encodeURIComponent(entry.path)}`, { credentials: 'same-origin', cache: 'no-store' });
-      if (!response.ok) throw new Error('Cannot read this file. Refresh to check access.');
-      if (Number(response.headers.get('Content-Length')) > limit) { await response.body?.cancel(); return; }
-      const data = await response.arrayBuffer();
-      if (data.byteLength > limit) return;
-      if (generation !== selectionGeneration.current) return;
-      if (image) { const extension = entry.path.split('.').at(-1)?.toLowerCase(); const type = extension === 'jpg' || extension === 'jpeg' ? 'image/jpeg' : `image/${extension}`; setImageURL(URL.createObjectURL(new Blob([data], { type }))); return; }
-      const content = new TextDecoder('utf-8', { fatal: true }).decode(data);
-      if (content.includes('\0')) return;
-      setText(content); setSaved(content); setEditable(true);
-    } catch (e) { if (!(e instanceof TypeError)) report(e); }
-  }
-  async function mutate(body: object) {
-    if (!session) return;
-    return api<{ revision: number }>(`${root}/draft/mutations`, { method: 'POST', body: JSON.stringify({ request_id: requestID(), expected_revision: library?.draft_revision, ...body }) }, session.csrf);
-  }
-  async function save() {
-    if (!selected || !session) return;
-    setBusy(true); setError('');
-    try {
-      const result = await mutate({ action: 'text', path: selected.path, text, expected_revision: editRevision });
-      setSaved(text); setEditRevision(result?.revision ?? editRevision); setNotice('Saved to draft.'); await load();
-    } catch (e) { report(e); } finally { setBusy(false); }
-  }
-  async function create(kind: 'text' | 'mkdir') {
-    const name = window.prompt(kind === 'mkdir' ? 'New directory name' : 'New text file name'); if (!name) return;
-    setBusy(true); setError('');
-    try { await mutate({ action: kind, path: parent ? `${parent}/${name}` : name }); await load(); setNotice('Created in the draft.'); }
-    catch (e) { report(e); } finally { setBusy(false); }
-  }
-  async function removeOrMove(entry: Entry, action: 'remove' | 'move') {
-    if (!confirmDiscard()) return;
-    const to = action === 'move' ? window.prompt('New path, relative to the library root', entry.path) : null;
-    if (action === 'move' && !to) return;
-    if (action === 'remove') {
-      let descendants = 0;
-      if (entry.kind === 'directory') {
-        try { descendants = (await api<{ descendant_count: number }>(`${root}/draft/tree?parent=${encodeURIComponent(entry.path)}&revision=${library?.draft_revision}`)).descendant_count; }
-        catch (e) { report(e); return; }
+    if (!ready) return;
+    history.replaceState(
+      null,
+      "",
+      `?${query({ view, version: version || undefined, path: selected || undefined })}`,
+    );
+  }, [ready, view, version, selected]);
+  useEffect(() => {
+    if (!version) {
+      setVersionLabel("Draft");
+      return;
+    }
+    const abort = new AbortController();
+    void api<Version>(`${root}/versions/${version}`, { signal: abort.signal })
+      .then((v) => setVersionLabel(v.label))
+      .catch((e) => {
+        if (!abort.signal.aborted) setError(String(e));
+      });
+    return () => abort.abort();
+  }, [root, version]);
+  const active = studio.model.buffers.find(
+    (b) => b.key === studio.model.active[id] && b.version === version,
+  );
+  const buffers = studio.model.buffers.filter(
+    (b) => b.library === id && b.version === version,
+  );
+  const open = async (entry: Entry) => {
+    const turn = ++openGeneration.current;
+    if (entry.kind === "directory") {
+      setDirectory(entry.path);
+      return;
+    }
+    await studio.open(id, version, entry, library?.draft_revision);
+    if (turn !== openGeneration.current) return;
+    setSelected(entry.path);
+    setDirectory(parentPath(entry.path));
+    setView("files");
+    if (innerWidth < 768) setSidebar(false);
+  };
+  const openPath = async (path: string) => {
+    if (!version) {
+      const s = await studio.snapshot(id, path);
+      if (!s.entry) throw new Error("File no longer exists.");
+      await open(s.entry);
+    } else {
+      const p = await api<Page<Entry>>(
+        `${root}/versions/${version}/search?${query({ q: path })}`,
+      );
+      const entry = p.items.find((e) => e.path === path);
+      if (!entry)
+        throw new Error("This path does not exist in the selected version.");
+      await open(entry);
+    }
+  };
+  useEffect(() => {
+    if (!ready || !library || opened) return;
+    setOpened(true);
+    if (selected) void openPath(selected).catch((e) => setError(String(e)));
+    // Load the initial deep link once. Further navigation is explicit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, library, opened]);
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        setSidebar(true);
+        setTimeout(() => search.current?.focus(), 0);
       }
-      if (!window.confirm(`Delete ${entry.path}${entry.kind === 'directory' ? ` and its ${descendants} contained entries` : ''} from the draft? Published versions are retained.`)) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (active && !active.version) void run(() => studio.save(active));
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  });
+  const switchVersion = (next: string) => {
+    openGeneration.current++;
+    studio.model.selectionGeneration[id] =
+      (studio.model.selectionGeneration[id] || 0) + 1;
+    void studio.persist();
+    setVersion(next);
+    setView("files");
+    setDirectory("");
+    setOpened(false);
+    setError("");
+  };
+  const create = (kind: "text" | "mkdir") =>
+    setForm({
+      title: kind === "text" ? "New file" : "New folder",
+      label: "Name",
+      submit: "Create",
+      action: async (name) => {
+        const path = [directory, name].filter(Boolean).join("/");
+        await studio.queue.run(id, async () => {
+          const target = await studio.snapshot(id, path);
+          if (target.entry)
+            throw new Error("An entry already exists at this path.");
+          await studio.write(`${root}/draft/mutations`, {
+            request_id: requestID(),
+            expected_revision: target.revision,
+            action: kind,
+            path,
+            ...(kind === "text" ? { text: "" } : {}),
+          });
+        });
+        studio.changed();
+        await refresh();
+        if (kind === "text") await openPath(path);
+      },
+    });
+  const move = async (entry: Entry, to: string) => {
+    if (!(await studio.settle(id, entry.path))) return;
+    const before = await studio.snapshot(id, entry.path);
+    await studio.mutate(
+      id,
+      { action: "move", path: entry.path, to },
+      before.revision,
+    );
+    for (const b of studio.model.buffers) {
+      if (
+        b.library === id &&
+        !b.version &&
+        (b.entry.path === entry.path ||
+          b.entry.path.startsWith(entry.path + "/"))
+      ) {
+        const next = to + b.entry.path.slice(entry.path.length);
+        await studio.persist();
+        const old = b.key;
+        await deleteRecovery(b.recoveryID);
+        const recoveryIdentity = JSON.parse(b.recoveryID) as string[];
+        recoveryIdentity[recoveryIdentity.length - 1] = next;
+        b.recoveryID = JSON.stringify(recoveryIdentity);
+        b.entry = { ...b.entry, path: next };
+        b.key = JSON.stringify([id, "", next]);
+        b.editorState = undefined;
+        if (studio.model.active[id] === old) studio.model.active[id] = b.key;
+      }
     }
-    setBusy(true); setError('');
-    try { await mutate({ action, path: entry.path, ...(to ? { to } : {}), ...(action === 'remove' && entry.kind === 'directory' ? { recursive: true } : {}) }); setSelected(null); setText(''); setSaved(''); await load(); }
-    catch (e) { report(e); } finally { setBusy(false); }
-  }
-  async function loadChanges(after = '') {
-    if (!library) return;
-    try { const p = await api<{ changes: Change[]; next: string }>(`${root}/draft/diff?revision=${library.draft_revision}&after=${encodeURIComponent(after)}`); setChanges(old => after ? [...old, ...p.changes] : p.changes); setChangeNext(p.next); setTab('changes'); }
-    catch (e) { report(e); }
-  }
-  async function editLibrary() {
-    if (!library || !session) return;
-    const name = window.prompt('Library name', library.name); if (name === null) return;
-    const description = window.prompt('Library description', library.description); if (description === null) return;
-    setBusy(true); setError('');
-    try { await api(root, { method: 'PATCH', body: JSON.stringify({ request_id: requestID(), expected_revision: library.metadata_revision, name, description, archived: library.archived }) }, session.csrf); await load(); }
-    catch (e) { report(e); } finally { setBusy(false); }
-  }
-  async function reviewPublish() {
-    if (!session || !library) return;
-    if (dirty) { setError('Save or discard the open text edit before reviewing publication.'); return; }
-    setBusy(true); setError('');
-    try { const p = await api<{ entry_count: number; total_bytes: string }>(`${root}/publish-preview`, { method: 'POST', body: JSON.stringify({ expected_revision: library.draft_revision }) }, session.csrf); setPreview({ ...p, revision: library.draft_revision }); setPublishing(true); }
-    catch (e) { report(e); } finally { setBusy(false); }
-  }
-  async function publish(event: React.FormEvent) {
-    event.preventDefault(); if (!session || !library) return;
-    setBusy(true); setError('');
-    try { await api(`${root}/versions`, { method: 'POST', body: JSON.stringify({ request_id: requestID(), expected_revision: preview?.revision, label, note }) }, session.csrf); setPublishing(false); setLabel(''); setNote(''); setTab('history'); setNotice('Publication admitted. Validation continues if you close this page.'); await load(); }
-    catch (e) { report(e); } finally { setBusy(false); }
-  }
-  async function versionAction(version: Version, action: 'restore' | 'archive' | 'retire' | 'retry' | 'cancel') {
-    if (!session || !library) return;
-    if (action === 'retire') {
-      try { const retention = await api<{ active_exports: number; active_readers: number; active_validations: number }>(`${root}/versions/${version.id}/retention`); if (retention.active_exports || retention.active_readers || retention.active_validations) { setError(`Source is retained by ${retention.active_exports} active exports, ${retention.active_readers} reader pins and ${retention.active_validations} validation jobs. Retry after these finish.`); return; } } catch (e) { report(e); return; }
+    studio.changed();
+    if (selected === entry.path || selected.startsWith(entry.path + "/"))
+      setSelected(to + selected.slice(entry.path.length));
+    await refresh();
+  };
+  const remove = async (entry: Entry) => {
+    if (!(await studio.settle(id, entry.path))) return;
+    const state = await studio.snapshot(id, entry.path);
+    let count = 1;
+    if (entry.kind === "directory") {
+      const tree = await api<{ descendant_count: number }>(
+        `${root}/draft/tree?${query({ parent: entry.path, revision: state.revision })}`,
+      );
+      count += tree.descendant_count;
     }
-    if (!window.confirm(`${action[0].toUpperCase() + action.slice(1)} version ${version.label}?${action === 'restore' ? ' This replaces the current draft; existing projects are unaffected.' : action === 'retire' ? ' Source files may be collected. Existing imported copies and projects remain available.' : ''}`)) return;
-    setBusy(true); setError('');
+    if (
+      (await studio.ask(
+        "Delete from draft",
+        `Delete ${entry.path}${count > 1 ? ` and ${count - 1} contained entries` : ""}? Published versions are retained.`,
+        ["Cancel", "Delete"],
+      )) !== "Delete"
+    )
+      return;
+    await studio.mutate(
+      id,
+      { action: "remove", path: entry.path, recursive: true },
+      state.revision,
+    );
+    for (const b of [...studio.model.buffers])
+      if (
+        b.library === id &&
+        !b.version &&
+        (b.entry.path === entry.path ||
+          b.entry.path.startsWith(entry.path + "/"))
+      )
+        await studio.close(b);
+    setSelected("");
+    await refresh();
+  };
+  const fileActions = (entry: Entry) => [
+    {
+      label: "Copy path",
+      action: () =>
+        void navigator.clipboard
+          .writeText(entry.path)
+          .catch((e) => setError(String(e))),
+    },
+    ...(entry.kind === "file"
+      ? [
+          {
+            label: "Download",
+            action: () => {
+              window.location.assign(contentURL(id, version, entry.path));
+            },
+          },
+        ]
+      : []),
+    ...(!version && !library?.archived
+      ? [
+          { label: "Rename", action: () => {} },
+          { label: "Move", action: () => setMoveEntry(entry) },
+          {
+            label: "Delete",
+            danger: true,
+            action: () => void run(() => remove(entry)),
+          },
+        ]
+      : []),
+  ];
+  const review = async () => {
+    if (reviewing) return;
+    setReviewing(true);
     try {
-      if (action === 'restore') { await mutate({ action: 'restore', version_id: version.id, path: '' }); setVersionID(''); setSelected(null); setText(''); setSaved(''); }
-      else if (action === 'archive' || action === 'retire') await api(`${root}/versions/${version.id}/lifecycle`, { method: 'POST', body: JSON.stringify({ request_id: requestID(), action }) }, session.csrf);
-      else await api(`/operations/${version.id}/${action}`, { method: 'POST', body: JSON.stringify({ request_id: requestID() }) }, session.csrf);
-      await load();
-    } catch (e) { report(e); } finally { setBusy(false); }
-  }
-  async function uploadFiles(files: FileList | null) {
-    if (!files || !session || !library || progress) return;
-    const abort = new AbortController(); controller.current = abort; setError('');
-    const failures: string[] = [];
-    for (const file of Array.from(files)) {
-      if (abort.signal.aborted) break;
-      const name = file.webkitRelativePath || file.name;
-      const target = parent ? `${parent}/${name}` : name;
-      try {
-        if (file.size > 256 << 20) throw new Error('exceeds 256 MiB per file');
-        setProgress({ path: target, message: 'Checking file', progress: 0 });
-        const digest = await hashFile(file, n => setProgress({ path: target, message: 'Checking file', progress: file.size ? n / file.size : 1 }), abort.signal);
-        let l = await api<Library>(root);
-        const parts = target.split('/');
-        for (let i = 1; i < parts.length; i++) {
-          const directory = parts.slice(0, i).join('/');
-          try { const created = await api<{ revision: number }>(`${root}/draft/mutations`, { method: 'POST', body: JSON.stringify({ request_id: requestID(), expected_revision: l.draft_revision, action: 'mkdir', path: directory }) }, session.csrf); l = { ...l, draft_revision: created.revision }; }
-          catch (e) { if (!(e instanceof APIError && e.status === 409)) throw e; l = await api<Library>(root); }
-        }
-        const pending = await api<{ uploads: Upload[] }>(`${root}/uploads`);
-        let u = pending.uploads.find(x => x.state === 'open' && x.path === target && x.digest === digest && x.size === String(file.size) && x.owner.subject === session.subject && x.owner.issuer === session.issuer);
-        if (!u) u = await api<Upload>(`${root}/uploads`, { method: 'POST', body: JSON.stringify({ request_id: requestID(), expected_revision: l.draft_revision, path: target, size: String(file.size), digest }) }, session.csrf);
-        let offset = Number(u.offset);
-        while (offset < file.size) {
-          if (abort.signal.aborted) throw new DOMException('Upload paused', 'AbortError');
-          const data = await file.slice(offset, offset + (8 << 20)).arrayBuffer();
-          const chunkDigest = await hashChunk(data);
-          u = await api<Upload>(`${root}/uploads/${u.id}/chunks/${offset}`, { method: 'PUT', body: data, headers: { 'Content-Type': 'application/octet-stream', 'X-Chunk-Digest': chunkDigest }, signal: abort.signal }, session.csrf);
-          offset = Number(u.offset); setProgress({ path: target, message: 'Uploading', progress: file.size ? offset / file.size : 1 });
-        }
-        const current = await api<Upload>(`${root}/uploads/${u.id}`);
-        let confirmTarget: string | undefined;
-        if (current.current_target !== current.target_identity) {
-          if (!window.confirm(`${target} changed while uploading. Replace the latest saved file with this upload?`)) throw new Error('target changed; uploaded bytes remain available for review');
-          confirmTarget = current.current_target;
-        }
-        await api(`${root}/uploads/${u.id}/complete`, { method: 'POST', body: JSON.stringify({ request_id: requestID(), expected_revision: current.current_revision, confirm_target: confirmTarget }) }, session.csrf);
-      } catch (e) { failures.push(`${target}: ${String(e)}`); }
+      // A save already requested by the user should finish before deciding
+      // whether publication needs another unsaved-edits decision.
+      await studio.queue.run(id, async () => {});
+      if (
+        studio.model.buffers.some(
+          (b) =>
+            b.library === id &&
+            !b.version &&
+            (b.text !== b.saved || !!b.pending),
+        )
+      ) {
+        if (
+          (await studio.ask(
+            "Save before publishing",
+            "Save all unsaved files before reviewing this version?",
+            ["Return to editing", "Save all and review"],
+          )) !== "Save all and review"
+        )
+          return;
+        await studio.saveAll(id);
+        if (
+          studio.model.buffers.some(
+            (b) =>
+              b.library === id &&
+              !b.version &&
+              (b.text !== b.saved || b.pending),
+          )
+        )
+          throw new Error(
+            "Some files changed while saving. Save them before publication review.",
+          );
+      }
+      const l = await api<Library>(root);
+      const p = await studio.write<{
+        entry_count: number;
+        total_bytes: string;
+        revision: number;
+      }>(`${root}/publish-preview`, { expected_revision: l.draft_revision });
+      setPreview({
+        ...p,
+        revision: l.draft_revision,
+        base_version: l.base_version,
+      });
+      setLibrary(l);
+      setPublish(true);
+    } finally {
+      setReviewing(false);
     }
-    setProgress(null); controller.current = null;
-    if (failures.length) setError(failures.join('\n'));
-    else setNotice('Files saved to the draft.');
-    await load().catch(report);
-    if (input.current) input.current.value = ''; if (folderInput.current) folderInput.current.value = '';
-  }
-  async function cancelUpload(u: Upload) {
-    if (!session || !window.confirm(`Cancel the unfinished upload for ${u.path}?`)) return;
-    try { await api(`${root}/uploads/${u.id}`, { method: 'DELETE', body: JSON.stringify({ request_id: requestID() }) }, session.csrf); await load(); } catch (e) { report(e); }
-  }
-  if (!session) return <SessionGate error={sessionError} loading={loading} />;
-  const activeUploads = uploads.filter(u => u.state === 'open');
-  const selectedVersion = versions.find(v => v.id === versionID);
-  const contentURL = selected ? `${base}/api/v1${root}/${versionID ? `versions/${versionID}` : 'draft'}/content?path=${encodeURIComponent(selected.path)}` : '';
-  return <main className="editor-shell">
-    <header className="topbar"><Link href="/" className="wordmark">◈ <span>Volume Studio</span></Link><nav><a href="/admin">Aster administration ↗</a><SignOut session={session} /></nav></header>
-    <div className="library-heading"><div><Link href="/" className="muted">Libraries /</Link><h1>{library?.name || 'Loading library…'}</h1><p>{library?.description}</p></div><div className="actions"><button className="quiet" disabled={busy} onClick={() => void editLibrary()}>Edit library details</button><span className="badge">{versionID ? selectedVersion?.label || 'Published version' : `Draft · revision ${library?.draft_revision ?? '…'}`}</span><button className="button" disabled={busy || !!progress || !!versionID || activeUploads.length > 0 || !!library?.archived} onClick={() => void reviewPublish()}>Review & publish</button></div></div>
-    {error && <div className="notice error" role="alert"><p>{error}</p><button className="quiet" onClick={() => { setError(''); void load().catch(report); }}>Refresh saved state</button></div>}
-    {notice && <p className="notice" role="status">{notice}</p>}
-    <div className="tabs" role="tablist" aria-label="Library views">{(['files', 'changes', 'history'] as const).map(t => <button key={t} role="tab" aria-selected={tab === t} onClick={() => t === 'changes' ? void loadChanges() : setTab(t)}>{t === 'files' ? 'Files' : t === 'changes' ? 'Draft changes' : `Version history (${versions.length})`}</button>)}<button className="quiet" onClick={() => void load().catch(report)}>↻ Refresh</button></div>
-    {publishing && <form className="panel publish-form" onSubmit={publish}><h2>Publish this revision</h2><p>{preview?.entry_count} entries · {bytes(preview?.total_bytes ?? '0')} · draft revision {preview?.revision}</p><p className="muted">The published version is fixed. You can continue editing a new draft immediately.</p><label>Version label<input autoFocus required maxLength={128} value={label} onChange={e => setLabel(e.target.value)} placeholder="2026.10 or v1" /></label><label>Release note<textarea maxLength={4000} value={note} onChange={e => setNote(e.target.value)} /></label><div className="actions"><button className="button" disabled={busy}>Publish version</button><button className="quiet" type="button" onClick={() => setPublishing(false)}>Cancel</button></div></form>}
-    {tab === 'files' && <>
-      <div className="file-toolbar"><div className="actions"><button className="quiet" onClick={() => { if (confirmDiscard()) { setVersionID(''); setParent(''); setSelected(null); setText(''); setSaved(''); } }}>Draft root</button>{parent && !versionID && <button className="quiet" onClick={() => { if (confirmDiscard()) setParent(parent.split('/').slice(0, -1).join('/')); }}>↑ Parent directory</button>}<span className="muted">/{parent}</span></div><div className="actions"><button className="quiet" disabled={busy || !!versionID || !!progress} onClick={() => void create('text')}>＋ Text file</button><button className="quiet" disabled={busy || !!versionID || !!progress} onClick={() => void create('mkdir')}>＋ Directory</button><button className="button secondary" disabled={!!versionID || !!progress} onClick={() => input.current?.click()}>Upload files</button><button className="quiet" disabled={!!versionID || !!progress} onClick={() => folderInput.current?.click()}>Upload folder</button></div></div>
-      <input className="visually-hidden" ref={input} type="file" multiple aria-label="Select files" onChange={e => void uploadFiles(e.target.files)} /><input className="visually-hidden" ref={folderInput} type="file" multiple {...{ webkitdirectory: '' }} aria-label="Select directory" onChange={e => void uploadFiles(e.target.files)} />
-      <div className="file-workspace"><aside className="file-tree" aria-label="Files"><div className="tree-heading">Name <span>Size</span></div>{tree.entries.length === 0 && <p className="muted empty-tree">This directory is empty.</p>}{tree.entries.map(entry => <div className={`file-row ${selected?.path === entry.path ? 'selected' : ''}`} key={entry.path}><button className="file-name" aria-label={`Open ${entry.path}`} onClick={() => void choose(entry)} title={entry.path}><span aria-hidden="true">{entry.kind === 'directory' ? '▰' : '▤'}</span><span>{versionID ? entry.path : entry.path.split('/').at(-1)}</span><small>{entry.kind === 'directory' ? 'Directory' : bytes(entry.size)}</small></button>{!versionID && <details><summary aria-label={`Actions for ${entry.path}`}>⋯</summary><div className="row-menu"><button disabled={busy} onClick={() => void removeOrMove(entry, 'move')}>Rename / move</button><button disabled={busy} onClick={() => void removeOrMove(entry, 'remove')}>Delete</button></div></details>}</div>)}{tree.next && <button className="quiet" onClick={() => void api<Tree>(`${root}/${versionID ? `versions/${versionID}` : 'draft'}/tree?parent=${encodeURIComponent(parent)}&revision=${tree.revision}&after=${encodeURIComponent(tree.next)}`).then(t => setTree(old => ({ ...t, entries: [...old.entries, ...t.entries] }))).catch(report)}>Load more entries</button>}</aside>
-        <section className="file-editor" aria-label="File editor">{selected ? <><div className="editor-toolbar"><strong>{selected.path}</strong><div className="actions">{dirty && <span className="unsaved">Unsaved text</span>}<a className="quiet" href={contentURL}>Download</a>{editable && !versionID && <button className="button" disabled={busy || !dirty || new TextEncoder().encode(text).length > 1 << 20} onClick={() => void save()}>Save file</button>}<button className="quiet" onClick={() => void choose(selected)}>Reload file</button></div></div>{imageURL ? <div className="image-preview"><Image src={imageURL} alt={selected.path} width={1000} height={800} unoptimized /></div> : editable ? <textarea className="code-editor" aria-label={`Contents of ${selected.path}`} spellCheck={false} readOnly={!!versionID} value={text} onChange={e => setText(e.target.value)} /> : <div className="empty-state"><span aria-hidden="true">▤</span><h3>{selected.kind === 'directory' ? 'Directory' : 'Download to inspect this file'}</h3><p>Text editing supports UTF-8 files up to 1 MiB. Binary files keep their exact uploaded bytes.</p></div>}</> : <div className="empty-state"><span aria-hidden="true">▧</span><h3>Select a file to begin</h3><p>Open text to edit it, or upload files and directories into this draft.</p></div>}</section>
+  };
+  const finishPublish = async () => {
+    if (!preview) return;
+    setPublishing(true);
+    try {
+      await studio.write(`${root}/versions`, {
+        request_id: requestID(),
+        expected_revision: preview.revision,
+        expected_base_version: preview.base_version,
+        label,
+        note,
+      });
+      setPublish(false);
+      setLabel("");
+      setNote("");
+      setView("versions");
+      studio.changed();
+      await refresh();
+    } finally {
+      setPublishing(false);
+    }
+  };
+  const activeUploads =
+    studio.model.uploads[id]?.filter((u) => u.state === "open").length || 0;
+  const localUploads = studio.model.tasks.some(
+    (t) => t.library === id && t.controller,
+  );
+  const blocked = library?.archived
+    ? "This library is archived."
+    : version
+      ? "Switch to Draft to publish."
+      : activeUploads || localUploads
+        ? "Unfinished uploads block publication. Open Tasks to resolve them."
+        : activePublication
+          ? "A publication is already in progress."
+          : "";
+  const tabsLabel = (b: BufferFile) => {
+    const same = buffers.filter(
+      (x) => x.entry.path.split("/").at(-1) === b.entry.path.split("/").at(-1),
+    );
+    if (same.length === 1) return b.entry.path.split("/").at(-1);
+    const parts = b.entry.path.split("/");
+    for (let n = 2; n < parts.length; n++) {
+      const suffix = parts.slice(-n).join("/");
+      if (
+        same.filter(
+          (x) => x.entry.path.endsWith("/" + suffix) || x.entry.path === suffix,
+        ).length === 1
+      )
+        return suffix;
+    }
+    return b.entry.path;
+  };
+  const fileSidebar = (
+    <aside className="files-sidebar">
+      <div className="sidebar-heading">
+        <strong>Files</strong>
+        <div className="actions">
+          {!version && !library?.archived && (
+            <Menu
+              label="Add files"
+              items={[
+                { label: "New file", action: () => create("text") },
+                { label: "New folder", action: () => create("mkdir") },
+                {
+                  label: "Upload files",
+                  action: () => input.current?.click(),
+                },
+                {
+                  label: "Upload folder",
+                  action: () => folderInput.current?.click(),
+                },
+              ]}
+            >
+              <Plus size={16} />
+            </Menu>
+          )}
+          <button
+            className="icon-button"
+            aria-label="Hide files"
+            onClick={() => setSidebar(false)}
+          >
+            <PanelLeft size={16} />
+          </button>
+        </div>
       </div>
-      {(progress || activeUploads.length > 0) && <section className="panel upload-panel" aria-label="Upload queue"><div className="section-heading"><h2>Uploads</h2><span className="muted">Unfinished uploads block publication</span></div>{progress && <div><strong>{progress.path}</strong><div className="progress-row"><progress max={1} value={progress.progress} /><span>{progress.message} · {Math.round(progress.progress * 100)}%</span><button className="quiet" onClick={() => controller.current?.abort()}>Pause</button></div></div>}{activeUploads.map(u => <div key={u.id} className="upload-row"><span>{u.path}</span><small>{bytes(u.offset)} / {bytes(u.size)}</small><span className="muted">Select the same file to resume</span><button className="quiet" disabled={!!progress} onClick={() => void cancelUpload(u)}>Cancel upload</button></div>)}</section>}
-    </>}
-    {tab === 'changes' && <section className="panel"><h2>Changes since the draft base</h2>{changes.length === 0 ? <p className="muted">No saved changes from the base version.</p> : <ul className="change-list">{changes.map(c => <li key={c.path}><span className={`badge ${c.change}`}>{c.change}</span><code>{c.path}</code></li>)}</ul>}{changeNext && <button className="quiet" onClick={() => void loadChanges(changeNext)}>Load more changes</button>}</section>}
-    {tab === 'history' && <section className="history">{versions.length === 0 && <div className="empty-state"><h3>No published versions yet</h3><p>Review your saved draft when you are ready to publish.</p></div>}{versions.map(v => <article className="panel version-card" key={v.id}><div className="section-heading"><h2>{v.label}</h2><span className={`badge ${v.state}`}>{v.state}</span></div><p>{v.note || 'No release note.'}</p><p className="muted">Frozen from revision {v.source_revision} · Publisher {v.publisher.subject}</p><code className="digest">{v.descriptor_digest}</code>{v.error && <p role="alert">{v.error.replaceAll('_', ' ')}</p>}<div className="actions">{['published', 'archived'].includes(v.state) && <><button className="button secondary" onClick={() => { if (confirmDiscard()) { setVersionID(v.id); setSelected(null); setText(''); setSaved(''); setTab('files'); } }}>Inspect files</button><button className="quiet" disabled={busy} onClick={() => void versionAction(v, 'restore')}>Restore to draft</button></>}{v.state === 'published' && <><a className="button" href={`/admin/resources/volumes?volume_publisher=${encodeURIComponent(v.publisher_id)}&volume_library=${id}&volume_version=${v.id}`}>Use in Aster ↗</a><button className="quiet" disabled={busy} onClick={() => void versionAction(v, 'archive')}>Archive source</button></>}{['archived', 'failed'].includes(v.state) && <button className="quiet" disabled={busy} onClick={() => void versionAction(v, 'retire')}>Retire source</button>}{(v.state === 'failed' || v.error === 'principal_authority_required') && <button className="quiet" disabled={busy} onClick={() => void versionAction(v, 'retry')}>Retry validation</button>}{['pending', 'validating'].includes(v.state) && <button className="quiet" disabled={busy} onClick={() => void versionAction(v, 'cancel')}>Cancel publication</button>}</div></article>)}{versionNext && <button className="quiet" onClick={() => void api<{ versions: Version[]; next: string }>(`${root}/versions?after=${versionNext}`).then(p => { setVersions(old => [...old, ...p.versions]); setVersionNext(p.next); }).catch(report)}>Load more versions</button>}</section>}
-  </main>;
+      <VersionPicker
+        library={id}
+        value={version}
+        label={versionLabel}
+        onChange={switchVersion}
+      />
+      {library && (
+        <FileTree
+          library={id}
+          version={version}
+          revision={library.draft_revision}
+          selected={selected}
+          onOpen={(entry) => void run(() => open(entry))}
+          onDirectory={setDirectory}
+          actions={fileActions}
+          onRename={move}
+          searchRef={search}
+        />
+      )}
+      <div className="sidebar-footer">
+        {version
+          ? "Read-only version"
+          : `Draft · revision ${library?.draft_revision ?? "…"}`}
+      </div>
+    </aside>
+  );
+  return (
+    <main className="studio-shell">
+      <ShellHeader library={library} />
+      <div
+        className="workbench"
+        style={{ "--sidebar-width": `${width}px` } as React.CSSProperties}
+        onDragOver={(e) => {
+          if (
+            !version &&
+            !library?.archived &&
+            e.dataTransfer.types.includes("Files")
+          ) {
+            e.preventDefault();
+            setDrag(true);
+          }
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node))
+            setDrag(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDrag(false);
+          if (!version && !library?.archived)
+            void studio.upload(id, directory, Array.from(e.dataTransfer.files));
+        }}
+      >
+        {sidebar && (
+          <>
+            {mobile ? (
+              <Modal
+                title="Files"
+                open
+                onClose={() => setSidebar(false)}
+                className="sidebar-dialog"
+              >
+                {fileSidebar}
+              </Modal>
+            ) : (
+              fileSidebar
+            )}
+            <div
+              className="split-handle"
+              role="separator"
+              aria-label="Resize files sidebar"
+              aria-orientation="vertical"
+              aria-valuenow={width}
+              aria-valuemin={220}
+              aria-valuemax={420}
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                  e.preventDefault();
+                  const n = Math.max(
+                    220,
+                    Math.min(420, width + (e.key === "ArrowRight" ? 10 : -10)),
+                  );
+                  setWidth(n);
+                  storageWrite("local", "studio-sidebar-width", String(n));
+                }
+              }}
+              onPointerDown={(e) => {
+                e.currentTarget.setPointerCapture(e.pointerId);
+              }}
+              onPointerMove={(e) => {
+                if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                  const n = Math.max(220, Math.min(420, e.clientX));
+                  setWidth(n);
+                  storageWrite("local", "studio-sidebar-width", String(n));
+                }
+              }}
+            />
+          </>
+        )}
+        <section className="workspace-main">
+          <div className="workspace-nav">
+            {(!sidebar || mobile) && (
+              <button
+                aria-label="Show files"
+                className="icon-button"
+                onClick={() => setSidebar(true)}
+              >
+                <PanelLeft size={17} />
+              </button>
+            )}
+            <nav aria-label="Library views">
+              {["files", "changes", "versions"].map((v) => (
+                <button
+                  key={v}
+                  aria-current={view === v ? "page" : undefined}
+                  onClick={() => setView(v)}
+                >
+                  {v[0].toUpperCase() + v.slice(1)}
+                  {v === "changes" && !!library?.draft_change_count && (
+                    <span className="count">{library.draft_change_count}</span>
+                  )}
+                </button>
+              ))}
+            </nav>
+            <div className="actions">
+              <Menu
+                label="Library actions"
+                items={[
+                  {
+                    label: "Edit library details",
+                    action: () => setDetails(true),
+                  },
+                  { label: "Refresh", action: () => void run(() => refresh()) },
+                ]}
+              />
+              <button
+                className="primary publish-button"
+                disabled={!!blocked || !library || reviewing}
+                title={blocked || "Review saved draft and publish"}
+                onClick={() => void run(review)}
+              >
+                {reviewing ? "Preparing review…" : "Review & publish"}
+              </button>
+            </div>
+          </div>
+          {blocked && view === "files" && (
+            <div className="inline-status">{blocked}</div>
+          )}
+          {error && (
+            <div className="notice error" role="alert">
+              <span>{error}</span>
+              <button
+                onClick={() => {
+                  setError("");
+                  void run(() => refresh());
+                }}
+              >
+                Refresh saved state
+              </button>
+            </div>
+          )}
+          {view === "files" && (
+            <>
+              <div className="file-tabs" role="tablist" aria-label="Open files">
+                {buffers.map((b) => (
+                  <div
+                    className={`file-tab ${active === b ? "active" : ""}`}
+                    key={b.key}
+                  >
+                    <button
+                      role="tab"
+                      aria-selected={active === b}
+                      onClick={() => {
+                        studio.model.active[id] = b.key;
+                        studio.notify();
+                        setSelected(b.entry.path);
+                        setDirectory(parentPath(b.entry.path));
+                      }}
+                      title={b.entry.path}
+                    >
+                      {tabsLabel(b)}
+                      {b.text !== b.saved && (
+                        <span aria-label="Unsaved changes">●</span>
+                      )}
+                    </button>
+                    <button
+                      aria-label={`Close ${b.entry.path}`}
+                      className="tab-close"
+                      onClick={() => void run(() => studio.close(b))}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+                {buffers.length > 0 && (
+                  <Menu
+                    label="Open files"
+                    items={[
+                      ...buffers.map((b) => ({
+                        label: b.entry.path,
+                        action: () => {
+                          studio.model.active[id] = b.key;
+                          studio.notify();
+                          setSelected(b.entry.path);
+                        },
+                      })),
+                      {
+                        label: "Close all files",
+                        action: () =>
+                          void run(async () => {
+                            if (await studio.settle(id))
+                              for (const b of [...buffers])
+                                await studio.close(b);
+                          }),
+                      },
+                    ]}
+                  >
+                    <List size={16} />
+                  </Menu>
+                )}
+              </div>
+              {active ? (
+                <>
+                  <div className="editor-toolbar">
+                    <span className="file-path" title={active.entry.path}>
+                      {active.entry.path}
+                    </span>
+                    <div className="actions">
+                      <span className={active.error ? "error" : "muted"}>
+                        {active.version
+                          ? "Read only"
+                          : active.text !== active.saved &&
+                              active.status === "Saved"
+                            ? "Unsaved"
+                            : active.status}
+                      </span>
+                      {active.editable && /\.md$/i.test(active.entry.path) && (
+                        <div className="segmented" aria-label="Markdown mode">
+                          {["edit", "preview", "split"].map((m) => (
+                            <button
+                              key={m}
+                              aria-pressed={mode === m}
+                              onClick={() => setMode(m)}
+                            >
+                              {m}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <Menu
+                        label="File editor actions"
+                        items={[
+                          {
+                            label: wrap
+                              ? "Disable line wrapping"
+                              : "Enable line wrapping",
+                            action: () => setWrap(!wrap),
+                          },
+                          {
+                            label: "Download",
+                            action: () =>
+                              window.location.assign(
+                                contentURL(
+                                  id,
+                                  active.version,
+                                  active.entry.path,
+                                ),
+                              ),
+                          },
+                          {
+                            label: "Reload file",
+                            action: () =>
+                              void run(async () => {
+                                await studio.close(active);
+                                if (!studio.model.buffers.includes(active))
+                                  await openPath(active.entry.path);
+                              }),
+                          },
+                          {
+                            label: "Save all",
+                            disabled: !!version || !!library?.archived,
+                            action: () => void run(() => studio.saveAll(id)),
+                          },
+                        ]}
+                      />
+                      {active.editable && !version && (
+                        <button
+                          className="primary"
+                          disabled={
+                            !!library?.archived ||
+                            (active.text === active.saved && !active.pending) ||
+                            active.status === "Saving"
+                          }
+                          onClick={() => void run(() => studio.save(active))}
+                        >
+                          <Save size={14} />
+                          <span>Save file</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {active.error && (
+                    <div className="notice error" role="alert">
+                      {active.error}
+                    </div>
+                  )}
+                  {active.format.mixed && active.text !== active.saved && (
+                    <div className="inline-status">
+                      Mixed line endings will be saved as LF.
+                    </div>
+                  )}
+                  <div
+                    className={`editor-content ${active.editable && /\.md$/i.test(active.entry.path) ? `markdown-mode-${mode}` : ""}`}
+                  >
+                    {active.image ? (
+                      <ImagePreview buffer={active} />
+                    ) : active.editable ? (
+                      <>
+                        {(!/\.md$/i.test(active.entry.path) ||
+                          mode !== "preview") && (
+                          <CodeEditor
+                            key={`${active.key}:${active.reset || 0}`}
+                            buffer={active}
+                            wrap={wrap}
+                            onChange={(text) => {
+                              active.text = text;
+                              active.status =
+                                text === active.saved ? "Saved" : "Unsaved";
+                              studio.notify();
+                            }}
+                            onSave={() => void run(() => studio.save(active))}
+                            onPosition={(line, col) => setPosition([line, col])}
+                          />
+                        )}{" "}
+                        {/\.md$/i.test(active.entry.path) &&
+                          mode !== "edit" && (
+                            <MarkdownPreview
+                              buffer={active}
+                              onOpen={(path) => void run(() => openPath(path))}
+                            />
+                          )}
+                      </>
+                    ) : (
+                      <div className="empty-state">
+                        <FileText size={32} />
+                        <h2>File preview unavailable</h2>
+                        <p>
+                          {bytes(active.entry.size)} · Download to inspect this
+                          file.
+                        </p>
+                        <a
+                          className="button"
+                          href={contentURL(
+                            id,
+                            active.version,
+                            active.entry.path,
+                          )}
+                        >
+                          Download
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                  <div className="editor-status">
+                    <span>{active.version ? "Read only" : "Draft"}</span>
+                    <span>
+                      {active.editable
+                        ? `Ln ${position[0]}, Col ${position[1]} · UTF-8${active.format.bom ? " BOM" : ""} · ${active.format.separator === "\r\n" ? "CRLF" : "LF"}`
+                        : bytes(active.entry.size)}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <div className="editor-empty">
+                  <FileText size={30} />
+                  <h2>{version ? "Browse version files" : "Select a file"}</h2>
+                  <p>Open a file from the sidebar, or use Go to file.</p>
+                  <div className="actions">
+                    <button
+                      onClick={() => {
+                        setSidebar(true);
+                        setTimeout(() => search.current?.focus(), 0);
+                      }}
+                    >
+                      Go to file
+                    </button>
+                    {!version && !library?.archived && (
+                      <button onClick={() => input.current?.click()}>
+                        <UploadCloud size={16} />
+                        Upload files
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+          {view === "changes" && library && <Changes library={library} />}{" "}
+          {view === "versions" && library && (
+            <Versions
+              library={library}
+              onInspect={switchVersion}
+              onChanged={() => void run(() => refresh())}
+            />
+          )}
+        </section>
+        {drag && <div className="drop-target">Upload to /{directory}</div>}
+      </div>
+      <input
+        className="visually-hidden"
+        ref={input}
+        type="file"
+        multiple
+        aria-label="Select files"
+        onChange={(e) => {
+          void studio.upload(id, directory, Array.from(e.target.files || []));
+          e.target.value = "";
+        }}
+      />
+      <input
+        className="visually-hidden"
+        ref={folderInput}
+        type="file"
+        multiple
+        {...{ webkitdirectory: "" }}
+        aria-label="Select directory"
+        onChange={(e) => {
+          void studio.upload(id, directory, Array.from(e.target.files || []));
+          e.target.value = "";
+        }}
+      />
+      {form && (
+        <TextDialog
+          title={form.title}
+          label={form.label}
+          initial={form.initial}
+          submit={form.submit}
+          onClose={() => setForm(null)}
+          onSubmit={form.action}
+        />
+      )}{" "}
+      {details && library && (
+        <LibraryDetails
+          library={library}
+          onClose={() => setDetails(false)}
+          onSaved={setLibrary}
+        />
+      )}
+      <Modal
+        title="Review & publish"
+        open={publish}
+        onClose={() => setPublish(false)}
+        drawer
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(finishPublish);
+          }}
+        >
+          <p>
+            {preview?.entry_count} entries · {bytes(preview?.total_bytes || 0)}{" "}
+            · revision {preview?.revision}
+          </p>
+          <p className="muted">
+            This publishes the exact saved draft reviewed here.
+          </p>
+          {preview &&
+            library &&
+            (preview.revision !== library.draft_revision ||
+              preview.base_version !== library.base_version) && (
+              <p role="alert" className="error">
+                The draft changed.{" "}
+                <button type="button" onClick={() => void run(review)}>
+                  Review latest draft
+                </button>
+              </p>
+            )}
+          <label>
+            Version label
+            <input
+              autoFocus
+              required
+              maxLength={128}
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+            />
+          </label>
+          <label>
+            Release note
+            <textarea
+              maxLength={4000}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+          </label>
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="dialog-actions">
+            <button type="button" onClick={() => setPublish(false)}>
+              Cancel
+            </button>
+            <button
+              className="primary"
+              disabled={
+                publishing ||
+                !!blocked ||
+                preview?.revision !== library?.draft_revision ||
+                preview?.base_version !== library?.base_version
+              }
+            >
+              Publish version
+            </button>
+          </div>
+        </form>
+      </Modal>
+      {active?.conflict && <Conflict buffer={active} onError={setError} />}{" "}
+      {moveEntry && (
+        <MoveDialog
+          library={id}
+          entry={moveEntry}
+          onClose={() => setMoveEntry(null)}
+          onMove={(to) => move(moveEntry, to)}
+        />
+      )}
+    </main>
+  );
+}
+function Conflict({
+  buffer,
+  onError,
+}: {
+  buffer: BufferFile;
+  onError: (e: string) => void;
+}) {
+  const studio = useStudio();
+  const [open, setOpen] = useState(true),
+    [copy, setCopy] = useState(false);
+  const conflict = buffer.conflict!;
+  return (
+    <>
+      <button className="conflict-reopen" onClick={() => setOpen(true)}>
+        Review conflict
+      </button>
+      <Modal
+        title={`Resolve conflict · ${buffer.entry.path}`}
+        open={open}
+        onClose={() => setOpen(false)}
+        drawer
+      >
+        <p>
+          The left side is the saved file; the right side is your unsaved
+          content.
+        </p>
+        <div className="conflict-diff">
+          <TextDiff before={conflict.text} after={buffer.text} />
+        </div>
+        <div className="dialog-actions">
+          <button
+            onClick={() => {
+              if (!conflict.entry || !conflict.readable) {
+                onError(
+                  "The file was deleted. Save your content under a new name.",
+                );
+                return;
+              }
+              buffer.entry = conflict.entry;
+              if (conflict.format) buffer.format = conflict.format;
+              buffer.revision = conflict.revision;
+              buffer.text = buffer.saved = conflict.text;
+              buffer.editorState = undefined;
+              buffer.reset = (buffer.reset || 0) + 1;
+              buffer.conflict = undefined;
+              buffer.error = "";
+              buffer.status = "Saved";
+              studio.notify();
+              void studio.persist();
+            }}
+          >
+            Use saved version
+          </button>
+          <button onClick={() => setCopy(true)}>Save as new file</button>
+          <button
+            className="primary"
+            onClick={async () => {
+              try {
+                const current = await studio.snapshot(
+                  buffer.library,
+                  buffer.entry.path,
+                );
+                if (
+                  JSON.stringify(current.entry) !==
+                    JSON.stringify(conflict.entry) ||
+                  current.revision !== conflict.revision
+                )
+                  throw new Error(
+                    "The target changed again. Retry saving to review its latest content.",
+                  );
+                if (!current.entry)
+                  throw new Error("The file was deleted. Save as a new file.");
+                buffer.entry = current.entry;
+                buffer.revision = current.revision;
+                buffer.conflict = undefined;
+                await studio.save(buffer);
+              } catch (e) {
+                onError(String(e));
+                setOpen(false);
+              }
+            }}
+          >
+            Overwrite reviewed version
+          </button>
+        </div>
+      </Modal>
+      {copy && (
+        <TextDialog
+          title="Save as new file"
+          label="Path relative to library root"
+          initial={buffer.entry.path + ".copy"}
+          onClose={() => setCopy(false)}
+          onSubmit={async (path) => {
+            await studio.queue.run(buffer.library, async () => {
+              const target = await studio.snapshot(buffer.library, path);
+              if (target.entry) throw new Error("That path already exists.");
+              await studio.write(
+                `/libraries/${buffer.library}/draft/mutations`,
+                {
+                  request_id: requestID(),
+                  expected_revision: target.revision,
+                  action: "text",
+                  path,
+                  text: encodeText(buffer.text, buffer.format),
+                },
+              );
+            });
+            buffer.saved = buffer.text;
+            buffer.conflict = undefined;
+            buffer.error = "";
+            await studio.close(buffer);
+            studio.changed();
+          }}
+        />
+      )}
+    </>
+  );
+}
+function MoveDialog({
+  library,
+  entry,
+  onClose,
+  onMove,
+}: {
+  library: string;
+  entry: Entry;
+  onClose: () => void;
+  onMove: (to: string) => Promise<void>;
+}) {
+  const [parent, setParent] = useState(""),
+    [page, setPage] = useState<Page<Entry> | null>(null),
+    [error, setError] = useState("");
+  useEffect(() => {
+    const abort = new AbortController();
+    void api<Page<Entry>>(
+      `/libraries/${library}/draft/tree?${query({ mode: "workbench", parent })}`,
+      { signal: abort.signal },
+    )
+      .then(setPage)
+      .catch((e) => {
+        if (!abort.signal.aborted) setError(String(e));
+      });
+    return () => abort.abort();
+  }, [library, parent]);
+  return (
+    <Modal title={`Move ${entry.path}`} open onClose={onClose}>
+      <p>Destination: /{parent}</p>
+      {parent && (
+        <button onClick={() => setParent(parentPath(parent))}>
+          Parent directory
+        </button>
+      )}
+      <div className="picker-results">
+        {page?.items
+          .filter(
+            (e) =>
+              e.kind === "directory" &&
+              e.path !== entry.path &&
+              !e.path.startsWith(entry.path + "/"),
+          )
+          .map((e) => (
+            <button key={e.path} onClick={() => setParent(e.path)}>
+              ▸ {e.path.split("/").at(-1)}
+            </button>
+          ))}
+        {page?.next && (
+          <button
+            onClick={() =>
+              void api<Page<Entry>>(
+                `/libraries/${library}/draft/tree?${query({ mode: "workbench", parent, revision: page.revision, cursor: page.next })}`,
+              )
+                .then((p) =>
+                  setPage({ ...p, items: [...page.items, ...p.items] }),
+                )
+                .catch((e) => setError(String(e)))
+            }
+          >
+            Load more folders
+          </button>
+        )}
+      </div>
+      {error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )}
+      <div className="dialog-actions">
+        <button onClick={onClose}>Cancel</button>
+        <button
+          className="primary"
+          onClick={async () => {
+            try {
+              await onMove(
+                [parent, entry.path.split("/").at(-1)]
+                  .filter(Boolean)
+                  .join("/"),
+              );
+              onClose();
+            } catch (e) {
+              setError(String(e));
+            }
+          }}
+        >
+          Move here
+        </button>
+      </div>
+    </Modal>
+  );
 }

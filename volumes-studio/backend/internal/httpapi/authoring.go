@@ -35,6 +35,9 @@ func NewAuthoringAPI(store *authoring.Store) *AuthoringAPI {
 	m.HandleFunc("GET "+apiPrefix+"libraries/{library}", a.library)
 	m.HandleFunc("PATCH "+apiPrefix+"libraries/{library}", a.metadata)
 	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/draft/tree", a.tree)
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/draft/search", a.search)
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/draft/entry", a.entry)
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}/search", a.search)
 	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/draft/content", a.content)
 	m.HandleFunc("POST "+apiPrefix+"libraries/{library}/draft/mutations", a.mutate)
 	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/draft/diff", a.diff)
@@ -115,6 +118,11 @@ func revision(r *http.Request) int64 {
 	return n
 }
 func (a *AuthoringAPI) libraries(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("mode") == "workbench" {
+		p, err := a.Store.WorkbenchCatalog(r.Context(), workbenchQuery(r))
+		respond(w, 200, p, err)
+		return
+	}
 	list, err := a.Store.Libraries(r.Context(), r.URL.Query().Get("after"))
 	next := ""
 	if len(list) == 200 {
@@ -131,6 +139,11 @@ func (a *AuthoringAPI) create(w http.ResponseWriter, r *http.Request) {
 	respond(w, 201, l, err)
 }
 func (a *AuthoringAPI) library(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("mode") == "workbench" {
+		p, err := a.Store.Summary(r.Context(), r.PathValue("library"))
+		respond(w, 200, p, err)
+		return
+	}
 	l, err := a.Store.Library(r.Context(), r.PathValue("library"))
 	respond(w, 200, l, err)
 }
@@ -143,6 +156,11 @@ func (a *AuthoringAPI) metadata(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, l, err)
 }
 func (a *AuthoringAPI) tree(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("mode") == "workbench" {
+		p, err := a.Store.WorkbenchTree(r.Context(), r.PathValue("library"), "", workbenchQuery(r), false)
+		respond(w, 200, p, err)
+		return
+	}
 	page, err := a.Store.Tree(r.Context(), r.PathValue("library"), r.URL.Query().Get("parent"), r.URL.Query().Get("after"), revision(r))
 	respond(w, 200, page, err)
 }
@@ -155,6 +173,11 @@ func (a *AuthoringAPI) mutate(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, result, err)
 }
 func (a *AuthoringAPI) diff(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("mode") == "workbench" {
+		p, err := a.Store.WorkbenchDiff(r.Context(), r.PathValue("library"), workbenchQuery(r))
+		respond(w, 200, p, err)
+		return
+	}
 	changes, next, err := a.Store.Diff(r.Context(), r.PathValue("library"), r.URL.Query().Get("after"), revision(r))
 	respond(w, 200, map[string]any{"changes": changes, "next": next}, err)
 }
@@ -177,6 +200,11 @@ func (a *AuthoringAPI) publish(w http.ResponseWriter, r *http.Request) {
 	respond(w, 202, v, err)
 }
 func (a *AuthoringAPI) versions(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("mode") == "workbench" {
+		p, err := a.Store.VersionCatalog(r.Context(), r.PathValue("library"), workbenchQuery(r))
+		respond(w, 200, p, err)
+		return
+	}
 	list, err := a.Store.Versions(r.Context(), r.PathValue("library"), r.URL.Query().Get("after"))
 	next := ""
 	if len(list) == 200 {
@@ -192,6 +220,11 @@ func (a *AuthoringAPI) version(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, v, err)
 }
 func (a *AuthoringAPI) versionTree(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("mode") == "workbench" {
+		p, err := a.Store.WorkbenchTree(r.Context(), r.PathValue("library"), r.PathValue("version"), workbenchQuery(r), false)
+		respond(w, 200, p, err)
+		return
+	}
 	v, err := a.Store.Version(r.Context(), r.PathValue("version"))
 	if err != nil {
 		authoringError(w, err)
@@ -209,12 +242,15 @@ func (a *AuthoringAPI) content(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 416, "single_range_required")
 		return
 	}
-	reader, e, err := a.Store.Content(r.Context(), r.PathValue("library"), r.URL.Query().Get("path"), r.PathValue("version"))
+	reader, e, err := a.Store.Content(r.Context(), r.PathValue("library"), r.URL.Query().Get("path"), r.PathValue("version"), revision(r))
 	if err != nil {
 		authoringError(w, err)
 		return
 	}
 	defer reader.Close()
+	if revision(r) > 0 {
+		w.Header().Set("X-Draft-Revision", strconv.FormatInt(revision(r), 10))
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(e.Path)}))
 	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")

@@ -73,6 +73,16 @@ func (l *Lifecycle) stopHeldPlacement(ctx context.Context, project string) error
 			return l.finishExecutionHold(ctx, project, nil)
 		}
 	}
+	if o.Kind == "resume" && o.Phase == "configuration" {
+		if err := l.settleConfigurationCancellation(ctx, o, r); err != nil {
+			return err
+		}
+		r, err = l.Store.resourcesFor(ctx, project)
+		if err != nil {
+			return err
+		}
+	}
+
 	observed, err := l.Backend.Inspect(ctx, r.Reference)
 	if sandbox.Is(err, sandbox.NotFound) {
 		return l.finishExecutionHold(ctx, project, nil)
@@ -125,6 +135,9 @@ func (l *Lifecycle) finishExecutionHold(ctx context.Context, project string, obs
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE project_operations SET state='canceled',error=? WHERE project_id=? AND kind IN ('create','resume','pause') AND state NOT IN ('succeeded','canceled')`, reason, project); err != nil {
+			return err
+		}
+		if err := l.Store.cancelEnvironmentExecution(ctx, tx, project, reason); err != nil {
 			return err
 		}
 		// Unbound metadata keeps its created state. Bound plans preserve all slot

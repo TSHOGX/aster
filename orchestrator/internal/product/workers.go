@@ -178,6 +178,13 @@ func (w *Workers) project(ctx context.Context, p Project) error {
 	if err != nil {
 		return err
 	}
+	var deferred bool
+	if err := w.Store.reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM environment_update_executions WHERE project_id=? AND state='unknown' AND retry_after>?)`, p.ID, w.Store.timestamp()).Scan(&deferred); err != nil {
+		return err
+	}
+	if deferred {
+		return nil
+	}
 	if handled, err := w.adminProjectStep(ctx, current); handled || err != nil {
 		return err
 	}

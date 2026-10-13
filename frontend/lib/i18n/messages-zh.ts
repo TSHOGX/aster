@@ -1,5 +1,11 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Environment details are unavailable.": "暂时无法查看环境详情。",
+  "Current environment is up to date.": "当前环境已是最新版本。",
+  "This project retains the versions selected by your administrator.": "此项目保留管理员选定的版本。",
+  "This project keeps its current content until an update can be applied on a future start.": "此项目将保留当前内容，等待下次启动时应用更新。",
+  "Last checked": "最近检查",
+
   "Saved template is unavailable": "已保存的模板不可用",
   "Loading projects…": "正在加载项目…",
   "No projects yet.": "暂无项目。",

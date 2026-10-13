@@ -1,48 +1,363 @@
-'use client';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
-import { api, Library, requestID } from '../lib/api';
-import { SessionGate, SignOut, useSession } from '../components/session';
-
+/* eslint-disable react-hooks/set-state-in-effect -- Hydrate browser navigation and synchronize external workspace snapshots. */
+"use client";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import {
+  Search,
+  Plus,
+  RefreshCw,
+  ArrowDown,
+  ArrowUp,
+  ChevronsUpDown,
+} from "lucide-react";
+import { api, Library, requestID } from "../lib/api";
+import { storageRead, storageWrite } from "../lib/workbench";
+import { Page, query, relativeTime } from "../lib/workbench";
+import { LibraryDetails, ShellHeader } from "../components/shell";
+import { Menu, Picker } from "../components/ui";
+import { useStudio } from "../components/studio-provider";
 export default function Home() {
+  const studio = useStudio();
   const router = useRouter();
-  const { session, error: sessionError, loading } = useSession();
-  const [libraries, setLibraries] = useState<Library[]>([]);
-  const [next, setNext] = useState('');
-  const [error, setError] = useState('');
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const load = useCallback(async (after = '') => {
-    const page = await api<{ libraries: Library[]; next: string }>(`/libraries?after=${encodeURIComponent(after)}`);
-    setLibraries(old => after ? [...old, ...page.libraries] : page.libraries); setNext(page.next);
-  }, []);
+  const [q, setQ] = useState(""),
+    [status, setStatus] = useState("active"),
+    [changes, setChanges] = useState(""),
+    [sort, setSort] = useState("updated"),
+    [direction, setDirection] = useState("desc"),
+    [ready, setReady] = useState(false),
+    [page, setPage] = useState<Page<Library> | null>(null),
+    [error, setError] = useState(""),
+    [loading, setLoading] = useState(true),
+    [editing, setEditing] = useState<Library | null | undefined>(),
+    [refresh, setRefresh] = useState(0);
+  const scroll = useRef<HTMLDivElement>(null);
+  const navigating = useRef(false);
   useEffect(() => {
-    if (!session) return;
+    const p = new URLSearchParams(location.search);
+    setQ(p.get("q") || "");
+    setStatus(p.get("status") || "active");
+    setChanges(p.get("changes") || "");
+    setSort(p.get("sort") || "updated");
+    setDirection(p.get("direction") || "desc");
+    setReady(true);
+  }, []);
+  const params = query({
+    mode: "workbench",
+    q,
+    status,
+    changes,
+    sort,
+    direction,
+    limit: 50,
+  });
+  useEffect(() => {
+    if (!ready) return;
     const abort = new AbortController();
-    api<{ libraries: Library[]; next: string }>('/libraries', { signal: abort.signal }).then(page => { setLibraries(page.libraries); setNext(page.next); }).catch(e => { if (!abort.signal.aborted) setError(String(e)); });
-    return () => abort.abort();
-  }, [session]);
-  async function create(event: React.FormEvent) {
-    event.preventDefault(); if (!session) return;
-    setBusy(true); setError('');
+    const timer = setTimeout(() => {
+      setLoading(true);
+      if (!navigating.current)
+        history.replaceState(
+          null,
+          "",
+          `?${query({ q, status, changes, sort, direction })}`,
+        );
+      void api<Page<Library>>(`/libraries?${params}`, { signal: abort.signal })
+        .then((p) => {
+          setPage(p);
+          setError("");
+          requestAnimationFrame(() => {
+            if (scroll.current)
+              scroll.current.scrollTop = Number(
+                storageRead("session", `studio-list-scroll:${params}`) || 0,
+              );
+          });
+        })
+        .catch((e) => {
+          if (!abort.signal.aborted) setError(String(e));
+        })
+        .finally(() => {
+          if (!abort.signal.aborted) setLoading(false);
+        });
+    }, 150);
+    return () => {
+      clearTimeout(timer);
+      abort.abort();
+    };
+  }, [ready, params, refresh, q, status, changes, sort, direction]);
+  const setOrder = (value: string) => {
+    if (sort === value) setDirection(direction === "asc" ? "desc" : "asc");
+    else {
+      setSort(value);
+      setDirection(value === "updated" ? "desc" : "asc");
+    }
+  };
+  const archive = async (l: Library) => {
+    if (
+      (await studio.ask(
+        l.archived ? "Restore library" : "Archive library",
+        l.archived
+          ? "Make this library active again?"
+          : "Archive this library? Existing imported copies are unaffected.",
+        ["Cancel", l.archived ? "Restore" : "Archive"],
+      )) === "Cancel"
+    )
+      return;
     try {
-      const library = await api<Library>('/libraries', { method: 'POST', body: JSON.stringify({ request_id: requestID(), name, description }) }, session.csrf);
-      router.push(`/libraries/${library.id}`);
-    } catch (e) { setError(String(e)); } finally { setBusy(false); }
-  }
-  if (!session) return <SessionGate error={sessionError} loading={loading} />;
-  return <main className="shell">
-    <header className="topbar"><Link href="/" className="wordmark">◈ <span>Volume Studio</span></Link><nav><a href="/admin">Aster administration ↗</a><SignOut session={session} /></nav></header>
-    <div className="hero"><div><p className="eyebrow">YOUR CONTENT LIBRARY</p><h1>Good work starts<br />with the right files.</h1><p className="lede">Build collections of knowledge, datasets and starter files. Publish an exact version whenever it is ready.</p></div><button className="button" onClick={() => setCreating(true)}>＋ New library</button></div>
-    {error && <p className="notice error" role="alert">{error}</p>}
-    {creating && <form className="panel create-form" onSubmit={create}><h2>Create a library</h2><label>Name<input required autoFocus maxLength={200} value={name} onChange={e => setName(e.target.value)} placeholder="Research handbook" /></label><label>Description<textarea maxLength={4000} value={description} onChange={e => setDescription(e.target.value)} placeholder="What should someone know about these files?" /></label><div className="actions"><button className="button" disabled={busy || !name.trim()}>Create draft</button><button type="button" className="quiet" onClick={() => setCreating(false)}>Cancel</button></div></form>}
-    <section aria-labelledby="libraries"><div className="section-heading"><h2 id="libraries">Libraries <span className="count">{libraries.length}</span></h2><button className="quiet" onClick={() => void load().catch(e => setError(String(e)))}>Refresh</button></div>
-      {libraries.length === 0 ? <div className="empty-state"><span aria-hidden="true">▧</span><h3>A place for reusable files</h3><p>Create a library to start a draft. Your files stay saved as you work.</p></div> : <div className="library-grid">{libraries.map(library => <Link className="library-card" key={library.id} href={`/libraries/${library.id}`}><div className="card-icon" aria-hidden="true">▤</div><h3>{library.name}</h3><p>{library.description || 'A reusable collection of files.'}</p><div><span className="badge">{library.archived ? 'Archived' : 'Draft'}</span><span className="muted">Revision {library.draft_revision}</span><span aria-hidden="true">→</span></div></Link>)}</div>}
-      {next && <button className="quiet" onClick={() => void load(next).catch(e => setError(String(e)))}>Load more libraries</button>}
-    </section>
-    <footer>Published versions stay fixed. Existing projects keep the version they started with.</footer>
-  </main>;
+      await studio.write(
+        `/libraries/${l.id}`,
+        {
+          request_id: requestID(),
+          expected_revision: l.metadata_revision,
+          name: l.name,
+          description: l.description,
+          archived: !l.archived,
+        },
+        "PATCH",
+      );
+      setRefresh((n) => n + 1);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+  return (
+    <main className="studio-shell">
+      <ShellHeader />
+      <div className="catalog-heading">
+        <h1>
+          Libraries <span className="count">{page?.total ?? "…"}</span>
+        </h1>
+        <button className="primary" onClick={() => setEditing(null)}>
+          <Plus size={16} />
+          New library
+        </button>
+      </div>
+      <div className="catalog-toolbar">
+        <label className="search">
+          <Search size={16} />
+          <input
+            placeholder="Search libraries…"
+            aria-label="Search libraries"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </label>
+        <Picker
+          label="Library status"
+          value={status}
+          onChange={setStatus}
+          options={[
+            { value: "active", label: "Active" },
+            { value: "archived", label: "Archived" },
+            { value: "all", label: "All libraries" },
+          ]}
+        />
+        <Picker
+          label="Draft changes filter"
+          value={changes}
+          onChange={setChanges}
+          options={[
+            { value: "", label: "All drafts" },
+            { value: "yes", label: "With changes" },
+            { value: "no", label: "Without changes" },
+          ]}
+        />
+        <button
+          aria-label="Refresh libraries"
+          onClick={() => setRefresh((n) => n + 1)}
+        >
+          <RefreshCw size={16} />
+        </button>
+      </div>
+      {error && (
+        <p className="notice error" role="alert">
+          {error}
+        </p>
+      )}
+      <div
+        ref={scroll}
+        className="catalog-scroll"
+        onScroll={(e) =>
+          storageWrite(
+            "session",
+            `studio-list-scroll:${params}`,
+            String(e.currentTarget.scrollTop),
+          )
+        }
+        aria-busy={loading}
+      >
+        <table>
+          <thead>
+            <tr>
+              {[
+                ["name", "Name"],
+                ["status", "Status"],
+              ].map(([key, label]) => (
+                <th
+                  key={key}
+                  aria-sort={
+                    sort === key
+                      ? direction === "asc"
+                        ? "ascending"
+                        : "descending"
+                      : "none"
+                  }
+                >
+                  <button onClick={() => setOrder(key)}>
+                    {label}
+                    {sort === key ? (
+                      direction === "asc" ? (
+                        <ArrowUp size={13} />
+                      ) : (
+                        <ArrowDown size={13} />
+                      )
+                    ) : (
+                      <ChevronsUpDown size={13} />
+                    )}
+                  </button>
+                </th>
+              ))}
+              <th>Latest published version</th>
+              <th>Draft changes</th>
+              <th
+                aria-sort={
+                  sort === "updated"
+                    ? direction === "asc"
+                      ? "ascending"
+                      : "descending"
+                    : "none"
+                }
+              >
+                <button onClick={() => setOrder("updated")}>
+                  Updated
+                  {sort === "updated" ? (
+                    direction === "asc" ? (
+                      <ArrowUp size={13} />
+                    ) : (
+                      <ArrowDown size={13} />
+                    )
+                  ) : (
+                    <ChevronsUpDown size={13} />
+                  )}
+                </button>
+              </th>
+              <th>
+                <span className="visually-hidden">Actions</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {page?.items.map((l) => (
+              <tr key={l.id}>
+                <td>
+                  <Link className="library-name" href={`/libraries/${l.id}`}>
+                    {l.name}
+                  </Link>
+                  <p className="description">{l.description}</p>
+                </td>
+                <td>
+                  <span className="badge">
+                    {l.archived ? "Archived" : "Active"}
+                  </span>
+                </td>
+                <td>
+                  {l.latest_published_version ? (
+                    <Link
+                      href={`/libraries/${l.id}?version=${l.latest_published_version.id}`}
+                    >
+                      {l.latest_published_version.label}
+                    </Link>
+                  ) : (
+                    <span className="muted">No published version</span>
+                  )}
+                </td>
+                <td>
+                  {l.draft_change_count
+                    ? `${l.draft_change_count} changed`
+                    : "No changes"}
+                </td>
+                <td>
+                  <time
+                    title={
+                      l.updated_at
+                        ? new Date(l.updated_at * 1000).toLocaleString()
+                        : undefined
+                    }
+                  >
+                    {relativeTime(l.updated_at)}
+                  </time>
+                </td>
+                <td>
+                  <Menu
+                    label={`Actions for ${l.name}`}
+                    items={[
+                      {
+                        label: "Edit library details",
+                        action: () => setEditing(l),
+                      },
+                      {
+                        label: l.archived
+                          ? "Restore library"
+                          : "Archive library",
+                        action: () => void archive(l),
+                        danger: !l.archived,
+                      },
+                    ]}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!page && loading && <p className="empty-state">Loading libraries…</p>}
+        {page?.items.length === 0 && (
+          <div className="empty-state">
+            <h2>
+              {q || changes || status !== "active"
+                ? "No matching libraries"
+                : "No libraries yet"}
+            </h2>
+            <p>
+              {q || changes
+                ? "Adjust your search or filters."
+                : "Create a library to begin."}
+            </p>
+          </div>
+        )}
+        {page?.next && (
+          <button
+            className="load-more"
+            disabled={loading}
+            onClick={async () => {
+              setLoading(true);
+              try {
+                const p = await api<Page<Library>>(
+                  `/libraries?${params}&cursor=${encodeURIComponent(page.next)}`,
+                );
+                setPage({ ...p, items: [...page.items, ...p.items] });
+              } catch (e) {
+                setError(String(e));
+              } finally {
+                setLoading(false);
+              }
+            }}
+          >
+            Load more libraries
+          </button>
+        )}
+      </div>
+      {editing !== undefined && (
+        <LibraryDetails
+          library={editing || undefined}
+          onClose={() => setEditing(undefined)}
+          onSaved={(l) => {
+            if (!editing) {
+              navigating.current = true;
+              router.push(`/libraries/${l.id}`);
+            } else setRefresh((n) => n + 1);
+          }}
+        />
+      )}
+    </main>
+  );
 }

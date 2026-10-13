@@ -54,7 +54,14 @@ func scanImport(row scanner) (VolumeImport, error) {
 func (s *Store) VolumeImportAdmin(ctx context.Context, token string) (Account, error) {
 	return s.adminSession(ctx, s.reader, token)
 }
-func (s *Store) AdmitVolumeImport(ctx context.Context, token string, input VolumeImportInput, raw []byte, store, publisherActor string, localBudget, engineBudget int64) (VolumeImport, error) {
+
+type VolumeImportLabels struct {
+	LibraryName  string `json:"library_name"`
+	VersionLabel string `json:"version_label"`
+	VersionNote  string `json:"version_note"`
+}
+
+func (s *Store) AdmitVolumeImport(ctx context.Context, token string, input VolumeImportInput, raw []byte, store, publisherActor string, localBudget, engineBudget int64, labels ...VolumeImportLabels) (VolumeImport, error) {
 	if !validID(input.SourceID) || !validID(input.VersionID) || input.ConsumerProfile != manifest.Profile || localBudget <= 0 || engineBudget <= 0 || store == "" {
 		return VolumeImport{}, ErrInvalid
 	}
@@ -135,6 +142,15 @@ func (s *Store) AdmitVolumeImport(ctx context.Context, token string, input Volum
 		out.Artifact = ArtifactReference{ID: "studio-" + out.ID, Version: d.VersionID, Digest: d.TreeDigest}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO volume_imports(`+importColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'acquiring','','',?,?,?)`, out.ID, out.SourceID, out.PublisherID, out.LibraryID, out.VersionID, out.ManifestDigest, raw, out.Profile, store, out.TreeDigest, capacity, actor.ID, publisherActor, out.Artifact.ID, out.Artifact.Version, transfer, out.CreatedAt, out.UpdatedAt); err != nil {
 			return err
+		}
+		if len(labels) > 0 {
+			label := labels[0]
+			if len(label.LibraryName) > 1024 || len(label.VersionLabel) > 512 || len(label.VersionNote) > 8192 {
+				return ErrInvalid
+			}
+			if _, err = tx.ExecContext(ctx, `INSERT INTO volume_import_labels(import_id,library_name,version_label,version_note) VALUES(?,?,?,?)`, out.ID, label.LibraryName, label.VersionLabel, label.VersionNote); err != nil {
+				return err
+			}
 		}
 		if err = s.recordImportReceipt(ctx, tx, actor.ID, request, out.ID); err != nil {
 			return err

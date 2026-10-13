@@ -251,6 +251,7 @@ CREATE TABLE project_configuration (
  environment_template_id TEXT NOT NULL REFERENCES environment_templates(id),
  network TEXT NOT NULL CHECK(json_valid(network)),
  environment TEXT NOT NULL CHECK(json_valid(environment)),
+ initial_environment TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(initial_environment)),
  revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0)
 );
 CREATE TABLE group_policy_bindings (
@@ -1700,3 +1701,61 @@ CREATE TABLE content_publication_attempts (
  error TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(store_id,purpose,revision_digest,generation)
 );
+
+-- Update intent is independent of template edits and runtime operation ownership.
+CREATE TABLE environment_updates (
+ id TEXT PRIMARY KEY,
+ environment_id TEXT NOT NULL REFERENCES environment_templates(id),
+ sequence INTEGER NOT NULL CHECK(sequence>0),
+ revision INTEGER NOT NULL DEFAULT 1,
+ configuration_revision INTEGER NOT NULL,
+ kind TEXT NOT NULL CHECK(kind='publication_replace'),
+ state TEXT NOT NULL CHECK(state IN ('active','stopped','superseded','retired')),
+ stop_requested INTEGER NOT NULL DEFAULT 0 CHECK(stop_requested IN (0,1)),
+ note TEXT NOT NULL DEFAULT '', actor_id TEXT NOT NULL, created_at TEXT NOT NULL,
+ mounts TEXT NOT NULL CHECK(json_valid(mounts)),
+ UNIQUE(environment_id,sequence)
+);
+CREATE TABLE project_environment_updates (
+ project_id TEXT PRIMARY KEY REFERENCES projects(id),
+ policy TEXT NOT NULL DEFAULT 'follow' CHECK(policy IN ('follow','fixed')),
+ revision INTEGER NOT NULL DEFAULT 1,
+ target_id TEXT NOT NULL DEFAULT '', applied_id TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL DEFAULT 'current', reason TEXT NOT NULL DEFAULT '',
+ attempts INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+);
+CREATE INDEX project_environment_target ON project_environment_updates(target_id,state);
+CREATE TABLE environment_update_executions (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+ release_id TEXT NOT NULL REFERENCES environment_updates(id),
+ kind TEXT NOT NULL CHECK(kind='publication_replace'),
+ state TEXT NOT NULL CHECK(state IN ('pending','unknown','succeeded','deferred','canceled')),
+ before_mounts TEXT NOT NULL CHECK(json_valid(before_mounts)),
+ after_mounts TEXT NOT NULL CHECK(json_valid(after_mounts)),
+ reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ recovery_attempts INTEGER NOT NULL DEFAULT 0, retry_after TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX environment_execution_project ON environment_update_executions(project_id,created_at);
+CREATE UNIQUE INDEX environment_execution_pending ON environment_update_executions(project_id) WHERE state IN ('pending','unknown');
+
+CREATE TRIGGER environment_update_immutable BEFORE UPDATE OF environment_id,sequence,configuration_revision,kind,mounts,note,actor_id,created_at ON environment_updates
+BEGIN SELECT RAISE(ABORT,'immutable environment publication'); END;
+CREATE TRIGGER environment_execution_immutable BEFORE UPDATE OF project_id,release_id,kind,before_mounts,after_mounts ON environment_update_executions
+BEGIN SELECT RAISE(ABORT,'immutable environment execution'); END;
+
+CREATE TABLE volume_import_labels (
+ import_id TEXT PRIMARY KEY REFERENCES volume_imports(id),
+ library_name TEXT NOT NULL, version_label TEXT NOT NULL, version_note TEXT NOT NULL
+);
+
+CREATE INDEX project_configuration_environment ON project_configuration(environment_template_id,project_id);
+CREATE UNIQUE INDEX volume_import_artifact ON volume_imports(artifact_id,artifact_version);
+
+CREATE TABLE environment_update_members (
+ release_id TEXT NOT NULL REFERENCES environment_updates(id),
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ initial_state TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(release_id,project_id)
+);
+CREATE TRIGGER environment_update_member_immutable BEFORE UPDATE ON environment_update_members
+BEGIN SELECT RAISE(ABORT,'immutable deployment cohort'); END;

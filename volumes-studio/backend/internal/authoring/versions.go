@@ -14,10 +14,11 @@ import (
 )
 
 type PublishInput struct {
-	RequestID        string `json:"request_id"`
-	ExpectedRevision int64  `json:"expected_revision"`
-	Label            string `json:"label"`
-	Note             string `json:"note"`
+	RequestID           string  `json:"request_id"`
+	ExpectedRevision    int64   `json:"expected_revision"`
+	ExpectedBaseVersion *string `json:"expected_base_version,omitempty"`
+	Label               string  `json:"label"`
+	Note                string  `json:"note"`
 }
 
 const versionColumns = "id,library_id,label,note,source_revision,descriptor_digest,state,issuer,subject,error,generation,(SELECT value FROM metadata WHERE key='publisher_id')"
@@ -50,7 +51,7 @@ func (s *Store) Freeze(ctx context.Context, a Actor, id string, input PublishInp
 	if err != nil {
 		return v, err
 	}
-	if l.Archived || l.DraftRevision != input.ExpectedRevision {
+	if l.Archived || l.DraftRevision != input.ExpectedRevision || input.ExpectedBaseVersion != nil && *input.ExpectedBaseVersion != l.BaseVersion {
 		return v, ErrConflict
 	}
 	if err = unfinishedUploads(ctx, tx, id); err != nil {
@@ -205,7 +206,7 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 		return true, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, "UPDATE versions SET state='published',error='' WHERE id=? AND state='validating' AND generation=?", v.ID, generation)
+	result, err := tx.ExecContext(ctx, "UPDATE versions SET state='published',error='',published_at=? WHERE id=? AND state='validating' AND generation=?", s.now().Unix(), v.ID, generation)
 	if err != nil {
 		return true, err
 	}

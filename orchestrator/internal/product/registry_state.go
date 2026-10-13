@@ -68,6 +68,13 @@ func registryState(ctx context.Context, q queryer, kind string, reference Artifa
 	if err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM (SELECT document FROM environment_templates UNION ALL SELECT c.environment AS document FROM project_configuration c JOIN projects p ON p.id=c.project_id WHERE p.state<>'deleted') e WHERE `+defaultMatch+`)`, args...).Scan(&out.TemplateReferenced); err != nil {
 		return out, err
 	}
+	if kind == "volume" && !out.TemplateReferenced {
+		query := `SELECT EXISTS(SELECT 1 FROM environment_updates WHERE state<>'retired' AND ` + updateReferenceSQL("mounts") + `) OR EXISTS(SELECT 1 FROM environment_update_executions WHERE state IN ('pending','unknown') AND (` + updateReferenceSQL("before_mounts") + ` OR ` + updateReferenceSQL("after_mounts") + `))`
+		all := append(append(append([]any{}, args...), args...), args...)
+		if err = q.QueryRowContext(ctx, query, all...).Scan(&out.TemplateReferenced); err != nil {
+			return out, err
+		}
+	}
 	// Deleting Projects still own references until cleanup is confirmed. Pending
 	// lifecycle/file effects retain references even if metadata is inconsistent.
 	err = q.QueryRowContext(ctx, `SELECT coalesce(sum(p.state<>'deleted'),0),coalesce(sum(EXISTS(SELECT 1 FROM project_operations o WHERE o.project_id=p.id AND o.state NOT IN ('succeeded','canceled')) OR EXISTS(SELECT 1 FROM file_operations f WHERE f.project_id=p.id AND f.settled=0)),0) FROM project_resources r JOIN projects p ON p.id=r.project_id WHERE `+profileMatch, args...).Scan(&out.ProjectReferences, &out.PendingReferences)

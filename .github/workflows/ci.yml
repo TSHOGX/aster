@@ -80,7 +80,7 @@ jobs:
       - run: scripts/check.sh backend
       - name: Install Studio browser gate dependencies
         run: npm ci --prefix volumes-studio/frontend
-      - run: npx --no-install playwright install --with-deps chromium
+      - run: npx --no-install playwright install --with-deps chromium firefox webkit
         working-directory: volumes-studio/frontend
       - run: npm --prefix volumes-studio/frontend run build
       - run: scripts/check.sh studio-browser

@@ -1,4 +1,5 @@
 "use client";
+import { EnvironmentStatus } from "./environment-status";
 import { Select } from "@web/select";
 import { useEffect, useState } from "react";
 import { api, APIError, command } from "@/lib/project-api";
@@ -446,6 +447,7 @@ function AdvancedProjects({
                     )
                   : current.state}
               </p>
+              <EnvironmentStatus key={current.project_id} project={current.project_id}/>
               {settings.networks.length > 0 && (
                 <>
                   <label>

@@ -1,45 +1,8 @@
-# Project workbench
+# Aster workbench
 
-Next.js/TypeScript pages and assets for the Go Project application. The Go edge
-routes product HTTP/SSE/WebSocket; the frontend owns no API forwarding routes,
-database or runtime processes.
+The browser workbench provides Projects, conversations, Files, terminals and scheduled work. Open it through the installation's browser address.
 
-```sh
-python3 -m venv ../.venv
-. ../.venv/bin/activate
-python -m pip install -r e2e/requirements.txt
-npm ci
-npm run dev
-npm run lint
-npm run typecheck
-npm test
-npm run build
-npm run test:ui:built
-```
-
-Configure the Go application's `frontend` origin to this server and open its
-browser edge. The display name defaults to Aster; set `NEXT_PUBLIC_PROJECT_BRAND_NAME`
-before building to customize it. See [display-name configuration](../docs/configuration.md#frontend-display-name)
-for examples, affected surfaces and rebuild requirements.
-`PROJECT_DEV_ORIGINS` declares development hosts. The interface supports English
-and Chinese. The account Settings dialog offers system/light/dark mode,
-neutral/blue/green/violet accents, display name and security actions. Appearance
-is stored on the server; the Go edge supplies a verified account ID so the
-server-rendered page can select its account cache for first paint.
-Logging out clears the cache's active identity binding.
-
-Use the npm build/dev commands above: their hooks apply the reviewed lifecycle
-fixes for the pinned presentation viewer before Next compiles it. The patch
-verifies the upstream source digest and refuses an unreviewed dependency change.
-It releases chart callbacks, skips removed chart targets, uses document theme
-colors when explicit fills are absent, and disables preview chart animation.
-See [the patch](scripts/patch-office-viewers.mjs).
-
-See [frontend architecture](../docs/frontend.md), [configuration](../docs/configuration.md)
-and [development](../docs/development.md). `test:ui` builds and runs deterministic
-Chromium API fixtures; `test:ui:built` uses an existing production build.
-`test:pickers` builds and exercises Chromium/Firefox/WebKit scheduling controls.
-`test:e2e` is invoked by the isolated executable harness in
-[dev/README.md](../dev/README.md), with its disposable application and test URL.
-Candidate bundles use Next standalone output with static/public assets; see
-[delivery](../docs/delivery.md).
+- [User guide](../docs/users/getting-started.md)
+- [Account settings](../docs/users/settings.md)
+- [Installation](../docs/operators/installation.md)
+- [Display-name configuration](../docs/operators/configuration.md#frontend-display-name)

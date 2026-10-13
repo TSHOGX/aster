@@ -128,6 +128,7 @@ func (a *Application) volumeImportHandler() http.Handler {
 			return
 		}
 		publisherActor := ""
+		labels := product.VolumeImportLabels{LibraryName: descriptor.LibraryID}
 		cursor := ""
 		for pages := 0; pages < 1000; pages++ {
 			releases, next, err := client.Releases(r.Context(), descriptor.LibraryID, cursor)
@@ -138,6 +139,8 @@ func (a *Application) volumeImportHandler() http.Handler {
 			for _, release := range releases {
 				if release.ID == descriptor.VersionID {
 					publisherActor = release.Publisher.Issuer + "/" + release.Publisher.Subject
+					labels.VersionLabel = release.Label
+					labels.VersionNote = release.Note
 				}
 			}
 			if publisherActor != "" || next == "" {
@@ -153,10 +156,31 @@ func (a *Application) volumeImportHandler() http.Handler {
 			importError(w, product.ErrArtifactUnavailable)
 			return
 		}
+		// Display metadata is captured locally; it is never runtime authority.
+		labelsCtx, labelsDone := context.WithTimeout(r.Context(), 5*time.Second)
+		defer labelsDone()
+		for cursor, pages := "", 0; pages < 100; pages++ {
+			libraries, next, e := client.Libraries(labelsCtx, cursor)
+			if e != nil {
+				break
+			}
+			found := false
+			for _, library := range libraries {
+				if library.ID == descriptor.LibraryID {
+					labels.LibraryName = library.Name
+					found = true
+					break
+				}
+			}
+			if found || next == "" || next == cursor {
+				break
+			}
+			cursor = next
+		}
 
 		a.publication.Lock()
 		defer a.publication.Unlock()
-		imported, err := a.Store.AdmitVolumeImport(r.Context(), importToken(r), input, raw, a.Config.Engine.StoreID, publisherActor, a.Config.VolumeImports.TransferBytes, a.Config.VolumeImports.EngineBytes)
+		imported, err := a.Store.AdmitVolumeImport(r.Context(), importToken(r), input, raw, a.Config.Engine.StoreID, publisherActor, a.Config.VolumeImports.TransferBytes, a.Config.VolumeImports.EngineBytes, labels)
 		if err != nil {
 			importError(w, err)
 			return

@@ -312,9 +312,18 @@ func (f *pinnedFile) Close() error {
 
 // Content returns only an authorized tree member. HTTP serves it as a download
 // (nosniff/CSP sandbox), never by arbitrary blob digest or user-controlled host path.
-func (s *Store) Content(ctx context.Context, id, name, version string) (io.ReadSeekCloser, manifest.Entry, error) {
+func (s *Store) Content(ctx context.Context, id, name, version string, expectedRevision ...int64) (io.ReadSeekCloser, manifest.Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if version == "" && len(expectedRevision) > 0 && expectedRevision[0] != 0 {
+		l, err := s.Library(ctx, id)
+		if err != nil {
+			return nil, manifest.Entry{}, err
+		}
+		if l.DraftRevision != expectedRevision[0] {
+			return nil, manifest.Entry{}, ErrConflict
+		}
+	}
 	if manifest.ValidPath(name, false) != nil {
 		return nil, manifest.Entry{}, ErrInvalid
 	}

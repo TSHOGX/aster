@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/sandbox"
+	"harness-platform/orchestrator/internal/sqlitex"
 )
 
 var ErrPending = errors.New("project operation pending")
@@ -116,11 +117,15 @@ func (l *Lifecycle) lane(id string) *sync.Mutex {
 }
 
 type operationRequest struct {
-	Reference     sandbox.Reference
-	Restart       bool
-	Force         bool
-	NetworkPolicy *NetworkPolicy `json:",omitempty"`
-	Volumes       []VolumePlan   `json:",omitempty"`
+	Reference             sandbox.Reference
+	Restart               bool
+	Force                 bool
+	NetworkPolicy         *NetworkPolicy `json:",omitempty"`
+	Volumes               []VolumePlan   `json:",omitempty"`
+	UpdateExecution       string         `json:",omitempty"`
+	CancelConfiguration   bool           `json:",omitempty"`
+	SkipEnvironmentUpdate bool           `json:",omitempty"`
+	CancelReason          string         `json:",omitempty"`
 }
 type operation struct{ ID, ProjectID, Kind, State, Phase, Request, Error string }
 
@@ -162,9 +167,22 @@ func (l *Lifecycle) newOperation(ctx context.Context, tx *sql.Tx, project, kind,
 		if err != nil {
 			return err
 		}
+		if !request.SkipEnvironmentUpdate && (kind == "resume" || (kind == "create" && r.Reference.SandboxID == "")) {
+			execution, _, e := l.Store.planEnvironmentUpdate(ctx, tx, project, &target)
+			if e != nil {
+				return e
+			}
+			request.UpdateExecution = execution
+		}
 		request.Volumes = target.Volumes
 		request.NetworkPolicy = policy
 		if kind == "create" {
+			if request.UpdateExecution != "" {
+				// Preserve the original sources until the worker has checked
+				// local engine availability. Owned allocations are identical.
+				target.Volumes = r.Profile.Volumes
+				phase = "initial_configuration"
+			}
 			raw, err := json.Marshal(target)
 			if err != nil {
 				return err
@@ -172,8 +190,8 @@ func (l *Lifecycle) newOperation(ctx context.Context, tx *sql.Tx, project, kind,
 			if _, err = tx.ExecContext(ctx, `UPDATE project_resources SET profile=? WHERE project_id=?`, string(raw), project); err != nil {
 				return err
 			}
-		} else if policy != nil {
-			phase = "network"
+		} else if policy != nil || request.UpdateExecution != "" {
+			phase = "configuration"
 		}
 	}
 	raw, err := json.Marshal(request)
@@ -411,6 +429,7 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 	var o operation
 	var r Resources
 	var quotaDenial error
+	var deleting bool
 	err := l.Store.write(ctx, func(tx *sql.Tx) error {
 		var err error
 		o, err = pendingOperation(ctx, tx, project)
@@ -450,14 +469,31 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 		if err != nil {
 			return err
 		}
-		var deleting bool
 		if err := tx.QueryRowContext(ctx, `SELECT state='deleting' FROM projects WHERE id=?`, project).Scan(&deleting); err != nil {
 			return err
 		}
-		if deleting && o.Kind == "create" && (o.Phase == "volumes" || o.Phase == "reachability" || o.Phase == "sandbox" && o.State == "pending") {
+		if deleting && o.Kind == "create" && (o.Phase == "initial_configuration" || o.Phase == "volumes" || o.Phase == "reachability" || o.Phase == "sandbox" && o.State == "pending") {
 			// No uncertain sandbox creation is abandoned. Slot-level uncertain
 			// effects retain their original keys and are resolved by deletion.
+			if err := l.Store.cancelEnvironmentExecution(ctx, tx, project, "Project deleted before creation"); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, `UPDATE project_operations SET state='succeeded' WHERE id=?`, o.ID); err != nil {
+				return err
+			}
+			if err := l.newOperation(ctx, tx, project, "delete", "sandbox", operationRequest{Reference: r.Reference}); err != nil {
+				return err
+			}
+			o, err = pendingOperation(ctx, tx, project)
+			if err != nil {
+				return err
+			}
+		}
+		if deleting && o.Kind == "resume" && (o.Phase == "sandbox" && o.State == "pending" || o.Phase == "configuration" && o.State == "pending") {
+			if err := l.Store.cancelEnvironmentExecution(ctx, tx, project, "Project deleted before update dispatch"); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE project_operations SET state='canceled' WHERE id=?`, o.ID); err != nil {
 				return err
 			}
 			if err := l.newOperation(ctx, tx, project, "delete", "sandbox", operationRequest{Reference: r.Reference}); err != nil {
@@ -536,8 +572,21 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 		return l.unknown(ctx, o, err)
 	}
 	switch {
-	case o.Kind == "resume" && o.Phase == "network":
-		err = l.prepareNetwork(ctx, o, r)
+	case deleting && o.Kind == "resume" && o.Phase == "configuration":
+		err = l.settleConfigurationCancellation(ctx, o, r)
+		if err == nil {
+			err = l.Store.write(ctx, func(tx *sql.Tx) error {
+				latest, e := resources(ctx, tx, project)
+				if e != nil {
+					return e
+				}
+				return l.newOperation(ctx, tx, project, "delete", "sandbox", operationRequest{Reference: latest.Reference})
+			})
+		}
+	case o.Kind == "create" && o.Phase == "initial_configuration":
+		err = l.prepareInitialConfiguration(ctx, o, r)
+	case o.Kind == "resume" && o.Phase == "configuration":
+		err = l.prepareConfiguration(ctx, o, r)
 	// A committed placement awaiting its guest projection is resumed by phase, not
 	// by kind: create and resume converge on the same remaining work.
 	case o.Phase == "reachability" && (o.Kind == "create" || o.Kind == "resume"):
@@ -567,7 +616,30 @@ func (l *Lifecycle) unknown(ctx context.Context, o operation, cause error) error
 		if _, err := tx.ExecContext(settle, `UPDATE project_operations SET state=?,error=? WHERE id=? AND state NOT IN ('succeeded','canceled')`, state, cause.Error(), o.ID); err != nil {
 			return err
 		}
-		res, err := tx.ExecContext(settle, `UPDATE projects SET failure=? WHERE id=? AND failure<>?`, cause.Error(), o.ProjectID, cause.Error())
+		publicFailure := cause.Error()
+		var request operationRequest
+		if json.Unmarshal([]byte(o.Request), &request) == nil && request.UpdateExecution != "" && (o.Phase == "configuration" || o.Phase == "initial_configuration") {
+			publicFailure = "The project could not start. Please try again or contact an administrator."
+			var recoveryAttempts int
+			if err := tx.QueryRowContext(settle, `SELECT recovery_attempts FROM environment_update_executions WHERE id=?`, request.UpdateExecution).Scan(&recoveryAttempts); err != nil {
+				return err
+			}
+			delay := time.Second * time.Duration(1<<min(recoveryAttempts, 5))
+			if delay > 30*time.Second {
+				delay = 30 * time.Second
+			}
+			retryAfter := sqlitex.FormatTime(l.Store.now().Add(delay))
+			if _, err := tx.ExecContext(settle, `UPDATE environment_update_executions SET recovery_attempts=recovery_attempts+1,retry_after=? WHERE id=?`, retryAfter, request.UpdateExecution); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(settle, `UPDATE environment_update_executions SET state='unknown',reason=?,updated_at=? WHERE id=? AND state IN ('pending','unknown')`, cause.Error(), l.Store.timestamp(), request.UpdateExecution); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(settle, `UPDATE project_environment_updates SET state='unknown',reason=?,updated_at=? WHERE project_id=? AND target_id=(SELECT release_id FROM environment_update_executions WHERE id=?)`, cause.Error(), l.Store.timestamp(), o.ProjectID, request.UpdateExecution); err != nil {
+				return err
+			}
+		}
+		res, err := tx.ExecContext(settle, `UPDATE projects SET failure=? WHERE id=? AND failure<>?`, publicFailure, o.ProjectID, publicFailure)
 		if err != nil {
 			return err
 		}

@@ -91,6 +91,10 @@ def smoke(root):
             assets = set(re.findall(r'(?:src|href)="(/volumes-studio/_next/[^" ]+)"', html))
             if not assets:
                 raise ValueError('packaged page has no prefix-safe assets')
+            # Verify lazy editor languages, local fonts and upload worker chunks too.
+            for static_root in (runtime / 'frontend').glob('**/.next/static'):
+                assets.update('/volumes-studio/_next/static/' + file.relative_to(static_root).as_posix()
+                              for file in static_root.rglob('*') if file.is_file())
             for asset in assets:
                 with urllib.request.urlopen(origin + asset, timeout=5) as response:
                     if response.status != 200 or not response.read():
@@ -109,16 +113,16 @@ def smoke(root):
     print('Packaged Studio root, assets and deep link smoke passed.')
 
 
-def build(target, offline=False):
+def build(target, offline=False, source_ref="HEAD"):
     target = target.resolve()
     if target.exists() or target.is_relative_to(ROOT):
         raise ValueError('output must be a new directory outside the source checkout')
-    commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    commit = subprocess.check_output(['git', 'rev-parse', '--verify', source_ref + '^{commit}'], cwd=ROOT, text=True).strip()
     with tempfile.TemporaryDirectory(prefix='studio-release-') as temp:
         scratch = Path(temp)
         archive = scratch / 'source.tar'
         with archive.open('wb') as output:
-            subprocess.run(['git', 'archive', '--format=tar', commit, 'volumes-studio'], cwd=ROOT, stdout=output, check=True)
+            subprocess.run(['git', 'archive', '--format=tar', commit, 'volumes-studio', 'web/surfaces.css', 'web/appearance.css', 'web/appearance.ts', 'web/select.css', 'web/select-picker.tsx', 'web/picker-popover.ts'], cwd=ROOT, stdout=output, check=True)
         with tarfile.open(archive) as source:
             source.extractall(scratch / 'source', filter='data')
         app = scratch / 'source/volumes-studio'
@@ -135,7 +139,8 @@ def build(target, offline=False):
         for command in ['studio', 'front-door', 'studio-backup']:
             run(['go', 'build', '-trimpath', '-mod=readonly', '-o', str(staged / 'bin' / command), './cmd/' + command], app / 'backend', env)
         shutil.copytree(app / 'frontend/.next/standalone', staged / 'frontend', symlinks=True)
-        shutil.copytree(app / 'frontend/.next/static', staged / 'frontend/.next/static')
+        shutil.copytree(app / 'frontend/.next/static', staged / 'frontend/volumes-studio/frontend/.next/static')
+        (staged / 'frontend/server.js').write_text("require('./volumes-studio/frontend/server.js');\n")
         shutil.copytree(app / 'contracts', staged / 'contracts')
         shutil.copytree(app / 'deploy', staged / 'deploy')
         doc = {
@@ -159,9 +164,10 @@ def main():
     parser.add_argument('action', choices=['build', 'verify', 'smoke'])
     parser.add_argument('directory', type=Path)
     parser.add_argument('--offline', action='store_true', help='use preinstalled npm cache without network')
+    parser.add_argument('--source-ref', default='HEAD', help='committed source revision to build (default HEAD)')
     args = parser.parse_args()
     if args.action == 'build':
-        build(args.directory, args.offline)
+        build(args.directory, args.offline, args.source_ref)
     elif args.action == 'smoke':
         smoke(args.directory.resolve())
     else:

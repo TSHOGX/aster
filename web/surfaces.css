@@ -1,0 +1,106 @@
+/* Shared application surfaces, extracted without changing values. */
+:root {
+  color-scheme: light;
+
+  --bg: #f7f7f8;
+  --surface: #ffffff;
+  --surface-muted: #eeeeef;
+  --foreground: #292a2d;
+  --foreground-muted: #74767b;
+  --border: #e9e9eb;
+  --border-strong: #c8c9cd;
+
+  --success: #059669;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --danger-soft: #fdeaea;
+
+  --code-bg: #f8fafc;
+  --code-border: #e2e8f0;
+  --code-ink: #334155;
+
+  --overlay: rgba(15, 23, 42, 0.32);
+
+  --scrollbar: #cbd5e1;
+  --scrollbar-hover: #94a3b8;
+
+  --chart-1: #4f46e5;
+  --chart-2: #0891b2;
+  --chart-3: #059669;
+  --chart-4: #d97706;
+  --chart-5: #dc2626;
+  --chart-6: #c026d3;
+  --chart-7: #2563eb;
+  --chart-8: #65a30d;
+
+  --hl-base: var(--code-ink);
+  --hl-keyword: #cf222e;
+  --hl-entity: #8250df;
+  --hl-constant: #0550ae;
+  --hl-string: #0a3069;
+  --hl-variable: #953800;
+  --hl-comment: #6e7781;
+  --hl-tag: #116329;
+  --hl-section: #0550ae;
+  --hl-bullet: #953800;
+  --hl-addition-fg: #116329;
+  --hl-addition-bg: #e6ffec;
+  --hl-deletion-fg: #82071e;
+  --hl-deletion-bg: #ffebe9;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #191a1c;
+  --surface: #202123;
+  --surface-muted: #2c2d30;
+  --foreground: #e6edf3;
+  --foreground-muted: #a3a5ab;
+  --border: #333538;
+  --border-strong: #364152;
+
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --danger-soft: #3b1f22;
+
+  --code-bg: #0b0f14;
+  --code-border: #212936;
+  --code-ink: #d7e0ea;
+
+  --overlay: rgba(3, 7, 12, 0.66);
+
+  --scrollbar: #2f3947;
+  --scrollbar-hover: #46536b;
+
+  --chart-1: #818cf8;
+  --chart-2: #22d3ee;
+  --chart-3: #34d399;
+  --chart-4: #fbbf24;
+  --chart-5: #f87171;
+  --chart-6: #e879f9;
+  --chart-7: #60a5fa;
+  --chart-8: #a3e635;
+
+  --shadow-xs: 0 0 0 1px rgb(0 0 0 / 0.2);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 10px 28px rgb(0 0 0 / 0.55);
+  --shadow-xl: 0 20px 56px rgb(0 0 0 / 0.65);
+
+  --hl-base: var(--code-ink);
+  --hl-keyword: #ff7b72;
+  --hl-entity: #d2a8ff;
+  --hl-constant: #79c0ff;
+  --hl-string: #a5d6ff;
+  --hl-variable: #ffa657;
+  --hl-comment: #8b949e;
+  --hl-tag: #7ee787;
+  --hl-section: #79c0ff;
+  --hl-bullet: #ffa657;
+  --hl-addition-fg: #7ee787;
+  --hl-addition-bg: #12261e;
+  --hl-deletion-fg: #ffa198;
+  --hl-deletion-bg: #29161a;
+}

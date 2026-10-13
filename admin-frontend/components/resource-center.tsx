@@ -1,4 +1,5 @@
 "use client";
+import { EnvironmentUpdates } from "./environment-updates";
 import { VolumeImports } from "./volume-imports";
 import { Select } from "@web/select";
 import Link from "next/link";
@@ -188,6 +189,7 @@ function TemplateCatalog({
     [editing, setEditing] = useState<{
       value?: Template;
       duplicate?: boolean;
+      tab?: "configuration"|"updates"|"projects";
     } | null>(null),
     [error, setError] = useState("");
   const load = async () => {
@@ -212,14 +214,18 @@ function TemplateCatalog({
   if (editing)
     return (
       <TemplateEditor
+        key={`${editing.value?.id||"new"}:${editing.value?.revision||0}:${!!editing.duplicate}`}
+        initialTab={editing.tab}
         kind={kind}
         initial={editing.value}
         duplicate={editing.duplicate}
         onDirty={onDirty}
         close={() => setEditing(null)}
-        saved={async () => {
-          await load();
-          setEditing(null);
+        saved={async (savedName) => {
+          const result=await api<{templates:Template[]}>(`/api/admin/resource-templates/${kind}`);
+          setItems(result.templates);setError("");
+          const value=result.templates.find(item=>item.name===savedName);
+          setEditing(kind==="environment"&&value?{value,tab:"updates"}:null);
         }}
       />
     );
@@ -289,6 +295,7 @@ function TemplateCatalog({
   );
 }
 function TemplateEditor({
+  initialTab = "configuration",
   kind,
   initial,
   duplicate,
@@ -297,11 +304,12 @@ function TemplateEditor({
   saved,
 }: {
   kind: "network" | "environment";
+  initialTab?: "configuration"|"updates"|"projects";
   initial?: Template;
   duplicate?: boolean;
   onDirty: (value: boolean) => void;
   close: () => void;
-  saved: () => Promise<void>;
+  saved: (name?:string) => Promise<void>;
 }) {
   const [name, setName] = useState(
       initial ? initial.name + (duplicate ? " copy" : "") : "",
@@ -319,6 +327,8 @@ function TemplateEditor({
     [volumes, setVolumes] = useState<SharedVolume[]>([]),
     [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
+  const [tab,setTab]=useState<"configuration"|"updates"|"projects">(initialTab);
+  const [updatesDirty,setUpdatesDirty]=useState(false);
   const [maxMounts, setMaxMounts] = useState("0");
   const [inventoryLoaded, setInventoryLoaded] = useState(
     kind !== "environment",
@@ -337,9 +347,9 @@ function TemplateEditor({
       (kind === "environment" &&
         JSON.stringify(environment) !== JSON.stringify(initial.environment)));
   useEffect(() => {
-    onDirty(!!changed || mutation.blocked);
+    onDirty(!!changed || mutation.blocked || updatesDirty);
     return () => onDirty(false);
-  }, [changed, mutation.blocked, onDirty]);
+  }, [changed, mutation.blocked, updatesDirty, onDirty]);
   useEffect(() => {
     if (kind !== "environment") return;
     const controller = new AbortController();
@@ -415,10 +425,12 @@ function TemplateEditor({
               : "Configure capabilities, review the impact, then save."}
           </p>
         </div>
-        <button disabled={mutation.blocked} onClick={leave}>
+        <button disabled={mutation.blocked || updatesDirty} onClick={leave}>
           Back to templates
         </button>
       </header>
+      {kind==="environment" && initial && !duplicate && <nav className="catalog-tabs" aria-label="Environment sections">{(["configuration","updates","projects"] as const).map(value=><button key={value} aria-current={tab===value?"page":undefined} disabled={mutation.blocked||updatesDirty||(!!changed&&value!=="configuration")} onClick={()=>setTab(value)}>{value==="configuration"?"Configuration":value==="updates"?"Updates":"Projects"}</button>)}</nav>}
+      {tab!=="configuration" && initial ? <EnvironmentUpdates environment={initial.id} revision={initial.revision} hasPublications={!!initial.environment?.mounts.some(m=>m.role==="data"&&m.storage==="shared_readonly")} tab={tab} onDirty={setUpdatesDirty}/> : <>
       {error && (
         <p className="error" role="alert">
           {error}{" "}
@@ -655,6 +667,7 @@ function TemplateEditor({
                   </Select>
                 </label>
                 <h3>Storage and shared directories</h3>
+                <p>Saved configuration is used for new projects. Publish compatible data changes separately in Updates to reach existing projects.</p>
                 {environment.mounts.map((m) => (
                   <section className="runtime-mount" key={m.key}>
                     <h4>
@@ -662,6 +675,7 @@ function TemplateEditor({
                         ? "Data directory"
                         : m.role.replaceAll("_", " ")}
                     </h4>
+                    {["runtime","agent_config","shared_assets"].includes(m.role)&&<p className="hint">{m.role==="runtime"?"Private runtime state. Use an empty directory or an operator-reviewed clean seed.":"Required read-only system content, registered by an operator for this sandbox release. Studio manages ordinary workspace and data content."}</p>}
                     <label>
                       Mount path
                       <input
@@ -715,7 +729,8 @@ function TemplateEditor({
                     )}
                     {m.storage === "shared" ? (
                       <label>
-                        Shared volume
+                        Shared directory
+                        {!volumes.length&&<span>No shared directories yet. <Link href="/resources/volumes">Create a shared directory</Link></span>}
                         <Select aria-label="Shared volume"
                           required
                           value={m.source.shared_volume_id || ""}
@@ -742,8 +757,9 @@ function TemplateEditor({
                       </label>
                     ) : (
                       <label>
-                        Initial contents
-                        <Select aria-label="Initial contents"
+                        {m.storage==="shared_readonly"?"Published version":"Initial contents"}
+                        {m.storage==="shared_readonly"&&<small>Mount this immutable version read-only. Project-owned directories instead receive an independent copy.</small>}
+                        <Select aria-label={m.storage==="shared_readonly"?"Published version":"Initial contents"}
                           required={m.storage === "shared_readonly"}
                           value={
                             m.source.kind === "builtin" && m.source.version
@@ -807,10 +823,11 @@ function TemplateEditor({
                                   ].includes(s.availability)
                                 }
                               >
-                                {s.reference.id} · {s.reference.version}
+                                {s.library_name || s.reference.id} · {s.version_label || s.reference.version}
                               </option>
                             ))}
                         </Select>
+                        {sources.find(s=>s.reference.id===m.source.artifact_id&&s.reference.version===m.source.version)?.version_note&&<small>{sources.find(s=>s.reference.id===m.source.artifact_id&&s.reference.version===m.source.version)?.version_note}</small>}
                       </label>
                     )}
                     {m.role === "data" && (
@@ -931,7 +948,8 @@ function TemplateEditor({
           Review deletion
         </button>
       )}
-      <CatalogReview state={mutation} saved={saved} />
+      <CatalogReview state={mutation} saved={()=>saved(name)} />
+      </>}
     </section>
   );
 }
