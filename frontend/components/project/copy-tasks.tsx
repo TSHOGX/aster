@@ -55,7 +55,7 @@ export function CopyTasks({
       <summary>{tr("Copy tasks")}</summary>
       {error && (
         <p role="alert">
-          {error}
+          {tr(error)}
           <button onClick={() => setAttempt((n) => n + 1)}>
             {tr("Retry")}
           </button>

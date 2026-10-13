@@ -8,7 +8,7 @@ export async function workspaceFixture(
   // The standalone UI fixture supplies the metadata normally set by the Go edge.
   await page.setExtraHTTPHeaders({ "X-Project-Account-ID": "researcher" });
   const identity = { id: "researcher", username: "researcher", display_name: "researcher", status: "active", role: "user", revision: 1, session_revision: 1, must_change_password: false };
-  let preferences = { revision: 1, theme_mode: "system", accent: "neutral" };
+  let preferences = { language: "system", revision: 1, theme_mode: "system", accent: "neutral" };
   let signedIn = true;
   const recipient = {id:"account-bob",username:"bob",display_name:"Bob Reader",status:"active"};
   const conversationReaders = new Map<string, typeof recipient[]>();
@@ -239,7 +239,7 @@ export async function workspaceFixture(
     if (path === "/api/me/preferences") {
       if (method === "PATCH") {
         if (body?.expected_revision !== preferences.revision) return json({ error: "revision conflict" }, 409);
-        preferences = { revision: preferences.revision + 1, theme_mode: String(body?.theme_mode ?? preferences.theme_mode), accent: String(body?.accent ?? preferences.accent) };
+        preferences = { language: String(body?.language ?? preferences.language), revision: preferences.revision + 1, theme_mode: String(body?.theme_mode ?? preferences.theme_mode), accent: String(body?.accent ?? preferences.accent) };
       }
       return json(preferences);
     }

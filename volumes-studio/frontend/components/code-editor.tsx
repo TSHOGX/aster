@@ -1,5 +1,11 @@
 /* eslint-disable react-hooks/immutability -- Workspace buffers are imperative controller objects; mutations publish through the Studio provider. */
 "use client";
+import { useLocale } from "../../../web/i18n";
+import { currentLocale } from "../../../web/i18n/locale";
+import { editorPhrases } from "../../../web/i18n/editor";
+import { translateText } from "../../../web/i18n/text";
+
+
 import { useEffect, useRef, useState } from "react";
 import { EditorState, StateEffect, Compartment } from "@codemirror/state";
 import {
@@ -105,6 +111,9 @@ export function CodeEditor({
   onSave: () => void;
   onPosition: (line: number, column: number) => void;
 }) {
+
+  const locale = useLocale();
+  const [localization] = useState(() => new Compartment());
   const host = useRef<HTMLDivElement>(null),
     view = useRef<EditorView | null>(null);
   const [callbacks] = useState(() => ({
@@ -128,9 +137,7 @@ export function CodeEditor({
       syntaxHighlighting(highlights),
       EditorState.readOnly.of(!!buffer.version),
       EditorView.editable.of(!buffer.version),
-      EditorView.contentAttributes.of({
-        "aria-label": `Contents of ${buffer.entry.path}`,
-      }),
+      localization.of([EditorState.phrases.of(editorPhrases(currentLocale())), EditorView.contentAttributes.of({ "aria-label": translateText(currentLocale(), "Contents of {path}", { path: buffer.entry.path }) })]),
       wrapping.current.of(wrap ? EditorView.lineWrapping : []),
       lang.of([]),
       keymap.of([
@@ -202,6 +209,9 @@ export function CodeEditor({
       }
     }
   }, [wrap, wrapping]);
+  useEffect(() => {
+    view.current?.dispatch({ effects: localization.reconfigure([EditorState.phrases.of(editorPhrases(locale)), EditorView.contentAttributes.of({ "aria-label": translateText(locale, "Contents of {path}", { path: buffer.entry.path }) })]) });
+  }, [locale, buffer.entry.path, localization]);
   useEffect(() => {
     if (buffer.status === "Saving")
       view.current?.dispatch({ annotations: isolateHistory.of("full") });

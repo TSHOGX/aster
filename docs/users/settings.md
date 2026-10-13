@@ -5,12 +5,21 @@
 Open **Settings** from the account menu. The dialog leaves your current Project,
 conversation and draft selected; on a narrow screen it opens as a full-screen panel.
 
-## Profile, appearance and security
+## Profile, appearance, language and security
 
 Change your display name, choose system/light/dark appearance and select a neutral,
 blue, green or violet accent. Appearance changes preview immediately; check that
 the save succeeds. Failed or conflicting saves retain your changes so you can
 retry, reapply or revert them.
+
+Choose **Follow browser**, **Chinese (Simplified)**, or **English** under
+**Language**. Chinese uses Simplified Chinese; other browser languages use English
+when following the browser.
+The choice is saved with your account preferences and shared by the workspace,
+Admin and Studio across tabs and devices. Admin and Studio automatically follow
+this account setting and do not have separate language selectors. Language changes
+preview immediately and use the same retry, reapply and revert controls as appearance changes. Switching
+language keeps your current selection and unsaved files open.
 
 Use the security controls to change your password or sign out all sessions.
 Password changes and all-session sign-out invalidate earlier sessions. Leaving

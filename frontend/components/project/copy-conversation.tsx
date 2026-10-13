@@ -240,7 +240,7 @@ export function CopyConversation({
       >
         {tr("Copy to my project")}
       </button>
-      {!open && error && <span role="alert">{error}</span>}
+      {!open && error && <span role="alert">{tr(error)}</span>}
       <dialog
         ref={dialog}
         className="copy-dialog"
@@ -251,7 +251,7 @@ export function CopyConversation({
         <h2 id="copy-title">{tr("Copy conversation")}</h2>
         {error && (
           <p role="alert" className="notice error">
-            {error}
+            {tr(error)}
           </p>
         )}
         {task ? (

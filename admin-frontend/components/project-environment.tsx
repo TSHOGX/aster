@@ -1,4 +1,7 @@
 "use client";
+import { intlLocale } from "@web/i18n/locale";
+import { useT } from "@/lib/i18n";
+
 
 import { useEffect, useState } from "react";
 import { useEnvironmentQuery } from "@/lib/use-environment-query";
@@ -28,6 +31,7 @@ export function ProjectEnvironment({
   project: string;
   onDirty: (value: boolean) => void;
 }) {
+  const tr = useT();
   const [cursor, setCursor] = useState("");
   const mutation = useCatalogMutation();
   const path = `/api/admin/projects/${encodeURIComponent(project)}/environment`;
@@ -53,47 +57,44 @@ export function ProjectEnvironment({
   return (
     <section className="panel">
       <header className="catalog-toolbar">
-        <h2>Environment updates</h2>
+        <h2>{tr("Environment updates")}</h2>
         <button disabled={mutation.blocked} onClick={() => void load()}>
-          Refresh updates
-        </button>
+           {tr("Refresh updates")} </button>
       </header>
       {error && (
         <p role="alert" className="error">
-          {error}
+          {tr(error)}
         </p>
       )}
-      {!detail && !error && <p role="status">Loading environment details…</p>}
+      {!detail && !error && <p role="status">{tr("Loading environment details…")}</p>}
       {detail && (
         <>
           <p>
-            {detail.policy === "fixed"
-              ? "Current versions are fixed by an administrator."
-              : "Follows explicitly published updates on the next start or resume."}
+            {detail.policy === "fixed" ? tr("Current versions are fixed by an administrator.") : tr("Follows explicitly published updates on the next start or resume.")}
           </p>
           <p>
-            Status:{" "}
-            {environmentUpdateStates[detail.state] ||
-              detail.state.replaceAll("_", " ")}
+             {tr("Status:")}{" "}
+            {tr(environmentUpdateStates[detail.state] ||
+              detail.state.replaceAll("_", " "))}
           </p>
           <div className="environment-version-columns">
             <section>
-              <h3>Current content</h3>
+              <h3>{tr("Current content")}</h3>
               <MountVersions mounts={detail.current} labels={detail.labels} />
             </section>
             <section>
-              <h3>Target content</h3>
+              <h3>{tr("Target content")}</h3>
               {detail.target.length ? (
                 <MountVersions mounts={detail.target} labels={detail.labels} />
               ) : (
-                <p>No published target</p>
+                <p>{tr("No published target")}</p>
               )}
             </section>
           </div>
           {detail.reason && (
             <details>
-              <summary>Update diagnostic</summary>
-              <p>{detail.reason}</p>
+              <summary>{tr("Update diagnostic")}</summary>
+              <p>{tr(detail.reason)}</p>
             </details>
           )}
           <div className="form-actions">
@@ -103,68 +104,59 @@ export function ProjectEnvironment({
                 review(detail.policy === "fixed" ? "follow" : "fix")
               }
             >
-              {detail.policy === "fixed"
-                ? "Resume following"
-                : "Keep current versions"}
+              {detail.policy === "fixed" ? tr("Resume following") : tr("Keep current versions")}
             </button>
             {["failed", "deferred"].includes(detail.state) && (
               <button
                 disabled={mutation.blocked}
                 onClick={() => review("retry_project")}
               >
-                Retry on next resume
-              </button>
+                 {tr("Retry on next resume")} </button>
             )}
           </div>
           <details>
-            <summary>Execution history</summary>
-            {!detail.executions.length && <p>No update attempts yet.</p>}
+            <summary>{tr("Execution history")}</summary>
+            {!detail.executions.length && <p>{tr("No update attempts yet.")}</p>}
             {detail.executions.map((e) => (
               <article key={e.id}>
                 <h4>
-                  {e.state} · {new Date(e.updated_at).toLocaleString()}
+                  {tr(e.state)} · {new Date(e.updated_at).toLocaleString(intlLocale())}
                 </h4>
                 <MountVersions mounts={e.after} />
-                {e.reason && <p>{e.reason}</p>}
+                {e.reason && <p>{tr(e.reason)}</p>}
               </article>
             ))}
             {cursor && (
               <button disabled={mutation.blocked} onClick={() => setCursor("")}>
-                Latest attempts
-              </button>
+                 {tr("Latest attempts")} </button>
             )}
             {detail.next_cursor && (
               <button
                 disabled={mutation.blocked}
                 onClick={() => setCursor(detail.next_cursor!)}
               >
-                Older attempts
-              </button>
+                 {tr("Older attempts")} </button>
             )}
           </details>
         </>
       )}
       {mutation.error && (
         <p role="alert" className="error">
-          {mutation.error}
+          {tr(mutation.error)}
         </p>
       )}
       {mutation.review && (
-        <section aria-label="Review project environment policy">
-          <h3>Review project update policy</h3>
+        <section aria-label={tr("Review project environment policy")}>
+          <h3>{tr("Review project update policy")}</h3>
           <p>
-            This changes future update attempts. Running work is not
-            interrupted; an already issued update will finish safely.
-          </p>
+             {tr("This changes future update attempts. Running work is not interrupted; an already issued update will finish safely.")} </p>
           <button
             disabled={mutation.busy}
             onClick={() => void mutation.save(() => load(true))}
           >
-            Confirm policy
-          </button>
+             {tr("Confirm policy")} </button>
           <button disabled={mutation.busy} onClick={mutation.cancel}>
-            Cancel
-          </button>
+             {tr("Cancel")} </button>
         </section>
       )}
       {mutation.pending && !mutation.review && (
@@ -172,13 +164,11 @@ export function ProjectEnvironment({
           disabled={mutation.busy}
           onClick={() => void mutation.save(() => load(true))}
         >
-          Check original request
-        </button>
+           {tr("Check original request")} </button>
       )}
       {mutation.refreshRequired && (
         <button onClick={() => void mutation.refresh(() => load(true))}>
-          Reload saved policy
-        </button>
+           {tr("Reload saved policy")} </button>
       )}
     </section>
   );

@@ -15,7 +15,7 @@ export function AccountUsage() {
   const issues = (items: FitIssue[]) => <ul>{items.map((issue, index) => { const dimension = resourceDimensions.find(([key]) => key === issue.dimension); return <li key={index}>{dimension ? tr(dimension[1]) : tr("Environment configuration")}: {issue.reason || tr("Requested {requested}; allowed {limit}", { requested: issue.requested, limit: issue.limit })}</li>; })}</ul>;
   return <div className="account-usage">
     <p>{tr("Your administrator manages these limits. Existing data is retained after reductions; new allocations and resume must fit current limits.")}</p>
-    {error && <p className="settings-error" role="alert">{error}</p>}
+    {error && <p className="settings-error" role="alert">{tr(error)}</p>}
     {!value && !error && <p role="status">{tr("Loading resources…")}</p>}
     <button onClick={() => { setError(""); setValue(null); setAttempt(value => value + 1); }}>{tr("Refresh resources")}</button>
     {value && <>

@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
+import { useLocale } from "./i18n";
 import { usePickerPopover } from "./picker-popover";
 
 export type PickerOption = {
@@ -28,7 +29,7 @@ export function SelectPicker({
   icon,
   maxWidth,
   showLabel = true,
-  emptyLabel = "No matching options",
+  emptyLabel,
 }: {
   label: string;
   value: string;
@@ -46,6 +47,8 @@ export function SelectPicker({
   showLabel?: boolean;
   emptyLabel?: string;
 }) {
+  const zh = useLocale() === "zh";
+  const noOptions = emptyLabel ?? (zh ? "没有匹配的选项" : "No matching options");
   const id = useId();
   const {
     triggerRef,
@@ -80,7 +83,7 @@ export function SelectPicker({
     options.find((option) => option.value === value)?.label ||
     value ||
     placeholder ||
-    "Choose an option";
+    (zh ? "选择一个选项" : "Choose an option");
   const activeID = activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined;
   const open = (edge?: "first" | "last") => {
     if (triggerRef.current?.matches(":disabled")) return;
@@ -352,7 +355,7 @@ export function SelectPicker({
             </div>
             {!visible.length && (
               <p className="selection-picker-empty" role="status">
-                {emptyLabel}
+                {noOptions}
               </p>
             )}
           </div>,

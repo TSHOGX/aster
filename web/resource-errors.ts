@@ -5,6 +5,6 @@ export function resourceQuotaMessage(value: unknown): string {
   if(!value || typeof value!=="object")return "Resource allowance exceeded.";
   const quota=value as Record<string,unknown>;
   if(typeof quota.dimension!=="string" || !labels[quota.dimension])return "Resource allowance exceeded.";
-  const quantity=(field:string)=>typeof quota[field]==="string"&&/^\d{1,19}$/.test(quota[field] as string)?new Intl.NumberFormat().format(BigInt(quota[field] as string)):"unavailable";
+  const quantity=(field:string)=>typeof quota[field]==="string"&&/^\d{1,19}$/.test(quota[field] as string)?new Intl.NumberFormat("en-US").format(BigInt(quota[field] as string)):"unavailable";
   return `${labels[quota.dimension]} allowance exceeded. Limit: ${quantity("limit")}; used: ${quantity("used")}; reserved: ${quantity("reserved")}; requested: ${quantity("requested_delta")}.`;
 }

@@ -1,4 +1,6 @@
 "use client";
+import { useT } from "../lib/i18n";
+
 import { useEffect, useState } from "react";
 import { api, APIError, base, Session } from "../lib/api";
 export function useSession() {
@@ -31,25 +33,26 @@ export function SessionGate({
   error: string;
   loading: boolean;
 }) {
+  const tr = useT();
   return (
     <main className="session-gate">
       <div className="wordmark">
-        ◈ <span>Volume Studio</span>
+        ◈ <span>{tr("Volume Studio")}</span>
       </div>
-      <h1>{loading ? "Opening Studio…" : "Sign in to Studio"}</h1>
-      <p role="status">{loading ? "Checking your session…" : error}</p>
+      <h1>{loading ? tr("Opening Studio…") : tr("Sign in to Studio")}</h1>
+      <p role="status">{loading ? tr("Checking your session…") : tr(error)}</p>
       {!loading && (
         <a
           className="button primary"
           href={`${base}/auth/login?return=${encodeURIComponent(window.location.pathname + window.location.search)}`}
         >
-          Sign in
-        </a>
+           {tr("Sign in")} </a>
       )}
     </main>
   );
 }
 export function SignOut({ session }: { session: Session }) {
+  const tr = useT();
   const [error, setError] = useState("");
   async function logout() {
     const response = await fetch(`${base}/auth/logout`, {
@@ -66,12 +69,10 @@ export function SignOut({ session }: { session: Session }) {
   return (
     <div className="account">
       <span className="muted" title={session.subject}>
-        Administrator
-      </span>
+         {tr("Administrator")} </span>
       <button type="button" className="quiet" onClick={() => void logout()}>
-        Sign out everywhere in this session
-      </button>
-      {error && <p role="alert">{error}</p>}
+         {tr("Sign out everywhere in this session")} </button>
+      {error && <p role="alert">{tr(error)}</p>}
     </div>
   );
 }

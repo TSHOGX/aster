@@ -1,11 +1,14 @@
 "use client";
+import { useT } from "@/lib/i18n";
+
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { api, APIError } from "@/lib/api";
 import type { Identity } from "@web/identity";
 import { displayName } from "@web/brand";
-import { ACTIVE_APPEARANCE_KEY, appearanceKey, applyAppearance, bindAppearance, cacheAppearance, cachedAppearance, clearAppearanceBinding, DEFAULT_APPEARANCE, type Preferences } from "@web/appearance";
+import { ACTIVE_APPEARANCE_KEY, clearAppearanceBinding } from "@web/appearance";
+import { useAccountPreferences } from "@web/account-preferences";
 import { PolicyList } from "./policy-list";
 import { PolicyEditor } from "./policy-editor";
 import { GroupEditor } from "./group-editor";
@@ -17,6 +20,7 @@ import { ResourceCenter } from "./resource-center";
 import { UserEditor } from "./user-editor";
 import { AuditView, OperationView } from "./audit-view";
 export function Administration() {
+  const tr = useT();
   const pathname = usePathname();
   const route = pathname.replace(/^\/admin(?=\/|$)/, "").split("/").filter(Boolean).map(decodeURIComponent);
   const [identity, setIdentity] = useState<Identity | null>(null), [status, setStatus] = useState("loading"), [dirty, setDirty] = useState(false), [error, setError] = useState("");
@@ -43,24 +47,8 @@ export function Administration() {
     window.addEventListener("storage", storage); document.addEventListener("visibilitychange", visible);
     return () => { window.removeEventListener("admin-auth-expired", changed); window.removeEventListener("admin-authority-denied", changed); window.removeEventListener("storage", storage); document.removeEventListener("visibilitychange", visible); };
   }, [reloadIdentity]);
-  const accountID = identity?.id;
-  useEffect(() => {
-    if (!accountID) return;
-    let active = true;
-    bindAppearance(accountID);
-    let preferences = cachedAppearance(accountID) || DEFAULT_APPEARANCE;
-    const refresh = () => void api<Preferences>("/api/me/preferences").then(value => {
-      if (!active) return;
-      if (value.revision > 0) { preferences = value; cacheAppearance(accountID, value); }
-      applyAppearance(preferences);
-    }).catch(() => {});
-    refresh();
-    const system = window.matchMedia("(prefers-color-scheme: dark)");
-    const changed = () => applyAppearance(preferences);
-    const storage = (event: StorageEvent) => { if (event.key === appearanceKey(accountID)) refresh(); };
-    system.addEventListener("change", changed); window.addEventListener("storage", storage);
-    return () => { active = false; system.removeEventListener("change", changed); window.removeEventListener("storage", storage); };
-  }, [accountID]);
+  useAccountPreferences(identity?.id);
+  useEffect(() => { document.title = `${tr("Administration")} — ${displayName}`; }, [tr]);
   useEffect(() => {
     if (!dirty) return;
     const before = (event: BeforeUnloadEvent) => { if (dirtyRef.current) { event.preventDefault(); event.returnValue = ""; } };
@@ -68,7 +56,7 @@ export function Administration() {
   }, [dirty]);
   const setEditorDirty = useCallback((value: boolean) => { dirtyRef.current = value; setDirty(value); }, []);
   const mayLeave = () => {
-    if (dirtyRef.current && !window.confirm("Leave without saving these changes? An unconfirmed request may already have completed.")) return false;
+    if (dirtyRef.current && !window.confirm(tr("Leave without saving these changes? An unconfirmed request may already have completed."))) return false;
     dirtyRef.current = false; setDirty(false); return true;
   };
   const guardNavigation = (event: MouseEvent<HTMLElement>) => {
@@ -84,15 +72,15 @@ export function Administration() {
     catch (error) { setError(String(error)); }
   };
   return <div className="admin-shell">
-    <header className="admin-header"><strong>{displayName} <span>Administration</span></strong><nav aria-label="Administration" onClickCapture={guardNavigation}>
-      {status === "ready" && <><Link href="/users" aria-current={!route.length || route[0] === "users" ? "page" : undefined}>Users</Link><Link href="/groups" aria-current={route[0] === "groups" ? "page" : undefined}>Groups</Link><Link href="/policies" aria-current={route[0] === "policies" ? "page" : undefined}>Policies</Link><Link href="/projects" aria-current={route[0] === "projects" ? "page" : undefined}>Projects</Link><Link href="/resources/network" aria-current={route[0] === "resources" ? "page" : undefined}>Resource Center</Link><Link href="/audit" aria-current={route[0] === "audit" ? "page" : undefined}>Audit</Link></>}
-      <WorkbenchLink />{identity && <button onClick={() => void logout()}>Sign out</button>}
+    <header className="admin-header"><strong>{displayName} <span>{tr("Administration")}</span></strong><nav aria-label={tr("Administration")} onClickCapture={guardNavigation}>
+      {status === "ready" && <><Link href="/users" aria-current={!route.length || route[0] === "users" ? "page" : undefined}>{tr("Users")}</Link><Link href="/groups" aria-current={route[0] === "groups" ? "page" : undefined}>{tr("Groups")}</Link><Link href="/policies" aria-current={route[0] === "policies" ? "page" : undefined}>{tr("Policies")}</Link><Link href="/projects" aria-current={route[0] === "projects" ? "page" : undefined}>{tr("Projects")}</Link><Link href="/resources/network" aria-current={route[0] === "resources" ? "page" : undefined}>{tr("Resource Center")}</Link><Link href="/audit" aria-current={route[0] === "audit" ? "page" : undefined}>{tr("Audit")}</Link></>}
+      <WorkbenchLink />{identity && <button onClick={() => void logout()}>{tr("Sign out")}</button>}
     </nav></header>
     <main>
-      {error && <p role="alert" className="error">{error}</p>}
-      {status === "loading" && <p role="status">Opening administration…</p>}
-      {status === "denied" && <><h1>Access denied</h1><p>A platform administrator role is required.</p></>}
-      {status === "unavailable" && <><p role="alert">Account access is unavailable.</p><button onClick={() => void reloadIdentity()}>Retry access check</button></>}
+      {error && <p role="alert" className="error">{tr(error)}</p>}
+      {status === "loading" && <p role="status">{tr("Opening administration…")}</p>}
+      {status === "denied" && <><h1>{tr("Access denied")}</h1><p>{tr("A platform administrator role is required.")}</p></>}
+      {status === "unavailable" && <><p role="alert">{tr("Account access is unavailable.")}</p><button onClick={() => void reloadIdentity()}>{tr("Retry access check")}</button></>}
       {status === "ready" && identity && <div key={identity.id} onClickCapture={guardNavigation}>
         {(!route.length || route[0] === "users" && route.length === 1) ? <UserList />
           : route[0] === "users" && route.length === 2 ? <UserEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
@@ -106,15 +94,16 @@ export function Administration() {
           : route[0] === "resources" ? <ResourceCenter section={route[1]} onDirty={setEditorDirty} />
           : route[0] === "audit" && route.length === 1 ? <AuditView />
           : route[0] === "operations" && route.length === 2 ? <OperationView id={route[1]} />
-          : <><h1>Page not found</h1><Link href="/users">Open users</Link></>}
+          : <><h1>{tr("Page not found")}</h1><Link href="/users">{tr("Open users")}</Link></>}
       </div>}
     </main>
   </div>;
 }
 function WorkbenchLink() {
+  const tr = useT();
   return (
     // The workbench is a separate build; Next Link would add /admin to this URL.
     // eslint-disable-next-line @next/next/no-html-link-for-pages
-    <a href="/">Return to workbench</a>
+    <a href="/">{tr("Return to workbench")}</a>
   );
 }

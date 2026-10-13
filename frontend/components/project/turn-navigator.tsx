@@ -1,4 +1,5 @@
 "use client";
+import { intlLocale } from "@web/i18n/locale";
 import {
   useCallback,
   useEffect,
@@ -339,7 +340,7 @@ export function TurnNavigator({
             type="button"
             className="turn-rail-more"
             aria-label={tr("Retry turn navigation")}
-            title={error}
+            title={tr(error)}
             onClick={() => void load()}
           >
             !
@@ -362,7 +363,7 @@ export function TurnNavigator({
               <span>{tr("Turn {number}", { number: preview.sequence })}</span>
               {preview.created_at && (
                 <time>
-                  {new Date(preview.created_at).toLocaleTimeString(undefined, {
+                  {new Date(preview.created_at).toLocaleTimeString(intlLocale(), {
                     hour: "numeric",
                     minute: "2-digit",
                   })}

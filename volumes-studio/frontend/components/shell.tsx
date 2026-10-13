@@ -1,5 +1,9 @@
 /* eslint-disable react-hooks/immutability -- Workspace buffers are imperative controller objects; mutations publish through the Studio provider. */
 "use client";
+import { formatQuantity } from "../../../web/i18n/locale";
+import { intlLocale } from "../../../web/i18n/locale";
+import { message, useT } from "../lib/i18n";
+
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
@@ -14,6 +18,7 @@ import { Page, query } from "../lib/workbench";
 import { Modal, Menu } from "./ui";
 import { useStudio } from "./studio-provider";
 export function ShellHeader({ library }: { library?: Library | null }) {
+  const tr = useT();
   const studio = useStudio();
   const [chooser, setChooser] = useState(false),
     [tasks, setTasks] = useState(false),
@@ -46,11 +51,11 @@ export function ShellHeader({ library }: { library?: Library | null }) {
   return (
     <>
       <header className="topbar">
-        <Link href="/" className="wordmark" aria-label="Volume Studio">
-          ◈ <span>Studio</span>
+        <Link href="/" className="wordmark" aria-label={tr("Volume Studio")}>
+          ◈ <span>{tr("Studio")}</span>
         </Link>
         <span className="divider">/</span>
-        <Link href="/">Libraries</Link>
+        <Link href="/">{tr("Libraries")}</Link>
         {library && (
           <>
             <span className="divider">/</span>
@@ -61,19 +66,19 @@ export function ShellHeader({ library }: { library?: Library | null }) {
           </>
         )}
         <div className="topbar-right">
-          <button aria-label="Upload tasks" onClick={() => setTasks(true)}>
+          <button aria-label={tr("Upload tasks")} onClick={() => setTasks(true)}>
             <UploadCloud size={17} />
-            <span className="desktop-label">Tasks</span>
-            {count > 0 && <span className="count">{count}</span>}
+            <span className="desktop-label">{tr("Tasks")}</span>
+            {count > 0 && <span className="count">{formatQuantity(count)}</span>}
           </button>
-          <a href="/admin" className="icon-button" aria-label="Open Aster">
+          <a href="/admin" className="icon-button" aria-label={tr("Open Aster")}>
             <ArrowUpRight size={18} />
           </a>
           <Menu
-            label="Account"
+            label={tr("Account")}
             items={[
               {
-                label: "Sign out everywhere in this session",
+                label: message("Sign out everywhere in this session"),
                 action: () =>
                   void studio.logout().catch((e) => {
                     setError(String(e));
@@ -87,21 +92,21 @@ export function ShellHeader({ library }: { library?: Library | null }) {
       </header>
       {error && (
         <div className="notice error" role="alert">
-          {error}
-          <button onClick={() => setError("")}>Dismiss</button>
+          {tr(error)}
+          <button onClick={() => setError("")}>{tr("Dismiss")}</button>
         </div>
       )}
       {studio.model.recoveryError && (
         <div className="notice error" role="alert">
-          {studio.model.recoveryError}
+          {tr(studio.model.recoveryError)}
         </div>
       )}
       <RecoveryBanner />
       {studio.model.notice && (
         <div className="toast" role="status">
-          {studio.model.notice}
+          {tr(studio.model.notice)}
           <button
-            aria-label="Dismiss notification"
+            aria-label={tr("Dismiss notification")}
             onClick={() => {
               studio.model.notice = "";
               studio.notify();
@@ -112,7 +117,7 @@ export function ShellHeader({ library }: { library?: Library | null }) {
         </div>
       )}
       <Modal
-        title="Switch library"
+        title={tr("Switch library")}
         open={chooser}
         onClose={() => setChooser(false)}
       >
@@ -120,8 +125,8 @@ export function ShellHeader({ library }: { library?: Library | null }) {
           <Search size={16} />
           <input
             autoFocus
-            placeholder="Search libraries…"
-            aria-label="Search libraries to switch"
+            placeholder={tr("Search libraries…")}
+            aria-label={tr("Search libraries to switch")}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -140,7 +145,7 @@ export function ShellHeader({ library }: { library?: Library | null }) {
               <small>{l.description}</small>
             </Link>
           ))}
-          {page?.items.length === 0 && <p>No matching libraries.</p>}
+          {page?.items.length === 0 && <p>{tr("No matching libraries.")}</p>}
           {page?.next && (
             <button
               onClick={() =>
@@ -153,22 +158,21 @@ export function ShellHeader({ library }: { library?: Library | null }) {
                   .catch((e) => setError(String(e)))
               }
             >
-              Load more
-            </button>
+               {tr("Load more")} </button>
           )}
         </div>
       </Modal>
       <Modal
-        title="Upload tasks"
+        title={tr("Upload tasks")}
         open={tasks}
         onClose={() => setTasks(false)}
         drawer
       >
-        <p className="muted">Tasks from this session and visited libraries.</p>
+        <p className="muted">{tr("Tasks from this session and visited libraries.")}</p>
         {studio.model.tasks.length === 0 &&
           Object.values(studio.model.uploads)
             .flat()
-            .every((u) => u.state !== "open") && <p>No uploads in progress.</p>}
+            .every((u) => u.state !== "open") && <p>{tr("No uploads in progress.")}</p>}
         {studio.model.tasks.map((t) => (
           <div className="task-row" key={t.id}>
             <Link href={`/libraries/${t.library}`}>
@@ -176,17 +180,16 @@ export function ShellHeader({ library }: { library?: Library | null }) {
             </Link>
             <strong>{t.path}</strong>
             <span>
-              {t.state} · {Math.round(t.progress * 100)}%
+              {tr(t.state)} · {Math.round(t.progress * 100)}%
             </span>
             <progress max={1} value={t.progress} />
-            {t.error && <p className="error">{t.error}</p>}
+            {t.error && <p className="error">{tr(t.error)}</p>}
             {t.controller ? (
-              <button onClick={() => t.controller?.abort()}>Pause</button>
+              <button onClick={() => t.controller?.abort()}>{tr("Pause")}</button>
             ) : (
               t.file && (
                 <button onClick={() => void studio.retryUpload(t)}>
-                  Retry / resume
-                </button>
+                   {tr("Retry / resume")} </button>
               )
             )}
           </div>
@@ -207,6 +210,7 @@ function ServerUpload({
   library: string;
   upload: Upload;
 }) {
+  const tr = useT();
   const studio = useStudio();
   return (
     <div className="task-row">
@@ -218,14 +222,13 @@ function ServerUpload({
         {bytes(upload.offset)} / {bytes(upload.size)}
       </span>
       <p className="muted">
-        Select the same file at the same target path to resume.
-      </p>
+         {tr("Select the same file at the same target path to resume.")} </p>
       <button
         onClick={async () => {
           if (
             (await studio.ask(
               "Cancel upload",
-              `Cancel the retained upload for ${upload.path}?`,
+              message("Cancel the retained upload for {path}?", { path: upload.path }),
               ["Keep upload", "Cancel upload"],
             )) !== "Cancel upload"
           )
@@ -246,12 +249,12 @@ function ServerUpload({
           }
         }}
       >
-        Cancel upload
-      </button>
+         {tr("Cancel upload")} </button>
     </div>
   );
 }
 function RecoveryBanner() {
+  const tr = useT();
   const studio = useStudio();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
@@ -261,26 +264,25 @@ function RecoveryBanner() {
       {items.length > 0 && (
         <div className="notice">
           <span>
-            {items.length} local recovery{" "}
-            {items.length === 1 ? "copy" : "copies"} available.
-          </span>
-          <button onClick={() => setOpen(true)}>Review recovery</button>
+            {formatQuantity(items.length)}  {tr("local recovery")}{" "}
+            {items.length === 1 ? tr("copy") : tr("copies")}  {tr("available.")} </span>
+          <button onClick={() => setOpen(true)}>{tr("Review recovery")}</button>
         </div>
       )}
       <Modal
-        title="Recover unsaved edits"
+        title={tr("Recover unsaved edits")}
         open={open && items.length > 0}
         onClose={() => setOpen(false)}
       >
         {error && (
           <p role="alert" className="error">
-            {error}
+            {tr(error)}
           </p>
         )}
         {items.map((r) => (
           <div className="recovery-row" key={r.id}>
             <strong>{r.path}</strong>
-            <small>{new Date(r.updated).toLocaleString()}</small>
+            <small>{new Date(r.updated).toLocaleString(intlLocale())}</small>
             <div className="actions">
               <button
                 onClick={() =>
@@ -289,22 +291,19 @@ function RecoveryBanner() {
                     .catch((e) => setError(String(e)))
                 }
               >
-                Discard
-              </button>
+                 {tr("Discard")} </button>
               <button
                 className="primary"
                 onClick={() =>
                   void studio.restore(r).catch((e) => setError(String(e)))
                 }
               >
-                Restore
-              </button>
+                 {tr("Restore")} </button>
               <Link
                 className="button"
                 href={`/libraries/${r.library}?path=${encodeURIComponent(r.path)}`}
               >
-                Open library
-              </Link>
+                 {tr("Open library")} </Link>
             </div>
           </div>
         ))}
@@ -321,6 +320,7 @@ export function LibraryDetails({
   onClose: () => void;
   onSaved: (l: Library) => void;
 }) {
+  const tr = useT();
   const studio = useStudio();
   const [name, setName] = useState(library?.name || ""),
     [description, setDescription] = useState(library?.description || ""),
@@ -328,7 +328,7 @@ export function LibraryDetails({
     [busy, setBusy] = useState(false);
   return (
     <Modal
-      title={library ? "Library details" : "New library"}
+      title={library ? tr("Library details") : tr("New library")}
       open
       onClose={onClose}
     >
@@ -362,8 +362,7 @@ export function LibraryDetails({
         }}
       >
         <label>
-          Name
-          <input
+           {tr("Name")} <input
             autoFocus
             required
             maxLength={200}
@@ -372,8 +371,7 @@ export function LibraryDetails({
           />
         </label>
         <label>
-          Description
-          <textarea
+           {tr("Description")} <textarea
             maxLength={4000}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -381,15 +379,14 @@ export function LibraryDetails({
         </label>
         {error && (
           <p role="alert" className="error">
-            {error}
+            {tr(error)}
           </p>
         )}
         <div className="dialog-actions">
           <button type="button" onClick={onClose}>
-            Cancel
-          </button>
+             {tr("Cancel")} </button>
           <button className="primary" disabled={busy || !name.trim()}>
-            {library ? "Save details" : "Create draft"}
+            {library ? tr("Save details") : tr("Create draft")}
           </button>
         </div>
       </form>

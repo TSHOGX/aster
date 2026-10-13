@@ -1,4 +1,5 @@
 "use client";
+import { intlLocale } from "@web/i18n/locale";
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/project-api";
@@ -83,7 +84,7 @@ export function EnvironmentStatus({ project }: { project: string }) {
             {value.updated_at && (
               <p>
                 {tr("Last checked")}:{" "}
-                {new Date(value.updated_at).toLocaleString()}
+                {new Date(value.updated_at).toLocaleString(intlLocale())}
               </p>
             )}
           </>

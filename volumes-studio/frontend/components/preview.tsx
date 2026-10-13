@@ -1,5 +1,7 @@
 /* eslint-disable @next/next/no-img-element -- Authenticated, bounded blob previews must not use the public image optimizer. */
 "use client";
+import { useT } from "../lib/i18n";
+
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { BufferFile } from "./studio-provider";
@@ -30,6 +32,7 @@ function MarkdownImage({
   src: string;
   alt?: string;
 }) {
+  const tr = useT();
   const source = JSON.stringify([
     buffer.library,
     buffer.version,
@@ -74,7 +77,7 @@ function MarkdownImage({
   return image.source === source && image.url ? (
     <img src={image.url} alt={alt || ""} />
   ) : (
-    <span className="muted">{alt || "Image"} (image not loaded)</span>
+    <span className="muted">{alt || tr("Image")}  {tr("(image not loaded)")}</span>
   );
 }
 export function MarkdownPreview({
@@ -84,6 +87,7 @@ export function MarkdownPreview({
   buffer: BufferFile;
   onOpen: (path: string) => void;
 }) {
+  const tr = useT();
   return (
     <article className="markdown-preview">
       <ReactMarkdown
@@ -124,6 +128,7 @@ export function MarkdownPreview({
   );
 }
 export function ImagePreview({ buffer }: { buffer: BufferFile }) {
+  const tr = useT();
   const [zoom, setZoom] = useState(0);
   const [size, setSize] = useState({ source: "", width: 0 });
   const nativeWidth = size.source === buffer.image ? size.width : 0;
@@ -131,21 +136,20 @@ export function ImagePreview({ buffer }: { buffer: BufferFile }) {
     <div className="image-panel">
       <div className="image-controls">
         <button aria-pressed={!zoom} onClick={() => setZoom(0)}>
-          Fit
-        </button>
+           {tr("Fit")} </button>
         <button aria-pressed={zoom === 100} onClick={() => setZoom(100)}>
           100%
         </button>
         <button
-          aria-label="Zoom out"
+          aria-label={tr("Zoom out")}
           disabled={zoom === 25}
           onClick={() => setZoom((n) => Math.max(25, (n || 100) - 25))}
         >
           −
         </button>
-        <span>{zoom ? `${zoom}%` : "Fit to window"}</span>
+        <span>{zoom ? `${zoom}%` : tr("Fit to window")}</span>
         <button
-          aria-label="Zoom in"
+          aria-label={tr("Zoom in")}
           disabled={zoom === 400}
           onClick={() => setZoom((n) => Math.min(400, (n || 100) + 25))}
         >
@@ -163,12 +167,10 @@ export function ImagePreview({ buffer }: { buffer: BufferFile }) {
             })
           }
           style={
-            zoom
-              ? {
+            zoom ? {
                   maxWidth: "none",
                   width: nativeWidth ? (nativeWidth * zoom) / 100 : undefined,
-                }
-              : undefined
+                } : undefined
           }
         />
       </div>

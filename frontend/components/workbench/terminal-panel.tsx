@@ -180,7 +180,7 @@ export function TerminalPanel({
       </header>
       {notice ? (
         <p className="border-b border-[var(--color-border)] px-3 py-1.5 text-2xs text-[var(--color-foreground-muted)]">
-          {notice}
+          {tr(notice)}
         </p>
       ) : null}
       <div ref={host} className="min-h-0 flex-1 px-2 py-1.5" />

@@ -1,4 +1,6 @@
 "use client";
+import { useT } from "@/lib/i18n";
+
 import { useRef, useState } from "react";
 import { APIError, mutate } from "@/lib/api";
 import type { Impact } from "@/lib/catalog";
@@ -123,74 +125,63 @@ export function CatalogReview({
   state: ReturnType<typeof useCatalogMutation>;
   saved: () => Promise<void>;
 }) {
+  const tr = useT();
   return (
     <>
       {state.error && (
         <p className="error" role="alert">
-          {state.error}
+          {tr(state.error)}
         </p>
       )}
       {state.busy && (
         <p role="status">
-          {state.review || state.pending
-            ? "Saving changes…"
-            : "Checking configuration…"}
+          {state.review || state.pending ? tr("Saving changes…") : tr("Checking configuration…")}
         </p>
       )}
       {state.refreshRequired && (
         <div className="notice" role="status">
           <p>
-            Changes were saved. Reload the current data before editing again.
-          </p>
+             {tr("Changes were saved. Reload the current data before editing again.")} </p>
           <button
             disabled={state.busy}
             onClick={() => void state.refresh(saved)}
           >
-            Reload saved data
-          </button>
+             {tr("Reload saved data")} </button>
         </div>
       )}
       {state.review && (
-        <section className="panel catalog-review" aria-label="Review changes">
+        <section className="panel catalog-review" aria-label={tr("Review changes")}>
           <h2>
-            {state.review.request.method === "DELETE"
-              ? "Review deletion"
-              : "Review changes"}
+            {state.review.request.method === "DELETE" ? tr("Review deletion") : tr("Review changes")}
           </h2>
           {state.review.request.method === "DELETE" && (
-            <p role="alert">Deleting this resource cannot be undone.</p>
+            <p role="alert">{tr("Deleting this resource cannot be undone.")}</p>
           )}
           <p>
-            Existing project environments and data remain in place. Projects
-            that lose access will be paused. Counts include existing
-            configuration issues.
-          </p>
+             {tr("Existing project environments and data remain in place. Projects that lose access will be paused. Counts include existing configuration issues.")} </p>
           <p>
-            {state.review.impact.projects.length} projects require attention.{" "}
+            {state.review.impact.projects.length}  {tr("projects require attention.")}{" "}
             {
               state.review.impact.users.filter((u) => u.needs_admin_resolution)
                 .length
             }{" "}
-            users need default configuration.
-          </p>
+             {tr("users need default configuration.")} </p>
           {!!state.review.impact.projects.length && (
             <ul>
               {state.review.impact.projects.map((p) => (
                 <li key={p.id}>
-                  {p.title} · {p.state} · {p.reason.replaceAll("_", " ")}
+                  {p.title} · {tr(p.state)} · {p.reason.replaceAll("_", " ")}
                 </li>
               ))}
             </ul>
           )}
           <details>
-            <summary>Account configuration checks</summary>
+            <summary>{tr("Account configuration checks")}</summary>
             <ul>
               {state.review.impact.users.map((u) => (
                 <li key={u.id}>
                   {u.name}:{" "}
-                  {u.needs_admin_resolution
-                    ? "Administrator configuration needed"
-                    : "Ready"}
+                  {u.needs_admin_resolution ? tr("Administrator configuration needed") : tr("Ready")}
                 </li>
               ))}
             </ul>
@@ -201,25 +192,21 @@ export function CatalogReview({
               disabled={state.busy}
               onClick={() => void state.save(saved)}
             >
-              {state.review.request.method === "DELETE"
-                ? "Confirm deletion"
-                : "Confirm and save"}
+              {state.review.request.method === "DELETE" ? tr("Confirm deletion") : tr("Confirm and save")}
             </button>
             <button
               disabled={state.busy || !!state.pending}
               onClick={state.cancel}
             >
-              Back to editing
-            </button>
+               {tr("Back to editing")} </button>
           </div>
         </section>
       )}
       {state.pending && !state.busy && (
         <p role="alert">
-          The save outcome is unknown.{" "}
+           {tr("The save outcome is unknown.")}{" "}
           <button onClick={() => void state.save(saved)}>
-            Check original request
-          </button>
+             {tr("Check original request")} </button>
         </p>
       )}
     </>

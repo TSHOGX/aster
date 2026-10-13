@@ -1,5 +1,7 @@
 /* eslint-disable react-hooks/set-state-in-effect -- Hydrate browser navigation and synchronize external workspace snapshots. */
 "use client";
+import { useT } from "../lib/i18n";
+
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { ChevronDown, ChevronRight, File, Folder, Search } from "lucide-react";
 import { api, Entry } from "../lib/api";
@@ -30,6 +32,7 @@ export function FileTree({
   onRename: (entry: Entry, to: string) => Promise<void>;
   searchRef?: React.RefObject<HTMLInputElement | null>;
 }) {
+  const tr = useT();
   const [expanded, setExpanded] = useState<Set<string>>(new Set([""])),
     [pages, setPages] = useState<Record<string, Page<Entry>>>({}),
     [needle, setNeedle] = useState(""),
@@ -227,34 +230,33 @@ export function FileTree({
         <input
           ref={searchRef}
           value={needle}
-          placeholder="Go to file…"
-          aria-label="Find files"
+          placeholder={tr("Go to file…")}
+          aria-label={tr("Find files")}
           onChange={(e) => setNeedle(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && results?.items[0])
               reveal(results.items[0]);
           }}
         />
-        <kbd>⌘P</kbd>
+        <kbd>{tr("⌘P")}</kbd>
       </label>
       {error && (
         <div className="error tree-error" role="alert">
-          {error}
+          {tr(error)}
           <button
             onClick={() => {
               setError("");
               void load("");
             }}
           >
-            Retry
-          </button>
+             {tr("Retry")} </button>
         </div>
       )}
       <div
         ref={host}
         className="tree-scroll"
         role="tree"
-        aria-label="Files"
+        aria-label={tr("Files")}
         onScroll={(e) =>
           setViewport((v) => ({ ...v, top: e.currentTarget.scrollTop }))
         }
@@ -273,12 +275,11 @@ export function FileTree({
                   key={`more:${row.parent}`}
                   onClick={() => void load(row.parent, row.next)}
                 >
-                  Load more entries
-                </button>
+                   {tr("Load more entries")} </button>
               );
             const { entry, depth } = row;
             const items = actions(entry).map((a) =>
-              a.label === "Rename"
+              a.id === "rename"
                 ? {
                     ...a,
                     action: () => {
@@ -294,9 +295,7 @@ export function FileTree({
                   role="treeitem"
                   aria-selected={selected === entry.path}
                   aria-expanded={
-                    entry.kind === "directory"
-                      ? expanded.has(entry.path)
-                      : undefined
+                    entry.kind === "directory" ? expanded.has(entry.path) : undefined
                   }
                   aria-level={depth + 1}
                   className={`tree-row ${selected === entry.path ? "selected" : ""}`}
@@ -310,7 +309,7 @@ export function FileTree({
                   <button
                     className="file-name"
                     data-tree-index={index}
-                    aria-label={`Open ${entry.path}`}
+                    aria-label={tr("Open {value0}", { value0: entry.path })}
                     onClick={() => reveal(entry)}
                     onKeyDown={(e) => {
                       if (
@@ -388,7 +387,7 @@ export function FileTree({
                     >
                       <input
                         autoFocus
-                        aria-label="New file name"
+                        aria-label={tr("New file name")}
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         onKeyDown={(e) => {
@@ -398,7 +397,7 @@ export function FileTree({
                     </form>
                   ) : (
                     items.length > 0 && (
-                      <Menu label={`Actions for ${entry.path}`} items={items} />
+                      <Menu label={tr("Actions for {value0}", { value0: entry.path })} items={items} />
                     )
                   )}
                 </div>
@@ -408,13 +407,7 @@ export function FileTree({
         </div>
         {rows.length === 0 && (
           <p className="muted tree-empty">
-            {needle
-              ? results
-                ? "No matching files."
-                : "Searching…"
-              : pages[""]
-                ? "This directory is empty."
-                : "Loading files…"}
+            {needle ? results ? tr("No matching files.") : tr("Searching…") : pages[""] ? tr("This directory is empty.") : tr("Loading files…")}
           </p>
         )}
         {needle && results?.next && (
@@ -434,8 +427,7 @@ export function FileTree({
                 });
             }}
           >
-            Load more matches
-          </button>
+             {tr("Load more matches")} </button>
         )}
       </div>
     </>

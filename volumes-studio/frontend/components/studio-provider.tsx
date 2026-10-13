@@ -1,5 +1,7 @@
 /* eslint-disable react-hooks/immutability -- Imperative editor controller publishes every mutation through notify; React state only owns its stable lifetime. */
 "use client";
+import { message, useT } from "../lib/i18n";
+
 import {
   createContext,
   useContext,
@@ -36,14 +38,9 @@ import {
   Recovery,
 } from "../lib/recovery";
 import { hashChunk, hashFile } from "../lib/hash-file";
-import {
-  applyAppearance,
-  bindAppearance,
-  cacheAppearance,
-  cachedAppearance,
-  DEFAULT_APPEARANCE,
-  Preferences,
-} from "../../../web/appearance";
+import { clearAppearanceBinding } from "../../../web/appearance";
+import { useAccountPreferences } from "../../../web/account-preferences";
+import type { Message } from "../../../web/i18n/locale";
 import { Modal } from "./ui";
 import { useSession, SessionGate } from "./session";
 export type BufferFile = {
@@ -84,9 +81,9 @@ export type Task = {
   controller?: AbortController;
 };
 type Question = {
-  title: string;
-  message: string;
-  choices: string[];
+  title: Message;
+  message: Message;
+  choices: { value: string; label: string }[];
   resolve: (value: string) => void;
 };
 type Model = {
@@ -133,12 +130,12 @@ function useStudioController(session: Session | null) {
     notify();
   };
   const ask = (
-    title: string,
-    message: string,
+    title: Message,
+    message: Message,
     choices = ["Cancel", "Continue"],
   ) =>
     new Promise<string>((resolve) => {
-      model.current.questions.push({ title, message, choices, resolve });
+      model.current.questions.push({ title, message, choices: choices.map(value => ({ value, label: value })), resolve });
       notify();
     });
   const write = async <T,>(
@@ -417,7 +414,7 @@ function useStudioController(session: Session | null) {
     if (b.text !== b.saved || !!b.pending) {
       const answer = await ask(
         "Unsaved changes",
-        `Save changes to ${b.entry.path}?`,
+        message("Save changes to {path}?", { path: b.entry.path }),
         ["Cancel", "Discard", "Save"],
       );
       if (answer === "Cancel") return;
@@ -450,7 +447,7 @@ function useStudioController(session: Session | null) {
     if (!dirty.length) return true;
     const answer = await ask(
       "Unsaved files",
-      `${dirty.length} file(s) have unsaved changes.`,
+      message("{count} file(s) have unsaved changes.", { count: dirty.length }),
       ["Cancel", "Discard changes", "Save all"],
     );
     if (answer === "Cancel") return false;
@@ -534,7 +531,7 @@ function useStudioController(session: Session | null) {
             target.entry &&
             (await ask(
               "Replace file?",
-              `${task.path} already exists. Replace it with this upload?`,
+              message("{path} already exists. Replace it with this upload?", { path: task.path }),
               ["Cancel", "Replace"],
             )) !== "Replace"
           )
@@ -581,7 +578,7 @@ function useStudioController(session: Session | null) {
           if (
             (await ask(
               "Upload target changed",
-              `${task.path} changed during upload. Replace the latest saved file?`,
+              message("{path} changed during upload. Replace the latest saved file?", { path: task.path }),
               ["Cancel", "Replace"],
             )) !== "Replace"
           )
@@ -641,48 +638,13 @@ function useStudioController(session: Session | null) {
         if (b.image) URL.revokeObjectURL(b.image);
       model.current.buffers = [];
       model.current.recoveryItems = [];
+      clearAppearanceBinding();
       window.location.assign(base + "/");
     }
   };
   useEffect(() => {
     sessionID.current = requestID();
   }, []);
-  useEffect(() => {
-    if (!session) return;
-    let disposed = false;
-    bindAppearance(session.subject);
-    const refresh = async () => {
-      try {
-        const identity = await fetch("/api/auth/session").then((r) =>
-          r.ok ? r.json() : null,
-        );
-        if (identity?.id !== session.subject) return;
-        const response = await fetch("/api/me/preferences");
-        if (!response.ok) return;
-        const preferences: Preferences = await response.json();
-        if (!disposed) {
-          cacheAppearance(session.subject, preferences);
-          applyAppearance(preferences);
-        }
-      } catch {}
-    };
-    void refresh();
-    const system = window.matchMedia("(prefers-color-scheme: dark)");
-    const theme = () =>
-      applyAppearance(cachedAppearance(session.subject) || DEFAULT_APPEARANCE);
-    system.addEventListener("change", theme);
-    window.addEventListener("storage", theme);
-    const visible = () => {
-      if (!document.hidden) void refresh();
-    };
-    document.addEventListener("visibilitychange", visible);
-    return () => {
-      disposed = true;
-      system.removeEventListener("change", theme);
-      window.removeEventListener("storage", theme);
-      document.removeEventListener("visibilitychange", visible);
-    };
-  }, [session]);
   useEffect(() => {
     if (!account) return;
     let canceled = false;
@@ -846,50 +808,52 @@ export function useStudio() {
   return value;
 }
 export function StudioProvider({ children }: { children: ReactNode }) {
+  const tr = useT();
   const { session, error, loading } = useSession();
   const studio = useStudioController(session);
+  useAccountPreferences(session?.subject, true);
+  useEffect(() => { document.title = "Volume Studio"; }, []);
   const question = studio.model.questions[0];
   return (
     <StudioContext.Provider value={studio}>
       {!session ? (
-        <SessionGate loading={loading} error={error} />
+        <SessionGate loading={loading} error={tr(error)} />
       ) : studio.model.expired ? (
         <main className="session-gate">
-          <h1>Sign in again</h1>
-          <p>Your unsaved edits are retained for this account.</p>
+          <h1>{tr("Sign in again")}</h1>
+          <p>{tr("Your unsaved edits are retained for this account.")}</p>
           <a
             className="button primary"
             href={`${base}/auth/login?return=${encodeURIComponent(location.pathname + location.search)}`}
           >
-            Sign in
-          </a>
+             {tr("Sign in")} </a>
         </main>
       ) : (
         children
       )}
       {question && (
         <Modal
-          title={question.title}
+          title={tr(question.title)}
           open
           onClose={() => {
             studio.model.questions.shift();
-            question.resolve(question.choices[0]);
+            question.resolve(question.choices[0].value);
             studio.notify();
           }}
         >
-          <p>{question.message}</p>
+          <p>{tr(question.message)}</p>
           <div className="dialog-actions">
             {question.choices.map((c, i) => (
               <button
-                key={c}
+                key={c.value}
                 className={i === question.choices.length - 1 ? "primary" : ""}
                 onClick={() => {
                   studio.model.questions.shift();
-                  question.resolve(c);
+                  question.resolve(c.value);
                   studio.notify();
                 }}
               >
-                {c}
+                {tr(c.label)}
               </button>
             ))}
           </div>

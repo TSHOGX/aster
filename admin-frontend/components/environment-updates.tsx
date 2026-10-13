@@ -1,4 +1,7 @@
 "use client";
+import { formatQuantity, intlLocale } from "@web/i18n/locale";
+import { useT } from "@/lib/i18n";
+
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -69,6 +72,7 @@ export function MountVersions({
   mounts: Mount[];
   labels?: PublicationLabels;
 }) {
+  const tr = useT();
   return (
     <ul className="environment-version-list">
       {mounts.map((m) => (
@@ -88,7 +92,7 @@ export function MountVersions({
             </small>
           )}
           <details>
-            <summary>Source details</summary>
+            <summary>{tr("Source details")}</summary>
             {labels?.[`${m.source.artifact_id}@${m.source.version}`]
               ?.version_note && (
               <p>
@@ -122,6 +126,7 @@ export function EnvironmentUpdates({
   hasPublications: boolean;
   onDirty: (value: boolean) => void;
 }) {
+  const tr = useT();
   const [note, setNote] = useState(""),
     [cursor, setCursor] = useState(""),
     [filter, setFilter] = useState(""),
@@ -181,64 +186,53 @@ export function EnvironmentUpdates({
     <section
       className="environment-updates"
       aria-label={
-        tab === "updates" ? "Environment updates" : "Environment projects"
+        tab === "updates" ? tr("Environment updates") : tr("Environment projects")
       }
     >
       <header className="catalog-toolbar">
         <div>
           <h3>
-            {tab === "updates"
-              ? "Updates for existing projects"
-              : "Projects using this environment"}
+            {tab === "updates" ? tr("Updates for existing projects") : tr("Projects using this environment")}
           </h3>
           <p>
-            Updates apply on the next start or resume. Running projects keep
-            their current content.
-          </p>
+             {tr("Updates apply on the next start or resume. Running projects keep their current content.")} </p>
         </div>
         <button disabled={mutation.blocked} onClick={() => void load()}>
-          Refresh
-        </button>
+           {tr("Refresh")} </button>
       </header>
       {error && (
         <p role="alert" className="error">
-          {error}
+          {tr(error)}
         </p>
       )}
-      {!page && !error && <p role="status">Loading environment updates…</p>}
+      {!page && !error && <p role="status">{tr("Loading environment updates…")}</p>}
       {page && (
         <>
           <div className="environment-counts">
             {Object.entries(page.counts).map(([state, count]) => (
               <span key={state} className="environment-count">
-                <strong>{count}</strong>{" "}
-                {environmentUpdateStates[state] || state}
+                <strong>{formatQuantity(count)}</strong>{" "}
+                {tr(environmentUpdateStates[state] || state)}
               </span>
             ))}
           </div>
           {tab === "updates" ? (
             <>
               <section className="panel">
-                <h3>Publish saved data versions</h3>
+                <h3>{tr("Publish saved data versions")}</h3>
                 {!hasPublications && (
                   <p>
-                    Add an immutable data publication in Configuration before
-                    publishing an update.
-                  </p>
+                     {tr("Add an immutable data publication in Configuration before publishing an update.")} </p>
                 )}
                 <p>
-                  Configuration revision {revision} is used for new projects.
-                  Publishing separately updates compatible existing projects.
-                  Only read-only data publications are included.
-                </p>
+                   {tr("Configuration revision")} {formatQuantity(revision)}  {tr("is used for new projects. Publishing separately updates compatible existing projects. Only read-only data publications are included.")} </p>
                 <label>
-                  Release note
-                  <textarea
+                   {tr("Release note")} <textarea
                     value={note}
                     maxLength={4096}
                     disabled={mutation.blocked}
                     onChange={(e) => setNote(e.target.value)}
-                    placeholder="What changed in this data release?"
+                    placeholder={tr("What changed in this data release?")}
                   />
                 </label>
                 <button
@@ -246,26 +240,22 @@ export function EnvironmentUpdates({
                   disabled={mutation.blocked || !hasPublications}
                   onClick={() => review("publish")}
                 >
-                  Preview update
-                </button>
+                   {tr("Preview update")} </button>
               </section>
-              <h3>Release history</h3>
+              <h3>{tr("Release history")}</h3>
               {releases?.length === 0 && (
                 <p>
-                  No updates published. Saving configuration alone does not
-                  update existing projects.
-                </p>
+                   {tr("No updates published. Saving configuration alone does not update existing projects.")} </p>
               )}
               {releases?.map((release) => (
                 <article key={release.id} className="panel environment-release">
                   <header>
-                    <h4>Update {release.sequence}</h4>
-                    <span>{release.state}</span>
+                    <h4>{tr("Update")} {formatQuantity(release.sequence)}</h4>
+                    <span>{tr(release.state)}</span>
                   </header>
-                  <p>{release.note || "Data publication update"}</p>
+                  <p>{release.note || tr("Data publication update")}</p>
                   <small>
-                    {new Date(release.created_at).toLocaleString()} ·
-                    Configuration revision {release.configuration_revision}
+                    {new Date(release.created_at).toLocaleString(intlLocale())}  {tr("· Configuration revision")} {formatQuantity(release.configuration_revision)}
                   </small>
                   <MountVersions
                     mounts={release.mounts}
@@ -285,16 +275,13 @@ export function EnvironmentUpdates({
                         )
                       }
                     >
-                      {release.state === "active"
-                        ? "Stop rollout"
-                        : "Continue rollout"}
+                      {release.state === "active" ? tr("Stop rollout") : tr("Continue rollout")}
                     </button>
                     <button
                       disabled={mutation.blocked || release.state === "retired"}
                       onClick={() => review("retry", release)}
                     >
-                      Retry deferred projects
-                    </button>
+                       {tr("Retry deferred projects")} </button>
                     {["superseded", "retired"].includes(release.state) && (
                       <>
                         <button
@@ -314,27 +301,25 @@ export function EnvironmentUpdates({
                             )
                           }
                         >
-                          Preview rollback to these versions
-                        </button>
+                           {tr("Preview rollback to these versions")} </button>
                         <button
                           disabled={
                             mutation.blocked || release.state === "retired"
                           }
                           onClick={() => review("retire", release)}
                         >
-                          Retire rollback target
-                        </button>
+                           {tr("Retire rollback target")} </button>
                       </>
                     )}
                   </div>
                   {release.state === "retired" && (
-                    <p>This release can no longer be used for rollback.</p>
+                    <p>{tr("This release can no longer be used for rollback.")}</p>
                   )}
                 </article>
               ))}
-              {history.error && <p role="alert">{history.error}</p>}
+              {history.error && <p role="alert">{tr(history.error)}</p>}
               {releaseBefore !== 0 && !history.data && !history.error && (
-                <p role="status">Loading release history…</p>
+                <p role="status">{tr("Loading release history…")}</p>
               )}
               <div className="form-actions">
                 {releaseBefore !== 0 && (
@@ -342,21 +327,18 @@ export function EnvironmentUpdates({
                     disabled={mutation.blocked}
                     onClick={() => setReleaseBefore(0)}
                   >
-                    Latest releases
-                  </button>
+                     {tr("Latest releases")} </button>
                 )}
                 {nextRelease && (
                   <button
                     disabled={mutation.blocked}
                     onClick={() => setReleaseBefore(nextRelease)}
                   >
-                    Older releases
-                  </button>
+                     {tr("Older releases")} </button>
                 )}
                 {history.error && (
                   <button onClick={() => void history.refresh()}>
-                    Retry history
-                  </button>
+                     {tr("Retry history")} </button>
                 )}
               </div>
             </>
@@ -364,9 +346,8 @@ export function EnvironmentUpdates({
             <>
               <div className="form-actions">
                 <label>
-                  Status
-                  <Select
-                    aria-label="Status"
+                   {tr("Status")} <Select
+                    aria-label={tr("Status")}
                     value={filter}
                     disabled={mutation.blocked}
                     onChange={(e) => {
@@ -375,11 +356,11 @@ export function EnvironmentUpdates({
                       setCursor("");
                     }}
                   >
-                    <option value="">All projects</option>
+                    <option value="">{tr("All projects")}</option>
                     {Object.entries(environmentUpdateStates).map(
                       ([value, label]) => (
                         <option key={value} value={value}>
-                          {label}
+                          {tr(label)}
                         </option>
                       ),
                     )}
@@ -400,8 +381,7 @@ export function EnvironmentUpdates({
                     )
                   }
                 >
-                  Fix selected projects
-                </button>
+                   {tr("Fix selected projects")} </button>
                 <button
                   disabled={
                     mutation.blocked ||
@@ -417,10 +397,9 @@ export function EnvironmentUpdates({
                     )
                   }
                 >
-                  Resume following
-                </button>
+                   {tr("Resume following")} </button>
               </div>
-              {!page.projects.length && <p>No projects match this view.</p>}
+              {!page.projects.length && <p>{tr("No projects match this view.")}</p>}
               {page.projects.map((p) => (
                 <article
                   key={p.project_id}
@@ -446,28 +425,27 @@ export function EnvironmentUpdates({
                         {p.title}
                       </Link>
                     </label>
-                    <span>{environmentUpdateStates[p.state] || p.state}</span>
+                    <span>{tr(environmentUpdateStates[p.state] || p.state)}</span>
                   </header>
                   <div className="environment-version-columns">
                     <section>
-                      <h4>Current content</h4>
+                      <h4>{tr("Current content")}</h4>
                       <MountVersions mounts={p.current} labels={p.labels} />
                     </section>
                     <section>
-                      <h4>Target content</h4>
+                      <h4>{tr("Target content")}</h4>
                       {p.target.length ? (
                         <MountVersions mounts={p.target} labels={p.labels} />
                       ) : (
-                        <p>No published target</p>
+                        <p>{tr("No published target")}</p>
                       )}
                     </section>
                   </div>
                   {p.reason && (
                     <details>
                       <summary>
-                        Why this project is retaining its version
-                      </summary>
-                      <p>{p.reason}</p>
+                         {tr("Why this project is retaining its version")} </summary>
+                      <p>{tr(p.reason)}</p>
                     </details>
                   )}
                   <div className="form-actions">
@@ -481,17 +459,14 @@ export function EnvironmentUpdates({
                         )
                       }
                     >
-                      {p.policy === "fixed"
-                        ? "Resume following"
-                        : "Keep current versions"}
+                      {p.policy === "fixed" ? tr("Resume following") : tr("Keep current versions")}
                     </button>
                     {["deferred", "failed"].includes(p.state) && (
                       <button
                         disabled={mutation.blocked}
                         onClick={() => review("retry_project", undefined, [p])}
                       >
-                        Retry on next resume
-                      </button>
+                         {tr("Retry on next resume")} </button>
                     )}
                   </div>
                 </article>
@@ -505,8 +480,7 @@ export function EnvironmentUpdates({
                       setCursor("");
                     }}
                   >
-                    First page
-                  </button>
+                     {tr("First page")} </button>
                 )}
                 {page.next_cursor && (
                   <button
@@ -516,8 +490,7 @@ export function EnvironmentUpdates({
                       setCursor(page.next_cursor!);
                     }}
                   >
-                    Next page
-                  </button>
+                     {tr("Next page")} </button>
                 )}
               </div>
             </>
@@ -526,27 +499,25 @@ export function EnvironmentUpdates({
       )}
       {mutation.error && (
         <p role="alert" className="error">
-          {mutation.error}
+          {tr(mutation.error)}
         </p>
       )}
-      {mutation.busy && <p role="status">Checking update…</p>}
+      {mutation.busy && <p role="status">{tr("Checking update…")}</p>}
       {mutation.review && (
         <section
           className="panel environment-review"
-          aria-label="Review environment update"
+          aria-label={tr("Review environment update")}
         >
-          <h3>Review environment update</h3>
+          <h3>{tr("Review environment update")}</h3>
           {proposed?.can_publish === false && (
             <p>
-              No projects can adopt a change from this publication. Review the
-              project reasons below; no empty release will be created.
-            </p>
+               {tr("No projects can adopt a change from this publication. Review the project reasons below; no empty release will be created.")} </p>
           )}
           {proposed?.counts && (
             <ul>
               {Object.entries(proposed.counts).map(([state, count]) => (
                 <li key={state}>
-                  {count} · {environmentUpdateStates[state] || state}
+                  {formatQuantity(count)} · {tr(environmentUpdateStates[state] || state)}
                 </li>
               ))}
             </ul>
@@ -560,37 +531,29 @@ export function EnvironmentUpdates({
           {proposed?.release && (
             <details>
               <summary>
-                Review affected projects and version differences
-              </summary>
+                 {tr("Review affected projects and version differences")} </summary>
               <UpdateImpactProjects
                 path={path}
                 release={
-                  mutation.review.request.body.action === "rollback"
-                    ? String(mutation.review.request.body.release_id)
-                    : undefined
+                  mutation.review.request.body.action === "rollback" ? String(mutation.review.request.body.release_id) : undefined
                 }
               />
             </details>
           )}
           <p>
-            {proposed?.new_projects_only ||
-              "This action controls future update attempts. Already issued operations are settled safely before another change can apply."}
+            {proposed?.new_projects_only || tr("This action controls future update attempts. Already issued operations are settled safely before another change can apply.")}
           </p>
           <p>
-            Running projects will not be interrupted. New-project configuration
-            is not changed by this action.
-          </p>
+             {tr("Running projects will not be interrupted. New-project configuration is not changed by this action.")} </p>
           <div className="form-actions">
             <button
               className="primary"
               disabled={mutation.busy || proposed?.can_publish === false}
               onClick={() => void mutation.save(saved)}
             >
-              Confirm
-            </button>
+               {tr("Confirm")} </button>
             <button disabled={mutation.busy} onClick={mutation.cancel}>
-              Cancel
-            </button>
+               {tr("Cancel")} </button>
           </div>
         </section>
       )}
@@ -599,13 +562,11 @@ export function EnvironmentUpdates({
           disabled={mutation.busy}
           onClick={() => void mutation.save(saved)}
         >
-          Check original request
-        </button>
+           {tr("Check original request")} </button>
       )}
       {mutation.refreshRequired && (
         <button onClick={() => void mutation.refresh(saved)}>
-          Reload saved update
-        </button>
+           {tr("Reload saved update")} </button>
       )}
     </section>
   );
@@ -618,6 +579,7 @@ function UpdateImpactProjects({
   path: string;
   release?: string;
 }) {
+  const tr = useT();
   const [cursor, setCursor] = useState("");
   const {
     data: page,
@@ -627,44 +589,44 @@ function UpdateImpactProjects({
     `${path}/preview?limit=20&cursor=${encodeURIComponent(cursor)}&release_id=${encodeURIComponent(release || "")}`,
   );
   return (
-    <section aria-label="Project update impact">
+    <section aria-label={tr("Project update impact")}>
       {error && (
         <p role="alert">
-          {error} <button onClick={() => void refresh()}>Retry</button>
+          {tr(error)} <button onClick={() => void refresh()}>{tr("Retry")}</button>
         </p>
       )}
-      {!page && !error && <p role="status">Loading projects…</p>}
+      {!page && !error && <p role="status">{tr("Loading projects…")}</p>}
       {page?.projects.map((p) => (
         <article key={p.project_id}>
           <h4>
-            {p.title} · {environmentUpdateStates[p.state] || p.state}
+            {p.title} · {tr(environmentUpdateStates[p.state] || p.state)}
           </h4>
           <div className="environment-version-columns">
             <div>
-              <strong>Current</strong>
+              <strong>{tr("Current")}</strong>
               <MountVersions mounts={p.current} labels={p.labels} />
             </div>
             <div>
-              <strong>Proposed</strong>
+              <strong>{tr("Proposed")}</strong>
               <MountVersions mounts={p.target} labels={p.labels} />
             </div>
           </div>
-          {p.reason && <p>{p.reason}</p>}
+          {p.reason && <p>{tr(p.reason)}</p>}
         </article>
       ))}
       {cursor && (
-        <button onClick={() => setCursor("")}>First impact page</button>
+        <button onClick={() => setCursor("")}>{tr("First impact page")}</button>
       )}
       {page?.next_cursor && (
         <button onClick={() => setCursor(page.next_cursor!)}>
-          Next impact page
-        </button>
+           {tr("Next impact page")} </button>
       )}
     </section>
   );
 }
 
 function ReleaseMembers({ path, release }: { path: string; release: string }) {
+  const tr = useT();
   const [open, setOpen] = useState(false),
     [cursor, setCursor] = useState("");
   const {
@@ -687,31 +649,30 @@ function ReleaseMembers({ path, release }: { path: string; release: string }) {
   );
   return (
     <details onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary>Deployment scope</summary>
+      <summary>{tr("Deployment scope")}</summary>
       {error && (
         <p role="alert">
-          {error} <button onClick={() => void refresh()}>Retry</button>
+          {tr(error)} <button onClick={() => void refresh()}>{tr("Retry")}</button>
         </p>
       )}
       {open && !page && !error && (
-        <p role="status">Loading deployment scope…</p>
+        <p role="status">{tr("Loading deployment scope…")}</p>
       )}
       {page?.members.map((m) => (
         <p key={m.project_id}>
           <Link href={`/projects/${encodeURIComponent(m.project_id)}`}>
             {m.title}
           </Link>{" "}
-          · {environmentUpdateStates[m.state] || m.state}
-          {m.reason && <small>{m.reason}</small>}
+          · {tr(environmentUpdateStates[m.state] || m.state)}
+          {m.reason && <small>{tr(m.reason)}</small>}
         </p>
       ))}
       {page?.next_cursor && (
         <button onClick={() => setCursor(page.next_cursor!)}>
-          More projects in this release
-        </button>
+           {tr("More projects in this release")} </button>
       )}
       {cursor && (
-        <button onClick={() => setCursor("")}>First scope page</button>
+        <button onClick={() => setCursor("")}>{tr("First scope page")}</button>
       )}
     </details>
   );

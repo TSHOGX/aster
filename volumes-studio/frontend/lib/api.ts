@@ -1,3 +1,4 @@
+import { intlLocale } from "../../../web/i18n/locale";
 export const base = "/volumes-studio";
 export type Session = { issuer: string; subject: string; csrf: string };
 export type Library = {
@@ -86,10 +87,10 @@ export const requestID = () => crypto.randomUUID();
 export const bytes = (value: string | number) => {
   const n = Number(value);
   return n >= 2 ** 30
-    ? `${(n / 2 ** 30).toFixed(1)} GiB`
+    ? `${(n / 2 ** 30).toLocaleString(intlLocale(), {minimumFractionDigits: 1, maximumFractionDigits: 1})} GiB`
     : n >= 2 ** 20
-      ? `${(n / 2 ** 20).toFixed(1)} MiB`
+      ? `${(n / 2 ** 20).toLocaleString(intlLocale(), {minimumFractionDigits: 1, maximumFractionDigits: 1})} MiB`
       : n >= 1024
-        ? `${(n / 1024).toFixed(1)} KiB`
-        : `${n} B`;
+        ? `${(n / 1024).toLocaleString(intlLocale(), {minimumFractionDigits: 1, maximumFractionDigits: 1})} KiB`
+        : `${n.toLocaleString(intlLocale())} B`;
 };

@@ -105,7 +105,7 @@ export function AccountAdvanced({
       </p>
       {error && (
         <p className="settings-error" role="alert">
-          {error}
+          {tr(error)}
           {current && !pending && (
             <button
               disabled={busy || projectDirty}
@@ -119,7 +119,7 @@ export function AccountAdvanced({
           )}
         </p>
       )}
-      {notice && <p role="status">{notice}</p>}
+      {notice && <p role="status">{tr(notice)}</p>}
       {!current || !draft ? (
         !error ? (
           <p role="status">{tr("Loading settings…")}</p>
@@ -382,7 +382,7 @@ function AdvancedProjects({
         <>
           {!loaded && !error && <p role="status">{tr("Loading projects…")}</p>}
           {loaded && projects.length === 0 && <p>{tr("No projects yet.")}</p>}
-          {notice && <p role="status">{notice}</p>}
+          {notice && <p role="status">{tr(notice)}</p>}
           <label>
             {tr("Project")}
             <Select aria-label={tr("Project")}
@@ -421,7 +421,7 @@ function AdvancedProjects({
           </label>
           {error && (
             <p role="alert" className="settings-error">
-              {error}
+              {tr(error)}
               {!pending && (
                 <button
                   disabled={busy || fileDirty}

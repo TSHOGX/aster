@@ -1,4 +1,7 @@
 "use client";
+import { formatQuantity, intlLocale } from "@web/i18n/locale";
+import { useT } from "@/lib/i18n";
+
 import { EnvironmentUpdates } from "./environment-updates";
 import { VolumeImports } from "./volume-imports";
 import { Select } from "@web/select";
@@ -64,6 +67,7 @@ export function ResourceCenter({
   section?: string;
   onDirty: (value: boolean) => void;
 }) {
+  const tr = useT();
   const section = sections.find((s) => s.id === raw) || sections[0];
 	const [importDirty,setImportDirty]=useState(false),[sharedDirty,setSharedDirty]=useState(false);
 	useEffect(()=>{if(section.id!=="volumes")return;onDirty(importDirty||sharedDirty);return()=>onDirty(false)},[section.id,importDirty,sharedDirty,onDirty]);
@@ -71,18 +75,18 @@ export function ResourceCenter({
     <section>
       <header className="page-heading">
         <div>
-          <h1>Resource Center</h1>
-          <p>{section.description}</p>
+          <h1>{tr("Resource Center")}</h1>
+          <p>{tr(section.description)}</p>
         </div>
       </header>
-      <nav className="catalog-tabs" aria-label="Resource categories">
+      <nav className="catalog-tabs" aria-label={tr("Resource categories")}>
         {sections.map((s) => (
           <Link
             key={s.id}
             aria-current={section.id === s.id ? "page" : undefined}
             href={`/resources/${s.id}`}
           >
-            {s.label}
+            {tr(s.label)}
           </Link>
         ))}
       </nav>
@@ -93,7 +97,7 @@ export function ResourceCenter({
           <VolumeImports onDirty={setImportDirty} />
           <SharedVolumes onDirty={setSharedDirty} />
           <details className="panel">
-            <summary>Initialization sources</summary>
+            <summary>{tr("Initialization sources")}</summary>
             <Inventory kind="volume" />
           </details>
         </>
@@ -104,6 +108,7 @@ export function ResourceCenter({
   );
 }
 function Inventory({ kind }: { kind: "sandbox" | "volume" }) {
+  const tr = useT();
   const [items, setItems] = useState<RuntimeOption[] | null>(null),
     [error, setError] = useState(""),
     [attempt, setAttempt] = useState(0);
@@ -120,7 +125,7 @@ function Inventory({ kind }: { kind: "sandbox" | "volume" }) {
     <section className="panel">
       {error && (
         <p role="alert" className="error">
-          {error}
+          {tr(error)}
         </p>
       )}
       <button
@@ -129,18 +134,17 @@ function Inventory({ kind }: { kind: "sandbox" | "volume" }) {
           setAttempt((v) => v + 1);
         }}
       >
-        Refresh availability
-      </button>
+         {tr("Refresh availability")} </button>
       {!items ? (
-        <p role="status">Loading inventory…</p>
+        <p role="status">{tr("Loading inventory…")}</p>
       ) : (
         <div className="table-scroll">
           <table>
             <thead>
               <tr>
-                <th>Resource</th>
-                <th>Status</th>
-                <th>Details</th>
+                <th>{tr("Resource")}</th>
+                <th>{tr("Status")}</th>
+                <th>{tr("Details")}</th>
               </tr>
             </thead>
             <tbody>
@@ -150,14 +154,14 @@ function Inventory({ kind }: { kind: "sandbox" | "volume" }) {
                     {item.reference.id}
                     <small>{item.reference.version}</small>
                   </td>
-                  <td>{item.enabled ? item.availability : "Disabled"}</td>
+                  <td>{item.enabled ? tr(item.availability) : tr("Disabled")}</td>
                   <td>
                     <details>
-                      <summary>View constraints</summary>
-                      {item.roles && <p>Roles: {item.roles.join(", ")}</p>}
+                      <summary>{tr("View constraints")}</summary>
+                      {item.roles && <p>{tr("Roles:")} {tr(item.roles.join(", "))}</p>}
                       {item.required_publications?.map((p) => (
                         <p key={p.role}>
-                          {p.role}: {p.destination}
+                          {tr(p.role)}: {p.destination}
                         </p>
                       ))}
                       <code>{item.reference.digest}</code>
@@ -171,9 +175,7 @@ function Inventory({ kind }: { kind: "sandbox" | "volume" }) {
       )}
       {items?.length === 0 && (
         <p>
-          No registered resources. Register a release or publish initialization
-          content with the operator tools.
-        </p>
+           {tr("No registered resources. Register a release or publish initialization content with the operator tools.")} </p>
       )}
     </section>
   );
@@ -185,6 +187,7 @@ function TemplateCatalog({
   kind: "network" | "environment";
   onDirty: (value: boolean) => void;
 }) {
+  const tr = useT();
   const [items, setItems] = useState<Template[] | null>(null),
     [editing, setEditing] = useState<{
       value?: Template;
@@ -233,62 +236,54 @@ function TemplateCatalog({
     <>
       <div className="catalog-toolbar">
         <h2>
-          {kind === "network" ? "Network templates" : "Environment templates"}
+          {kind === "network" ? tr("Network templates") : tr("Environment templates")}
         </h2>
         <button className="primary" onClick={() => setEditing({})}>
-          Create template
-        </button>
+           {tr("Create template")} </button>
       </div>
       {error && (
         <p className="error" role="alert">
-          {error}
+          {tr(error)}
           <button onClick={() => void load().catch((e) => setError(String(e)))}>
-            Retry
-          </button>
+             {tr("Retry")} </button>
         </p>
       )}
-      {!items && !error && <p role="status">Loading templates…</p>}
+      {!items && !error && <p role="status">{tr("Loading templates…")}</p>}
       <div className="catalog-grid">
         {items?.map((item) => (
           <article key={item.id} className="panel catalog-card">
             <div>
               <h3>{item.name}</h3>
               <span className="catalog-status">
-                {item.builtin ? "Built-in · " : ""}
-                {item.enabled ? "Enabled" : "Disabled"}
+                {item.builtin ? tr("Built-in · ") : ""}
+                {item.enabled ? tr("Enabled") : tr("Disabled")}
               </span>
             </div>
-            <p>{item.description || "No description"}</p>
+            <p>{item.description || tr("No description")}</p>
             <p className="hint">
-              {kind === "network"
-                ? `${item.network?.direct.length || 0} outbound rules`
-                : `${item.environment?.mounts.length || 0} mounts`}{" "}
-              · {item.usage_count} policy references
-            </p>
+              {kind === "network" ? tr("{value0} outbound rules", { value0: item.network?.direct.length || 0 }) : tr("{value0} mounts", { value0: item.environment?.mounts.length || 0 })}{" "}
+              · {item.usage_count}  {tr("policy references")} </p>
             <small>
-              Revision {item.revision} · Updated{" "}
-              {new Date(item.updated_at).toLocaleString()}
+               {tr("Revision")} {formatQuantity(item.revision)}  {tr("· Updated")}{" "}
+              {new Date(item.updated_at).toLocaleString(intlLocale())}
             </small>
             <div className="form-actions">
               <button onClick={() => setEditing({ value: item })}>
-                {item.builtin ? "View" : "Edit"}
+                {item.builtin ? tr("View") : tr("Edit")}
               </button>
               <button
                 onClick={() => setEditing({ value: item, duplicate: true })}
               >
-                Duplicate
-              </button>
+                 {tr("Duplicate")} </button>
             </div>
           </article>
         ))}
       </div>
       {items?.length === 0 && (
         <section className="panel">
-          <h3>No templates yet</h3>
+          <h3>{tr("No templates yet")}</h3>
           <p>
-            Create a template, authorize it in a policy, and choose it as a
-            group default.
-          </p>
+             {tr("Create a template, authorize it in a policy, and choose it as a group default.")} </p>
         </section>
       )}
     </>
@@ -311,6 +306,7 @@ function TemplateEditor({
   close: () => void;
   saved: (name?:string) => Promise<void>;
 }) {
+  const tr = useT();
   const [name, setName] = useState(
       initial ? initial.name + (duplicate ? " copy" : "") : "",
     ),
@@ -387,7 +383,7 @@ function TemplateEditor({
   }, [kind, initial, attempt]);
   const path = `/api/admin/resource-templates/${kind}${initial && !duplicate ? `/${encodeURIComponent(initial.id)}` : ""}`;
   const leave = () => {
-    if (!changed || window.confirm("Discard unsaved template changes?"))
+    if (!changed || window.confirm(tr("Discard unsaved template changes?")))
       close();
   };
   const required =
@@ -413,27 +409,20 @@ function TemplateEditor({
       <header className="page-heading">
         <div>
           <h2>
-            {duplicate
-              ? "Duplicate template"
-              : initial
-                ? initial.name
-                : "Create template"}
+            {duplicate ? tr("Duplicate template") : initial ? initial.name : tr("Create template")}
           </h2>
           <p>
-            {readOnly
-              ? "Built-in templates are immutable. Duplicate this template to customize it."
-              : "Configure capabilities, review the impact, then save."}
+            {readOnly ? tr("Built-in templates are immutable. Duplicate this template to customize it.") : tr("Configure capabilities, review the impact, then save.")}
           </p>
         </div>
         <button disabled={mutation.blocked || updatesDirty} onClick={leave}>
-          Back to templates
-        </button>
+           {tr("Back to templates")} </button>
       </header>
-      {kind==="environment" && initial && !duplicate && <nav className="catalog-tabs" aria-label="Environment sections">{(["configuration","updates","projects"] as const).map(value=><button key={value} aria-current={tab===value?"page":undefined} disabled={mutation.blocked||updatesDirty||(!!changed&&value!=="configuration")} onClick={()=>setTab(value)}>{value==="configuration"?"Configuration":value==="updates"?"Updates":"Projects"}</button>)}</nav>}
+      {kind==="environment" && initial && !duplicate && <nav className="catalog-tabs" aria-label={tr("Environment sections")}>{(["configuration","updates","projects"] as const).map(value=><button key={value} aria-current={tab===value ? "page" : undefined} disabled={mutation.blocked||updatesDirty||(!!changed&&value!=="configuration")} onClick={()=>setTab(value)}>{value==="configuration" ? tr("Configuration") : value==="updates" ? tr("Updates") : tr("Projects")}</button>)}</nav>}
       {tab!=="configuration" && initial ? <EnvironmentUpdates environment={initial.id} revision={initial.revision} hasPublications={!!initial.environment?.mounts.some(m=>m.role==="data"&&m.storage==="shared_readonly")} tab={tab} onDirty={setUpdatesDirty}/> : <>
       {error && (
         <p className="error" role="alert">
-          {error}{" "}
+          {tr(error)}{" "}
           <button
             disabled={mutation.blocked}
             onClick={() => {
@@ -441,18 +430,15 @@ function TemplateEditor({
               setAttempt((value) => value + 1);
             }}
           >
-            Retry loading
-          </button>
+             {tr("Retry loading")} </button>
         </p>
       )}
       {inventoryLoaded && kind === "environment" && !environment && (
         <p role="status">
-          No available sandbox releases. Register a release before creating an
-          environment template.
-        </p>
+           {tr("No available sandbox releases. Register a release before creating an environment template.")} </p>
       )}
       {!inventoryLoaded && !error && (
-        <p role="status">Loading environment resources…</p>
+        <p role="status">{tr("Loading environment resources…")}</p>
       )}
       <form
         className="account-form catalog-form"
@@ -481,10 +467,9 @@ function TemplateEditor({
         }}
       >
         <fieldset disabled={readOnly || mutation.blocked || !inventoryLoaded}>
-          <legend>Identity and purpose</legend>
+          <legend>{tr("Identity and purpose")}</legend>
           <label>
-            Name
-            <input
+             {tr("Name")} <input
               required
               maxLength={256}
               value={name}
@@ -492,12 +477,11 @@ function TemplateEditor({
             />
           </label>
           <label>
-            Description
-            <textarea
+             {tr("Description")} <textarea
               maxLength={1024}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Explain when this template should be used"
+              placeholder={tr("Explain when this template should be used")}
             />
           </label>
           <label className="check-label">
@@ -506,20 +490,16 @@ function TemplateEditor({
               checked={enabled}
               onChange={(e) => setEnabled(e.target.checked)}
             />
-            Available for authorization
-          </label>
+             {tr("Available for authorization")} </label>
           {kind === "network" ? (
             <>
-              <h3>Outbound connections</h3>
+              <h3>{tr("Outbound connections")}</h3>
               <p className="hint">
-                No rules means no additional direct connections. Platform
-                service routes are configured separately.
-              </p>
+                 {tr("No rules means no additional direct connections. Platform service routes are configured separately.")} </p>
               {network.direct.map((rule, index) => (
                 <div className="catalog-rule" key={index}>
                   <label>
-                    IPv4 CIDR
-                    <input
+                     {tr("IPv4 CIDR")} <input
                       required
                       value={rule.cidr}
                       placeholder="192.0.2.0/24"
@@ -534,8 +514,7 @@ function TemplateEditor({
                     />
                   </label>
                   <label>
-                    Port
-                    <input
+                     {tr("Port")} <input
                       type="number"
                       min={1}
                       max={65535}
@@ -554,8 +533,7 @@ function TemplateEditor({
                     />
                   </label>
                   <label>
-                    Protocol
-                    <Select aria-label="Protocol"
+                     {tr("Protocol")} <Select aria-label={tr("Protocol")}
                       value={rule.protocol}
                       onChange={(e) =>
                         setNetwork((n) => ({
@@ -571,8 +549,8 @@ function TemplateEditor({
                         }))
                       }
                     >
-                      <option value="tcp">TCP</option>
-                      <option value="udp">UDP</option>
+                      <option value="tcp">{tr("TCP")}</option>
+                      <option value="udp">{tr("UDP")}</option>
                     </Select>
                   </label>
                   <button
@@ -584,8 +562,7 @@ function TemplateEditor({
                       }))
                     }
                   >
-                    Remove
-                  </button>
+                     {tr("Remove")} </button>
                 </div>
               ))}
               <button
@@ -601,13 +578,11 @@ function TemplateEditor({
                   }))
                 }
               >
-                Add destination
-              </button>
+                 {tr("Add destination")} </button>
               <label>
-                DNS resolvers
-                <textarea
+                 {tr("DNS resolvers")} <textarea
                   value={network.resolvers.join("\n")}
-                  placeholder="One IPv4 address per line"
+                  placeholder={tr("One IPv4 address per line")}
                   onChange={(e) =>
                     setNetwork((n) => ({
                       ...n,
@@ -617,17 +592,14 @@ function TemplateEditor({
                 />
               </label>
               <p className="hint">
-                Use 0.0.0.0/0 for public IPv4 destinations on the selected port.
-                DNS permits UDP/53; add an explicit rule if TCP DNS is required.
-              </p>
+                 {tr("Use 0.0.0.0/0 for public IPv4 destinations on the selected port. DNS permits UDP/53; add an explicit rule if TCP DNS is required.")} </p>
             </>
           ) : (
             environment && (
               <>
-                <h3>Sandbox</h3>
+                <h3>{tr("Sandbox")}</h3>
                 <label>
-                  Release
-                  <Select aria-label="Release"
+                   {tr("Release")} <Select aria-label={tr("Release")}
                     value={artifactKey(environment.sandbox_release)}
                     onChange={(e) => {
                       const release = releases.find(
@@ -666,19 +638,16 @@ function TemplateEditor({
                       ))}
                   </Select>
                 </label>
-                <h3>Storage and shared directories</h3>
-                <p>Saved configuration is used for new projects. Publish compatible data changes separately in Updates to reach existing projects.</p>
+                <h3>{tr("Storage and shared directories")}</h3>
+                <p>{tr("Saved configuration is used for new projects. Publish compatible data changes separately in Updates to reach existing projects.")}</p>
                 {environment.mounts.map((m) => (
                   <section className="runtime-mount" key={m.key}>
                     <h4>
-                      {m.role === "data"
-                        ? "Data directory"
-                        : m.role.replaceAll("_", " ")}
+                      {m.role === "data" ? tr("Data directory") : m.role.replaceAll("_", " ")}
                     </h4>
-                    {["runtime","agent_config","shared_assets"].includes(m.role)&&<p className="hint">{m.role==="runtime"?"Private runtime state. Use an empty directory or an operator-reviewed clean seed.":"Required read-only system content, registered by an operator for this sandbox release. Studio manages ordinary workspace and data content."}</p>}
+                    {["runtime","agent_config","shared_assets"].includes(m.role)&&<p className="hint">{m.role==="runtime" ? tr("Private runtime state. Use an empty directory or an operator-reviewed clean seed.") : tr("Required read-only system content, registered by an operator for this sandbox release. Studio manages ordinary workspace and data content.")}</p>}
                     <label>
-                      Mount path
-                      <input
+                       {tr("Mount path")} <input
                         required
                         readOnly={required.some((role) => role.role === m.role)}
                         value={m.destination}
@@ -689,8 +658,7 @@ function TemplateEditor({
                     </label>
                     {m.role === "data" && (
                       <label>
-                        Storage
-                        <Select aria-label="Storage"
+                         {tr("Storage")} <Select aria-label={tr("Storage")}
                           value={m.storage}
                           onChange={(e) =>
                             patchMount(
@@ -719,19 +687,17 @@ function TemplateEditor({
                             )
                           }
                         >
-                          <option value="owned">Project-owned directory</option>
-                          <option value="shared">Shared directory</option>
+                          <option value="owned">{tr("Project-owned directory")}</option>
+                          <option value="shared">{tr("Shared directory")}</option>
                           <option value="shared_readonly">
-                            Immutable publication
-                          </option>
+                             {tr("Immutable publication")} </option>
                         </Select>
                       </label>
                     )}
                     {m.storage === "shared" ? (
                       <label>
-                        Shared directory
-                        {!volumes.length&&<span>No shared directories yet. <Link href="/resources/volumes">Create a shared directory</Link></span>}
-                        <Select aria-label="Shared volume"
+                         {tr("Shared directory")} {!volumes.length&&<span>{tr("No shared directories yet.")} <Link href="/resources/volumes">{tr("Create a shared directory")}</Link></span>}
+                        <Select aria-label={tr("Shared volume")}
                           required
                           value={m.source.shared_volume_id || ""}
                           onChange={(e) =>
@@ -743,32 +709,30 @@ function TemplateEditor({
                             })
                           }
                         >
-                          <option value="">Select a shared directory</option>
+                          <option value="">{tr("Select a shared directory")}</option>
                           {volumes.map((v) => (
                             <option
                               key={v.id}
                               value={v.id}
                               disabled={!v.enabled || v.state !== "ready"}
                             >
-                              {v.name} · {v.state}
+                              {v.name} · {tr(v.state)}
                             </option>
                           ))}
                         </Select>
                       </label>
                     ) : (
                       <label>
-                        {m.storage==="shared_readonly"?"Published version":"Initial contents"}
-                        {m.storage==="shared_readonly"&&<small>Mount this immutable version read-only. Project-owned directories instead receive an independent copy.</small>}
-                        <Select aria-label={m.storage==="shared_readonly"?"Published version":"Initial contents"}
+                        {m.storage==="shared_readonly" ? tr("Published version") : tr("Initial contents")}
+                        {m.storage==="shared_readonly"&&<small>{tr("Mount this immutable version read-only. Project-owned directories instead receive an independent copy.")}</small>}
+                        <Select aria-label={m.storage==="shared_readonly" ? tr("Published version") : tr("Initial contents")}
                           required={m.storage === "shared_readonly"}
                           value={
-                            m.source.kind === "builtin" && m.source.version
-                              ? JSON.stringify([
+                            m.source.kind === "builtin" && m.source.version ? JSON.stringify([
                                   m.source.artifact_id,
                                   m.source.version,
                                   m.source.digest,
-                                ])
-                              : ""
+                                ]) : ""
                           }
                           onChange={(e) => {
                             const s = sources.find(
@@ -791,9 +755,7 @@ function TemplateEditor({
                             value=""
                             disabled={m.storage === "shared_readonly"}
                           >
-                            {m.storage === "shared_readonly"
-                              ? "Select an initialization source"
-                              : "Empty directory"}
+                            {m.storage === "shared_readonly" ? tr("Select an initialization source") : tr("Empty directory")}
                           </option>
                           {sources
                             .filter(
@@ -833,8 +795,7 @@ function TemplateEditor({
                     {m.role === "data" && (
                       <>
                         <label>
-                          Access limit
-                          <Select aria-label="Access limit"
+                           {tr("Access limit")} <Select aria-label={tr("Access limit")}
                             disabled={m.storage === "shared_readonly"}
                             value={m.access}
                             onChange={(e) =>
@@ -843,14 +804,13 @@ function TemplateEditor({
                               })
                             }
                           >
-                            <option value="read_only">Read only</option>
-                            <option value="read_write">Read and write</option>
+                            <option value="read_only">{tr("Read only")}</option>
+                            <option value="read_write">{tr("Read and write")}</option>
                           </Select>
                         </label>
                         {m.storage === "owned" && (
                           <label>
-                            Capacity (bytes)
-                            <input
+                             {tr("Capacity (bytes)")} <input
                               required
                               inputMode="numeric"
                               pattern="[1-9][0-9]*"
@@ -878,8 +838,7 @@ function TemplateEditor({
                             )
                           }
                         >
-                          Remove directory
-                        </button>
+                           {tr("Remove directory")} </button>
                       </>
                     )}
                   </section>
@@ -914,13 +873,9 @@ function TemplateEditor({
                     BigInt(environment.mounts.length) >= BigInt(maxMounts)
                   }
                 >
-                  Add data directory
-                </button>
+                   {tr("Add data directory")} </button>
                 <p className="hint">
-                  Shared directories require a separate policy grant. Project
-                  storage sizes follow resource quotas. Existing projects retain
-                  their environment.
-                </p>
+                   {tr("Shared directories require a separate policy grant. Project storage sizes follow resource quotas. Existing projects retain their environment.")} </p>
               </>
             )
           )}
@@ -929,8 +884,7 @@ function TemplateEditor({
               className="primary"
               disabled={!changed || (kind === "environment" && !environment)}
             >
-              Validate and review
-            </button>
+               {tr("Validate and review")} </button>
           )}
         </fieldset>
       </form>
@@ -945,8 +899,7 @@ function TemplateEditor({
             )
           }
         >
-          Review deletion
-        </button>
+           {tr("Review deletion")} </button>
       )}
       <CatalogReview state={mutation} saved={()=>saved(name)} />
       </>}
@@ -954,6 +907,7 @@ function TemplateEditor({
   );
 }
 function SharedVolumes({ onDirty }: { onDirty: (value: boolean) => void }) {
+  const tr = useT();
   const [items, setItems] = useState<SharedVolume[] | null>(null),
     [selected, setSelected] = useState<SharedVolume | null>(null),
     [open, setOpen] = useState(false),
@@ -1003,29 +957,27 @@ function SharedVolumes({ onDirty }: { onDirty: (value: boolean) => void }) {
   return (
     <section>
       <div className="catalog-toolbar">
-        <h2>Shared directories</h2>
+        <h2>{tr("Shared directories")}</h2>
         <div className="form-actions">
           <button
             disabled={open}
             onClick={() => void load().catch((e) => setError(String(e)))}
           >
-            Refresh
-          </button>
+             {tr("Refresh")} </button>
           <button
             className="primary"
             disabled={open}
             onClick={() => edit(null)}
           >
-            Create shared directory
-          </button>
+             {tr("Create shared directory")} </button>
         </div>
       </div>
       {error && (
         <p role="alert" className="error">
-          {error}
+          {tr(error)}
         </p>
       )}
-      {!items && !error && <p role="status">Loading shared directories…</p>}
+      {!items && !error && <p role="status">{tr("Loading shared directories…")}</p>}
       {open ? (
         <>
           <form
@@ -1047,24 +999,21 @@ function SharedVolumes({ onDirty }: { onDirty: (value: boolean) => void }) {
           >
             <fieldset disabled={mutation.blocked}>
               <label>
-                Name
-                <input
+                 {tr("Name")} <input
                   required
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                 />
               </label>
               <label>
-                Description
-                <textarea
+                 {tr("Description")} <textarea
                   maxLength={1024}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                 />
               </label>
               <label>
-                Capacity (bytes)
-                <input
+                 {tr("Capacity (bytes)")} <input
                   required
                   readOnly={!!selected}
                   inputMode="numeric"
@@ -1079,19 +1028,17 @@ function SharedVolumes({ onDirty }: { onDirty: (value: boolean) => void }) {
                   checked={enabled}
                   onChange={(e) => setEnabled(e.target.checked)}
                 />
-                Available for authorization
-              </label>
+                 {tr("Available for authorization")} </label>
               <div className="form-actions">
-                <button className="primary">Review changes</button>
+                <button className="primary">{tr("Review changes")}</button>
                 <button
                   type="button"
                   onClick={() => {
-                    if (!dirty || window.confirm("Discard unsaved changes?"))
+                    if (!dirty || window.confirm(tr("Discard unsaved changes?")))
                       setOpen(false);
                   }}
                 >
-                  Cancel
-                </button>
+                   {tr("Cancel")} </button>
                 {selected && (
                   <button
                     type="button"
@@ -1104,8 +1051,7 @@ function SharedVolumes({ onDirty }: { onDirty: (value: boolean) => void }) {
                       )
                     }
                   >
-                    Review deletion
-                  </button>
+                     {tr("Review deletion")} </button>
                 )}
               </div>
             </fieldset>
@@ -1123,10 +1069,10 @@ function SharedVolumes({ onDirty }: { onDirty: (value: boolean) => void }) {
           <table>
             <thead>
               <tr>
-                <th>Directory</th>
-                <th>Capacity</th>
-                <th>Status</th>
-                <th>Actions</th>
+                <th>{tr("Directory")}</th>
+                <th>{tr("Capacity")}</th>
+                <th>{tr("Status")}</th>
+                <th>{tr("Actions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1136,18 +1082,17 @@ function SharedVolumes({ onDirty }: { onDirty: (value: boolean) => void }) {
                     {v.name}
                     <small>{v.description}</small>
                   </td>
-                  <td>{v.capacity} bytes</td>
+                  <td>{v.capacity}  {tr("bytes")}</td>
                   <td>
-                    {v.enabled ? v.state : "Disabled"}
-                    {v.error && <small role="alert">{v.error}</small>}
+                    {v.enabled ? tr(v.state) : tr("Disabled")}
+                    {v.error && <small role="alert">{tr(v.error)}</small>}
                   </td>
                   <td>
                     <button
                       disabled={v.state === "deleting" || v.state === "deleted"}
                       onClick={() => edit(v)}
                     >
-                      Configure
-                    </button>
+                       {tr("Configure")} </button>
                   </td>
                 </tr>
               ))}
@@ -1155,9 +1100,7 @@ function SharedVolumes({ onDirty }: { onDirty: (value: boolean) => void }) {
           </table>
           {items?.length === 0 && (
             <p>
-              No shared directories. Create one, grant group access through a
-              policy, and add it to an environment template.
-            </p>
+               {tr("No shared directories. Create one, grant group access through a policy, and add it to an environment template.")} </p>
           )}
         </div>
       )}

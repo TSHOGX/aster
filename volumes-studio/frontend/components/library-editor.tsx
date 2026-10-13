@@ -1,6 +1,8 @@
 /* eslint-disable react-hooks/immutability -- Workspace buffers are imperative controller objects; mutations publish through the Studio provider. */
 /* eslint-disable react-hooks/set-state-in-effect -- Hydrate browser navigation and synchronize external workspace snapshots. */
 "use client";
+import { message, useT } from "../lib/i18n";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   PanelLeft,
@@ -39,6 +41,7 @@ type Form = {
   action: (v: string) => Promise<void>;
 };
 export function LibraryEditor({ id }: { id: string }) {
+  const tr = useT();
   const studio = useStudio();
   const [library, setLibrary] = useState<Library | null>(null),
     [version, setVersion] = useState(""),
@@ -321,7 +324,7 @@ export function LibraryEditor({ id }: { id: string }) {
     if (
       (await studio.ask(
         "Delete from draft",
-        `Delete ${entry.path}${count > 1 ? ` and ${count - 1} contained entries` : ""}? Published versions are retained.`,
+        count > 1 ? message("Delete {path} and {count} contained entries? Published versions are retained.", { path: entry.path, count: count - 1 }) : message("Delete {path}? Published versions are retained.", { path: entry.path }),
         ["Cancel", "Delete"],
       )) !== "Delete"
     )
@@ -344,7 +347,7 @@ export function LibraryEditor({ id }: { id: string }) {
   };
   const fileActions = (entry: Entry) => [
     {
-      label: "Copy path",
+      label: message("Copy path"),
       action: () =>
         void navigator.clipboard
           .writeText(entry.path)
@@ -353,7 +356,7 @@ export function LibraryEditor({ id }: { id: string }) {
     ...(entry.kind === "file"
       ? [
           {
-            label: "Download",
+            label: message("Download"),
             action: () => {
               window.location.assign(contentURL(id, version, entry.path));
             },
@@ -362,10 +365,10 @@ export function LibraryEditor({ id }: { id: string }) {
       : []),
     ...(!version && !library?.archived
       ? [
-          { label: "Rename", action: () => {} },
-          { label: "Move", action: () => setMoveEntry(entry) },
+          { id: "rename", label: message("Rename"), action: () => {} },
+          { label: message("Move"), action: () => setMoveEntry(entry) },
           {
-            label: "Delete",
+            label: message("Delete"),
             danger: true,
             action: () => void run(() => remove(entry)),
           },
@@ -480,20 +483,20 @@ export function LibraryEditor({ id }: { id: string }) {
   const fileSidebar = (
     <aside className="files-sidebar">
       <div className="sidebar-heading">
-        <strong>Files</strong>
+        <strong>{tr("Files")}</strong>
         <div className="actions">
           {!version && !library?.archived && (
             <Menu
-              label="Add files"
+              label={tr("Add files")}
               items={[
-                { label: "New file", action: () => create("text") },
-                { label: "New folder", action: () => create("mkdir") },
+                { label: message("New file"), action: () => create("text") },
+                { label: message("New folder"), action: () => create("mkdir") },
                 {
-                  label: "Upload files",
+                  label: message("Upload files"),
                   action: () => input.current?.click(),
                 },
                 {
-                  label: "Upload folder",
+                  label: message("Upload folder"),
                   action: () => folderInput.current?.click(),
                 },
               ]}
@@ -503,7 +506,7 @@ export function LibraryEditor({ id }: { id: string }) {
           )}
           <button
             className="icon-button"
-            aria-label="Hide files"
+            aria-label={tr("Hide files")}
             onClick={() => setSidebar(false)}
           >
             <PanelLeft size={16} />
@@ -530,9 +533,7 @@ export function LibraryEditor({ id }: { id: string }) {
         />
       )}
       <div className="sidebar-footer">
-        {version
-          ? "Read-only version"
-          : `Draft · revision ${library?.draft_revision ?? "…"}`}
+        {version ? tr("Read-only version") : tr("Draft · revision {value0}", { value0: library?.draft_revision ?? "…" })}
       </div>
     </aside>
   );
@@ -567,7 +568,7 @@ export function LibraryEditor({ id }: { id: string }) {
           <>
             {mobile ? (
               <Modal
-                title="Files"
+                title={tr("Files")}
                 open
                 onClose={() => setSidebar(false)}
                 className="sidebar-dialog"
@@ -580,7 +581,7 @@ export function LibraryEditor({ id }: { id: string }) {
             <div
               className="split-handle"
               role="separator"
-              aria-label="Resize files sidebar"
+              aria-label={tr("Resize files sidebar")}
               aria-orientation="vertical"
               aria-valuenow={width}
               aria-valuemin={220}
@@ -614,21 +615,21 @@ export function LibraryEditor({ id }: { id: string }) {
           <div className="workspace-nav">
             {(!sidebar || mobile) && (
               <button
-                aria-label="Show files"
+                aria-label={tr("Show files")}
                 className="icon-button"
                 onClick={() => setSidebar(true)}
               >
                 <PanelLeft size={17} />
               </button>
             )}
-            <nav aria-label="Library views">
+            <nav aria-label={tr("Library views")}>
               {["files", "changes", "versions"].map((v) => (
                 <button
                   key={v}
                   aria-current={view === v ? "page" : undefined}
                   onClick={() => setView(v)}
                 >
-                  {v[0].toUpperCase() + v.slice(1)}
+                  {tr(v[0].toUpperCase() + v.slice(1))}
                   {v === "changes" && !!library?.draft_change_count && (
                     <span className="count">{library.draft_change_count}</span>
                   )}
@@ -637,44 +638,43 @@ export function LibraryEditor({ id }: { id: string }) {
             </nav>
             <div className="actions">
               <Menu
-                label="Library actions"
+                label={tr("Library actions")}
                 items={[
                   {
-                    label: "Edit library details",
+                    label: message("Edit library details"),
                     action: () => setDetails(true),
                   },
-                  { label: "Refresh", action: () => void run(() => refresh()) },
+                  { label: message("Refresh"), action: () => void run(() => refresh()) },
                 ]}
               />
               <button
                 className="primary publish-button"
                 disabled={!!blocked || !library || reviewing}
-                title={blocked || "Review saved draft and publish"}
+                title={tr(blocked) || tr("Review saved draft and publish")}
                 onClick={() => void run(review)}
               >
-                {reviewing ? "Preparing review…" : "Review & publish"}
+                {reviewing ? tr("Preparing review…") : tr("Review & publish")}
               </button>
             </div>
           </div>
           {blocked && view === "files" && (
-            <div className="inline-status">{blocked}</div>
+            <div className="inline-status">{tr(blocked)}</div>
           )}
           {error && (
             <div className="notice error" role="alert">
-              <span>{error}</span>
+              <span>{tr(error)}</span>
               <button
                 onClick={() => {
                   setError("");
                   void run(() => refresh());
                 }}
               >
-                Refresh saved state
-              </button>
+                 {tr("Refresh saved state")} </button>
             </div>
           )}
           {view === "files" && (
             <>
-              <div className="file-tabs" role="tablist" aria-label="Open files">
+              <div className="file-tabs" role="tablist" aria-label={tr("Open files")}>
                 {buffers.map((b) => (
                   <div
                     className={`file-tab ${active === b ? "active" : ""}`}
@@ -693,11 +693,11 @@ export function LibraryEditor({ id }: { id: string }) {
                     >
                       {tabsLabel(b)}
                       {b.text !== b.saved && (
-                        <span aria-label="Unsaved changes">●</span>
+                        <span aria-label={tr("Unsaved changes")}>●</span>
                       )}
                     </button>
                     <button
-                      aria-label={`Close ${b.entry.path}`}
+                      aria-label={tr("Close {value0}", { value0: b.entry.path })}
                       className="tab-close"
                       onClick={() => void run(() => studio.close(b))}
                     >
@@ -707,7 +707,7 @@ export function LibraryEditor({ id }: { id: string }) {
                 ))}
                 {buffers.length > 0 && (
                   <Menu
-                    label="Open files"
+                    label={tr("Open files")}
                     items={[
                       ...buffers.map((b) => ({
                         label: b.entry.path,
@@ -718,7 +718,7 @@ export function LibraryEditor({ id }: { id: string }) {
                         },
                       })),
                       {
-                        label: "Close all files",
+                        label: message("Close all files"),
                         action: () =>
                           void run(async () => {
                             if (await studio.settle(id))
@@ -740,37 +740,31 @@ export function LibraryEditor({ id }: { id: string }) {
                     </span>
                     <div className="actions">
                       <span className={active.error ? "error" : "muted"}>
-                        {active.version
-                          ? "Read only"
-                          : active.text !== active.saved &&
-                              active.status === "Saved"
-                            ? "Unsaved"
-                            : active.status}
+                        {active.version ? tr("Read only") : active.text !== active.saved &&
+                              active.status === "Saved" ? tr("Unsaved") : tr(active.status)}
                       </span>
                       {active.editable && /\.md$/i.test(active.entry.path) && (
-                        <div className="segmented" aria-label="Markdown mode">
+                        <div className="segmented" aria-label={tr("Markdown mode")}>
                           {["edit", "preview", "split"].map((m) => (
                             <button
                               key={m}
                               aria-pressed={mode === m}
                               onClick={() => setMode(m)}
                             >
-                              {m}
+                              {tr(m)}
                             </button>
                           ))}
                         </div>
                       )}
                       <Menu
-                        label="File editor actions"
+                        label={tr("File editor actions")}
                         items={[
                           {
-                            label: wrap
-                              ? "Disable line wrapping"
-                              : "Enable line wrapping",
+                            label: wrap ? message("Disable line wrapping") : message("Enable line wrapping"),
                             action: () => setWrap(!wrap),
                           },
                           {
-                            label: "Download",
+                            label: message("Download"),
                             action: () =>
                               window.location.assign(
                                 contentURL(
@@ -781,7 +775,7 @@ export function LibraryEditor({ id }: { id: string }) {
                               ),
                           },
                           {
-                            label: "Reload file",
+                            label: message("Reload file"),
                             action: () =>
                               void run(async () => {
                                 await studio.close(active);
@@ -790,7 +784,7 @@ export function LibraryEditor({ id }: { id: string }) {
                               }),
                           },
                           {
-                            label: "Save all",
+                            label: message("Save all"),
                             disabled: !!version || !!library?.archived,
                             action: () => void run(() => studio.saveAll(id)),
                           },
@@ -807,20 +801,19 @@ export function LibraryEditor({ id }: { id: string }) {
                           onClick={() => void run(() => studio.save(active))}
                         >
                           <Save size={14} />
-                          <span>Save file</span>
+                          <span>{tr("Save file")}</span>
                         </button>
                       )}
                     </div>
                   </div>
                   {active.error && (
                     <div className="notice error" role="alert">
-                      {active.error}
+                      {tr(active.error)}
                     </div>
                   )}
                   {active.format.mixed && active.text !== active.saved && (
                     <div className="inline-status">
-                      Mixed line endings will be saved as LF.
-                    </div>
+                       {tr("Mixed line endings will be saved as LF.")} </div>
                   )}
                   <div
                     className={`editor-content ${active.editable && /\.md$/i.test(active.entry.path) ? `markdown-mode-${mode}` : ""}`}
@@ -856,11 +849,9 @@ export function LibraryEditor({ id }: { id: string }) {
                     ) : (
                       <div className="empty-state">
                         <FileText size={32} />
-                        <h2>File preview unavailable</h2>
+                        <h2>{tr("File preview unavailable")}</h2>
                         <p>
-                          {bytes(active.entry.size)} · Download to inspect this
-                          file.
-                        </p>
+                          {bytes(active.entry.size)}  {tr("· Download to inspect this file.")} </p>
                         <a
                           className="button"
                           href={contentURL(
@@ -869,25 +860,22 @@ export function LibraryEditor({ id }: { id: string }) {
                             active.entry.path,
                           )}
                         >
-                          Download
-                        </a>
+                           {tr("Download")} </a>
                       </div>
                     )}
                   </div>
                   <div className="editor-status">
-                    <span>{active.version ? "Read only" : "Draft"}</span>
+                    <span>{active.version ? tr("Read only") : tr("Draft")}</span>
                     <span>
-                      {active.editable
-                        ? `Ln ${position[0]}, Col ${position[1]} · UTF-8${active.format.bom ? " BOM" : ""} · ${active.format.separator === "\r\n" ? "CRLF" : "LF"}`
-                        : bytes(active.entry.size)}
+                      {active.editable ? tr("Ln {value0}, Col {value1} · UTF-8{value2} · {value3}", { value0: position[0], value1: position[1], value2: active.format.bom ? " BOM" : "", value3: active.format.separator === "\r\n" ? "CRLF" : "LF" }) : bytes(active.entry.size)}
                     </span>
                   </div>
                 </>
               ) : (
                 <div className="editor-empty">
                   <FileText size={30} />
-                  <h2>{version ? "Browse version files" : "Select a file"}</h2>
-                  <p>Open a file from the sidebar, or use Go to file.</p>
+                  <h2>{version ? tr("Browse version files") : tr("Select a file")}</h2>
+                  <p>{tr("Open a file from the sidebar, or use Go to file.")}</p>
                   <div className="actions">
                     <button
                       onClick={() => {
@@ -895,13 +883,11 @@ export function LibraryEditor({ id }: { id: string }) {
                         setTimeout(() => search.current?.focus(), 0);
                       }}
                     >
-                      Go to file
-                    </button>
+                       {tr("Go to file")} </button>
                     {!version && !library?.archived && (
                       <button onClick={() => input.current?.click()}>
                         <UploadCloud size={16} />
-                        Upload files
-                      </button>
+                         {tr("Upload files")} </button>
                     )}
                   </div>
                 </div>
@@ -917,14 +903,14 @@ export function LibraryEditor({ id }: { id: string }) {
             />
           )}
         </section>
-        {drag && <div className="drop-target">Upload to /{directory}</div>}
+        {drag && <div className="drop-target">{tr("Upload to /")}{directory}</div>}
       </div>
       <input
         className="visually-hidden"
         ref={input}
         type="file"
         multiple
-        aria-label="Select files"
+        aria-label={tr("Select files")}
         onChange={(e) => {
           void studio.upload(id, directory, Array.from(e.target.files || []));
           e.target.value = "";
@@ -936,7 +922,7 @@ export function LibraryEditor({ id }: { id: string }) {
         type="file"
         multiple
         {...{ webkitdirectory: "" }}
-        aria-label="Select directory"
+        aria-label={tr("Select directory")}
         onChange={(e) => {
           void studio.upload(id, directory, Array.from(e.target.files || []));
           e.target.value = "";
@@ -960,7 +946,7 @@ export function LibraryEditor({ id }: { id: string }) {
         />
       )}
       <Modal
-        title="Review & publish"
+        title={tr("Review & publish")}
         open={publish}
         onClose={() => setPublish(false)}
         drawer
@@ -972,26 +958,23 @@ export function LibraryEditor({ id }: { id: string }) {
           }}
         >
           <p>
-            {preview?.entry_count} entries · {bytes(preview?.total_bytes || 0)}{" "}
-            · revision {preview?.revision}
+            {preview?.entry_count}  {tr("entries ·")} {bytes(preview?.total_bytes || 0)}{" "}
+             {tr("· revision")} {preview?.revision}
           </p>
           <p className="muted">
-            This publishes the exact saved draft reviewed here.
-          </p>
+             {tr("This publishes the exact saved draft reviewed here.")} </p>
           {preview &&
             library &&
             (preview.revision !== library.draft_revision ||
               preview.base_version !== library.base_version) && (
               <p role="alert" className="error">
-                The draft changed.{" "}
+                 {tr("The draft changed.")}{" "}
                 <button type="button" onClick={() => void run(review)}>
-                  Review latest draft
-                </button>
+                   {tr("Review latest draft")} </button>
               </p>
             )}
           <label>
-            Version label
-            <input
+             {tr("Version label")} <input
               autoFocus
               required
               maxLength={128}
@@ -1000,8 +983,7 @@ export function LibraryEditor({ id }: { id: string }) {
             />
           </label>
           <label>
-            Release note
-            <textarea
+             {tr("Release note")} <textarea
               maxLength={4000}
               value={note}
               onChange={(e) => setNote(e.target.value)}
@@ -1009,13 +991,12 @@ export function LibraryEditor({ id }: { id: string }) {
           </label>
           {error && (
             <p className="error" role="alert">
-              {error}
+              {tr(error)}
             </p>
           )}
           <div className="dialog-actions">
             <button type="button" onClick={() => setPublish(false)}>
-              Cancel
-            </button>
+               {tr("Cancel")} </button>
             <button
               className="primary"
               disabled={
@@ -1025,8 +1006,7 @@ export function LibraryEditor({ id }: { id: string }) {
                 preview?.base_version !== library?.base_version
               }
             >
-              Publish version
-            </button>
+               {tr("Publish version")} </button>
           </div>
         </form>
       </Modal>
@@ -1049,6 +1029,7 @@ function Conflict({
   buffer: BufferFile;
   onError: (e: string) => void;
 }) {
+  const tr = useT();
   const studio = useStudio();
   const [open, setOpen] = useState(true),
     [copy, setCopy] = useState(false);
@@ -1056,18 +1037,15 @@ function Conflict({
   return (
     <>
       <button className="conflict-reopen" onClick={() => setOpen(true)}>
-        Review conflict
-      </button>
+         {tr("Review conflict")} </button>
       <Modal
-        title={`Resolve conflict · ${buffer.entry.path}`}
+        title={tr("Resolve conflict · {value0}", { value0: buffer.entry.path })}
         open={open}
         onClose={() => setOpen(false)}
         drawer
       >
         <p>
-          The left side is the saved file; the right side is your unsaved
-          content.
-        </p>
+           {tr("The left side is the saved file; the right side is your unsaved content.")} </p>
         <div className="conflict-diff">
           <TextDiff before={conflict.text} after={buffer.text} />
         </div>
@@ -1093,9 +1071,8 @@ function Conflict({
               void studio.persist();
             }}
           >
-            Use saved version
-          </button>
-          <button onClick={() => setCopy(true)}>Save as new file</button>
+             {tr("Use saved version")} </button>
+          <button onClick={() => setCopy(true)}>{tr("Save as new file")}</button>
           <button
             className="primary"
             onClick={async () => {
@@ -1124,14 +1101,13 @@ function Conflict({
               }
             }}
           >
-            Overwrite reviewed version
-          </button>
+             {tr("Overwrite reviewed version")} </button>
         </div>
       </Modal>
       {copy && (
         <TextDialog
-          title="Save as new file"
-          label="Path relative to library root"
+          title={tr("Save as new file")}
+          label={tr("Path relative to library root")}
           initial={buffer.entry.path + ".copy"}
           onClose={() => setCopy(false)}
           onSubmit={async (path) => {
@@ -1171,6 +1147,7 @@ function MoveDialog({
   onClose: () => void;
   onMove: (to: string) => Promise<void>;
 }) {
+  const tr = useT();
   const [parent, setParent] = useState(""),
     [page, setPage] = useState<Page<Entry> | null>(null),
     [error, setError] = useState("");
@@ -1187,12 +1164,11 @@ function MoveDialog({
     return () => abort.abort();
   }, [library, parent]);
   return (
-    <Modal title={`Move ${entry.path}`} open onClose={onClose}>
-      <p>Destination: /{parent}</p>
+    <Modal title={tr("Move {value0}", { value0: entry.path })} open onClose={onClose}>
+      <p>{tr("Destination: /")}{parent}</p>
       {parent && (
         <button onClick={() => setParent(parentPath(parent))}>
-          Parent directory
-        </button>
+           {tr("Parent directory")} </button>
       )}
       <div className="picker-results">
         {page?.items
@@ -1219,17 +1195,16 @@ function MoveDialog({
                 .catch((e) => setError(String(e)))
             }
           >
-            Load more folders
-          </button>
+             {tr("Load more folders")} </button>
         )}
       </div>
       {error && (
         <p role="alert" className="error">
-          {error}
+          {tr(error)}
         </p>
       )}
       <div className="dialog-actions">
-        <button onClick={onClose}>Cancel</button>
+        <button onClick={onClose}>{tr("Cancel")}</button>
         <button
           className="primary"
           onClick={async () => {
@@ -1245,8 +1220,7 @@ function MoveDialog({
             }
           }}
         >
-          Move here
-        </button>
+           {tr("Move here")} </button>
       </div>
     </Modal>
   );

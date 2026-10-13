@@ -1,4 +1,5 @@
 "use client";
+import { intlLocale } from "@web/i18n/locale";
 import { ShareFilePicker } from "./share-file-picker";
 import { Select } from "@web/select";
 import { useT } from "@/lib/i18n";
@@ -116,7 +117,7 @@ export function SharePanel({
       </p>
       {error && (
         <p className="notice error" role="alert">
-          {error}
+          {tr(error)}
         </p>
       )}
       <label>
@@ -214,7 +215,7 @@ export function SharePanel({
         <article className="schedule-card" key={account.id}>
           <strong>{account.display_name}</strong>
           <small>
-            @{account.username} · {account.status}
+            @{account.username} · {tr(account.status)}
             {account.suspended && ` · ${tr("Access suspended")}`}
           </small>
           <ReaderAccessEditor
@@ -321,11 +322,11 @@ export function SharePanel({
       )}
       {shares.map((share) => (
         <article className="schedule-card" key={share.id}>
-          <strong>{share.title}</strong> · {share.state}
+          <strong>{share.title}</strong> · {tr(share.state)}
           {share.suspended && ` · ${tr("Access suspended")}`}
           <small>
             {tr("Expires")}
-            {new Date(share.expires_at).toLocaleString()}
+            {new Date(share.expires_at).toLocaleString(intlLocale())}
           </small>
           <label>
             <input
@@ -463,7 +464,7 @@ function ReaderAccessEditor({
           >
             {tr("Save access")}
           </button>
-          {error && <p role="alert">{error}</p>}
+          {error && <p role="alert">{tr(error)}</p>}
         </>
       )}
     </div>
@@ -502,7 +503,7 @@ export function Inbox({
           {tr("unread")}
         </small>
       </h2>
-      {error && <p className="notice error">{error}</p>}
+      {error && <p className="notice error">{tr(error)}</p>}
       {!items.length && <p>{tr("No notifications.")}</p>}
       {items.map((notice) => (
         <article className="schedule-card" key={notice.id}>
@@ -511,7 +512,7 @@ export function Inbox({
             {!notice.read ? " · unread" : ""}
           </strong>
           <p>{notice.body}</p>
-          <small>{new Date(notice.created_at).toLocaleString()}</small>
+          <small>{new Date(notice.created_at).toLocaleString(intlLocale())}</small>
           <div className="row-actions">
             {notice.schedule_id && notice.project_id && (
               <a
@@ -599,7 +600,7 @@ export function SearchPanel({
         />
         <button className="primary">{tr("Search")}</button>
       </form>
-      {error && <p className="notice error">{error}</p>}
+      {error && <p className="notice error">{tr(error)}</p>}
       {results.map((result) => (
         <button
           className="search-result"

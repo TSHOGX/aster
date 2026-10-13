@@ -1,4 +1,5 @@
 "use client";
+import { LanguagePicker } from "@web/language-picker";
 import { Select } from "@web/select";
 import type { Identity } from "@web/identity";
 
@@ -64,6 +65,7 @@ export function AccountSettings({ identity, appearance, onIdentity, onProfile, o
     <div className="account-settings-body">
       <section aria-labelledby="appearance-title">
         <h3 id="appearance-title">{tr("Appearance")}</h3>
+        <LanguagePicker preferences={appearance} feedback={false} />
         <div className="appearance-fields">
           <label>{tr("Theme mode")}
             <Select aria-label={tr("Theme mode")} value={appearance.preview.theme_mode} disabled={!appearance.loaded || appearance.pending}
@@ -105,7 +107,7 @@ export function AccountSettings({ identity, appearance, onIdentity, onProfile, o
         }}>
           <label>{tr("Username")}<input readOnly value={profile.username} autoComplete="username" /></label>
           <label>{tr("Display name")}<input required maxLength={256} disabled={profileLoading || profileBusy} value={name} onChange={event => setName(event.target.value)} /></label>
-          {profileError && <p className="settings-error" role="alert">{profileError}</p>}
+          {profileError && <p className="settings-error" role="alert">{tr(profileError)}</p>}
           <button className="primary" disabled={profileLoading || profileBusy || name === profile.display_name}>{profileBusy ? tr("Saving…") : tr("Save display name")}</button>
         </form>
         <form onSubmit={event => {
@@ -121,7 +123,7 @@ export function AccountSettings({ identity, appearance, onIdentity, onProfile, o
           <button className="primary" disabled={securityBusy}>{tr("Change password")}</button>
           {securitySaved && <p role="status">{tr("Password changed. Other sessions have been signed out.")}</p>}
         </form>
-        {securityError && <p className="settings-error" role="alert">{securityError}</p>}
+        {securityError && <p className="settings-error" role="alert">{tr(securityError)}</p>}
         <button className="danger" disabled={securityBusy || profileBusy} onClick={() => void (async () => {
           if (!await discard()) return;
           setSecurityBusy(true); setSecurityError("");

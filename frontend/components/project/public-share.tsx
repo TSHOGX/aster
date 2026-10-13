@@ -1,4 +1,5 @@
 "use client";
+import { intlLocale } from "@web/i18n/locale";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { displayName } from "@web/brand";
 import { api, encode } from "@/lib/project-api";
@@ -75,7 +76,7 @@ function ShareContent({ token }: { token: string }) {
           actor="public"
           source={source}
           title={metadata.title}
-          attribution={`${tr("Shared snapshot")} · ${tr("Expires")} ${new Date(metadata.expires_at).toLocaleString()}`}
+          attribution={`${tr("Shared snapshot")} · ${tr("Expires")} ${new Date(metadata.expires_at).toLocaleString(intlLocale())}`}
           paths={metadata.files.map((f) => f.path)}
           onMetadata={reload}
         />

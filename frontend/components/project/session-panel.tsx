@@ -1079,7 +1079,7 @@ export function SessionPanel({
           {turnHistory.map((turn) => (
             <details key={turn.id}>
               <summary>
-                #{turn.sequence} · {turn.state} · {turn.content.slice(0, 80)}
+                #{turn.sequence} · {tr(turn.state)} · {turn.content.slice(0, 80)}
               </summary>
               <pre>{turn.content.slice(0, 8000)}</pre>
               {turn.state === "held" && (

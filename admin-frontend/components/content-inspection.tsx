@@ -1,9 +1,13 @@
 "use client";
+import { formatQuantity, intlLocale } from "@web/i18n/locale";
+import { useT } from "@/lib/i18n";
+
 import { useEffect, useRef, useState } from "react";
 import { api, APIError } from "@/lib/api";
 import type { EffectiveAccess } from "@web/capabilities";
 type Inspection = { account_id:string; project_id:string; session_id:string; title:string; audit_id:number; next_after?:number; messages:{id:string;role:string;content:string;sequence:number;created_at:string;truncated:boolean}[] };
 export function ContentInspection({accountID}:{accountID:string}) {
+  const tr = useT();
   const [allowed,setAllowed]=useState(false),[session,setSession]=useState(""),[purpose,setPurpose]=useState(""),[page,setPage]=useState<Inspection|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const inspectionGeneration=useRef({generation:0});
   const [inspected,setInspected]=useState<{session:string;purpose:string}|null>(null);
@@ -22,9 +26,9 @@ export function ContentInspection({accountID}:{accountID:string}) {
     catch(error){if(current!==inspectionGeneration.current.generation)return;setError(error instanceof APIError&&error.status===403?"An explicit admin.content.read grant is required.":"Inspection did not return content. Retry explicitly; each successful read is audited.");}
     finally{if(current===inspectionGeneration.current.generation)setBusy(false);}
   };
-  return <section className="panel" aria-labelledby="content-inspection-title"><h2 id="content-inspection-title">Private conversation inspection</h2><p>Read stored messages for a specific support or review purpose. Every page is audited. This does not grant access to the account’s live workspace or native runtime.</p>
-    {!allowed?<p>An explicit admin.content.read grant is required in addition to the administrator role.</p>:<form className="account-form" onSubmit={e=>{e.preventDefault();void inspect();}}><fieldset disabled={busy}><label>Conversation ID<input required maxLength={128} value={session} onChange={e=>setSession(e.target.value)}/></label><label>Inspection purpose<input required maxLength={512} value={purpose} onChange={e=>setPurpose(e.target.value)} placeholder="Case reference and reason; omit private message content"/></label><button disabled={!session.trim()||!purpose.trim()} className="primary">Inspect conversation</button></fieldset></form>}
-    {error&&<p role="alert" className="error">{error}</p>}{busy&&<p role="status">Reading and recording audit…</p>}
-    {page&&<div className="inspection-results"><h3>{page.title}</h3><p>Conversation {page.session_id} · Audit {page.audit_id}</p><p>Purpose: {inspected?.purpose}</p>{page.messages.map(message=><article key={message.id} className="impact-card"><h4>{message.role} · Message {message.sequence}</h4><time>{new Date(message.created_at).toLocaleString()}</time><pre>{message.content}</pre>{message.truncated&&<p>This message was shortened for bounded inspection.</p>}</article>)}{!page.messages.length&&<p>No stored messages on this page.</p>}<div className="form-actions">{page.next_after&&<button disabled={busy||!allowed} onClick={()=>void inspect(page.next_after)}>Read next messages</button>}<button onClick={()=>{inspectionGeneration.current.generation++;setBusy(false);setPage(null);setInspected(null);}}>Clear inspected content</button></div></div>}
+  return <section className="panel" aria-labelledby="content-inspection-title"><h2 id="content-inspection-title">{tr("Private conversation inspection")}</h2><p>{tr("Read stored messages for a specific support or review purpose. Every page is audited. This does not grant access to the account’s live workspace or native runtime.")}</p>
+    {!allowed ? <p>{tr("An explicit admin.content.read grant is required in addition to the administrator role.")}</p> : <form className="account-form" onSubmit={e=>{e.preventDefault();void inspect();}}><fieldset disabled={busy}><label>{tr("Conversation ID")}<input required maxLength={128} value={session} onChange={e=>setSession(e.target.value)}/></label><label>{tr("Inspection purpose")}<input required maxLength={512} value={purpose} onChange={e=>setPurpose(e.target.value)} placeholder={tr("Case reference and reason; omit private message content")}/></label><button disabled={!session.trim()||!purpose.trim()} className="primary">{tr("Inspect conversation")}</button></fieldset></form>}
+    {error&&<p role="alert" className="error">{tr(error)}</p>}{busy&&<p role="status">{tr("Reading and recording audit…")}</p>}
+    {page&&<div className="inspection-results"><h3>{page.title}</h3><p>{tr("Conversation")} {page.session_id}  {tr("· Audit")} {page.audit_id}</p><p>{tr("Purpose:")} {inspected?.purpose}</p>{page.messages.map(message=><article key={message.id} className="impact-card"><h4>{tr(message.role)}  {tr("· Message")} {formatQuantity(message.sequence)}</h4><time>{new Date(message.created_at).toLocaleString(intlLocale())}</time><pre>{message.content}</pre>{message.truncated&&<p>{tr("This message was shortened for bounded inspection.")}</p>}</article>)}{!page.messages.length&&<p>{tr("No stored messages on this page.")}</p>}<div className="form-actions">{page.next_after&&<button disabled={busy||!allowed} onClick={()=>void inspect(page.next_after)}>{tr("Read next messages")}</button>}<button onClick={()=>{inspectionGeneration.current.generation++;setBusy(false);setPage(null);setInspected(null);}}>{tr("Clear inspected content")}</button></div></div>}
   </section>;
 }

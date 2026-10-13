@@ -68,7 +68,7 @@ export function startViewer(format: OfficeKind, createRenderer: RendererFactory)
     if (message.kind === 'render' && !started) {
       if (!(message.buffer instanceof ArrayBuffer) || message.buffer.byteLength > OFFICE_LIMITS.sourceBytes || message.format !== format) return;
       started = true; labels = message.labels;
-      document.documentElement.lang = message.locale === 'zh-CN' ? 'zh-CN' : 'en';
+      document.documentElement.lang = typeof message.locale === 'string' && /^zh(?:-|_|$)/i.test(message.locale) ? 'zh-Hans' : 'en';
       host.classList.add(message.format);
       try {
         send('stage', { stage: 'loading-engine' });

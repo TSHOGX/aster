@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./style.css";
 import { StudioProvider } from "../components/studio-provider";
+import { localeInitScript } from "../../../web/i18n/locale";
 import { themeInitScript } from "../../../web/appearance";
 
 export const metadata: Metadata = {
@@ -15,6 +16,7 @@ export default function Layout({
     <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        <script dangerouslySetInnerHTML={{ __html: localeInitScript }} />
       </head>
       <body>
         <StudioProvider>{children}</StudioProvider>

@@ -153,7 +153,7 @@ export function ProjectWorkbench() {
           <p>{tr("Your research, agents, and workspace.")}</p>
           {error && (
             <p className="notice error" role="alert">
-              {error}
+              {tr(error)}
             </p>
           )}
           <label>
@@ -195,7 +195,7 @@ export function ProjectWorkbench() {
         }}>
           <h1>{tr("Set your password")}</h1>
           <p>{tr("Choose a permanent password with 12 to 128 characters.")}</p>
-          {error && <p className="notice error" role="alert">{error}</p>}
+          {error && <p className="notice error" role="alert">{tr(error)}</p>}
           <label>{tr("New password")}
             <input required type="password" autoComplete="new-password" value={password}
               onChange={(e) => setPassword(e.target.value)} />
@@ -781,8 +781,8 @@ function Application({
                               {s.state !== "idle" && (
                                 <span
                                   className={`state-dot ${s.state}`}
-                                  aria-label={s.state}
-                                  title={s.state}
+                                  aria-label={tr(s.state)}
+                                  title={tr(s.state)}
                                 />
                               )}
                             </button>

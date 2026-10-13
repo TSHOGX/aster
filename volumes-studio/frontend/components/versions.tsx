@@ -1,4 +1,8 @@
 "use client";
+import { formatQuantity } from "../../../web/i18n/locale";
+import { intlLocale } from "../../../web/i18n/locale";
+import { message, useT } from "../lib/i18n";
+
 import { useEffect, useRef, useState } from "react";
 import { api, Library, requestID, Version } from "../lib/api";
 import { Page, query, relativeTime } from "../lib/workbench";
@@ -15,6 +19,7 @@ export function VersionPicker({
   label: string;
   onChange: (id: string) => void;
 }) {
+  const tr = useT();
   const [open, setOpen] = useState(false),
     [q, setQ] = useState(""),
     [page, setPage] = useState<Page<Version> | null>(null),
@@ -42,19 +47,18 @@ export function VersionPicker({
       <button
         className="version-picker"
         onClick={() => setOpen(true)}
-        aria-label="Select version"
+        aria-label={tr("Select version")}
       >
-        <span>{label}</span>
-        <span>{value ? "Read only" : "Editable"} ⌄</span>
+        <span>{tr(label)}</span>
+        <span>{value ? tr("Read only") : tr("Editable")} ⌄</span>
       </button>
-      <Modal title="Select version" open={open} onClose={() => setOpen(false)}>
+      <Modal title={tr("Select version")} open={open} onClose={() => setOpen(false)}>
         <label>
-          Find version
-          <input
+           {tr("Find version")} <input
             autoFocus
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search version labels…"
+            placeholder={tr("Search version labels…")}
           />
         </label>
         <div className="picker-results">
@@ -64,7 +68,7 @@ export function VersionPicker({
               setOpen(false);
             }}
           >
-            Draft <small>Editable working copy</small>
+             {tr("Draft")} <small>{tr("Editable working copy")}</small>
           </button>
           {page?.items.map((v) => (
             <button
@@ -75,7 +79,7 @@ export function VersionPicker({
               }}
             >
               {v.label}
-              <small>{v.state} · read only</small>
+              <small>{tr(v.state)}  {tr("· read only")}</small>
             </button>
           ))}
           {page?.next && (
@@ -90,13 +94,12 @@ export function VersionPicker({
                   .catch((e) => setError(String(e)))
               }
             >
-              Load more versions
-            </button>
+               {tr("Load more versions")} </button>
           )}
         </div>
         {error && (
           <p role="alert" className="error">
-            {error}
+            {tr(error)}
           </p>
         )}
       </Modal>
@@ -112,6 +115,7 @@ export function Versions({
   onInspect: (id: string) => void;
   onChanged: () => void;
 }) {
+  const tr = useT();
   const studio = useStudio();
   const [q, setQ] = useState(""),
     [status, setStatus] = useState("all"),
@@ -176,24 +180,21 @@ export function Versions({
   }, [root, params]);
   async function action(v: Version, action: string) {
     try {
-      let message = `${action} version ${v.label}?`;
+      const titles: Record<string, string> = { restore: "Restore version", archive: "Archive version", retire: "Retire version", retry: "Retry version", cancel: "Cancel version" };
+      const prompts: Record<string, string> = { archive: "Archive version {label}?", retry: "Retry version {label}?", cancel: "Cancel version {label}?" };
+      let prompt = message(prompts[action] || titles[action], { label: v.label });
       if (action === "restore") {
         if (!(await studio.settle(library.id))) return;
-        message +=
-          " This replaces the saved draft. Existing imported copies are unaffected.";
+        prompt = message("Restore version {label}? This replaces the saved draft. Existing imported copies are unaffected.", { label: v.label });
       }
       if (action === "retire") {
-        const retention = await api<Record<string, unknown>>(
-          `${root}/versions/${v.id}/retention`,
-        );
-        message +=
-          " Source files may be collected. Retention: " +
-          JSON.stringify(retention);
+        const retention = await api<Record<string, unknown>>(`${root}/versions/${v.id}/retention`);
+        prompt = message("Retire version {label}? Source files may be collected. Retention: {retention}", { label: v.label, retention: JSON.stringify(retention) });
       }
       if (
         (await studio.ask(
-          `${action[0].toUpperCase() + action.slice(1)} version`,
-          message,
+          titles[action],
+          prompt,
           ["Cancel", "Continue"],
         )) !== "Continue"
       )
@@ -223,14 +224,14 @@ export function Versions({
     }
   }
   const actions = (v: Version) => [
-    { label: "Version details", action: () => setSelected(v) },
+    { label: message("Version details"), action: () => setSelected(v) },
     ...(["published", "archived"].includes(v.state)
-      ? [{ label: "Restore to draft", action: () => void action(v, "restore") }]
+      ? [{ label: message("Restore to draft"), action: () => void action(v, "restore") }]
       : []),
     ...(v.state === "published"
       ? [
           {
-            label: "Archive source",
+            label: message("Archive source"),
             action: () => void action(v, "archive"),
             danger: true,
           },
@@ -239,19 +240,19 @@ export function Versions({
     ...(["archived", "failed"].includes(v.state)
       ? [
           {
-            label: "Retire source",
+            label: message("Retire source"),
             action: () => void action(v, "retire"),
             danger: true,
           },
         ]
       : []),
     ...(v.state === "failed" || v.error === "principal_authority_required"
-      ? [{ label: "Retry validation", action: () => void action(v, "retry") }]
+      ? [{ label: message("Retry validation"), action: () => void action(v, "retry") }]
       : []),
     ...(["pending", "validating"].includes(v.state)
       ? [
           {
-            label: "Cancel publication",
+            label: message("Cancel publication"),
             action: () => void action(v, "cancel"),
             danger: true,
           },
@@ -262,17 +263,17 @@ export function Versions({
     <section className="versions-view">
       <div className="view-heading">
         <h2>
-          Versions <span className="count">{page?.total ?? "…"}</span>
+           {tr("Versions")} <span className="count">{page?.total ?? "…"}</span>
         </h2>
         <div className="actions">
           <input
-            aria-label="Search versions"
-            placeholder="Search version labels…"
+            aria-label={tr("Search versions")}
+            placeholder={tr("Search version labels…")}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
           <Picker
-            label="Version status"
+            label={tr("Version status")}
             value={status}
             onChange={setStatus}
             options={[
@@ -292,19 +293,19 @@ export function Versions({
       </div>
       {error && (
         <p className="notice error" role="alert">
-          {error}
+          {tr(error)}
         </p>
       )}
       <div className="table-scroll">
         <table>
           <thead>
             <tr>
-              <th>Version</th>
-              <th>Status</th>
-              <th>Published</th>
-              <th>Publisher</th>
-              <th>Release note</th>
-              <th>Actions</th>
+              <th>{tr("Version")}</th>
+              <th>{tr("Status")}</th>
+              <th>{tr("Published")}</th>
+              <th>{tr("Publisher")}</th>
+              <th>{tr("Release note")}</th>
+              <th>{tr("Actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -317,36 +318,34 @@ export function Versions({
                   >
                     {v.label}
                   </button>
-                  <small>Created {relativeTime(v.created_at)}</small>
+                  <small>{tr("Created")} {relativeTime(v.created_at, intlLocale())}</small>
                 </td>
                 <td>
-                  <span className={`badge ${v.state}`}>{v.state}</span>
+                  <span className={`badge ${v.state}`}>{tr(v.state)}</span>
                   {v.error && (
                     <small className="error">
-                      {v.error.replaceAll("_", " ")}
+                      {tr(v.error.replaceAll("_", " "))}
                     </small>
                   )}
                 </td>
-                <td>{relativeTime(v.published_at)}</td>
+                <td>{relativeTime(v.published_at, intlLocale())}</td>
                 <td>{v.publisher.subject}</td>
                 <td className="version-note">{v.note || "—"}</td>
                 <td>
                   <div className="actions">
                     {["published", "archived"].includes(v.state) && (
                       <button onClick={() => onInspect(v.id)}>
-                        Inspect files
-                      </button>
+                         {tr("Inspect files")} </button>
                     )}
                     {v.state === "published" && (
                       <a
                         className="button"
                         href={`/admin/resources/volumes?${query({ volume_publisher: v.publisher_id, volume_library: library.id, volume_version: v.id })}`}
                       >
-                        Use in Aster ↗
-                      </a>
+                         {tr("Use in Aster ↗")} </a>
                     )}
                     <Menu
-                      label={`Actions for version ${v.label}`}
+                      label={tr("Actions for version {value0}", { value0: v.label })}
                       items={actions(v)}
                     />
                   </div>
@@ -356,7 +355,7 @@ export function Versions({
           </tbody>
         </table>
         {page?.items.length === 0 && (
-          <p className="empty-state">No versions found.</p>
+          <p className="empty-state">{tr("No versions found.")}</p>
         )}
         {page?.next && (
           <button
@@ -371,45 +370,40 @@ export function Versions({
                 .catch((e) => setError(String(e)))
             }
           >
-            Load more versions
-          </button>
+             {tr("Load more versions")} </button>
         )}
       </div>
       <Modal
-        title={selected?.label || "Version details"}
+        title={selected?.label || tr("Version details")}
         open={!!selected}
         onClose={() => setSelected(null)}
         drawer
       >
         {selected && (
           <>
-            <span className={`badge ${selected.state}`}>{selected.state}</span>
+            <span className={`badge ${selected.state}`}>{tr(selected.state)}</span>
             <p className="preserve-lines">
-              {selected.note || "No release note."}
+              {selected.note || tr("No release note.")}
             </p>
             <dl>
-              <dt>Source revision</dt>
-              <dd>{selected.source_revision}</dd>
-              <dt>Publisher</dt>
+              <dt>{tr("Source revision")}</dt>
+              <dd>{formatQuantity(selected.source_revision)}</dd>
+              <dt>{tr("Publisher")}</dt>
               <dd>{selected.publisher.subject}</dd>
-              <dt>Created</dt>
+              <dt>{tr("Created")}</dt>
               <dd>
-                {selected.created_at
-                  ? new Date(selected.created_at * 1000).toLocaleString()
-                  : "Unknown"}
+                {selected.created_at ? new Date(selected.created_at * 1000).toLocaleString(intlLocale()) : tr("Unknown")}
               </dd>
-              <dt>Published</dt>
+              <dt>{tr("Published")}</dt>
               <dd>
-                {selected.published_at
-                  ? new Date(selected.published_at * 1000).toLocaleString()
-                  : "Unknown / not published"}
+                {selected.published_at ? new Date(selected.published_at * 1000).toLocaleString(intlLocale()) : tr("Unknown / not published")}
               </dd>
-              <dt>Descriptor</dt>
+              <dt>{tr("Descriptor")}</dt>
               <dd>
                 <code>{selected.descriptor_digest}</code>
               </dd>
             </dl>
-            {selected.error && <p className="error">{selected.error}</p>}
+            {selected.error && <p className="error">{tr(selected.error)}</p>}
           </>
         )}
       </Modal>

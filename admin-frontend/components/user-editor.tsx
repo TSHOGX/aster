@@ -1,4 +1,7 @@
 "use client";
+import { formatQuantity } from "@web/i18n/locale";
+import { useT } from "@/lib/i18n";
+
 import { Select } from "@web/select";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -11,6 +14,7 @@ import { CredentialDialog } from "./credential-dialog";
 
 type Pending = { path: string; body: Record<string, unknown>; method: string; kind: "create" | "edit" | "reset" | "status" };
 export function UserEditor({ id, onDirty }: { id?: string; onDirty: (dirty: boolean) => void }) {
+  const tr = useT();
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null), [username, setUsername] = useState(""), [name, setName] = useState(""), [role, setRole] = useState("user");
   const [membership, setMembership] = useState("default"), [selected, setSelected] = useState<string[]>([]), [groups, setGroups] = useState<Group[]>([]), [groupCursor, setGroupCursor] = useState("");
@@ -77,43 +81,43 @@ export function UserEditor({ id, onDirty }: { id?: string; onDirty: (dirty: bool
     }
   };
   return <section aria-labelledby="user-title">
-    <header className="page-heading"><div><h1 id="user-title">{user ? user.display_name : id ? "User details" : "Create user"}</h1><p>{user ? user.username : "Issue a one-time password for account setup."}</p></div><Link href="/users">Back to users</Link></header>
-    {loading && <p role="status">Loading account…</p>}
-    {error && <p className="error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
-    {pending && !busy && <div className="notice"><p>The outcome is unconfirmed. Retry checks the original request without repeating its effects.</p><button onClick={() => void submit(pending)}>Check original request</button></div>}
+    <header className="page-heading"><div><h1 id="user-title">{user ? user.display_name : id ? tr("User details") : tr("Create user")}</h1><p>{user ? user.username : tr("Issue a one-time password for account setup.")}</p></div><Link href="/users">{tr("Back to users")}</Link></header>
+    {loading && <p role="status">{tr("Loading account…")}</p>}
+    {error && <p className="error" role="alert">{tr(error)}</p>}{notice && <p role="status">{tr(notice)}</p>}
+    {pending && !busy && <div className="notice"><p>{tr("The outcome is unconfirmed. Retry checks the original request without repeating its effects.")}</p><button onClick={() => void submit(pending)}>{tr("Check original request")}</button></div>}
     {(!id || user) && <form className="account-form" onSubmit={event => { event.preventDefault(); save(); }}>
       <fieldset disabled={loading || busy || !!pending}>
-        {!user && <label>Username<input required maxLength={64} autoComplete="off" pattern="[A-Za-z0-9_-]{1,64}" value={username} onChange={event => setUsername(event.target.value)} /></label>}
-        <label>Display name<input required maxLength={256} value={name} onChange={event => setName(event.target.value)} /></label>
-        <label>Management role<Select aria-label="Management role" value={role} onChange={event => setRole(event.target.value)}><option value="user">User</option><option value="admin">Platform administrator</option></Select></label>
-        <p className="hint">Management authority does not grant private-content access. Changing the role signs this account out.</p>
+        {!user && <label>{tr("Username")}<input required maxLength={64} autoComplete="off" pattern="[A-Za-z0-9_-]{1,64}" value={username} onChange={event => setUsername(event.target.value)} /></label>}
+        <label>{tr("Display name")}<input required maxLength={256} value={name} onChange={event => setName(event.target.value)} /></label>
+        <label>{tr("Management role")}<Select aria-label={tr("Management role")} value={role} onChange={event => setRole(event.target.value)}><option value="user">{tr("User")}</option><option value="admin">{tr("Platform administrator")}</option></Select></label>
+        <p className="hint">{tr("Management authority does not grant private-content access. Changing the role signs this account out.")}</p>
         {!user && <>
-          <label>Membership<Select aria-label="Membership" value={membership} onChange={event => setMembership(event.target.value)}><option value="default">Default group</option><option value="custom">Choose groups</option><option value="none">No groups</option></Select></label>
-          {membership === "custom" && <fieldset className="group-options"><legend>Groups</legend>{groups.map(group => <label key={group.id}><input type="checkbox" checked={selected.includes(group.id)} onChange={event => setSelected(values => event.target.checked ? [...values, group.id] : values.filter(value => value !== group.id))} />{group.name}</label>)}
-            {groupCursor && <button type="button" onClick={() => void api<{groups: Group[]; next_cursor?: string}>(`/api/admin/groups?limit=100&cursor=${encodeURIComponent(groupCursor)}`).then(value => { setGroups(values => [...values, ...value.groups]); setGroupCursor(value.next_cursor || ""); }).catch(error => setError(String(error)))}>More groups</button>}
+          <label>{tr("Membership")}<Select aria-label={tr("Membership")} value={membership} onChange={event => setMembership(event.target.value)}><option value="default">{tr("Default group")}</option><option value="custom">{tr("Choose groups")}</option><option value="none">{tr("No groups")}</option></Select></label>
+          {membership === "custom" && <fieldset className="group-options"><legend>{tr("Groups")}</legend>{groups.map(group => <label key={group.id}><input type="checkbox" checked={selected.includes(group.id)} onChange={event => setSelected(values => event.target.checked ? [...values, group.id] : values.filter(value => value !== group.id))} />{group.name}</label>)}
+            {groupCursor && <button type="button" onClick={() => void api<{groups: Group[]; next_cursor?: string}>(`/api/admin/groups?limit=100&cursor=${encodeURIComponent(groupCursor)}`).then(value => { setGroups(values => [...values, ...value.groups]); setGroupCursor(value.next_cursor || ""); }).catch(error => setError(String(error)))}>{tr("More groups")}</button>}
           </fieldset>}
         </>}
-        <div className="form-actions"><button className="primary" type="submit" disabled={!!user && !changedName && !changedRole}>{busy ? "Saving…" : user ? "Save changes" : "Create account"}</button>
-        {user && (changedName || changedRole) && <button type="button" onClick={() => { setName(user.display_name); setRole(user.role); setError(""); }}>Discard edits</button>}</div>
+        <div className="form-actions"><button className="primary" type="submit" disabled={!!user && !changedName && !changedRole}>{busy ? tr("Saving…") : user ? tr("Save changes") : tr("Create account")}</button>
+        {user && (changedName || changedRole) && <button type="button" onClick={() => { setName(user.display_name); setRole(user.role); setError(""); }}>{tr("Discard edits")}</button>}</div>
       </fieldset>
     </form>}
-    {user && !id && <p><Link href={`/users/${encodeURIComponent(user.id)}`}>Open this account</Link></p>}
-    {user && <section className="panel" aria-labelledby="security-title"><h2 id="security-title">Account and security</h2>
-      <dl><dt>Status</dt><dd>{user.status}</dd><dt>Memberships</dt><dd>{user.groups.map(group => group.name).join(", ") || "No groups"}</dd><dt>Last sign-in</dt><dd>{date(user.last_login_at)}</dd><dt>Created</dt><dd>{date(user.created_at)}</dd><dt>Updated</dt><dd>{date(user.updated_at)}</dd><dt>Revision</dt><dd>{user.revision}</dd></dl>
-      {user.must_change_password && <p>Password setup is required.</p>}
-      <p>Resetting issues a new one-time password and revokes this account’s sessions. Existing work is not stopped.</p>
-      <button disabled={busy || !!pending || changedName || changedRole} onClick={() => void submit({ path: `/api/admin/users/${encodeURIComponent(user.id)}/password-reset`, body: { request_id: crypto.randomUUID(), expected_revision: user.revision }, method: "POST", kind: "reset" })}>Reset password</button>
+    {user && !id && <p><Link href={`/users/${encodeURIComponent(user.id)}`}>{tr("Open this account")}</Link></p>}
+    {user && <section className="panel" aria-labelledby="security-title"><h2 id="security-title">{tr("Account and security")}</h2>
+      <dl><dt>{tr("Status")}</dt><dd>{tr(user.status)}</dd><dt>{tr("Memberships")}</dt><dd>{user.groups.map(group => group.name).join(", ") || tr("No groups")}</dd><dt>{tr("Last sign-in")}</dt><dd>{date(user.last_login_at)}</dd><dt>{tr("Created")}</dt><dd>{date(user.created_at)}</dd><dt>{tr("Updated")}</dt><dd>{date(user.updated_at)}</dd><dt>{tr("Revision")}</dt><dd>{formatQuantity(user.revision)}</dd></dl>
+      {user.must_change_password && <p>{tr("Password setup is required.")}</p>}
+      <p>{tr("Resetting issues a new one-time password and revokes this account’s sessions. Existing work is not stopped.")}</p>
+      <button disabled={busy || !!pending || changedName || changedRole} onClick={() => void submit({ path: `/api/admin/users/${encodeURIComponent(user.id)}/password-reset`, body: { request_id: crypto.randomUUID(), expected_revision: user.revision }, method: "POST", kind: "reset" })}>{tr("Reset password")}</button>
       <button disabled={busy || !!pending || changedName || changedRole} onClick={() => {
         const suspend=user.status==="active";
-        if(suspend && !window.confirm(`Suspend ${user.username}? Sessions and sharing access will close, schedules and queues will be held, and running work will be stopped and Projects paused. Files and history are preserved.`)) return;
+        if(suspend && !window.confirm(tr("Suspend {name}? Sessions and sharing access will close, schedules and queues will be held, and running work will be stopped and Projects paused. Files and history are preserved.", { name: user.username }))) return;
         void submit({path:`/api/admin/users/${encodeURIComponent(user.id)}/${suspend?"suspend":"enable"}`,body:{request_id:crypto.randomUUID(),expected_revision:user.revision},method:"POST",kind:"status"});
-      }}>{user.status==="active"?"Suspend account":"Enable account"}</button>
-      {operationID && <Link className="inline-link" href={`/operations/${encodeURIComponent(operationID)}`}>View suspension operation</Link>}
+      }}>{user.status==="active" ? tr("Suspend account") : tr("Enable account")}</button>
+      {operationID && <Link className="inline-link" href={`/operations/${encodeURIComponent(operationID)}`}>{tr("View suspension operation")}</Link>}
 
-      <Link className="inline-link" href={`/projects?owner_id=${encodeURIComponent(user.id)}`}>Projects and Volumes</Link>
-      <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/resources`}>Resources and usage</Link>
-      <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/configuration`}>Effective configuration</Link>
-      <Link className="inline-link" href={`/audit?target=${encodeURIComponent(user.id)}`}>View account audit</Link>
+      <Link className="inline-link" href={`/projects?owner_id=${encodeURIComponent(user.id)}`}>{tr("Projects and Volumes")}</Link>
+      <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/resources`}>{tr("Resources and usage")}</Link>
+      <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/configuration`}>{tr("Effective configuration")}</Link>
+      <Link className="inline-link" href={`/audit?target=${encodeURIComponent(user.id)}`}>{tr("View account audit")}</Link>
     </section>}
     {user && <><EffectiveAccessView accountID={user.id} /><ContentInspection accountID={user.id}/></>}
     {credential && <CredentialDialog username={credential.username} password={credential.password} onClose={() => {

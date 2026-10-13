@@ -59,7 +59,7 @@ export function ShareFilePicker({
       </div>
       {error && (
         <p role="alert">
-          {error}
+          {tr(error)}
           <button type="button" onClick={() => setAttempt((n) => n + 1)}>
             {tr("Retry")}
           </button>

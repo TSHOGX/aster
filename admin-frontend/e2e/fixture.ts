@@ -13,6 +13,7 @@ export async function adminFixture(page: Page, role: "admin" | "user" = "admin")
   const groups: GroupDetail[] = [{...group,description:"",member_count:2,policy_ids:["standard-policy"]}];
   const memberships = new Map<string,string[]>([[group.id,users.map(user=>user.id)]]);
   const controls = { loseCreateReply: false, conflictEdit: false, losePolicyReply: false, conflictPolicy: false, stalePreview: false };
+  let preferences = { revision: 1, theme_mode: "system", accent: "neutral", language: "system" };
   await page.setExtraHTTPHeaders({ "X-Project-Account-ID": identity.id });
   await page.route("**/api/**", async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname, method = request.method();
@@ -20,7 +21,13 @@ export async function adminFixture(page: Page, role: "admin" | "user" = "admin")
     calls.push({ path, method, body });
     if (path === "/api/auth/session") return route.fulfill({ json: identity });
     if (path === "/api/me/capabilities") return route.fulfill({json:{account_id:identity.id,account_status:"active",management_role:identity.role,revision:1,actions:{"admin.content.read":{allowed:false}}}});
-    if (path === "/api/me/preferences") return route.fulfill({ json: { revision: 1, theme_mode: "system", accent: "neutral" } });
+    if (path === "/api/me/preferences") {
+      if (method === "PATCH") {
+        if (body?.expected_revision !== preferences.revision) return route.fulfill({status:409,json:{code:"revision_conflict",error:"settings changed"}});
+        preferences = { ...preferences, ...body, revision: preferences.revision + 1 };
+      }
+      return route.fulfill({ json: preferences });
+    }
     if (path === "/api/auth/logout") return route.fulfill({ status: 204 });
     if (path.startsWith("/api/admin/") && role !== "admin") return route.fulfill({ status: 403, json: { code: "action_denied", error: "administrator role required" } });
     if (path.endsWith("/effective-access")) {

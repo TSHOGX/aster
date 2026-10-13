@@ -407,7 +407,7 @@ export function Schedules({
           </div>
           {notice && (
             <p role="status" className="notice">
-              {notice}
+              {tr(notice)}
             </p>
           )}
           {notice === tr("Task saved.") &&
@@ -957,7 +957,7 @@ function SelectedSchedule({
                 </p>
               )}
           </section>
-          {notice && <p role="status">{notice}</p>}
+          {notice && <p role="status">{tr(notice)}</p>}
           {lastRun && (
             <button
               onClick={() => onOpen(lastRun.project_id, lastRun.session_id)}
@@ -967,7 +967,7 @@ function SelectedSchedule({
           )}
           {error && (
             <p className="notice error" role="alert">
-              {error}{" "}
+              {tr(error)}{" "}
               {runRequests.current.has(path) &&
                 tr("Retry Run now to confirm the same request.")}
             </p>

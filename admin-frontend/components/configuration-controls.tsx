@@ -1,4 +1,6 @@
 "use client";
+import { useT } from "@/lib/i18n";
+
 import { Select } from "@web/select";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
@@ -25,6 +27,7 @@ export function PolicyResourceGrants({
   disabled: boolean;
   onDraft?: (grants: Grant[]) => void;
 }) {
+  const tr = useT();
   const [grants, setGrants] = useState<Grant[]>([]),
     [baseline, setBaseline] = useState<Grant[]>([]),
     [networks, setNetworks] = useState<Template[]>([]),
@@ -107,14 +110,12 @@ export function PolicyResourceGrants({
     ]);
   return (
     <section className="panel configuration-panel">
-      <h2>Resource access</h2>
+      <h2>{tr("Resource access")}</h2>
       <p>
-        Choose one network template and one environment template for this
-        policy. Shared directories can be granted separately.
-      </p>
+         {tr("Choose one network template and one environment template for this policy. Shared directories can be granted separately.")} </p>
       {error && (
         <p className="error" role="alert">
-          {error}{" "}
+          {tr(error)}{" "}
           <button
             type="button"
             disabled={disabled || mutation.blocked}
@@ -123,12 +124,11 @@ export function PolicyResourceGrants({
               setAttempt((value) => value + 1);
             }}
           >
-            Retry loading
-          </button>
+             {tr("Retry loading")} </button>
         </p>
       )}
       {!loaded && !error && (
-        <p role="status">Loading resource configuration…</p>
+        <p role="status">{tr("Loading resource configuration…")}</p>
       )}
       <fieldset disabled={!loaded || disabled || mutation.blocked}>
         {[
@@ -151,12 +151,12 @@ export function PolicyResourceGrants({
           return (
             <div key={field.kind}>
               <label>
-                {field.label}
+                {tr(field.label)}
                 <Select aria-label={field.label}
                   value={valid ? selected[0].id : ""}
                   onChange={(e) => selectTemplate(field.kind, e.target.value)}
                 >
-                  <option value="">No template granted</option>
+                  <option value="">{tr("No template granted")}</option>
                   {available.map((o) => (
                     <option key={o.id} value={o.id}>
                       {o.name}
@@ -166,22 +166,18 @@ export function PolicyResourceGrants({
               </label>
               {loaded && selected.length > 0 && !valid && (
                 <p role="alert">
-                  The saved selection is unavailable or contains multiple
-                  templates. Choose one available template or{" "}
+                   {tr("The saved selection is unavailable or contains multiple templates. Choose one available template or")}{" "}
                   <button
                     type="button"
                     onClick={() => selectTemplate(field.kind, "")}
                   >
-                    clear the selection
-                  </button>
+                     {tr("clear the selection")} </button>
                   .
                 </p>
               )}
               {loaded && !available.length && (
                 <p className="hint">
-                  No enabled templates. Configure an available template in the
-                  Resource Center.
-                </p>
+                   {tr("No enabled templates. Configure an available template in the Resource Center.")} </p>
               )}
               {valid && (
                 <p className="hint">
@@ -191,7 +187,7 @@ export function PolicyResourceGrants({
             </div>
           );
         })}
-        <h3>Shared directories</h3>
+        <h3>{tr("Shared directories")}</h3>
         {volumes
           .filter((v) => v.enabled)
           .map((v) => {
@@ -226,8 +222,8 @@ export function PolicyResourceGrants({
                 </label>
                 {grant && (
                   <label>
-                    Access for {v.name}
-                    <Select aria-label={`Access for ${v.name}`}
+                     {tr("Access for")} {v.name}
+                    <Select aria-label={tr("Access for {value0}", { value0: v.name })}
                       value={grant.access}
                       onChange={(e) =>
                         setGrants((current) =>
@@ -242,8 +238,8 @@ export function PolicyResourceGrants({
                         )
                       }
                     >
-                      <option value="read_only">Read only</option>
-                      <option value="read_write">Read and write</option>
+                      <option value="read_only">{tr("Read only")}</option>
+                      <option value="read_write">{tr("Read and write")}</option>
                     </Select>
                   </label>
                 )}
@@ -258,20 +254,19 @@ export function PolicyResourceGrants({
           )
           .map((g) => (
             <p role="alert" key={g.id}>
-              A saved shared directory is unavailable.{" "}
+               {tr("A saved shared directory is unavailable.")}{" "}
               <button
                 type="button"
                 onClick={() =>
                   setGrants((current) => current.filter((v) => v !== g))
                 }
               >
-                Remove unavailable grant
-              </button>
+                 {tr("Remove unavailable grant")} </button>
             </p>
           ))}
         {missing.map((v, i) => (
           <p key={`${v.id}-${i}`} role="status">
-            {v.environment} requires access to {v.name}.{" "}
+            {v.environment}  {tr("requires access to")} {v.name}.{" "}
             <button
               type="button"
               disabled={
@@ -294,8 +289,7 @@ export function PolicyResourceGrants({
                 )
               }
             >
-              Add read access
-            </button>
+               {tr("Add read access")} </button>
           </p>
         ))}
         {policy ? (
@@ -311,16 +305,13 @@ export function PolicyResourceGrants({
                 )
               }
             >
-              Review resource access
-            </button>
+               {tr("Review resource access")} </button>
             <button disabled={!dirty} onClick={() => setGrants(baseline)}>
-              Discard changes
-            </button>
+               {tr("Discard changes")} </button>
           </div>
         ) : (
           <p className="hint">
-            These selections will be saved together with the new policy.
-          </p>
+             {tr("These selections will be saved together with the new policy.")} </p>
         )}
       </fieldset>
       {policy && (
@@ -353,6 +344,7 @@ export function GroupConfigurationDefaults({
   onDirty: (v: boolean) => void;
   disabled: boolean;
 }) {
+  const tr = useT();
   const [networks, setNetworks] = useState<Template[]>([]),
     [environments, setEnvironments] = useState<Template[]>([]),
     [allowed, setAllowed] = useState<Grant[]>([]),
@@ -405,14 +397,12 @@ export function GroupConfigurationDefaults({
   }, [group.policy_ids, attempt]);
   return (
     <section className="panel configuration-panel">
-      <h2>Default configuration</h2>
+      <h2>{tr("Default configuration")}</h2>
       <p>
-        Members inherit these defaults. Conflicting defaults across groups
-        require an administrator selection on the user account.
-      </p>
+         {tr("Members inherit these defaults. Conflicting defaults across groups require an administrator selection on the user account.")} </p>
       {error && (
         <p className="error" role="alert">
-          {error}{" "}
+          {tr(error)}{" "}
           <button
             type="button"
             disabled={disabled || mutation.blocked}
@@ -421,12 +411,11 @@ export function GroupConfigurationDefaults({
               setAttempt((value) => value + 1);
             }}
           >
-            Retry loading
-          </button>
+             {tr("Retry loading")} </button>
         </p>
       )}
       {!loaded && !error && (
-        <p role="status">Loading resource configuration…</p>
+        <p role="status">{tr("Loading resource configuration…")}</p>
       )}
       <fieldset disabled={!loaded || disabled || mutation.blocked}>
         {[
@@ -446,12 +435,12 @@ export function GroupConfigurationDefaults({
           },
         ].map((field) => (
           <label key={field.kind}>
-            {field.label}
+            {tr(field.label)}
             <Select aria-label={field.label}
               value={field.value}
               onChange={(e) => field.set(e.target.value)}
             >
-              <option value="">No group default</option>
+              <option value="">{tr("No group default")}</option>
               {field.options
                 .filter(
                   (o) =>
@@ -471,7 +460,7 @@ export function GroupConfigurationDefaults({
                     }
                   >
                     {o.name}
-                    {!o.enabled ? " (disabled)" : ""}
+                    {!o.enabled ? tr(" (disabled)") : ""}
                   </option>
                 ))}
             </Select>
@@ -493,8 +482,7 @@ export function GroupConfigurationDefaults({
               )
             }
           >
-            Review defaults
-          </button>
+             {tr("Review defaults")} </button>
           <button
             disabled={!dirty}
             onClick={() => {
@@ -502,8 +490,7 @@ export function GroupConfigurationDefaults({
               setEnvironment(group.environment_template_id || "");
             }}
           >
-            Discard changes
-          </button>
+             {tr("Discard changes")} </button>
         </div>
       </fieldset>
       <CatalogReview
@@ -526,6 +513,7 @@ export function UserConfiguration({
   id: string;
   onDirty: (v: boolean) => void;
 }) {
+  const tr = useT();
   const [value, setValue] = useState<ConfigurationSettings | null>(null),
     [network, setNetwork] = useState(""),
     [environment, setEnvironment] = useState(""),
@@ -570,38 +558,33 @@ export function UserConfiguration({
     <section>
       <header className="page-heading">
         <div>
-          <h1>Effective configuration</h1>
+          <h1>{tr("Effective configuration")}</h1>
           <p>
-            Review defaults, resolve group conflicts, and see where access comes
-            from.
-          </p>
+             {tr("Review defaults, resolve group conflicts, and see where access comes from.")} </p>
         </div>
       </header>
       {error && (
         <p className="error" role="alert">
-          {error}
+          {tr(error)}
           <button
             type="button"
             disabled={mutation.blocked}
             onClick={() => void load().catch((e) => setError(String(e)))}
           >
-            Reload configuration
-          </button>
+             {tr("Reload configuration")} </button>
         </p>
       )}
       {value ? (
         <>
           <section className="panel configuration-panel">
             <h2>
-              {value.needs_admin_resolution
-                ? "Administrator selection required"
-                : "Ready for new projects"}
+              {value.needs_admin_resolution ? tr("Administrator selection required") : tr("Ready for new projects")}
             </h2>
-            <p>Network: {value.default_network?.name || "Not resolved"}</p>
+            <p>{tr("Network:")} {value.default_network?.name || tr("Not resolved")}</p>
             <p>
-              Environment: {value.default_environment?.name || "Not resolved"}
+               {tr("Environment:")} {value.default_environment?.name || tr("Not resolved")}
             </p>
-            <p>These defaults do not migrate existing projects.</p>
+            <p>{tr("These defaults do not migrate existing projects.")}</p>
           </section>
           <form
             className="account-form"
@@ -639,11 +622,10 @@ export function UserConfiguration({
                     value={f.value}
                     onChange={(e) => f.set(e.target.value)}
                   >
-                    <option value="">Inherit group defaults</option>
+                    <option value="">{tr("Inherit group defaults")}</option>
                     {f.value && !f.options.some((o) => o.id === f.value) && (
                       <option value={f.value} disabled>
-                        Saved template is unavailable
-                      </option>
+                         {tr("Saved template is unavailable")} </option>
                     )}
                     {f.options.map((o) => (
                       <option key={o.id} value={o.id}>
@@ -655,20 +637,18 @@ export function UserConfiguration({
               ))}
               <div className="form-actions">
                 <button className="primary" disabled={!dirty}>
-                  Review administrator defaults
-                </button>
+                   {tr("Review administrator defaults")} </button>
                 <button
                   type="button"
                   disabled={!dirty}
                   onClick={() => accept(value)}
                 >
-                  Discard changes
-                </button>
+                   {tr("Discard changes")} </button>
               </div>
             </fieldset>
           </form>
           <section className="panel configuration-panel">
-            <h2>Authorization sources</h2>
+            <h2>{tr("Authorization sources")}</h2>
             {[...value.networks, ...value.environments].map((v) => (
               <details key={v.id}>
                 <summary>{v.name}</summary>
@@ -680,18 +660,18 @@ export function UserConfiguration({
                 </ul>
               </details>
             ))}
-            <h3>Shared directories</h3>
+            <h3>{tr("Shared directories")}</h3>
             {value.shared_volumes.map((g) => (
               <p key={g.volume.id}>
                 {g.volume.name} ·{" "}
-                {g.access === "read_write" ? "Read and write" : "Read only"}
+                {g.access === "read_write" ? tr("Read and write") : tr("Read only")}
               </p>
             ))}
           </section>
           <CatalogReview state={mutation} saved={load} />
         </>
       ) : (
-        !error && <p role="status">Loading effective configuration…</p>
+        !error && <p role="status">{tr("Loading effective configuration…")}</p>
       )}
     </section>
   );

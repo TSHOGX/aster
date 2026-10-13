@@ -1,4 +1,7 @@
 "use client";
+import type { Message } from "../../../web/i18n/locale";
+import { useT } from "../lib/i18n";
+
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Dropdown from "@radix-ui/react-dropdown-menu";
 import * as Context from "@radix-ui/react-context-menu";
@@ -21,6 +24,7 @@ export function Modal({
   drawer?: boolean;
   className?: string;
 }) {
+  const tr = useT();
   const returnFocus = useRef<HTMLElement | null>(null);
   return (
     <Dialog.Root
@@ -32,6 +36,7 @@ export function Modal({
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
         <Dialog.Content
+          data-picker-container
           className={`${drawer ? "dialog drawer" : "dialog"} ${className}`}
           aria-describedby={undefined}
           onOpenAutoFocus={() => {
@@ -50,7 +55,7 @@ export function Modal({
           <div className="dialog-heading">
             <Dialog.Title>{title}</Dialog.Title>
             <Dialog.Close asChild>
-              <button className="icon-button" aria-label="Close dialog">
+              <button className="icon-button" aria-label={tr("Close dialog")}>
                 <X size={18} />
               </button>
             </Dialog.Close>
@@ -62,7 +67,8 @@ export function Modal({
   );
 }
 export type MenuAction = {
-  label: string;
+  id?: string;
+  label: Message;
   action: () => void;
   disabled?: boolean;
   danger?: boolean;
@@ -76,10 +82,11 @@ export function Menu({
   items: MenuAction[];
   children?: ReactNode;
 }) {
+  const tr = useT();
   return (
     <Dropdown.Root>
       <Dropdown.Trigger asChild>
-        <button className="icon-button" aria-label={label} title={label}>
+        <button className="icon-button" aria-label={tr(label)} title={tr(label)}>
           {children || <MoreHorizontal size={17} />}
         </button>
       </Dropdown.Trigger>
@@ -88,11 +95,11 @@ export function Menu({
           {items.map((x) => (
             <Dropdown.Item
               className={x.danger ? "danger" : ""}
-              key={x.label}
+              key={x.id ?? (typeof x.label === "string" ? x.label : x.label.key)}
               disabled={x.disabled}
               onSelect={x.action}
             >
-              {x.label}
+              {typeof x.label === "string" ? x.label : tr(x.label)}
             </Dropdown.Item>
           ))}
         </Dropdown.Content>
@@ -107,6 +114,7 @@ export function ContextMenu({
   items: MenuAction[];
   children: ReactNode;
 }) {
+  const tr = useT();
   return (
     <Context.Root>
       <Context.Trigger asChild>{children}</Context.Trigger>
@@ -114,12 +122,12 @@ export function ContextMenu({
         <Context.Content className="menu" collisionPadding={8}>
           {items.map((x) => (
             <Context.Item
-              key={x.label}
+              key={x.id ?? (typeof x.label === "string" ? x.label : x.label.key)}
               disabled={x.disabled}
               className={x.danger ? "danger" : ""}
               onSelect={x.action}
             >
-              {x.label}
+              {typeof x.label === "string" ? x.label : tr(x.label)}
             </Context.Item>
           ))}
         </Context.Content>
@@ -134,13 +142,14 @@ export function Tip({
   label: string;
   children: ReactNode;
 }) {
+  const tr = useT();
   return (
     <Tooltip.Provider delayDuration={350}>
       <Tooltip.Root>
         <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
         <Tooltip.Portal>
           <Tooltip.Content className="tooltip" sideOffset={6}>
-            {label}
+            {tr(label)}
           </Tooltip.Content>
         </Tooltip.Portal>
       </Tooltip.Root>
@@ -158,11 +167,12 @@ export function Picker({
   options: { value: string; label: string }[];
   onChange: (value: string) => void;
 }) {
+  const tr = useT();
   return (
     <SelectPicker
-      label={label}
+      label={tr(label)}
       value={value}
-      options={options}
+      options={options.map(option => ({ ...option, label: tr(option.label) }))}
       onChange={onChange}
       showLabel={false}
     />
@@ -183,12 +193,13 @@ export function TextDialog({
   onClose: () => void;
   onSubmit: (v: string) => Promise<void>;
 }) {
+  const tr = useT();
   const [value, setValue] = useState(initial),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   return (
     <Modal
-      title={title}
+      title={tr(title)}
       open
       onClose={() => {
         if (!busy) onClose();
@@ -211,7 +222,7 @@ export function TextDialog({
         }}
       >
         <label>
-          {label}
+          {tr(label)}
           <input
             autoFocus
             required
@@ -222,15 +233,14 @@ export function TextDialog({
         </label>
         {error && (
           <p role="alert" className="error">
-            {error}
+            {tr(error)}
           </p>
         )}
         <div className="dialog-actions">
           <button type="button" disabled={busy} onClick={onClose}>
-            Cancel
-          </button>
+             {tr("Cancel")} </button>
           <button className="primary" disabled={busy || !value.trim()}>
-            {submit}
+            {tr(submit)}
           </button>
         </div>
       </form>

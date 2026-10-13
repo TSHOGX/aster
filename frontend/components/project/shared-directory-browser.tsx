@@ -248,7 +248,7 @@ export function SharedDirectoryBrowser({
       </label>
       {error && (
         <div className="settings-error" role="alert">
-          <p>{error}</p>
+          <p>{tr(error)}</p>
           <button disabled={busy || dirty} onClick={refresh}>
             {tr("Refresh")}
           </button>

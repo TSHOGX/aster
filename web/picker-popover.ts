@@ -51,14 +51,14 @@ export function usePickerPopover(maxWidth = 420, minWidth = 220) {
   }, []);
   const open = useCallback(() => {
     if (triggerRef.current?.matches(":disabled")) return;
-    setContainer(triggerRef.current?.closest("dialog") || document.body);
+    setContainer(triggerRef.current?.closest<HTMLElement>("dialog, [data-picker-container]") || document.body);
     setPosition(measure());
   }, [measure]);
   const tabFromTrigger = useCallback(
     (backwards: boolean) => {
       const trigger = triggerRef.current;
       if (!trigger) return false;
-      const root = trigger.closest("dialog") || document.body;
+      const root = trigger.closest<HTMLElement>("dialog, [data-picker-container]") || document.body;
       const controls = [
         ...root.querySelectorAll<HTMLElement>(
           'a[href],button,input:not([type="hidden"]),textarea,select,[tabindex]',

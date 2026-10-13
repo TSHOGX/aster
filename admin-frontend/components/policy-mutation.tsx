@@ -1,4 +1,6 @@
 "use client";
+import { useT } from "@/lib/i18n";
+
 import { useEffect, useRef, useState } from "react";
 import { APIError, mutate } from "@/lib/api";
 import type { PolicyResult } from "@/lib/policy-models";
@@ -29,6 +31,7 @@ export function usePolicyMutation() {
   return { pending, busy, error, notice, submit };
 }
 export function MutationStatus({ state, saved }: { state: ReturnType<typeof usePolicyMutation>; saved: (result: PolicyResult) => Promise<void> | void }) {
-  return <>{state.error && <p role="alert" className="error">{state.error}</p>}{state.notice && <p role="status">{state.notice}</p>}
-    {state.pending && !state.busy && <div className="notice"><p>The outcome is unconfirmed. Check the original request before making another change.</p><button onClick={() => void state.submit(state.pending!, saved)}>Check original request</button></div>}</>;
+  const tr = useT();
+  return <>{state.error && <p role="alert" className="error">{tr(state.error)}</p>}{state.notice && <p role="status">{tr(state.notice)}</p>}
+    {state.pending && !state.busy && <div className="notice"><p>{tr("The outcome is unconfirmed. Check the original request before making another change.")}</p><button onClick={() => void state.submit(state.pending!, saved)}>{tr("Check original request")}</button></div>}</>;
 }

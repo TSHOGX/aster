@@ -1,5 +1,8 @@
 /* eslint-disable react-hooks/set-state-in-effect -- Hydrate browser navigation and synchronize external workspace snapshots. */
 "use client";
+import { intlLocale } from "../../../web/i18n/locale";
+import { message, useT } from "../lib/i18n";
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -18,6 +21,7 @@ import { LibraryDetails, ShellHeader } from "../components/shell";
 import { Menu, Picker } from "../components/ui";
 import { useStudio } from "../components/studio-provider";
 export default function Home() {
+  const tr = useT();
   const studio = useStudio();
   const router = useRouter();
   const [q, setQ] = useState(""),
@@ -125,25 +129,24 @@ export default function Home() {
       <ShellHeader />
       <div className="catalog-heading">
         <h1>
-          Libraries <span className="count">{page?.total ?? "…"}</span>
+           {tr("Libraries")} <span className="count">{page?.total ?? "…"}</span>
         </h1>
         <button className="primary" onClick={() => setEditing(null)}>
           <Plus size={16} />
-          New library
-        </button>
+           {tr("New library")} </button>
       </div>
       <div className="catalog-toolbar">
         <label className="search">
           <Search size={16} />
           <input
-            placeholder="Search libraries…"
-            aria-label="Search libraries"
+            placeholder={tr("Search libraries…")}
+            aria-label={tr("Search libraries")}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </label>
         <Picker
-          label="Library status"
+          label={tr("Library status")}
           value={status}
           onChange={setStatus}
           options={[
@@ -153,7 +156,7 @@ export default function Home() {
           ]}
         />
         <Picker
-          label="Draft changes filter"
+          label={tr("Draft changes filter")}
           value={changes}
           onChange={setChanges}
           options={[
@@ -163,7 +166,7 @@ export default function Home() {
           ]}
         />
         <button
-          aria-label="Refresh libraries"
+          aria-label={tr("Refresh libraries")}
           onClick={() => setRefresh((n) => n + 1)}
         >
           <RefreshCw size={16} />
@@ -171,7 +174,7 @@ export default function Home() {
       </div>
       {error && (
         <p className="notice error" role="alert">
-          {error}
+          {tr(error)}
         </p>
       )}
       <div
@@ -196,15 +199,11 @@ export default function Home() {
                 <th
                   key={key}
                   aria-sort={
-                    sort === key
-                      ? direction === "asc"
-                        ? "ascending"
-                        : "descending"
-                      : "none"
+                    sort === key ? direction === "asc" ? "ascending" : "descending" : "none"
                   }
                 >
                   <button onClick={() => setOrder(key)}>
-                    {label}
+                    {tr(label)}
                     {sort === key ? (
                       direction === "asc" ? (
                         <ArrowUp size={13} />
@@ -217,20 +216,15 @@ export default function Home() {
                   </button>
                 </th>
               ))}
-              <th>Latest published version</th>
-              <th>Draft changes</th>
+              <th>{tr("Latest published version")}</th>
+              <th>{tr("Draft changes")}</th>
               <th
                 aria-sort={
-                  sort === "updated"
-                    ? direction === "asc"
-                      ? "ascending"
-                      : "descending"
-                    : "none"
+                  sort === "updated" ? direction === "asc" ? "ascending" : "descending" : "none"
                 }
               >
                 <button onClick={() => setOrder("updated")}>
-                  Updated
-                  {sort === "updated" ? (
+                   {tr("Updated")} {sort === "updated" ? (
                     direction === "asc" ? (
                       <ArrowUp size={13} />
                     ) : (
@@ -242,7 +236,7 @@ export default function Home() {
                 </button>
               </th>
               <th>
-                <span className="visually-hidden">Actions</span>
+                <span className="visually-hidden">{tr("Actions")}</span>
               </th>
             </tr>
           </thead>
@@ -257,7 +251,7 @@ export default function Home() {
                 </td>
                 <td>
                   <span className="badge">
-                    {l.archived ? "Archived" : "Active"}
+                    {l.archived ? tr("Archived") : tr("Active")}
                   </span>
                 </td>
                 <td>
@@ -268,37 +262,31 @@ export default function Home() {
                       {l.latest_published_version.label}
                     </Link>
                   ) : (
-                    <span className="muted">No published version</span>
+                    <span className="muted">{tr("No published version")}</span>
                   )}
                 </td>
                 <td>
-                  {l.draft_change_count
-                    ? `${l.draft_change_count} changed`
-                    : "No changes"}
+                  {l.draft_change_count ? tr("{value0} changed", { value0: l.draft_change_count }) : tr("No changes")}
                 </td>
                 <td>
                   <time
                     title={
-                      l.updated_at
-                        ? new Date(l.updated_at * 1000).toLocaleString()
-                        : undefined
+                      l.updated_at ? new Date(l.updated_at * 1000).toLocaleString(intlLocale()) : undefined
                     }
                   >
-                    {relativeTime(l.updated_at)}
+                    {relativeTime(l.updated_at, intlLocale())}
                   </time>
                 </td>
                 <td>
                   <Menu
-                    label={`Actions for ${l.name}`}
+                    label={tr("Actions for {value0}", { value0: l.name })}
                     items={[
                       {
-                        label: "Edit library details",
+                        label: message("Edit library details"),
                         action: () => setEditing(l),
                       },
                       {
-                        label: l.archived
-                          ? "Restore library"
-                          : "Archive library",
+                        label: l.archived ? message("Restore library") : message("Archive library"),
                         action: () => void archive(l),
                         danger: !l.archived,
                       },
@@ -309,18 +297,14 @@ export default function Home() {
             ))}
           </tbody>
         </table>
-        {!page && loading && <p className="empty-state">Loading libraries…</p>}
+        {!page && loading && <p className="empty-state">{tr("Loading libraries…")}</p>}
         {page?.items.length === 0 && (
           <div className="empty-state">
             <h2>
-              {q || changes || status !== "active"
-                ? "No matching libraries"
-                : "No libraries yet"}
+              {q || changes || status !== "active" ? tr("No matching libraries") : tr("No libraries yet")}
             </h2>
             <p>
-              {q || changes
-                ? "Adjust your search or filters."
-                : "Create a library to begin."}
+              {q || changes ? tr("Adjust your search or filters.") : tr("Create a library to begin.")}
             </p>
           </div>
         )}
@@ -342,8 +326,7 @@ export default function Home() {
               }
             }}
           >
-            Load more libraries
-          </button>
+             {tr("Load more libraries")} </button>
         )}
       </div>
       {editing !== undefined && (

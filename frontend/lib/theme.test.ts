@@ -9,7 +9,7 @@ it("requires a supported cache bound to the exact immutable account", () => {
   values.set(appearanceKey("b"), JSON.stringify({ account_id: "a", revision: 3, theme_mode: "dark", accent: "violet" }));
   expect(cachedAppearance("b")).toBeNull();
   values.set(appearanceKey("b"), JSON.stringify({ account_id: "b", revision: 3, theme_mode: "dark", accent: "violet" }));
-  expect(cachedAppearance("b")).toEqual({ revision: 3, theme_mode: "dark", accent: "violet" });
+  expect(cachedAppearance("b")).toEqual({ revision: 3, theme_mode: "dark", accent: "violet", language: "system" });
   expect(validAppearance({ theme_mode: ["dark"], accent: "blue" })).toBe(false);
   expect(validAppearance({ theme_mode: "system", accent: "red" })).toBe(false);
 });

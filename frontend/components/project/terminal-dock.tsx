@@ -137,7 +137,7 @@ export function TerminalDock({
             ...live
               .filter((t) => !open.includes(t.id))
               .map((t) => ({
-                label: `${tr("Open")} ${t.title} · ${t.state}`,
+                label: `${tr("Open")} ${t.title} · ${tr(t.state)}`,
                 action: () => onChange([...open, t.id], t.id),
               })),
             ...(selected

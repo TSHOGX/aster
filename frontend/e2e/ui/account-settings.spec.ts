@@ -88,7 +88,7 @@ test("appearance modes and accents persist with readable controls and follow sys
 
 test("stale and failed appearance saves keep an explicit preview without erasing unrelated changes", async ({ page }) => {
   await workspaceFixture(page);
-  let saved: Preferences = { revision: 1, theme_mode: "light", accent: "neutral" };
+  let saved: Preferences = { language: "system", revision: 1, theme_mode: "light", accent: "neutral" };
   let failure: "conflict" | "error" | null = "conflict";
   const mutations: Record<string, unknown>[] = [];
   await page.route("**/api/me/preferences", route => {
@@ -99,7 +99,7 @@ test("stale and failed appearance saves keep an explicit preview without erasing
         return route.fulfill({ status: 409, json: { error: "changed elsewhere" } });
       }
       if (failure === "error") return route.fulfill({ status: 503, json: { error: "save unavailable" } });
-      saved = { revision: saved.revision + 1, theme_mode: body.theme_mode ?? saved.theme_mode, accent: body.accent ?? saved.accent };
+      saved = { language: "system", revision: saved.revision + 1, theme_mode: body.theme_mode ?? saved.theme_mode, accent: body.accent ?? saved.accent };
     }
     return route.fulfill({ json: saved });
   });
@@ -118,7 +118,7 @@ test("stale and failed appearance saves keep an explicit preview without erasing
   await expect(page.locator("html")).toHaveAttribute("data-accent", "green");
   await dialog.getByRole("button", { name: "Use saved settings", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-accent", "blue");
-  expect(saved).toEqual({ revision: 3, theme_mode: "dark", accent: "blue" });
+  expect(saved).toEqual({ language: "system", revision: 3, theme_mode: "dark", accent: "blue" });
 });
 
 for (const cacheOwner of ["previous-account", "researcher"]) test(`initial preferences use only a cache bound to the same account (${cacheOwner})`, async ({ page }) => {
@@ -128,12 +128,12 @@ for (const cacheOwner of ["previous-account", "researcher"]) test(`initial prefe
     localStorage.setItem(`account-appearance:${cacheOwner}`, JSON.stringify({ account_id: cacheOwner, revision: 4, theme_mode: "dark", accent: "violet" }));
   }, cacheOwner);
   const expected = cacheOwner === "researcher" ? { theme_mode: "dark", accent: "violet" } : { theme_mode: "system", accent: "neutral" };
-  let preferences: Preferences = { revision: 0, theme_mode: "system", accent: "neutral" };
+  let preferences: Preferences = { language: "system", revision: 0, theme_mode: "system", accent: "neutral" };
   await page.route("**/api/me/preferences", route => {
     if (route.request().method() === "PATCH") {
       const body = route.request().postDataJSON();
-      expect(body).toEqual({ expected_revision: 0, ...expected });
-      preferences = { revision: 1, theme_mode: body.theme_mode, accent: body.accent };
+      expect(body).toEqual({ expected_revision: 0, language: "system", ...expected });
+      preferences = { language: "system", revision: 1, theme_mode: body.theme_mode, accent: body.accent };
     }
     return route.fulfill({ json: preferences });
   });
@@ -148,7 +148,7 @@ for (const cacheOwner of ["previous-account", "researcher"]) test(`initial prefe
 test("same-account tabs converge and logout clears the identity binding", async ({ context, page }) => {
   const other = await context.newPage();
   let signedIn = true;
-  let saved: Preferences = { revision: 1, theme_mode: "light", accent: "neutral" };
+  let saved: Preferences = { language: "system", revision: 1, theme_mode: "light", accent: "neutral" };
   for (const target of [page, other]) {
     await workspaceFixture(target);
     await target.route("**/api/auth/session", route => route.fulfill(signedIn ? {json:{ id: "researcher", username: "researcher", display_name: "researcher", status: "active", role: "user", revision: 1, session_revision: 1, must_change_password: false }} : {status:401,json:{error:"login required"}}));
@@ -156,7 +156,7 @@ test("same-account tabs converge and logout clears the identity binding", async 
     await target.route("**/api/me/preferences", route => {
       if (route.request().method() === "PATCH") {
         const body = route.request().postDataJSON();
-        saved = { revision: saved.revision + 1, theme_mode: body.theme_mode ?? saved.theme_mode, accent: body.accent ?? saved.accent };
+        saved = { language: "system", revision: saved.revision + 1, theme_mode: body.theme_mode ?? saved.theme_mode, accent: body.accent ?? saved.accent };
       }
       return route.fulfill({ json: saved });
     });
@@ -235,7 +235,7 @@ for (const width of [390, 1600]) test(`advanced configuration repairs revoked ne
   await page.emulateMedia({ colorScheme: width === 390 ? "dark" : "light" });
   const network = { id: "replacement", name: "Research network", enabled: true, description: "", sources: ["researchers"] };
   const environment = { ...network, id: "environment", name: "Research environment" };
-  const preferences = { revision: 1, network_template_id: "", environment_template_id: "", show_shared_volumes: true };
+  const preferences = { language: "system", revision: 1, network_template_id: "", environment_template_id: "", show_shared_volumes: true };
   await page.route("**/api/me/configuration", route => route.fulfill({ json: { networks: [network], environments: [environment], shared_volumes: [], preferences, default_network: network, default_environment: environment, selected_network: network, selected_environment: environment, network_default_source: [], environment_sources: [], needs_admin_resolution: false } }));
   const project = { project_id: "battery", title: "Battery research", state: "paused", suspended: true, revision: 1, network_template_id: "revoked", network_name: "Old network", environment_name: environment.name };
   await page.route("**/api/me/project-configurations", route => route.fulfill({ json: { projects: [project] } }));
@@ -357,4 +357,32 @@ test("settings disclosures keep dialog and header geometry stable", async ({ pag
   await toggle.click();
   expect(await dialog.boundingBox()).toEqual(frame);
   expect(await header.boundingBox()).toEqual(heading);
+});
+
+test("account language overrides browser language and persists without closing settings", async ({ page }) => {
+  await workspaceFixture(page);
+  let saved: Preferences = { revision: 1, theme_mode: "system", accent: "neutral", language: "system" };
+  await page.route("**/api/me/preferences", route => {
+    if (route.request().method() === "PATCH") {
+      const body = route.request().postDataJSON();
+      saved = { ...saved, ...body, revision: saved.revision + 1 };
+    }
+    return route.fulfill({ json: saved });
+  });
+  await page.goto("/");
+  const dialog = await openSettings(page);
+  await chooseValue(dialog.getByRole("combobox", { name: "Language", exact: true }), "zh");
+  await expect(page.getByRole("dialog", { name: "设置", exact: true })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-Hans");
+  expect(saved.language).toBe("zh");
+  await page.goto("/?view=schedules");
+  const scheduleStatus = page.locator('.schedule-row .schedule-status[data-state="active"]');
+  await expect(scheduleStatus).toContainText("已启用");
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-Hans");
+  await page.getByRole("button", { name: "账户", exact: true }).click();
+  await page.getByRole("menuitem", { name: "设置", exact: true }).click();
+  await chooseValue(page.getByRole("combobox", { name: "语言", exact: true }), "en");
+  await expect(page.locator("html")).toHaveAttribute("lang", "en");
+  expect(saved.language).toBe("en");
 });

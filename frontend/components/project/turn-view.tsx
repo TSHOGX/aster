@@ -1,4 +1,5 @@
 "use client";
+import { intlLocale } from "@web/i18n/locale";
 import { useEffect, useState } from "react";
 import { Check, ChevronRight, Copy, ThumbsUp, ThumbsDown } from "lucide-react";
 import { MarkdownView } from "@/components/workbench/markdown-view";
@@ -322,9 +323,9 @@ export function TurnView({
             {finishedAt && Number.isFinite(Date.parse(finishedAt)) && (
               <time
                 dateTime={finishedAt}
-                title={new Date(finishedAt).toLocaleString()}
+                title={new Date(finishedAt).toLocaleString(intlLocale())}
               >
-                {new Date(finishedAt).toLocaleTimeString(undefined, {
+                {new Date(finishedAt).toLocaleTimeString(intlLocale(), {
                   hour: "numeric",
                   minute: "2-digit",
                 })}

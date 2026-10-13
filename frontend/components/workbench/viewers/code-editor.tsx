@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { EditorState, type Extension } from "@codemirror/state";
+import { useEffect, useRef, useState } from "react";
+import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -24,6 +24,10 @@ import { css } from "@codemirror/lang-css";
 import { xml } from "@codemirror/lang-xml";
 import { yaml } from "@codemirror/lang-yaml";
 
+import { useLocale } from "@web/i18n";
+import { translateText } from "@web/i18n/text";
+import { currentLocale } from "@web/i18n/locale";
+import { editorPhrases } from "@web/i18n/editor";
 import { codeMirrorLang, type CodeMirrorLang } from "@/lib/languages";
 
 // Instantiate the CodeMirror language extension for a loader key. The key→ext
@@ -94,6 +98,9 @@ type Props = {
 };
 
 export function CodeEditor({ path, initialText, onChange }: Props) {
+  const locale = useLocale();
+  const [localization] = useState(() => new Compartment());
+  const viewRef = useRef<EditorView | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
 
@@ -108,7 +115,7 @@ export function CodeEditor({ path, initialText, onChange }: Props) {
     const lang = languageForPath(path);
     const extensions: Extension[] = [
       lineNumbers(),
-      EditorView.contentAttributes.of({ "aria-label": `Edit ${path}` }),
+      localization.of([EditorState.phrases.of(editorPhrases(currentLocale())), EditorView.contentAttributes.of({ "aria-label": translateText(currentLocale(), "Edit {path}", { path }) })]),
       EditorState.transactionFilter.of((transaction) =>
         transaction.newDoc.length <= 1 << 20 ? transaction : [],
       ),
@@ -131,10 +138,13 @@ export function CodeEditor({ path, initialText, onChange }: Props) {
       state: EditorState.create({ doc: initialText, extensions }),
       parent: hostRef.current,
     });
-    return () => view.destroy();
+    viewRef.current = view;
+    return () => { viewRef.current = null; view.destroy(); };
     // Rebuild only when switching files; text edits flow through updateListener.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
+
+  useEffect(() => { viewRef.current?.dispatch({ effects: localization.reconfigure([EditorState.phrases.of(editorPhrases(locale)), EditorView.contentAttributes.of({ "aria-label": translateText(locale, "Edit {path}", { path }) })]) }); }, [locale, localization, path]);
 
   return <div ref={hostRef} className="h-full min-h-0 overflow-hidden" />;
 }

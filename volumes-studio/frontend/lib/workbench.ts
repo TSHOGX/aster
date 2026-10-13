@@ -59,10 +59,10 @@ export class WriteQueue {
     return next;
   }
 }
-export function relativeTime(seconds?: number | null) {
+export function relativeTime(seconds?: number | null, locale = "en") {
   if (!seconds) return "—";
   const d = Math.round((seconds * 1000 - Date.now()) / 1000);
-  const f = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  const f = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
   if (Math.abs(d) < 60) return f.format(d, "second");
   if (Math.abs(d) < 3600) return f.format(Math.round(d / 60), "minute");
   if (Math.abs(d) < 86400) return f.format(Math.round(d / 3600), "hour");

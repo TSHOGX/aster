@@ -1,14 +1,16 @@
+import { setLanguage, validLanguage, type Language } from "./i18n/locale";
 export type Theme = "light" | "dark";
 export type ThemeMode = "system" | Theme;
 export type Accent = "neutral" | "blue" | "green" | "violet";
 export type Appearance = { theme_mode: ThemeMode; accent: Accent };
-export type Preferences = Appearance & { revision: number };
-export const DEFAULT_APPEARANCE: Appearance = { theme_mode: "system", accent: "neutral" };
+export type PreferenceValues = Appearance & { language: Language };
+export type Preferences = PreferenceValues & { revision: number };
+export const DEFAULT_APPEARANCE: PreferenceValues = { theme_mode: "system", accent: "neutral", language: "system" };
 export const ACTIVE_APPEARANCE_KEY = "account-appearance-active";
 export const appearanceKey = (id: string) => `account-appearance:${id}`;
 const THEME_COLOR: Record<Theme, string> = { light: "#f7f7f8", dark: "#191a1c" };
 
-export function validAppearance(value: unknown): value is Appearance {
+export function validAppearance(value: unknown): value is Appearance & { language?: unknown } {
   if (!value || typeof value !== "object") return false;
   const fields = value as Record<string, unknown>;
   return typeof fields.theme_mode === "string" && ["system", "light", "dark"].includes(fields.theme_mode) &&
@@ -18,8 +20,8 @@ export function cachedAppearance(id: string): Preferences | null {
   try {
     const value = JSON.parse(localStorage.getItem(appearanceKey(id)) || "null");
     const revision: unknown = value?.revision;
-    if (value?.account_id !== id || typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0 || !validAppearance(value)) return null;
-    return { theme_mode: value.theme_mode, accent: value.accent, revision };
+    if (value?.account_id !== id || typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0 || !validAppearance(value) || value.language !== undefined && !validLanguage(value.language)) return null;
+    return { theme_mode: value.theme_mode, accent: value.accent, language: validLanguage(value.language) ? value.language : "system", revision };
   } catch { return null; }
 }
 export function cacheAppearance(id: string, value: Preferences) {
@@ -38,7 +40,8 @@ export function clearAppearanceBinding() {
   try { localStorage.removeItem(ACTIVE_APPEARANCE_KEY); } catch {}
   applyAppearance(DEFAULT_APPEARANCE);
 }
-export function applyAppearance(value: Appearance) {
+export function applyAppearance(value: Appearance & { language?: Language }) {
+  setLanguage(validLanguage(value.language) ? value.language : "system");
   const theme = value.theme_mode === "system"
     ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : value.theme_mode;
   document.documentElement.dataset.theme = theme;

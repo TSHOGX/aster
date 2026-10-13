@@ -195,7 +195,7 @@ export function FilePreview({
     setRetry(n => n + 1);
   };
   if (error && !loaded)
-    return <PreviewStatus maxBytes={maxBytes} path={path} href={downloadHref} title={errorTitle} description={error} size={progress.total} onRetry={retryable ? restart : undefined} />;
+    return <PreviewStatus maxBytes={maxBytes} path={path} href={downloadHref} title={errorTitle} description={tr(error)} size={progress.total} onRetry={retryable ? restart : undefined} />;
   if (!loaded)
     return <PreviewStatus maxBytes={maxBytes} path={path} href={downloadHref}
       title={tr(phase === "canceled" ? "Preview canceled." : phase === "preparing" ? "Preparing preview…" : "Loading preview…")}
@@ -209,7 +209,7 @@ export function FilePreview({
       )}
       {error && (
         <p className="notice error" role="alert">
-          {error}{" "}
+          {tr(error)}{" "}
           {retryable && <button onClick={() => { setError(""); setRetry(n => n + 1); }}>{tr("Retry")}</button>}
           {downloadHref && <a href={downloadHref} download>
             {tr("Download")}

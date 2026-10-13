@@ -9,6 +9,10 @@ import { tags } from "@lezer/highlight";
 import { sourceLanguage } from "@/lib/source-language";
 import { sourceDecorations } from "@/lib/source-decorations";
 import { reservePreview } from "@/lib/preview-budget";
+import { useLocale } from "@web/i18n";
+import { translateText } from "@web/i18n/text";
+import { currentLocale } from "@web/i18n/locale";
+import { editorPhrases } from "@web/i18n/editor";
 import { useT } from "@/lib/i18n";
 
 const sourceTheme = EditorView.theme({
@@ -35,6 +39,8 @@ export function SourcePreview({ path, text, initialPosition, onPosition }: {
   onPosition?: (offset: number) => void;
 }) {
   const tr = useT();
+  const locale = useLocale();
+  const [localization] = useState(() => new Compartment());
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const positionRef = useRef(onPosition);
@@ -51,7 +57,7 @@ export function SourcePreview({ path, text, initialPosition, onPosition }: {
     const extensions: Extension[] = [
       EditorState.readOnly.of(true),
       EditorState.transactionFilter.of(transaction => transaction.docChanged ? [] : transaction),
-      EditorView.contentAttributes.of({ "aria-label": `${tr("Source")} ${path}` }),
+      localization.of([EditorState.phrases.of(editorPhrases(currentLocale())), EditorView.contentAttributes.of({ "aria-label": translateText(currentLocale(), "Source {path}", { path }) })]),
       lineNumbers(), search({ top: true }), highlightSelectionMatches(),
       keymap.of([...searchKeymap]), sourceTheme, syntaxHighlighting(tokenTheme),
       language.of([]),
@@ -99,6 +105,7 @@ export function SourcePreview({ path, text, initialPosition, onPosition }: {
     // The content identity owns the view; mode changes recreate it from its saved position.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, text]);
+  useEffect(() => { viewRef.current?.dispatch({ effects: localization.reconfigure([EditorState.phrases.of(editorPhrases(locale)), EditorView.contentAttributes.of({ "aria-label": translateText(locale, "Source {path}", { path }) })]) }); }, [locale, localization, path]);
   const jump = () => {
     const view = viewRef.current;
     const number = Number(target);

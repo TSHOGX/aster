@@ -31,7 +31,7 @@ export default async function RootLayout({
         <meta name="theme-color" content="#f6f8fb" />
         {/* Set data-theme before first paint to avoid a light-mode flash. */}
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
-        {/* Corrects <html lang> from the server's "en" to the browser's actual
+        {/* Corrects <html lang> from the server's "en" to the selected
             language, before paint. Screen readers pick a pronunciation voice from
             this attribute, so a Chinese UI announced as English is a real defect,
             not a cosmetic one. The visible strings are translated client-side by

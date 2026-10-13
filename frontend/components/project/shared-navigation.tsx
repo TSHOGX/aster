@@ -162,7 +162,7 @@ export function SharedNavigation({
           )}
           {error && (
             <p className="list-hint" role="alert">
-              {error}
+              {tr(error)}
               <button onClick={() => setRevision((n) => n + 1)}>
                 {tr("Retry")}
               </button>
@@ -256,7 +256,7 @@ function ReceivedList({
       )}
       {error && (
         <p role="alert" className="list-hint">
-          {error}
+          {tr(error)}
           <button onClick={() => setAttempt((n) => n + 1)}>
             {tr("Retry")}
           </button>

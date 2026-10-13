@@ -119,7 +119,7 @@ export function NewChat({
       </div>
       {error && (
         <p className="notice error" role="alert">
-          {error}
+          {tr(error)}
         </p>
       )}
       {pending && error && (

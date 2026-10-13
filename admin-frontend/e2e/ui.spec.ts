@@ -185,7 +185,7 @@ test("Project Volume metadata distinguishes allocated initialization from reserv
   } }));
   await page.goto("/admin/projects/partial");
   await expect(page.getByRole("heading", { name: "Partial initialization", exact: true })).toBeVisible();
-  await expect(page.getByText("9007199254740993 bytes", { exact: true })).toBeVisible();
+  await expect(page.getByText("9,007,199,254,740,993 bytes", { exact: true })).toBeVisible();
   await expect(page.getByText("initializing", { exact: true })).toBeVisible();
   await expect(page.getByText("reserved", { exact: true })).toBeVisible();
   await expect(page.getByText("Not confirmed by this observation", { exact: true })).toBeVisible();
@@ -397,4 +397,38 @@ test("expanding resource constraints keeps page and table columns stable", async
   expect(await geometry()).toEqual(before);
   await toggle.click();
   expect(await geometry()).toEqual(before);
+});
+
+for (const width of [390, 1440]) test(`Admin follows account language and preserves edits at ${width}px`, async ({ page }, info) => {
+  await adminFixture(page);
+  await page.setViewportSize({ width, height: 900 });
+  let preferences = { revision: 1, theme_mode: "system", accent: "neutral", language: "en" };
+  await page.route("**/api/me/preferences", route => route.fulfill({ json: preferences }));
+  await page.goto("/admin/users/user-id");
+  await page.getByLabel("Display name", { exact: true }).fill("Unsaved English Name");
+  preferences = { ...preferences, revision: 2, language: "zh" };
+  await page.evaluate(() => window.dispatchEvent(new StorageEvent("storage", { key: "account-appearance:admin-id" })));
+  await expect(page.getByRole("link", { name: "资源中心", exact: true })).toBeVisible();
+  await expect(page.getByLabel("显示名称", { exact: true })).toHaveValue("Unsaved English Name");
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-Hans");
+  await expect(page.getByRole("combobox", { name: "语言", exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
+  await page.screenshot({ path: info.outputPath(`admin-zh-${width}.png`) });
+  await page.getByRole("button", { name: "保存更改", exact: true }).click();
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-Hans");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Unsaved English Name");
+});
+
+test("Chinese browser preferences apply throughout Admin navigation and policy controls", async ({ browser }) => {
+  const context = await browser.newContext({ locale: "zh-CN", viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  await adminFixture(page);
+  await page.goto("/admin/policies/standard-policy");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "运行智能体", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "审计", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "审计", exact: true })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-Hans");
+  await context.close();
 });

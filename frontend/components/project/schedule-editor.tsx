@@ -583,7 +583,7 @@ export function ScheduleEditor({
       )}
       {error && (
         <p role="alert" className="notice error">
-          {error}
+          {tr(error)}
         </p>
       )}
       {uncertain && (

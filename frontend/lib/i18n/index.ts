@@ -1,18 +1,16 @@
 "use client";
 
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback } from "react";
 
-import { DEFAULT_LOCALE, detectLocale, type Locale } from "./locale";
-import { EN, type MessageKey } from "./messages-en";
+import { type Locale } from "./locale";
+import { useLocale } from "@web/i18n";
+export { useLocale } from "@web/i18n";
+import { type MessageKey } from "./messages-en";
+import { translateText } from "@web/i18n/text";
 import { ZH } from "./messages-zh";
 
 export type { Locale, MessageKey };
 export { localeInitScript } from "./locale";
-
-const CATALOGS: Record<Locale, Record<MessageKey, string>> = {
-  en: EN,
-  zh: ZH,
-};
 
 export type MessageParams = Record<string, string | number>;
 
@@ -23,36 +21,18 @@ export type MessageParams = Record<string, string | number>;
  * rendering as `{count} steps` is an obvious bug, while ` steps` looks like a
  * plausible string and can ship unnoticed.
  */
-export function format(template: string, params?: MessageParams): string {
-  if (!params) return template;
-  return template.replace(/\{(\w+)\}/g, (whole, name: string) =>
-    name in params ? String(params[name]) : whole,
-  );
-}
+export { format } from "@web/i18n/locale";
 
 /** Looks a key up in one locale, falling back to English then to the key. */
 export function translate(
   locale: Locale,
-  key: MessageKey,
+  key: string,
   params?: MessageParams,
 ): string {
-  const template = CATALOGS[locale]?.[key] ?? EN[key] ?? key;
-  return format(template, params);
+  return translateText(locale, key, params, ZH);
 }
 
-// Hydration starts from the English server snapshot, then React applies the
-// detected browser preference without mismatching server-rendered markup.
-export function useLocale(): Locale {
-  return useSyncExternalStore(
-    // The browser's language list does not change during a page's life, so there
-    // is nothing to subscribe to — an empty unsubscribe satisfies the contract.
-    () => () => {},
-    detectLocale,
-    () => DEFAULT_LOCALE,
-  );
-}
-
-export type TFunction = (key: MessageKey, params?: MessageParams) => string;
+export type TFunction = (key: string, params?: MessageParams) => string;
 
 /**
  * Returns the translator for the current locale.
@@ -63,7 +43,7 @@ export type TFunction = (key: MessageKey, params?: MessageParams) => string;
 export function useT(): TFunction {
   const locale = useLocale();
   return useCallback(
-    (key: MessageKey, params?: MessageParams) => translate(locale, key, params),
+    (key: string, params?: MessageParams) => translate(locale, key, params),
     [locale],
   );
 }

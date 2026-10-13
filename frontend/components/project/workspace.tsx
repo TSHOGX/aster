@@ -142,7 +142,7 @@ export function ProjectWorkspace({
       </header>
       {project.failure && (
         <p className="notice error" role="alert">
-          {project.failure}
+          {tr(project.failure)}
         </p>
       )}
       <div

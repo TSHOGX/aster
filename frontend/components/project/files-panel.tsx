@@ -906,7 +906,7 @@ export function FilesPanel({
       </header>
       {error && (
         <p className="notice error" role="alert">
-          {error}
+          {tr(error)}
         </p>
       )}
       {uncertain && (
@@ -953,7 +953,7 @@ export function FilesPanel({
       {!filesAvailable ? (
         <div className="empty-state">
           <p>
-            {tr("The workspace is")} {project.state}.
+            {tr("The workspace is")} {tr(project.state)}.
           </p>
         </div>
       ) : (
