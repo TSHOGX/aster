@@ -106,6 +106,9 @@ volumes-studio/frontend/test-results/
 volumes-studio/frontend/playwright-report/
 !admin-frontend/AGENTS.md
 
+# Shared documentation maintenance instructions.
+!/docs/AGENTS.md
+
 # Generated TypeScript/Next declarations and incremental state.
 next-env.d.ts
 *.tsbuildinfo
