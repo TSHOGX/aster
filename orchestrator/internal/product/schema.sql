@@ -393,6 +393,10 @@ CREATE TABLE conversation_dirty_turns (
 );
 
 CREATE TABLE conversation_grants (
+ revision INTEGER NOT NULL DEFAULT 1,
+ shared_at TEXT NOT NULL DEFAULT '',
+ paths TEXT NOT NULL DEFAULT '[]',
+ allow_download INTEGER NOT NULL DEFAULT 0 CHECK(allow_download IN (0,1)),
  suspended INTEGER NOT NULL DEFAULT 0 CHECK(suspended IN (0,1)),
  session_id TEXT NOT NULL REFERENCES sessions(id),
  reader_id TEXT NOT NULL REFERENCES accounts(id) CHECK(reader_id<>''),
@@ -780,6 +784,9 @@ CREATE TABLE share_files (
 );
 
 CREATE TABLE shares (
+ allow_download INTEGER NOT NULL DEFAULT 0 CHECK(allow_download IN (0,1)),
+ access_revision INTEGER NOT NULL DEFAULT 1,
+ bundle_id TEXT NOT NULL DEFAULT '',
  suspended INTEGER NOT NULL DEFAULT 0 CHECK(suspended IN (0,1)),
  id TEXT PRIMARY KEY,
  project_id TEXT NOT NULL,
@@ -1759,3 +1766,63 @@ CREATE TABLE environment_update_members (
 );
 CREATE TRIGGER environment_update_member_immutable BEFORE UPDATE ON environment_update_members
 BEGIN SELECT RAISE(ABORT,'immutable deployment cohort'); END;
+
+-- Durable sanitized history, independent of projection pruning and source deletion.
+CREATE TABLE conversation_bundles (
+ id TEXT PRIMARY KEY, title TEXT NOT NULL, frontier INTEGER NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE bundle_items (
+ bundle_id TEXT NOT NULL REFERENCES conversation_bundles(id) ON DELETE CASCADE,
+ id TEXT NOT NULL, turn_id TEXT NOT NULL, position INTEGER NOT NULL, block_index INTEGER NOT NULL,
+ data TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(bundle_id,id)
+);
+CREATE INDEX bundle_items_position ON bundle_items(bundle_id,position,block_index,id);
+CREATE TABLE bundle_messages (
+ bundle_id TEXT NOT NULL REFERENCES conversation_bundles(id) ON DELETE CASCADE,
+ id TEXT NOT NULL, turn_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL,
+ sequence INTEGER NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(bundle_id,id)
+);
+CREATE TABLE bundle_turns (
+ bundle_id TEXT NOT NULL REFERENCES conversation_bundles(id) ON DELETE CASCADE,
+ id TEXT NOT NULL, sequence INTEGER NOT NULL, content TEXT NOT NULL, data TEXT NOT NULL,
+ PRIMARY KEY(bundle_id,id)
+);
+CREATE TABLE session_imports (
+ session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+ bundle_id TEXT NOT NULL REFERENCES conversation_bundles(id),
+ file_map TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE conversation_copies (
+ id TEXT PRIMARY KEY, actor TEXT NOT NULL REFERENCES accounts(id),
+ request_digest TEXT NOT NULL, source_kind TEXT NOT NULL, source_id TEXT NOT NULL,
+ source_token_digest TEXT NOT NULL DEFAULT '', source_revision INTEGER NOT NULL,
+ target_project TEXT NOT NULL REFERENCES projects(id), target_session TEXT NOT NULL,
+ title TEXT NOT NULL, paths TEXT NOT NULL, source_paths TEXT NOT NULL DEFAULT '[]', files TEXT NOT NULL DEFAULT '[]',
+ bundle_id TEXT NOT NULL REFERENCES conversation_bundles(id),
+ state TEXT NOT NULL CHECK(state IN ('preparing','committed','complete','failed','canceled')),
+ committed INTEGER NOT NULL DEFAULT 0, cleaned INTEGER NOT NULL DEFAULT 0, retry_generation INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX conversation_copy_work ON conversation_copies(state,updated_at);
+
+CREATE TABLE received_revisions (reader_id TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 1);
+CREATE TRIGGER received_grant_insert AFTER INSERT ON conversation_grants BEGIN
+ INSERT INTO received_revisions VALUES(NEW.reader_id,1) ON CONFLICT(reader_id) DO UPDATE SET revision=revision+1;
+END;
+CREATE TRIGGER received_grant_update AFTER UPDATE ON conversation_grants BEGIN
+ INSERT INTO received_revisions VALUES(NEW.reader_id,1) ON CONFLICT(reader_id) DO UPDATE SET revision=revision+1;
+END;
+CREATE TRIGGER received_grant_delete AFTER DELETE ON conversation_grants BEGIN
+ INSERT INTO received_revisions VALUES(OLD.reader_id,1) ON CONFLICT(reader_id) DO UPDATE SET revision=revision+1;
+END;
+CREATE TRIGGER received_session_update AFTER UPDATE OF title,deletion_intent ON sessions BEGIN
+ UPDATE received_revisions SET revision=revision+1 WHERE reader_id IN (SELECT reader_id FROM conversation_grants WHERE session_id=NEW.id);
+END;
+CREATE TRIGGER received_project_update AFTER UPDATE OF state ON projects BEGIN
+ UPDATE received_revisions SET revision=revision+1 WHERE reader_id IN (SELECT g.reader_id FROM conversation_grants g JOIN sessions s ON s.id=g.session_id WHERE s.project_id=NEW.id);
+END;
+CREATE TRIGGER received_owner_update AFTER UPDATE OF display_name,username,status ON accounts BEGIN
+ UPDATE received_revisions SET revision=revision+1 WHERE reader_id IN (SELECT g.reader_id FROM conversation_grants g JOIN sessions s ON s.id=g.session_id JOIN projects p ON p.id=s.project_id WHERE p.owner_id=NEW.id);
+END;

@@ -92,6 +92,7 @@ export function normalizeNavigation(n: Navigation): Navigation {
     }
   } else if (n.view === "shared" && n.conversation) {
     base.conversation = n.conversation;
+    base.message = n.message;
   } else if (n.view === "schedules") {
     if (n.scheduleMode === "create") base.scheduleMode = "create";
     else if (n.schedule && n.scheduleProject) {

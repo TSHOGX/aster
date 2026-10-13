@@ -24,6 +24,7 @@ import (
 )
 
 type Config struct {
+	HistoryDigest                                                                string
 	Session, Incarnation, StateRoot, Workspace, ConfigRoot, SharedRoot, PiBinary string
 	PiArgs                                                                       []string
 	Environment                                                                  []string
@@ -139,6 +140,9 @@ func Run(ctx context.Context, c Config, input io.Reader, output, diagnostics io.
 		return err
 	}
 	nativeFile := filepath.Join(nativeRoot, "session.jsonl")
+	if err = installHistory(c, nativeFile); err != nil {
+		return err
+	}
 	args := c.PiArgs
 	if args == nil {
 		args = []string{"--mode", "rpc", "--session", nativeFile, "--session-dir", nativeRoot, "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--append-system-prompt", "/usr/local/share/project-runtime/system.md"}

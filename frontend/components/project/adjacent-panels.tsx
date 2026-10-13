@@ -1,4 +1,5 @@
 "use client";
+import { ShareFilePicker } from "./share-file-picker";
 import { Select } from "@web/select";
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -14,7 +15,16 @@ import {
   type Share,
 } from "@/lib/project-api";
 import { useCapabilities } from "./capability-provider";
-type ReaderAccount = { id: string; username: string; display_name: string; status: string; suspended?: boolean };
+type ReaderAccount = {
+  revision?: number;
+  paths?: string[];
+  allow_download?: boolean;
+  id: string;
+  username: string;
+  display_name: string;
+  status: string;
+  suspended?: boolean;
+};
 export function SharePanel({
   project,
   sessions,
@@ -29,15 +39,19 @@ export function SharePanel({
     initialSession || sessions[0]?.id || "",
   );
   const can = useCapabilities();
-  const canShare = can("conversations.share"), canPublish = can("shares.public.create");
+  const canShare = can("conversations.share"),
+    canPublish = can("shares.public.create");
   const [reader, setReader] = useState("");
   const [query, setQuery] = useState("");
   const [candidates, setCandidates] = useState<ReaderAccount[]>([]);
   const [readers, setReaders] = useState<ReaderAccount[]>([]);
   const [readerAfter, setReaderAfter] = useState("");
-  const [paths, setPaths] = useState("");
+  const [paths, setPaths] = useState<string[]>([]);
+  const [readerPaths, setReaderPaths] = useState<string[]>([]);
+  const [allowDownload, setAllowDownload] = useState(false);
+  const [readerDownload, setReaderDownload] = useState(false);
   const [shares, setShares] = useState<Share[]>([]);
- const reactivationRequests = useRef(new Map<string,string>());
+  const reactivationRequests = useRef(new Map<string, string>());
   const [link, setLink] = useState("");
   const [error, setError] = useState("");
   const refresh = useCallback(async () => {
@@ -45,7 +59,9 @@ export function SharePanel({
     try {
       const [snapshots, granted] = await Promise.all([
         api<{ shares: Share[] }>(`${sessionURL(project, session)}/shares`),
-        api<{ readers: ReaderAccount[] }>(`${sessionURL(project, session)}/readers?after=${encode(readerAfter)}&limit=50`),
+        api<{ readers: ReaderAccount[] }>(
+          `${sessionURL(project, session)}/readers?after=${encode(readerAfter)}&limit=50`,
+        ),
       ]);
       setShares(snapshots.shares);
       setReaders(granted.readers);
@@ -59,12 +75,27 @@ export function SharePanel({
   useEffect(() => {
     let gone = false;
     const timer = setTimeout(() => {
-      if (!session || !canShare) { setCandidates([]); return; }
-      void api<{readers:ReaderAccount[]}>(`${sessionURL(project, session)}/reader-candidates?q=${encode(query)}&limit=50`)
-        .then(result => { if (!gone) setCandidates(result.readers); })
-        .catch(error => { if (!gone) { setCandidates([]); setError(String(error)); } });
+      if (!session || !canShare) {
+        setCandidates([]);
+        return;
+      }
+      void api<{ readers: ReaderAccount[] }>(
+        `${sessionURL(project, session)}/reader-candidates?q=${encode(query)}&limit=50`,
+      )
+        .then((result) => {
+          if (!gone) setCandidates(result.readers);
+        })
+        .catch((error) => {
+          if (!gone) {
+            setCandidates([]);
+            setError(String(error));
+          }
+        });
     }, 200);
-    return () => { gone = true; clearTimeout(timer); };
+    return () => {
+      gone = true;
+      clearTimeout(timer);
+    };
   }, [project, session, query, canShare]);
   const act = async (fn: () => Promise<unknown>) => {
     setError("");
@@ -80,7 +111,7 @@ export function SharePanel({
       <h2>{tr("Share a conversation")}</h2>
       <p>
         {tr(
-          "Readers receive the conversation and explicitly frozen files. Live Project resources stay private.",
+          "Shared content includes tool activity. Copies already made remain with the recipient.",
         )}
       </p>
       {error && (
@@ -90,7 +121,20 @@ export function SharePanel({
       )}
       <label>
         {tr("Agent Session")}
-        <Select aria-label={tr("Agent Session")} value={session} onChange={(e) => { setSession(e.target.value); setReader(""); setReaderAfter(""); setLink(""); }}>
+        <Select
+          aria-label={tr("Agent Session")}
+          value={session}
+          onChange={(e) => {
+            setSession(e.target.value);
+            setReader("");
+            setReaderAfter("");
+            setLink("");
+            setPaths([]);
+            setReaderPaths([]);
+            setAllowDownload(false);
+            setReaderDownload(false);
+          }}
+        >
           <option value="">{tr("Choose a Session")}</option>
           {sessions.map((s) => (
             <option key={s.id} value={s.id}>
@@ -99,36 +143,136 @@ export function SharePanel({
           ))}
         </Select>
       </label>
-      <form onSubmit={event => {
-        event.preventDefault();
-        if (!canShare || !candidates.some(account => account.id === reader)) return;
-        void act(() => command(`${sessionURL(project, session)}/readers`, { reader_id: reader }));
-      }}>
-        <label>{tr("Find a reader")}
-          <input value={query} maxLength={128} disabled={!canShare} onChange={event => { setQuery(event.target.value); setReader(""); }} />
+      <h3>{tr("Share with users")}</h3>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!canShare || !candidates.some((account) => account.id === reader))
+            return;
+          void act(() =>
+            command(`${sessionURL(project, session)}/readers`, {
+              reader_id: reader,
+              paths: readerPaths,
+              allow_download: readerDownload,
+            }),
+          );
+        }}
+      >
+        <label>
+          {tr("Find a reader")}
+          <input
+            value={query}
+            maxLength={128}
+            disabled={!canShare}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setReader("");
+            }}
+          />
         </label>
-        <label>{tr("Reader account")}
-          <Select aria-label={tr("Reader account")} value={reader} required disabled={!canShare} onChange={event => setReader(event.target.value)}>
+        <label>
+          {tr("Reader account")}
+          <Select
+            aria-label={tr("Reader account")}
+            value={reader}
+            required
+            disabled={!canShare}
+            onChange={(event) => setReader(event.target.value)}
+          >
             <option value="">{tr("Choose an account")}</option>
-            {candidates.map(account => <option key={account.id} value={account.id}>{account.display_name} (@{account.username})</option>)}
+            {candidates.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.display_name} (@{account.username})
+              </option>
+            ))}
           </Select>
         </label>
-        <button disabled={!session || !canShare || !reader}>{tr("Grant conversation access")}</button>
+        <ShareFilePicker
+          project={project}
+          value={readerPaths}
+          onChange={setReaderPaths}
+          disabled={!canShare}
+        />
+        <p>{tr("Selected files update automatically.")}</p>
+        <label>
+          <input
+            type="checkbox"
+            checked={readerDownload}
+            disabled={!canShare}
+            onChange={(e) => setReaderDownload(e.target.checked)}
+          />
+          {tr("Allow file downloads")}
+        </label>
+        <small>
+          {tr("Preview remains available when downloads are disabled.")}
+        </small>
+        <button disabled={!session || !canShare || !reader}>
+          {tr("Grant conversation access")}
+        </button>
       </form>
-      {readers.map(account => <article className="schedule-card" key={account.id}>
-        <strong>{account.display_name}</strong><small>@{account.username} · {account.status}{account.suspended && ` · ${tr("Access suspended")}`}</small>
-        {account.suspended && <button type="button" disabled={!canShare} onClick={() => void act(async () => {
-          const key=`reader/${session}/${account.id}`;
-          let requestID=reactivationRequests.current.get(key);
-          if(!requestID) {requestID=crypto.randomUUID();reactivationRequests.current.set(key,requestID);}
-          await command(`${sessionURL(project,session)}/readers/${encode(account.id)}/reactivate`,{request_id:requestID});
-          reactivationRequests.current.delete(key);
-        })}>{tr("Reactivate reader")}</button>}
-        <button type="button" onClick={() => void act(() => command(`${sessionURL(project, session)}/readers/${encode(account.id)}`, undefined, "DELETE"))}>{tr("Revoke reader")}</button>
-      </article>)}
+      {readers.map((account) => (
+        <article className="schedule-card" key={account.id}>
+          <strong>{account.display_name}</strong>
+          <small>
+            @{account.username} · {account.status}
+            {account.suspended && ` · ${tr("Access suspended")}`}
+          </small>
+          <ReaderAccessEditor
+            key={`${account.id}:${account.revision}`}
+            project={project}
+            session={session}
+            account={account}
+            disabled={!canShare || !!account.suspended}
+            onSave={refresh}
+          />
+          {account.suspended && (
+            <button
+              type="button"
+              disabled={!canShare}
+              onClick={() =>
+                void act(async () => {
+                  const key = `reader/${session}/${account.id}`;
+                  let requestID = reactivationRequests.current.get(key);
+                  if (!requestID) {
+                    requestID = crypto.randomUUID();
+                    reactivationRequests.current.set(key, requestID);
+                  }
+                  await command(
+                    `${sessionURL(project, session)}/readers/${encode(account.id)}/reactivate`,
+                    { request_id: requestID },
+                  );
+                  reactivationRequests.current.delete(key);
+                })
+              }
+            >
+              {tr("Reactivate reader")}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() =>
+              void act(() =>
+                command(
+                  `${sessionURL(project, session)}/readers/${encode(account.id)}`,
+                  undefined,
+                  "DELETE",
+                ),
+              )
+            }
+          >
+            {tr("Revoke reader")}
+          </button>
+        </article>
+      ))}
       <div className="row-actions">
-        {readerAfter && <button onClick={() => setReaderAfter("")}>{tr("Latest")}</button>}
-        {readers.length === 50 && <button onClick={() => setReaderAfter(readers.at(-1)!.id)}>{tr("More readers")}</button>}
+        {readerAfter && (
+          <button onClick={() => setReaderAfter("")}>{tr("Latest")}</button>
+        )}
+        {readers.length === 50 && (
+          <button onClick={() => setReaderAfter(readers.at(-1)!.id)}>
+            {tr("More readers")}
+          </button>
+        )}
       </div>
       <form
         onSubmit={(e) => {
@@ -137,22 +281,29 @@ export function SharePanel({
             const result = await command<{
               token: string;
             }>(`${sessionURL(project, session)}/shares`, {
-              paths: paths
-                .split("\n")
-                .map((p) => p.trim())
-                .filter(Boolean),
+              paths,
+              allow_download: allowDownload,
             });
             setLink(`${location.origin}/s/${result.token}`);
           });
         }}
       >
+        <h3>{tr("Public links")}</h3>
+        <ShareFilePicker
+          maxCount={16}
+          project={project}
+          value={paths}
+          onChange={setPaths}
+          disabled={!canPublish}
+        />
         <label>
-          {tr("Frozen files (one Project path per line)")}
-          <textarea
-            value={paths}
-            onChange={(e) => setPaths(e.target.value)}
-            placeholder="results/report.md"
+          <input
+            type="checkbox"
+            checked={allowDownload}
+            disabled={!canPublish}
+            onChange={(e) => setAllowDownload(e.target.checked)}
           />
+          {tr("Allow file downloads")}
         </label>
         <button disabled={!session || !canPublish} className="primary">
           {tr("Create public snapshot \u00B7 7 days")}
@@ -170,20 +321,57 @@ export function SharePanel({
       )}
       {shares.map((share) => (
         <article className="schedule-card" key={share.id}>
-          <strong>{share.title}</strong> · {share.state}{share.suspended && ` · ${tr("Access suspended")}`}
+          <strong>{share.title}</strong> · {share.state}
+          {share.suspended && ` · ${tr("Access suspended")}`}
           <small>
             {tr("Expires")}
             {new Date(share.expires_at).toLocaleString()}
           </small>
+          <label>
+            <input
+              type="checkbox"
+              checked={!!share.allow_download}
+              disabled={!canPublish || share.state !== "published"}
+              onChange={(e) =>
+                void act(() =>
+                  command(
+                    `${projectURL(project)}/shares/${encode(share.id)}`,
+                    {
+                      revision: share.access_revision,
+                      allow_download: e.target.checked,
+                    },
+                    "PATCH",
+                  ),
+                )
+              }
+            />
+            {tr("Allow file downloads")}
+          </label>
           <div className="row-actions">
-            {share.state === "published" && share.suspended && <button disabled={!canPublish} onClick={() => void act(async () => {
-              let requestID=reactivationRequests.current.get(share.id);
-              if(!requestID) {requestID=crypto.randomUUID();reactivationRequests.current.set(share.id,requestID);}
-              await command(`${projectURL(project)}/shares/${encode(share.id)}/reactivate`,{request_id:requestID});
-              reactivationRequests.current.delete(share.id);
-            })}>{tr("Reactivate public link")}</button>}
+            {share.state === "published" && share.suspended && (
+              <button
+                disabled={!canPublish}
+                onClick={() =>
+                  void act(async () => {
+                    let requestID = reactivationRequests.current.get(share.id);
+                    if (!requestID) {
+                      requestID = crypto.randomUUID();
+                      reactivationRequests.current.set(share.id, requestID);
+                    }
+                    await command(
+                      `${projectURL(project)}/shares/${encode(share.id)}/reactivate`,
+                      { request_id: requestID },
+                    );
+                    reactivationRequests.current.delete(share.id);
+                  })
+                }
+              >
+                {tr("Reactivate public link")}
+              </button>
+            )}
             {share.state === "published" && (
-              <button disabled={!canPublish}
+              <button
+                disabled={!canPublish}
                 onClick={() =>
                   void act(async () => {
                     const result = await command<{
@@ -215,6 +403,70 @@ export function SharePanel({
         </article>
       ))}
     </section>
+  );
+}
+function ReaderAccessEditor({
+  project,
+  session,
+  account,
+  disabled,
+  onSave,
+}: {
+  project: string;
+  session: string;
+  account: ReaderAccount;
+  disabled: boolean;
+  onSave: () => Promise<void>;
+}) {
+  const tr = useT();
+  const [open, setOpen] = useState(false);
+  const [paths, setPaths] = useState(account.paths || []);
+  const [download, setDownload] = useState(!!account.allow_download);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  return (
+    <div>
+      <button type="button" onClick={() => setOpen((v) => !v)}>
+        {tr("Shared files")}
+      </button>
+      {open && (
+        <>
+          <ShareFilePicker
+            project={project}
+            value={paths}
+            onChange={setPaths}
+            disabled={disabled || busy}
+          />
+          <label>
+            <input
+              type="checkbox"
+              checked={download}
+              disabled={disabled || busy}
+              onChange={(e) => setDownload(e.target.checked)}
+            />
+            {tr("Allow file downloads")}
+          </label>
+          <button
+            disabled={disabled || busy}
+            onClick={() => {
+              setBusy(true);
+              setError("");
+              void command(
+                `${sessionURL(project, session)}/readers/${encode(account.id)}`,
+                { revision: account.revision, paths, allow_download: download },
+                "PATCH",
+              )
+                .then(onSave)
+                .catch((e) => setError(String(e)))
+                .finally(() => setBusy(false));
+            }}
+          >
+            {tr("Save access")}
+          </button>
+          {error && <p role="alert">{error}</p>}
+        </>
+      )}
+    </div>
   );
 }
 export function Inbox({
@@ -261,10 +513,22 @@ export function Inbox({
           <p>{notice.body}</p>
           <small>{new Date(notice.created_at).toLocaleString()}</small>
           <div className="row-actions">
-            {notice.schedule_id && notice.project_id && <a href={`/?view=schedules&schedule_project=${encode(notice.project_id)}&schedule=${encode(notice.schedule_id)}&status=exhausted`}>{tr("View task")}</a>}
+            {notice.schedule_id && notice.project_id && (
+              <a
+                href={`/?view=schedules&schedule_project=${encode(notice.project_id)}&schedule=${encode(notice.schedule_id)}&status=exhausted`}
+              >
+                {tr("View task")}
+              </a>
+            )}
             {notice.project_id && notice.session_id && (
               <button
-                onClick={() => onOpen(notice.project_id!, notice.session_id,notice.message_id)}
+                onClick={() =>
+                  onOpen(
+                    notice.project_id!,
+                    notice.session_id,
+                    notice.message_id,
+                  )
+                }
               >
                 {tr("Open conversation")}
               </button>

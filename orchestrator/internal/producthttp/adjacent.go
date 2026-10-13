@@ -133,7 +133,7 @@ func (s *Server) readNotification(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) sharedConversations(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	items, err := s.Store.SharedConversations(r.Context(), actorFrom(r.Context()), q.Get("after"), intParam(q, "limit", 100))
+	items, err := s.Store.ReceivedConversations(r.Context(), actorFrom(r.Context()), q.Get("source"), q.Get("after"), intParam(q, "limit", 50))
 	if err != nil {
 		fail(w, err)
 		return
@@ -150,7 +150,7 @@ func (s *Server) conversationMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"messages": items})
 }
 func (s *Server) sharedConversation(w http.ResponseWriter, r *http.Request) {
-	item, err := s.Store.SharedConversation(r.Context(), actorFrom(r.Context()), r.PathValue("session"))
+	item, err := s.Store.ReceivedConversation(r.Context(), actorFrom(r.Context()), r.PathValue("session"))
 	if err != nil {
 		fail(w, err)
 		return
@@ -159,12 +159,14 @@ func (s *Server) sharedConversation(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) grantConversation(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ReaderID string `json:"reader_id"`
+		ReaderID      string   `json:"reader_id"`
+		Paths         []string `json:"paths"`
+		AllowDownload bool     `json:"allow_download"`
 	}
 	if !decode(w, r, s.Config.bodyLimit(), &body) {
 		return
 	}
-	if err := s.Store.GrantConversation(r.Context(), s.scope(r), r.PathValue("session"), body.ReaderID); err != nil {
+	if err := s.Store.GrantConversationAccess(r.Context(), s.scope(r), r.PathValue("session"), body.ReaderID, product.ReaderAccess{Paths: body.Paths, AllowDownload: body.AllowDownload}); err != nil {
 		fail(w, err)
 		return
 	}
@@ -257,8 +259,9 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Paths     []string  `json:"paths"`
-		ExpiresAt time.Time `json:"expires_at"`
+		Paths         []string  `json:"paths"`
+		AllowDownload bool      `json:"allow_download"`
+		ExpiresAt     time.Time `json:"expires_at"`
 	}
 	if !decode(w, r, s.Config.bodyLimit(), &body) {
 		return
@@ -266,7 +269,7 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 	if body.ExpiresAt.IsZero() {
 		body.ExpiresAt = time.Now().Add(7 * 24 * time.Hour)
 	}
-	share, token, err := s.Shares.Create(r.Context(), s.scope(r), r.PathValue("session"), body.Paths, body.ExpiresAt)
+	share, token, err := s.Shares.CreateWithPolicy(r.Context(), s.scope(r), r.PathValue("session"), body.Paths, body.ExpiresAt, body.AllowDownload)
 	if err != nil {
 		fail(w, err)
 		return
@@ -303,7 +306,7 @@ func (s *Server) publicShare(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"id": share.ID, "title": share.Title, "files": share.Files, "expires_at": share.ExpiresAt})
+	writeJSON(w, 200, map[string]any{"id": share.ID, "title": share.Title, "files": share.Files, "expires_at": share.ExpiresAt, "allow_download": share.AllowDownload, "access_revision": share.AccessRevision, "can_copy": share.Frontier > 0})
 }
 func (s *Server) publicMessages(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -328,6 +331,16 @@ func (s *Server) publicFile(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("path")
 	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 	defer cancel()
+	metadata, err := s.Store.PublicShare(ctx, token)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	download := path.Base(r.URL.Path) != "content"
+	if download && !metadata.AllowDownload {
+		fail(w, product.ErrForbidden)
+		return
+	}
 	file, meta, err := s.Shares.OpenFile(ctx, token, name)
 	if err != nil {
 		fail(w, err)
@@ -336,7 +349,14 @@ func (s *Server) publicFile(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(name)}))
+	if media := mime.TypeByExtension(path.Ext(name)); media == "image/png" || media == "image/jpeg" || media == "image/gif" || media == "image/webp" || media == "image/avif" {
+		w.Header().Set("Content-Type", media)
+	}
+	disposition := "inline"
+	if download {
+		disposition = "attachment"
+	}
+	w.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": path.Base(name)}))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Length", fmt.Sprint(meta.Size))
 	controller := http.NewResponseController(w)
@@ -347,7 +367,7 @@ func (s *Server) publicFile(w http.ResponseWriter, r *http.Request) {
 			panic(http.ErrAbortHandler)
 		}
 		if time.Now().After(checkAt) {
-			if _, err := s.Store.PublicShare(ctx, token); err != nil {
+			if current, err := s.Store.PublicShare(ctx, token); err != nil || current.AccessRevision != metadata.AccessRevision {
 				panic(http.ErrAbortHandler)
 			}
 			checkAt = time.Now().Add(500 * time.Millisecond)

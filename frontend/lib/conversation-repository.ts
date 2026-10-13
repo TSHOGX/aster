@@ -1,8 +1,8 @@
+import { ownedConversation, type ConversationSource } from "./conversation-source";
 import {
   api,
   APIError,
   encode,
-  sessionURL,
   type AgentSession,
   type Turn,
   type TurnSummary,
@@ -156,15 +156,16 @@ export class ConversationRepository {
   };
   constructor(
     private resources: ResourceStore,
-    project: string,
-    session: string,
+    source: string | ConversationSource,
+    session = "",
   ) {
+    const resolved = typeof source === "string" ? ownedConversation(source, session) : source;
     this.key = {
-      project,
+      project: resolved.key,
       kind: "conversation",
-      identity: `conversation:${session}`,
+      identity: `conversation:${resolved.session}`,
     };
-    this.base = sessionURL(project, session) + "/view";
+    this.base = resolved.base + "/view";
     const cached = resources.peek<CachedConversation>(this.key);
     if (cached) {
       this.windows = cached.windows;

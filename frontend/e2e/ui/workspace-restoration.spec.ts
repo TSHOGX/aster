@@ -1,3 +1,4 @@
+import { ConversationFixture } from "./conversation-fixture";
 import { expect, test, type Page } from "@playwright/test";
 import { workspaceFixture } from "./fixture";
 const key="project-view:researcher:expanded";
@@ -66,10 +67,11 @@ test("a missing Project URL returns to the workbench without a global error",asy
 test("a granted conversation can use the shared fallback without a false global 404",async({page})=>{
   await workspaceFixture(page);
   await page.route(/\/api\/projects\/foreign(?:[/?]|$)/,route=>route.fulfill({status:404,json:{error:"not found"}}));
-  await page.route("**/api/conversations?*",route=>route.fulfill({json:{conversations:[{project_id:"foreign",session_id:"granted",title:"Shared result",revision:1}]}}));
-  await page.route("**/api/conversations/granted/messages?*",route=>route.fulfill({json:{messages:[{id:"shared-message",role:"assistant",content:"Shared answer",sequence:1,created_at:"2026-09-24T00:00:00Z"}]}}));
-  await page.route("**/api/conversations/granted/head",route=>route.fulfill({json:{}}));
-  await page.route("**/api/conversations/granted", route => route.fulfill({json:{project_id:"foreign",session_id:"granted",title:"Shared result",revision:1}}));
+  await page.route("**/api/conversations?*",route=>route.fulfill({json:{conversations:[{source:{id:"alice",display_name:"Alice",username:"alice"},paths:[],allow_download:false,session_id:"granted",title:"Shared result",revision:1}]}}));
+  const view=new ConversationFixture();
+  await page.route("**/api/conversations/granted/view/**",route=>route.fulfill({json:view.reply({session:{id:"granted",project_id:"",title:"Shared result",state:"idle",revision:1,control_revision:1,deletion:0},messages:[{id:"shared-message",role:"assistant",content:"Shared answer",sequence:1,created_at:"2026-09-24T00:00:00Z"}]},new URL(route.request().url()))}));
+  await page.route("**/api/conversations/granted/turn-index?*",route=>route.fulfill({json:{turns:[]}}));
+  await page.route("**/api/conversations/granted", route => route.fulfill({json:{source:{id:"alice",display_name:"Alice",username:"alice"},paths:[],allow_download:false,session_id:"granted",title:"Shared result",revision:1}}));
   await page.goto("/?project=foreign&session=granted");
   await expect(page).toHaveURL(/view=shared&conversation=granted/);
   await expect(page.getByText("Shared answer",{exact:true})).toBeVisible();

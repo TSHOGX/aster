@@ -393,7 +393,25 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 				environment = append(environment, "PROJECT_PLATFORM_ENDPOINT="+endpoint)
 			}
 		}
-		stream, err = a.Backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: i.Reference, IdempotencyKey: i.ID, Command: a.RunnerBinary, Arguments: append([]string{"--session", i.SessionID, "--incarnation", i.ID}, resources.Profile.RunnerPaths()...), Directory: resources.Profile.RolePath("workspace"), Environment: environment})
+		arguments := append([]string{"--session", i.SessionID, "--incarnation", i.ID}, resources.Profile.RunnerPaths()...)
+		history, historyErr := a.Store.ImportedNativeHistory(ctx, i.SessionID, resources.Profile.RolePath("workspace"))
+		if historyErr != nil {
+			return historyErr
+		}
+		if len(history) > 0 {
+			installer, ok := a.Backend.(interface {
+				InstallSessionHistory(context.Context, sandbox.Reference, string, string, []byte) (string, error)
+			})
+			if !ok {
+				return errors.New("runtime does not support history imports")
+			}
+			digest, e := installer.InstallSessionHistory(ctx, resources.Reference, resources.Profile.RolePath("runtime"), i.SessionID, history)
+			if e != nil {
+				return e
+			}
+			arguments = append(arguments, "--history-digest", digest)
+		}
+		stream, err = a.Backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: i.Reference, IdempotencyKey: i.ID, Command: a.RunnerBinary, Arguments: arguments, Directory: resources.Profile.RolePath("workspace"), Environment: environment})
 	} else {
 		stream, err = a.Backend.ConnectProcess(ctx, i.Reference, 0)
 	}

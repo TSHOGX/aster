@@ -7,7 +7,8 @@ export function loginReturnPath(value: string | null, origin: string): string | 
     const path = value.split(/[?#]/, 1)[0];
     if (target.pathname !== path) return null;
     const admin = /^\/admin(?:\/[a-zA-Z0-9_-]+)*\/?$/.test(path);
-    if (!admin && path !== "/api/identity/v1/authorize") return null;
+    const publicShare = /^\/s\/[a-zA-Z0-9_-]{43}$/.test(path);
+    if (!admin && !publicShare && path !== "/api/identity/v1/authorize") return null;
     return target.pathname + target.search + target.hash;
   } catch { return null; }
 }

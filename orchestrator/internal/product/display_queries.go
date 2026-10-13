@@ -42,6 +42,9 @@ type ViewHead struct {
 }
 
 func liveDisplaySession(ctx context.Context, q queryer, scope Scope, id string) (Session, error) {
+	if receivedView(ctx) {
+		return receivedSession(ctx, q, scope, id)
+	}
 	p, err := ownedProject(ctx, q, scope)
 	if err != nil {
 		return Session{}, err
@@ -131,6 +134,14 @@ func viewHead(ctx context.Context, q queryer, scope Scope, session string) (View
 	if err != nil {
 		return out, err
 	}
+	var fileMap string
+	if e := q.QueryRowContext(ctx, `SELECT file_map FROM session_imports WHERE session_id=?`, session).Scan(&fileMap); e == nil {
+		if err = json.Unmarshal([]byte(fileMap), &out.Session.ImportedFiles); err != nil {
+			return out, err
+		}
+	} else if !errors.Is(e, sql.ErrNoRows) {
+		return out, e
+	}
 	out.ControlRevision = out.Session.ControlRevision
 	if err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_items WHERE session_id=?)`, session).Scan(&out.HasContent); err != nil {
 		return out, err
@@ -168,6 +179,10 @@ func viewHead(ctx context.Context, q queryer, scope Scope, session string) (View
 		if pending {
 			out.State = "catching_up"
 		}
+	}
+	if receivedView(ctx) {
+		out.Session = Session{ID: out.Session.ID, Title: out.Session.Title, State: out.Session.State, Revision: out.Session.Revision}
+		return out, nil
 	}
 	rows, err := q.QueryContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE session_id=? AND (disposition IN ('pending','claimed') OR EXISTS(SELECT 1 FROM execution_runs r WHERE r.prompt_id=turns.id AND r.state IN ('starting','running','stopping','unknown') AND r.acknowledged=0)) ORDER BY CASE WHEN EXISTS(SELECT 1 FROM execution_runs r WHERE r.prompt_id=turns.id AND r.state IN ('starting','running','stopping','unknown') AND r.acknowledged=0) THEN 0 ELSE 1 END,sequence DESC LIMIT 33`, session)
 	if err != nil {
@@ -533,6 +548,9 @@ func (s *Store) ConversationDetail(ctx context.Context, scope Scope, session, it
 
 // Rebuild changes only derived data and generation. It cannot replay commands.
 func (s *Store) RebuildConversation(ctx context.Context, scope Scope, session string) error {
+	if receivedView(ctx) {
+		return ErrForbidden
+	}
 	return s.write(ctx, func(tx *sql.Tx) error {
 		if _, err := liveDisplaySession(ctx, tx, scope, session); err != nil {
 			return err
@@ -545,7 +563,16 @@ func (s *Store) RebuildConversation(ctx context.Context, scope Scope, session st
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO conversation_dirty_turns SELECT session_id,id FROM turns WHERE session_id=?`, session); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO conversation_pending_sessions VALUES(?)`, session)
+		var bundle string
+		err := tx.QueryRowContext(ctx, `SELECT bundle_id FROM session_imports WHERE session_id=?`, session).Scan(&bundle)
+		if err == nil {
+			if err = installBundle(ctx, tx, session, scope.ProjectID, bundle, s.timestamp()); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO conversation_pending_sessions VALUES(?)`, session)
 		return err
 	})
 }

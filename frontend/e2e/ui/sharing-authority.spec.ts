@@ -10,7 +10,7 @@ test("sharing selects an immutable recipient and retains revoke", async ({page})
   await page.getByRole("button", {name:"Grant conversation access"}).click();
   await expect(page.getByRole("button", {name:"Revoke reader"})).toBeVisible();
   const grant = fixture.calls.find(call=>call.method==="POST" && call.path.endsWith("/readers"));
-  expect(grant?.body).toEqual({reader_id:"account-bob"});
+  expect(grant?.body).toEqual({reader_id:"account-bob",paths:[],allow_download:false});
   await expect(page.getByRole("button", {name:"Create public snapshot · 7 days"})).toBeDisabled();
   await page.getByRole("button", {name:"Revoke reader"}).click();
   await expect(page.getByRole("button", {name:"Revoke reader"})).toHaveCount(0);

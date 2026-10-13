@@ -16,6 +16,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "canonical runtime --root and one Session identity required")
 		os.Exit(2)
 	}
+	if err := projectfiles.RemoveTree(*root, ".history-"+flag.Arg(0)+".jsonl"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if err := projectfiles.RemoveTree(filepath.Join(*root, "sessions"), flag.Arg(0)); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

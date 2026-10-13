@@ -365,8 +365,9 @@ test("a recovered stream prevents a fallback read before React effect cleanup", 
         data: JSON.stringify({ protocol_version: 1, cursor: "ready", resource_kind: "ready" }),
       }));
       private fail = () => this.onerror?.();
-      constructor() {
+      constructor(url:string) {
         super();
+        if(url.startsWith("/api/conversations")){return;}
         window.addEventListener("test-stream-recovery", this.ready);
         window.addEventListener("test-stream-failure", this.fail);
         if (first) { first = false; queueMicrotask(this.ready); }

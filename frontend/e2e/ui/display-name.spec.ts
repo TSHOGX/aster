@@ -28,7 +28,7 @@ test("deployment display name appears on sign-in, navigation and public shares",
     json: { messages: [] },
   }));
   await page.goto("/s/display-fixture");
-  await expect(page.locator(".public-share header > small")).toContainText(displayName);
+  await expect(page.locator(".public-share-brand > small")).toContainText(displayName);
   await expect(page).toHaveTitle(displayName);
   await expect(page.locator('meta[name="application-name"]')).toHaveAttribute("content", displayName);
 });

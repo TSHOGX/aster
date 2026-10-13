@@ -1,7 +1,7 @@
 /* Application chrome uses quiet surfaces; content establishes the hierarchy. */
 .project-shell,
 .project-login,
-.public-share {
+.public-share-reader {
   color: var(--color-foreground);
   background: var(--color-surface);
   font-size: 14px;
@@ -18,7 +18,7 @@
 }
 .project-shell button,
 .project-login button,
-.public-share button,
+.public-share-reader button,
 .action-menu button,
 .app-dialog button {
   display: inline-flex;
@@ -39,7 +39,7 @@
 }
 .project-shell button:hover,
 .project-login button:hover,
-.public-share button:hover,
+.public-share-reader button:hover,
 .action-menu button:hover,
 .app-dialog button:hover {
   background: var(--color-surface-muted);
@@ -1002,7 +1002,7 @@
   gap: 7px;
   min-height: 40px;
   padding: 8px 14px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--color-border);
   border-radius: 9px;
   background: var(--surface);
   color: var(--foreground);
@@ -1327,26 +1327,6 @@
 .project-login .primary {
   width: 100%;
   padding: 11px;
-}
-.public-share {
-  max-width: 928px;
-  min-height: 100dvh;
-  margin: auto;
-  padding: 40px 24px;
-}
-.public-share header {
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--color-border);
-  margin-bottom: 20px;
-}
-.public-share h1 {
-  font-size: 28px;
-  font-weight: 550;
-}
-.public-share .selected-file {
-  height: 65vh;
-  border: 1px solid var(--color-border);
-  margin-top: 20px;
 }
 .panel-heading {
   display: flex;
@@ -2117,3 +2097,52 @@ details[open] > .activity-row .activity-chevron {
 @media (forced-colors: active) {
   .selection-picker-option[data-active="true"], .time-picker-values > div[aria-selected="true"] { outline: 1px solid Highlight; outline-offset: -1px; }
 }
+
+.project-shell .shared-toggle { width: 100%; justify-content: flex-start; gap: 6px; background: transparent; border: 0; text-align: left; cursor: pointer; }
+.shared-navigation .project-toggle small { color: var(--color-foreground-muted); font-size: .75em; }
+.shared-workspace .workspace-title small { display: block; }
+.shared-workspace .conversation-stage { display: flex; position: relative; min-height: 0; flex: 1; }
+.shared-workspace .conversation-scroll { min-height: 0; flex: 1; overflow: auto; }
+.shared-files { width: min(var(--shared-file-width, 640px), 70%); flex-shrink: 0; min-width: 320px; overflow: auto; border-left: 1px solid var(--color-border); }
+.shared-files nav { display: flex; flex-direction: column; align-items: stretch; padding: 8px; }
+.shared-files nav button { text-align: left; overflow-wrap: anywhere; }
+.shared-fullscreen .shared-files { width: 100%; }
+@media (max-width: 960px) { .shared-files { position: absolute; inset: 0; z-index: 5; width: 100%; background: var(--color-surface); } }
+
+.public-share-reader { height: 100dvh; overflow: hidden; }
+
+.copy-dialog { width: min(560px, calc(100vw - 32px)); max-height: 85dvh; overflow: auto; border: 1px solid var(--color-border); border-radius: 12px; padding: 24px; }
+.copy-dialog fieldset, .share-file-picker { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.copy-dialog label { display: flex; gap: 8px; flex-wrap: wrap; }
+.copy-dialog::backdrop { background: #0006; }
+
+.shared-files .file-tree { width: 200px; }
+.shared-files .file-tree-scroll { height: 100%; }
+.shared-workspace .agent-panel { flex: 1; min-width: 0; }
+
+.project-shell .shared-toggle { color: var(--color-foreground-muted); font-size: 12px; padding-left: 12px; }
+.shared-navigation { flex-shrink: 1; min-height: 0; }
+.shared-navigation > .project-list { max-height: 40vh; }
+.public-share-reader { display: flex; flex-direction: column; }
+.public-share-brand { padding: 8px 24px; color: var(--color-foreground-muted); border-bottom: 1px solid var(--color-border); }
+.public-share-reader .project-workspace { min-height: 0; flex: 1; }
+.public-share-reader [hidden] { display: none !important; }
+.copy-dialog { color: var(--color-foreground); background: var(--color-surface); }
+
+.shared-files-splitter { display: flex; }
+@media (max-width: 960px) { .shared-files-splitter { display: none; } .shared-workspace .workspace-heading { flex-wrap: wrap; height: auto; min-height: 52px; } .shared-workspace .workspace-title { min-width: 120px; } .shared-files { width: 100%; } .shared-files .file-tree { width: 140px; } }
+
+.copy-tasks { padding: 8px 12px; font-size: 12px; color: var(--color-foreground-muted); }
+.copy-task { display: flex; flex-direction: column; align-items: flex-start; margin: 8px 0; }
+.copy-dialog { margin: auto; }
+.copy-dialog h2 { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+.copy-dialog input[type="radio"],
+.copy-dialog input[type="checkbox"],
+.share-file-picker input[type="checkbox"],
+.adjacent-panel input[type="checkbox"] { width: 16px; min-width: 16px; height: 16px; margin: 0; flex: 0 0 16px; }
+.copy-dialog label:has(input[type="radio"]),
+.copy-dialog label:has(input[type="checkbox"]),
+.share-file-picker label,
+.adjacent-panel label:has(input[type="checkbox"]) { display: flex; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 32px; }
+.copy-dialog label:has(input[type="checkbox"]) { overflow-wrap: anywhere; }
+.copy-dialog fieldset { border: 0; }

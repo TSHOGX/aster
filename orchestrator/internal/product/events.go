@@ -3,6 +3,7 @@ package product
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 )
 
 // Events returns bounded projection invalidations. The transport reauthorizes
@@ -62,6 +63,15 @@ func (s *Store) ScheduleEvents(ctx context.Context, actor string, after int64, l
 	return out, rows.Err()
 }
 func (s *Store) GrantConversation(ctx context.Context, scope Scope, session, reader string) error {
+	return s.grantConversationAccess(ctx, scope, session, reader, nil)
+}
+func (s *Store) GrantConversationAccess(ctx context.Context, scope Scope, session, reader string, access ReaderAccess) error {
+	if err := validReaderAccess(access); err != nil {
+		return err
+	}
+	return s.grantConversationAccess(ctx, scope, session, reader, &access)
+}
+func (s *Store) grantConversationAccess(ctx context.Context, scope Scope, session, reader string, access *ReaderAccess) error {
 	if !validText(reader, 256) {
 		return ErrInvalid
 	}
@@ -91,8 +101,22 @@ func (s *Store) GrantConversation(ctx context.Context, scope Scope, session, rea
 		if suspended {
 			return Admission("reader_suspended", ErrConflict)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO conversation_grants(session_id,reader_id) VALUES(?,?) ON CONFLICT(session_id,reader_id) DO UPDATE SET revoked=0,suspended=0`, session, reader); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO conversation_grants(session_id,reader_id,shared_at) VALUES(?,?,?) ON CONFLICT(session_id,reader_id) DO UPDATE SET revoked=0,suspended=0,revision=conversation_grants.revision+1,shared_at=excluded.shared_at`, session, reader, s.timestamp()); err != nil {
 			return err
+		}
+		if access != nil {
+			if len(access.Paths) > 0 {
+				if _, err := projectAction(ctx, tx, scope, ActionFilesRead); err != nil {
+					return err
+				}
+			}
+			raw, _ := json.Marshal(access.Paths)
+			if access.Paths == nil {
+				raw = []byte("[]")
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE conversation_grants SET paths=?,allow_download=? WHERE session_id=? AND reader_id=?`, string(raw), access.AllowDownload, session, reader); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO notifications(id,audience,project_id,session_id,title,body,created_at) SELECT ?,?,?,?,?,?,? FROM notification_policy WHERE id=1 AND conversation_shared=1`, "share/"+session+"/"+reader, reader, scope.ProjectID, session, "Conversation shared with you", "Open the shared conversation to read it.", s.timestamp()); err != nil {
 			return err
@@ -108,7 +132,7 @@ func (s *Store) RevokeConversation(ctx context.Context, scope Scope, session, re
 		if err := activeAccount(ctx, tx, scope.Actor); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE conversation_grants SET revoked=1 WHERE session_id=? AND reader_id=?`, session, reader); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE conversation_grants SET revoked=1,revision=revision+1 WHERE session_id=? AND reader_id=?`, session, reader); err != nil {
 			return err
 		}
 		return s.bumpSession(ctx, tx, scope.ProjectID, session, "conversation.revoked")

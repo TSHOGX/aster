@@ -171,7 +171,7 @@ func (w *WorkspaceReader) start(entry *readerCarrier) {
 		return
 	}
 	entry.err = w.Store.write(attempt, func(tx *sql.Tx) error {
-		p, err := mutableOwnedProject(attempt, tx, entry.scope)
+		p, err := scanProject(tx.QueryRowContext(attempt, `SELECT `+projectColumns+` FROM projects WHERE id=?`, entry.scope.ProjectID))
 		if err != nil {
 			return err
 		}
@@ -232,7 +232,7 @@ func (w *WorkspaceReader) start(entry *readerCarrier) {
 			return
 		}
 		check, done := context.WithTimeout(entry.ctx, 2*time.Second)
-		current, e := w.Lifecycle.ActiveResources(check, entry.scope)
+		current, e := w.activeReadResources(check, entry.scope.ProjectID)
 		done()
 		if e != nil || !samePlacement(entry.ref, current.Reference) {
 			entry.cancel()
@@ -251,7 +251,7 @@ func (w *WorkspaceReader) acquire(ctx context.Context, scope Scope, list bool) (
 			releaseWork()
 		}
 	}()
-	current, err := w.Lifecycle.ActiveResources(ctx, scope)
+	current, err := w.activeReadResources(ctx, scope.ProjectID)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -335,7 +335,7 @@ func (w *WorkspaceReader) acquire(ctx context.Context, scope Scope, list bool) (
 	if list {
 		action = ActionFilesList
 	}
-	if _, err := projectAction(requestCtx, w.Store.reader, scope, action); err != nil {
+	if _, err := fileReadAction(requestCtx, w.Store.reader, scope, action); err != nil {
 		release()
 		return nil, nil, nil, err
 	}
@@ -343,7 +343,7 @@ func (w *WorkspaceReader) acquire(ctx context.Context, scope Scope, list bool) (
 	return entry, requestCtx, release, nil
 }
 func (w *WorkspaceReader) validate(ctx context.Context, entry *readerCarrier) error {
-	current, err := w.Lifecycle.ActiveResources(ctx, entry.scope)
+	current, err := w.activeReadResources(ctx, entry.scope.ProjectID)
 	if err != nil {
 		return err
 	}
@@ -478,10 +478,13 @@ func (w *WorkspaceReader) Capture(ctx context.Context, scope Scope, path string)
 	return w.CaptureLimited(ctx, scope, path, projectfiles.MaxTransfer)
 }
 func (w *WorkspaceReader) CaptureLimited(ctx context.Context, scope Scope, path string, maxBytes int64) (out *CapturedFile, result error) {
+	if grant, ok := ctx.Value(receivedFileKey{}).(receivedFileGrant); ok && grant.Path != path {
+		return nil, ErrNotFound
+	}
 	if projectfiles.Path(path, false) != nil {
 		return nil, ErrInvalid
 	}
-	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesRead); err != nil {
+	if _, err := fileReadAction(ctx, w.Store.reader, scope, ActionFilesRead); err != nil {
 		return nil, err
 	}
 	r, readctx, unlock, done, paused, err := w.pausedVolume(ctx, scope)
@@ -570,7 +573,7 @@ func (w *WorkspaceReader) CaptureLimited(ctx context.Context, scope Scope, path 
 	if err = w.validate(ctx, entry); err != nil {
 		return nil, err
 	}
-	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesRead); err != nil {
+	if _, err := fileReadAction(ctx, w.Store.reader, scope, ActionFilesRead); err != nil {
 		return nil, err
 	}
 	// Reopen the unlinked inode read-only before handing it to HTTP. No pathname

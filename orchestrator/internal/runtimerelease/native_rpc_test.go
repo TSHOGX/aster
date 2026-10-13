@@ -70,7 +70,7 @@ func TestNativeSettlementCapabilityCannotBeDeclaredWithoutPatchedBytes(t *testin
 	if _, err := Load(bytes.NewReader(raw), digest); err == nil {
 		t.Fatal("old runtime format accepted")
 	}
-	manifest.Version = 5
+	manifest.Version = ManifestVersion
 	original, err := os.ReadFile("testdata/pi-rpc-0.77.0.js")
 	if err != nil {
 		t.Fatal(err)

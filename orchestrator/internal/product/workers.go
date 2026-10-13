@@ -84,6 +84,12 @@ func (w *Workers) Run(ctx context.Context) {
 		}
 		return nil
 	})
+	loop("conversation copies", time.Second, func(ctx context.Context) error {
+		if w.Shares != nil {
+			return w.Shares.CopyStep(ctx)
+		}
+		return nil
+	})
 	loop("capture", time.Second, w.captureStep)
 	loop("metadata retention", time.Second, w.Store.PruneMetadata)
 	loop("adjacent", time.Second, func(ctx context.Context) error {
