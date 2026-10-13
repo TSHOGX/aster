@@ -43,6 +43,13 @@ or full runtime suitability. Use artifacts qualified for your host and workload;
 keep qualification records private. Runtime assembly and registration are covered
 in [runtime inventory](runtime-inventory.md).
 
+To assemble the application, independent Studio bundle, pinned engine and a fresh
+guest runtime together from one committed revision, use `scripts/rebuild.py` on
+a privileged Linux builder with the runtime prerequisites above. See the
+[installation tools](../../scripts/README.md) for arguments and current limitations.
+The builder does not activate services. Use a new output directory and qualify
+the complete build before deployment.
+
 ## Prepare configuration
 
 Copy [application.example.json](../../config/application.example.json) to a private

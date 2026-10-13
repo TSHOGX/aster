@@ -142,14 +142,14 @@ def smoke_frontend(root, frontend, base):
                 server.wait()
 
 
-def build(destination):
-    if output("git", "status", "--porcelain", "--untracked-files=all"):
+def build(destination, source_ref=None):
+    if source_ref is None and output("git", "status", "--porcelain", "--untracked-files=all"):
         raise ValueError("candidate builds require a clean committed checkout")
     if output("go", "env", "GOOS") != "linux" or output("go", "env", "GOARCH") != output("go", "env", "GOHOSTARCH"):
         raise ValueError("build host candidates on Linux for their native architecture")
     if destination.is_relative_to(ROOT):
         raise ValueError("place candidate output outside the source checkout")
-    commit = output("git", "rev-parse", "HEAD")
+    commit = output("git", "rev-parse", "--verify", "--end-of-options", (source_ref or "HEAD") + "^{commit}")
     version = "candidate-" + commit[:12]
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.mkdir()  # Never overwrite a previous candidate, including a failed build.
@@ -199,12 +199,15 @@ def main():
     parser.add_argument("action", choices=("build", "verify", "inspect"))
     parser.add_argument("directory", type=Path)
     parser.add_argument("--config", type=Path, help="reviewed target application config; inspect only")
+    parser.add_argument("--source-ref", help="explicit committed source revision; build only")
     args = parser.parse_args()
     if (args.action == "inspect") != (args.config is not None):
         parser.error("--config is required only with inspect")
+    if args.source_ref and args.action != "build":
+        parser.error("--source-ref is valid only with build")
     root = args.directory.resolve()
     if args.action == "build":
-        build(root)
+        build(root, args.source_ref)
     else:
         report = verify(root)
         if args.action == "inspect":
