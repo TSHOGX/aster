@@ -27,6 +27,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  studio:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: volumes-studio/backend/go.mod
+          cache: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - run: scripts/check.sh studio
+      - run: npm ci
+        working-directory: volumes-studio/frontend
+      - run: scripts/check.sh studio-frontend
+
   source:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -61,6 +78,12 @@ jobs:
       - name: Install pinned native Session test dependencies
         run: npm ci --ignore-scripts --prefix orchestrator/internal/runtimerelease
       - run: scripts/check.sh backend
+      - name: Install Studio browser gate dependencies
+        run: npm ci --prefix volumes-studio/frontend
+      - run: npx --no-install playwright install --with-deps chromium firefox webkit
+        working-directory: volumes-studio/frontend
+      - run: npm --prefix volumes-studio/frontend run build
+      - run: scripts/check.sh studio-browser
       - name: Core race checks (main and explicit qualification)
         if: github.event_name != 'pull_request'
         run: scripts/check.sh race

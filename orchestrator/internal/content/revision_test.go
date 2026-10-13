@@ -77,14 +77,11 @@ func TestRevisionDigestIsIndependentOfEntryOrder(t *testing.T) {
 	if Digest(reversed) != revision.Digest {
 		t.Fatal("digest depends on traversal order")
 	}
-	// Source is publication input, not identity.
-	stripped := append([]Entry(nil), revision.Entries...)
-	for i := range stripped {
-		stripped[i].Source = ""
+	// Source readers are separate from serialized identity metadata.
+	if revision.Reader == nil {
+		t.Fatal("source reader missing")
 	}
-	if Digest(stripped) != revision.Digest {
-		t.Fatal("digest depends on host source paths")
-	}
+
 }
 
 func TestRevisionRefusesUnpublishableSources(t *testing.T) {

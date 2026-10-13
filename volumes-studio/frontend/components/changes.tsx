@@ -1,0 +1,231 @@
+/* eslint-disable react-hooks/set-state-in-effect -- Hydrate browser navigation and synchronize external workspace snapshots. */
+"use client";
+import { useEffect, useRef, useState } from "react";
+import { EditorView } from "@codemirror/view";
+import { EditorState } from "@codemirror/state";
+import { MergeView, unifiedMergeView } from "@codemirror/merge";
+import { api, Entry, Library } from "../lib/api";
+import { decodeText, Page, query } from "../lib/workbench";
+import { contentURL } from "./shell";
+import { useStudio } from "./studio-provider";
+type Change = { path: string; change: string; before?: Entry; after?: Entry };
+export function TextDiff({ before, after }: { before: string; after: string }) {
+  const host = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = host.current;
+    if (!node) return;
+    const media = matchMedia("(max-width: 767px)");
+    let destroy = () => {};
+    const render = () => {
+      destroy();
+      const extensions = [
+        EditorState.readOnly.of(true),
+        EditorView.editable.of(false),
+        EditorView.lineWrapping,
+        EditorView.theme({
+          "&": {
+            height: "100%",
+            backgroundColor: "var(--surface)",
+            color: "var(--foreground)",
+          },
+          ".cm-scroller": { fontFamily: "var(--font-mono)", overflow: "auto" },
+          ".cm-gutters": {
+            backgroundColor: "var(--surface)",
+            color: "var(--foreground-muted)",
+          },
+        }),
+      ];
+      if (media.matches) {
+        const v = new EditorView({
+          parent: node,
+          doc: after,
+          extensions: [
+            ...extensions,
+            unifiedMergeView({ original: before, mergeControls: false }),
+          ],
+        });
+        destroy = () => v.destroy();
+      } else {
+        const v = new MergeView({
+          parent: node,
+          a: { doc: before, extensions },
+          b: { doc: after, extensions },
+          collapseUnchanged: { margin: 3, minSize: 8 },
+        });
+        destroy = () => v.destroy();
+      }
+    };
+    render();
+    media.addEventListener("change", render);
+    return () => {
+      destroy();
+      media.removeEventListener("change", render);
+    };
+  }, [before, after]);
+  return <div className="diff-host" ref={host} aria-label="File differences" />;
+}
+export function Changes({ library }: { library: Library }) {
+  const studio = useStudio();
+  const [page, setPage] = useState<Page<Change> | null>(null),
+    [selected, setSelected] = useState<Change | null>(null),
+    [content, setContent] = useState<{ before: string; after: string } | null>(
+      null,
+    ),
+    [message, setMessage] = useState(""),
+    [error, setError] = useState("");
+  const root = `/libraries/${library.id}`;
+  const params = query({
+    mode: "workbench",
+    revision: library.draft_revision,
+    base_version: library.base_version,
+  });
+  useEffect(() => {
+    const abort = new AbortController();
+    void api<Page<Change>>(`${root}/draft/diff?${params}`, {
+      signal: abort.signal,
+    })
+      .then((p) => {
+        setPage(p);
+        setError("");
+      })
+      .catch((e) => {
+        if (!abort.signal.aborted) setError(String(e));
+      });
+    return () => abort.abort();
+  }, [root, params]);
+  useEffect(() => {
+    if (!selected) return;
+    const abort = new AbortController();
+    setContent(null);
+    setMessage("Loading comparison…");
+    const load = async (version: string, path: string) => {
+      const url = contentURL(library.id, version, path, library.draft_revision);
+      const response = await fetch(url, { signal: abort.signal });
+      if (!response.ok)
+        throw new Error(
+          version
+            ? "Original content is unavailable. The base version may have been retired."
+            : "The saved draft changed. Refresh the comparison.",
+        );
+      if (Number(response.headers.get("Content-Length")) > 1 << 20)
+        throw new Error("This file is too large for text comparison.");
+      const data = await response.arrayBuffer();
+      if (data.byteLength > 1 << 20)
+        throw new Error("This file is too large for text comparison.");
+      return decodeText(data).text;
+    };
+    void (async () => {
+      try {
+        const entry = selected.after || selected.before;
+        if (entry?.kind === "directory") {
+          setMessage(`Directory ${selected.change}`);
+          return;
+        }
+        if (
+          entry &&
+          (Number(entry.size) > 1 << 20 ||
+            /\.(png|jpe?g|gif|webp|pdf|docx?|xlsx?|pptx?|zip|bin)$/i.test(
+              entry.path,
+            ))
+        ) {
+          setMessage(
+            `${selected.change} · ${selected.before?.size || "0"} → ${selected.after?.size || "0"} bytes. Download to inspect this file.`,
+          );
+          return;
+        }
+        const before =
+          selected.change === "added"
+            ? ""
+            : await load(library.base_version, selected.path);
+        const after =
+          selected.change === "removed" ? "" : await load("", selected.path);
+        if (!abort.signal.aborted) {
+          setContent({ before, after });
+          setMessage("");
+        }
+      } catch (e) {
+        if (!abort.signal.aborted) setMessage(String(e));
+      }
+    })();
+    return () => abort.abort();
+  }, [
+    selected,
+    library.id,
+    library.draft_revision,
+    library.base_version,
+    root,
+  ]);
+  const dirty = studio.model.buffers.filter(
+    (b) => b.library === library.id && b.text !== b.saved,
+  ).length;
+  return (
+    <section className="changes-view">
+      <div className="view-heading">
+        <h2>
+          Changes <span className="count">{page?.total ?? "…"}</span>
+        </h2>
+        <span className="muted">
+          Saved draft vs. base version
+          {dirty ? ` · ${dirty} unsaved file(s) excluded` : ""}
+        </span>
+      </div>
+      {error && (
+        <p role="alert" className="notice error">
+          {error}
+        </p>
+      )}
+      <div className="changes-workspace">
+        <aside className="change-list">
+          {page?.items.map((c) => (
+            <button
+              key={c.path}
+              className={selected?.path === c.path ? "selected" : ""}
+              onClick={() => setSelected(c)}
+            >
+              <span className={`change-mark ${c.change}`}>
+                {c.change === "added"
+                  ? "+"
+                  : c.change === "removed"
+                    ? "−"
+                    : "~"}
+              </span>
+              <span>{c.path}</span>
+              <small>{c.change}</small>
+            </button>
+          ))}
+          {page?.items.length === 0 && (
+            <p className="empty-state">No saved changes.</p>
+          )}
+          {page?.next && (
+            <button
+              onClick={() =>
+                void api<Page<Change>>(
+                  `${root}/draft/diff?${params}&cursor=${encodeURIComponent(page.next)}`,
+                )
+                  .then((p) =>
+                    setPage({ ...p, items: [...page.items, ...p.items] }),
+                  )
+                  .catch((e) => setError(String(e)))
+              }
+            >
+              Load more changes
+            </button>
+          )}
+        </aside>
+        <div className="comparison">
+          <div className="editor-toolbar">
+            <strong>{selected?.path || "Select a change"}</strong>
+            {selected && <span className="muted">Base → saved draft</span>}
+          </div>
+          {content ? (
+            <TextDiff {...content} />
+          ) : (
+            <p className="empty-state">
+              {message || "Select a file to compare."}
+            </p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}

@@ -147,6 +147,9 @@ func (s *Store) PruneMetadata(ctx context.Context) error {
 		s.retention.session = sessions[len(sessions)-1]
 	}
 	if err = s.writeClass(ctx, backgroundWrite, "", 0, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM identity_codes WHERE code_digest IN (SELECT code_digest FROM identity_codes WHERE expires_at<=? LIMIT ?)`, s.timestamp(), RetentionBatch); err != nil {
+			return err
+		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM auth_sessions WHERE token_digest IN (SELECT token_digest FROM auth_sessions WHERE expires_at<=? LIMIT ?)`, s.timestamp(), RetentionBatch)
 		return err
 	}); err != nil {

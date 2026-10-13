@@ -80,35 +80,24 @@ func ValidateBuiltinVolume(artifact BuiltinVolume) error {
 			return ErrInvalid
 		}
 	}
-	if len(artifact.Entries) > content.MaxEntries {
+	total, err := content.ValidateEntries(artifact.Entries, content.ProfileForPurpose(artifact.PublicationPurpose))
+	if err != nil {
 		return ErrInvalid
 	}
-	var total int64
-	paths := map[string]bool{}
-	for _, entry := range artifact.Entries {
-		if paths[entry.Path] {
+	if total > artifact.MinimumBytes {
+		return ErrInvalid
+	}
+	if artifact.PublicationPurpose == "authored" {
+		if artifact.CleanRuntime {
 			return ErrInvalid
 		}
-		paths[entry.Path] = true
-		if content.ValidPath(entry.Path) != nil || entry.Size < 0 || entry.Size > content.MaxFileBytes {
-			return ErrInvalid
-		}
-		if entry.Directory {
-			if entry.Size != 0 || entry.Digest != "" {
+		for _, role := range artifact.Roles {
+			if role != "data" && role != "workspace" {
 				return ErrInvalid
 			}
-		} else if !content.ValidDigest(entry.Digest) {
-			return ErrInvalid
-		}
-		var err error
-		total, err = checkedSum(total, entry.Size)
-		if err != nil {
-			return err
 		}
 	}
-	if total > artifact.MinimumBytes || total > content.MaxTotalBytes {
-		return ErrInvalid
-	}
+
 	return nil
 }
 func checkBuiltinRegistration(ctx context.Context, q queryer, artifact BuiltinVolume) (bool, error) {

@@ -89,9 +89,30 @@ func TestEnvironmentHTTPAdminAuthorityAndExactArtifactInputs(t *testing.T) {
 		if status != want {
 			t.Fatal(status)
 		}
+		for _, endpoint := range []string{"/api/admin/environments/environment-default/updates", "/api/admin/environments/environment-default/updates/preview", "/api/admin/environments/environment-default/updates/history", "/api/admin/projects/unknown/environment"} {
+			code, _ := perform("GET", endpoint, credential, "https://app", nil)
+			if code != want {
+				t.Fatal(endpoint, code, want)
+			}
+		}
 		status, _ = perform("PATCH", path, credential, "https://app", change)
 		if status != want {
 			t.Fatal(status)
 		}
 	}
+	_, err = store.CreateProject(ctx, admin.ID, "private-project", "Private project")
+	must(t, err)
+	status, _ = perform("GET", "/api/me/project-configurations/private-project/environment", ordinary, "https://app", nil)
+	if status != 404 {
+		t.Fatal("environment status leaked across ownership", status)
+	}
+	status, result = perform("GET", "/api/me/project-configurations/private-project/environment", token, "https://app", nil)
+	if status != 200 || result["project_id"] != "private-project" {
+		t.Fatal(status, result)
+	}
+	status, _ = perform("POST", "/api/admin/environments/environment-default/updates", token, "https://foreign", map[string]any{"action": "publish", "request_id": "forged", "expected_revision": 2})
+	if status != 403 {
+		t.Fatal("cross-origin publication accepted", status)
+	}
+
 }

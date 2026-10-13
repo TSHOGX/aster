@@ -2,9 +2,11 @@ package content
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"path"
 	"sort"
 	"strings"
@@ -17,6 +19,7 @@ import (
 // immutable engine volume. Its stages exist so an interrupted publication resumes
 // with the same engine objects rather than leaking a new volume per attempt.
 type Publication struct {
+	Generation                                          int64
 	StoreID, Purpose, RevisionDigest                    string
 	Capacity                                            int64
 	Entries                                             []Entry
@@ -30,6 +33,9 @@ type Publication struct {
 type Repository interface {
 	ClaimContentPublication(context.Context, Publication) (Publication, error)
 	RecordContentStaging(context.Context, Publication, string) (Publication, error)
+	StartContentPopulation(context.Context, Publication) (Publication, error)
+	FinishContentPopulation(context.Context, Publication) (Publication, error)
+	QuarantineContentPublication(context.Context, Publication) error
 	RecordContentDerivation(context.Context, Publication, string) (Publication, error)
 	CommitContentPublication(context.Context, Publication, string, string) (Publication, error)
 	FailContentPublication(context.Context, Publication, string) error
@@ -41,7 +47,8 @@ type Repository interface {
 type Backend interface {
 	Identity(context.Context) (sandbox.Identity, error)
 	CreateVolume(context.Context, string, int64) (sandbox.Volume, error)
-	sandbox.VolumeWrites
+	MkdirVolume(context.Context, sandbox.VolumeReference, string) error
+	ImportVolume(context.Context, sandbox.VolumeReference, string, io.Reader, int64) error
 	sandbox.VolumeDerivation
 	sandbox.VolumeListings
 	sandbox.VolumeReads
@@ -52,6 +59,16 @@ type Backend interface {
 type Publisher struct {
 	Repository Repository
 	Backend    Backend
+	// Authorize is checked at each privileged phase for admitted human work.
+	// Operator publication leaves it nil under its protected control authority.
+	Authorize func(context.Context) error
+}
+
+func (p Publisher) authorize(ctx context.Context) error {
+	if p.Authorize != nil {
+		return p.Authorize(ctx)
+	}
+	return nil
 }
 
 // Publish resolves one authored revision to an immutable published volume,
@@ -70,6 +87,17 @@ func (p Publisher) Publish(ctx context.Context, purpose string, revision Revisio
 	}
 	if Digest(revision.Entries) != revision.Digest {
 		return "", fmt.Errorf("authored revision digest does not match its entries")
+	}
+	profile := ProfileForPurpose(purpose)
+	if revision.Profile != profile {
+		return "", fmt.Errorf("content source profile differs from publication purpose")
+	}
+	total, err := ValidateEntries(revision.Entries, profile)
+	if err != nil {
+		return "", err
+	}
+	if total != revision.TotalBytes {
+		return "", fmt.Errorf("incorrect source aggregate")
 	}
 	minimum := revision.TotalBytes + int64(len(revision.Entries))*16<<10
 	if capacity <= 0 || capacity < minimum {
@@ -104,7 +132,16 @@ func (p Publisher) Publish(ctx context.Context, purpose string, revision Revisio
 }
 
 func (p Publisher) prepare(ctx context.Context, record Publication, revision Revision) (string, error) {
+	if record.Stage == "populating" || record.Stage == "quarantined" {
+		return "", ErrPublicationQuarantined
+	}
+	if record.Stage == "failed" {
+		return "", ErrContentRefused
+	}
 	if record.StagingVolumeID == "" {
+		if err := p.authorize(ctx); err != nil {
+			return "", err
+		}
 		// The engine key is derived from content identity, so a lost create reply
 		// replays onto the same volume instead of allocating another one.
 		staging, err := p.Backend.CreateVolume(ctx, stagingKey(record), record.Capacity)
@@ -122,12 +159,32 @@ func (p Publisher) prepare(ctx context.Context, record Publication, revision Rev
 	}
 	source := sandbox.VolumeReference{StoreID: record.StoreID, VolumeID: record.StagingVolumeID}
 	if record.DerivedVolumeID == "" {
-		if err := p.populate(ctx, source, revision); err != nil {
-			return "", err
+		if record.Stage != "populated" {
+			if err := p.authorize(ctx); err != nil {
+				return "", err
+			}
+			var err error
+			record, err = p.Repository.StartContentPopulation(ctx, record)
+			if err != nil {
+				return "", err
+			}
+			if err = p.populate(ctx, source, revision); err != nil {
+				settle, cancel := contextWithoutCancelTimeout(ctx)
+				defer cancel()
+				quarantineErr := p.Repository.QuarantineContentPublication(settle, record)
+				return "", errors.Join(err, ErrPublicationQuarantined, quarantineErr)
+			}
+			record, err = p.Repository.FinishContentPopulation(ctx, record)
+			if err != nil {
+				return "", err
+			}
 		}
 		// Verify the staging tree before deriving: a snapshot of wrong bytes would
 		// be permanent, since a published volume is never rewritten.
-		if err := p.verify(ctx, source, revision.Digest); err != nil {
+		if err := p.verify(ctx, source, revision.Digest, ProfileForPurpose(record.Purpose)); err != nil {
+			return "", err
+		}
+		if err := p.authorize(ctx); err != nil {
 			return "", err
 		}
 		derived, err := p.Backend.SnapshotVolume(ctx, source, publishKey(record), record.Capacity)
@@ -146,7 +203,10 @@ func (p Publisher) prepare(ctx context.Context, record Publication, revision Rev
 	// Verification reads the volume a guest will actually mount, so the committed
 	// pointer is evidence about published bytes rather than about the writes.
 	published := sandbox.VolumeReference{StoreID: record.StoreID, VolumeID: record.DerivedVolumeID}
-	if err := p.verify(ctx, published, record.RevisionDigest); err != nil {
+	if err := p.verify(ctx, published, record.RevisionDigest, ProfileForPurpose(record.Purpose)); err != nil {
+		return "", err
+	}
+	if err := p.authorize(ctx); err != nil {
 		return "", err
 	}
 	committed, err := p.Repository.CommitContentPublication(ctx, record, record.DerivedVolumeID, record.RevisionDigest)
@@ -180,31 +240,46 @@ func (p Publisher) populate(ctx context.Context, reference sandbox.VolumeReferen
 			}
 			continue
 		}
-		data, err := p.read(entry)
+		if revision.Reader == nil {
+			return fmt.Errorf("content source reader required")
+		}
+		reader, err := revision.Reader.ReadFile(entry.Path)
 		if err != nil {
 			return err
 		}
-		if err := p.Backend.WriteVolume(ctx, reference, entry.Path, data); err != nil {
+		hash := sha256.New()
+		counted := &countingReader{reader: io.TeeReader(io.LimitReader(reader, entry.Size+1), hash)}
+		err = p.Backend.ImportVolume(ctx, reference, entry.Path, counted, entry.Size)
+		if err == nil {
+			var extra [1]byte
+			n, readErr := counted.Read(extra[:])
+			if n != 0 || readErr != io.EOF {
+				err = fmt.Errorf("%w: source length changed", ErrContentRefused)
+			}
+		}
+		closeErr := reader.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if err != nil {
 			return err
+		}
+		if counted.bytes != entry.Size || "sha256:"+hex.EncodeToString(hash.Sum(nil)) != entry.Digest {
+			return fmt.Errorf("%w: source digest changed", ErrContentRefused)
 		}
 	}
 	return nil
 }
 
-// read loads one authored file and rechecks its digest, so content that changed
-// after the revision was computed is refused instead of silently published.
-func (p Publisher) read(entry Entry) ([]byte, error) {
-	if entry.Source == "" {
-		return nil, fmt.Errorf("authored entry %q has no source path", entry.Path)
-	}
-	data, err := os.ReadFile(entry.Source)
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) != entry.Size || contentDigest(data) != entry.Digest {
-		return nil, fmt.Errorf("%w: authored content %q changed after its revision was computed", ErrContentRefused, entry.Path)
-	}
-	return data, nil
+type countingReader struct {
+	reader io.Reader
+	bytes  int64
+}
+
+func (r *countingReader) Read(b []byte) (int, error) {
+	n, err := r.reader.Read(b)
+	r.bytes += int64(n)
+	return n, err
 }
 
 // verify reconstructs the revision from the engine's own view of the volume. It
@@ -217,16 +292,21 @@ type volumeVerifier struct {
 	Backend VolumeVerifier
 	entries int
 	bytes   int64
+	Limits  Limits
 }
 
-func (p Publisher) verify(ctx context.Context, reference sandbox.VolumeReference, expected string) error {
-	return VerifyVolume(ctx, p.Backend, reference, expected)
+func (p Publisher) verify(ctx context.Context, reference sandbox.VolumeReference, expected, profile string) error {
+	return VerifyVolume(ctx, p.Backend, reference, expected, profile)
 }
 
 // VerifyVolume reuses bounded publication verification before an owned seed copy
 // becomes visible. A ready, potentially user-modified volume is never reverified.
-func VerifyVolume(ctx context.Context, backend VolumeVerifier, reference sandbox.VolumeReference, expected string) error {
-	p := volumeVerifier{Backend: backend}
+func VerifyVolume(ctx context.Context, backend VolumeVerifier, reference sandbox.VolumeReference, expected, profile string) error {
+	limits, err := ProfileLimits(profile)
+	if err != nil {
+		return err
+	}
+	p := volumeVerifier{Backend: backend, Limits: limits}
 	observed, err := p.walk(ctx, reference, "", 0)
 	if err != nil {
 		return err
@@ -251,14 +331,20 @@ func (p *volumeVerifier) walk(ctx context.Context, reference sandbox.VolumeRefer
 			return nil, err
 		}
 		p.entries++
-		if p.entries > MaxEntries {
-			return nil, fmt.Errorf("%w: published content exceeds %d entries", ErrContentRefused, MaxEntries)
+		if p.entries > p.Limits.Entries {
+			return nil, fmt.Errorf("%w: published content exceeds %d entries", ErrContentRefused, p.Limits.Entries)
 		}
 		name := item.Name
 		if strings.ContainsAny(name, "/\x00") || name == "" || name == "." || name == ".." {
 			return nil, fmt.Errorf("%w: published content entry %q is not addressable", ErrContentRefused, name)
 		}
 		full := path.Join(directory, name)
+		if err := ValidPath(full); err != nil {
+			return nil, fmt.Errorf("%w: invalid observed path", ErrContentRefused)
+		}
+		if item.Type == "directory" && strings.TrimSpace(name) != name {
+			return nil, fmt.Errorf("%w: invalid directory name", ErrContentRefused)
+		}
 		switch item.Type {
 		case "directory":
 			result = append(result, Entry{Path: full, Directory: true})
@@ -268,8 +354,8 @@ func (p *volumeVerifier) walk(ctx context.Context, reference sandbox.VolumeRefer
 			}
 			result = append(result, children...)
 		case "file":
-			if item.Size < 0 || item.Size > MaxTotalBytes-p.bytes {
-				return nil, fmt.Errorf("%w: published content exceeds %d bytes", ErrContentRefused, MaxTotalBytes)
+			if item.Size < 0 || item.Size > p.Limits.TreeBytes-p.bytes {
+				return nil, fmt.Errorf("%w: published content exceeds %d bytes", ErrContentRefused, p.Limits.TreeBytes)
 			}
 			p.bytes += item.Size
 			digest, err := p.readVolumeDigest(ctx, reference, full, item.Size)
@@ -285,33 +371,35 @@ func (p *volumeVerifier) walk(ctx context.Context, reference sandbox.VolumeRefer
 }
 
 func (p volumeVerifier) readVolumeDigest(ctx context.Context, reference sandbox.VolumeReference, name string, size int64) (string, error) {
-	if size < 0 || size > MaxFileBytes {
+	if size < 0 || size > p.Limits.FileBytes {
 		return "", fmt.Errorf("%w: published content file %q has unsupported size %d", ErrContentRefused, name, size)
 	}
 	const chunk = 256 << 10
-	data := make([]byte, 0, size)
-	for int64(len(data)) < size {
-		remaining := size - int64(len(data))
+	hash := sha256.New()
+	var offset int64
+	for offset < size {
+		remaining := size - offset
 		if remaining > chunk {
 			remaining = chunk
 		}
-		part, err := p.Backend.ReadVolume(ctx, reference, name, int64(len(data)), remaining)
+		part, err := p.Backend.ReadVolume(ctx, reference, name, offset, remaining)
 		if err != nil {
 			return "", err
 		}
-		if len(part) == 0 {
-			return "", fmt.Errorf("published content file %q ended before its declared size", name)
+		if len(part) == 0 || int64(len(part)) > remaining {
+			return "", fmt.Errorf("%w: invalid readback length", ErrContentRefused)
 		}
-		data = append(data, part...)
+		_, _ = hash.Write(part)
+		offset += int64(len(part))
 	}
-	return contentDigest(data), nil
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func stagingKey(p Publication) string {
-	return "content-staging:" + p.Purpose + ":" + p.RevisionDigest
+	return fmt.Sprintf("content-staging:%s:%s:g%d", p.Purpose, p.RevisionDigest, p.Generation)
 }
 func publishKey(p Publication) string {
-	return "content-publish:" + p.Purpose + ":" + p.RevisionDigest
+	return fmt.Sprintf("content-publish:%s:%s:g%d", p.Purpose, p.RevisionDigest, p.Generation)
 }
 
 // ErrContentRefused marks the one failure that retrying cannot resolve: the
@@ -324,6 +412,7 @@ func publishKey(p Publication) string {
 // Recording such a failure as terminal would strand a correct revision behind a
 // failed row that only an operator could clear.
 var ErrContentRefused = errors.New("authored content contradicts the revision being published")
+var ErrPublicationQuarantined = errors.New("publication write outcome requires a fresh tracked attempt")
 
 func terminal(err error) bool { return errors.Is(err, ErrContentRefused) }
 
@@ -334,5 +423,5 @@ func contextWithoutCancelTimeout(ctx context.Context) (context.Context, context.
 // ValidPurpose separates system publications from operator-authored builtin
 // content while sharing the same immutable transport and accounting.
 func ValidPurpose(purpose string) bool {
-	return purpose == "assets" || purpose == "config" || purpose == "builtin"
+	return purpose == "assets" || purpose == "config" || purpose == "builtin" || purpose == "authored"
 }

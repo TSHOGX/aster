@@ -29,6 +29,8 @@ export async function adminFixture(page: Page, role: "admin" | "user" = "admin")
     }
     if (path.startsWith("/api/admin/resource-templates/")) return route.fulfill({ json: { templates: [] } });
     if (path === "/api/admin/shared-volumes") return route.fulfill({ json: { volumes: [] } });
+    if (path === "/api/admin/volume-sources") return route.fulfill({json:{sources:[]}});
+    if (path === "/api/admin/volume-imports") return route.fulfill({json:{imports:[]}});
     if (/^\/api\/admin\/policies\/[^/]+\/resources$/.test(path) && method === "GET") return route.fulfill({ json: { resources: [] } });
     if (path.startsWith("/api/admin/groups") || path.startsWith("/api/admin/policies")) {
       const parts=path.split("/"), kind=parts[3], id=parts[4], sub=parts[5], collection=kind==="groups"?groups:policies;

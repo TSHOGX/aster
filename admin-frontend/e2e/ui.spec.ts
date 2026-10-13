@@ -167,7 +167,7 @@ test("environment templates use registered inventory and lock required publicati
  await page.getByRole("button",{name:"Validate and review",exact:true}).click();
  await expect(page.getByRole("combobox",{name:"Shared volume",exact:true})).toBeFocused();
  await expect(page.getByRole("combobox",{name:"Shared volume",exact:true})).toHaveAttribute("aria-invalid","true");
- const source=page.getByRole("combobox",{name:"Initial contents",exact:true}).nth(2);
+ const source=page.getByRole("combobox",{name:"Published version",exact:true}).first();
  await source.click();
  await expect(page.getByRole("option",{name:"Select an initialization source",exact:true})).toHaveAttribute("aria-disabled","true");
  await page.keyboard.press("Home");await page.keyboard.press("Enter");
@@ -293,4 +293,108 @@ for(const width of [390,1440]) test(`shared dropdown keyboard and minimal select
  const active=page.getByRole("navigation",{name:"Resource categories"}).getByRole("link",{name:"Network templates",exact:true});
  expect(await active.evaluate(node=>getComputedStyle(node).boxShadow)).toBe("none");
  expect(await active.evaluate(node=>getComputedStyle(node).textDecorationLine)).toBe("none");
+});
+
+test("environment updates separate save from release and preview project differences", async ({ page }, info) => {
+  await adminFixture(page); await page.setViewportSize({width:390,height:900});
+  const digest=`sha256:${"a".repeat(64)}`,reference={id:"runtime",version:"v1",digest};
+  const mount=(version:string)=>({key:"knowledge",role:"data",destination:"/knowledge",storage:"shared_readonly",access:"read_only",source:{kind:"builtin",artifact_id:"knowledge",version,digest},capacity:{}});
+  const template={id:"research",name:"Research",description:"",kind:"environment",revision:2,enabled:true,builtin:false,environment:{revision:2,sandbox_release:reference,mounts:[{key:"workspace",role:"workspace",destination:"/workspace",storage:"owned",access:"read_write",source:{kind:"empty"},capacity:{setting:"workspace_bytes"}},{key:"runtime",role:"runtime",destination:"/runtime",storage:"owned",access:"read_write",source:{kind:"empty"},capacity:{setting:"runtime_bytes"}},mount("v2")]}};
+  const project={project_id:"project-a",title:"Research notes",environment_id:"research",policy:"follow",revision:1,target_id:"",applied_id:"",state:"pending",reason:"",attempts:0,updated_at:"",current:[mount("v1")],target:[mount("v2")]};
+  let released=false;const writes:Record<string,unknown>[]=[];
+  const release={id:"release-1",sequence:1,revision:1,configuration_revision:2,state:"active",note:"Updated knowledge",created_at:"2026-10-13T00:00:00Z",mounts:[mount("v2")]};
+  await page.route("**/api/admin/resource-templates/environment",route=>route.fulfill({json:{templates:[template]}}));
+  await page.route("**/api/admin/runtime/options?*",route=>route.fulfill({json:{max_mounts:"8",options:new URL(route.request().url()).searchParams.get("kind")==="sandbox"?[{kind:"sandbox",reference,enabled:true,availability:"available"}]:[{kind:"volume",reference:{id:"knowledge",version:"v2",digest},roles:["data"],enabled:true,availability:"available"}]}}));
+  await page.route("**/api/admin/environments/research/updates**",async route=>{
+    if(route.request().method()==="POST"){
+      const body=route.request().postDataJSON();writes.push(body);
+      if(body.preview)return route.fulfill({json:{expected_dependencies:"reviewed",proposed:{release,counts:{pending:1}},users:[],projects:[]}});
+      expect(body.expected_dependencies).toBe("reviewed");released=true;return route.fulfill({json:{release,counts:{pending:1}}});
+    }
+    return route.fulfill({json:{releases:released?[release]:[],projects:[project],counts:{pending:1}}});
+  });
+  await page.goto("/admin/resources/environment");
+  await page.getByRole("button",{name:"Edit",exact:true}).click();
+  await page.getByRole("button",{name:"Updates",exact:true}).click();
+  await expect(page.getByText("No updates published.",{exact:false})).toBeVisible();
+  await page.getByLabel("Release note").fill("Updated knowledge");
+  await page.getByRole("button",{name:"Preview update",exact:true}).click();
+  await expect(page.getByRole("region",{name:"Review environment update"})).toBeVisible();
+  expect(released).toBe(false);
+  await page.getByText("Review affected projects and version differences",{exact:true}).click();
+  await expect(page.getByText("Research notes · Waiting for next start or resume",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Confirm",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Update 1",exact:true})).toBeVisible();
+  expect(writes).toHaveLength(2);
+  await page.getByRole("button",{name:"Projects",exact:true}).click();
+  await expect(page.getByRole("link",{name:"Research notes",exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Keep current versions",exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await page.screenshot({path:info.outputPath("environment-update-projects-mobile.png"),fullPage:true});
+  const status = page.getByRole("combobox", { name: "Status", exact: true });
+  let fail = true;
+  await page.route("**/api/admin/environments/research/updates?*", route => {
+    if (fail) return route.fulfill({ status: 503, json: { error: "Temporary update outage" } });
+    return route.fulfill({ json: { releases: [release], projects: [{ ...project, state: "failed" }], counts: { failed: 1 } } });
+  });
+  await chooseValue(status, "failed");
+  await expect(page.getByRole("alert").filter({ hasText: "Temporary update outage" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Research notes", exact: true })).toHaveCount(0);
+  fail = false;
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.getByRole("link", { name: "Research notes", exact: true })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "Temporary update outage" })).toHaveCount(0);
+});
+
+test("primary links and buttons retain readable hover contrast across themes and accents", async ({ page }) => {
+  await adminFixture(page);
+  await page.goto("/admin/users");
+  const create = page.getByRole("link", { name: "Create user", exact: true });
+  await expect(create).toBeVisible();
+  await expect(page.getByRole("link", { name: "ordinary", exact: true })).toHaveCSS("text-decoration-line", "underline");
+  const contrast = (control: import("@playwright/test").Locator) => control.evaluate(node => {
+    const style = getComputedStyle(node);
+    const luminance = (color: string) => {
+      const rgb = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(v => {
+        const n = v / 255; return n <= .04045 ? n / 12.92 : ((n + .055) / 1.055) ** 2.4;
+      });
+      return rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
+    };
+    const a = luminance(style.color), b = luminance(style.backgroundColor);
+    return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+  });
+  for (const theme of ["light", "dark"]) for (const accent of ["neutral", "blue", "green", "violet"]) {
+    await page.evaluate(({ theme, accent }) => { document.documentElement.dataset.theme = theme; document.documentElement.dataset.accent = accent; }, { theme, accent });
+    await create.hover();
+    expect(await contrast(create), `${theme}/${accent} primary link hover`).toBeGreaterThanOrEqual(4.5);
+    await create.focus();
+    expect(await contrast(create), `${theme}/${accent} primary link focus`).toBeGreaterThanOrEqual(4.5);
+  }
+  await create.click();
+  await page.getByLabel("Username", { exact: true }).fill("contrast-user");
+  const button = page.getByRole("button", { name: "Create account", exact: true });
+  for (const theme of ["light", "dark"]) for (const accent of ["neutral", "blue", "green", "violet"]) {
+    await page.evaluate(({ theme, accent }) => { document.documentElement.dataset.theme = theme; document.documentElement.dataset.accent = accent; }, { theme, accent });
+    await button.hover();
+    expect(await contrast(button), `${theme}/${accent} primary button hover`).toBeGreaterThanOrEqual(4.5);
+  }
+});
+
+test("expanding resource constraints keeps page and table columns stable", async ({ page }) => {
+  await adminFixture(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.route("**/api/admin/runtime/options?*", route => route.fulfill({ json: {
+    max_mounts: "8", options: [{ kind: "sandbox", reference: { id: "stable-runtime", version: "v1", digest: `sha256:${"a".repeat(64)}` }, enabled: true, availability: "available", required_publications: Array.from({ length: 20 }, (_, i) => ({ role: "data", destination: `/reference/${i}/${"long-path-".repeat(15)}` })) }],
+  } }));
+  await page.goto("/admin/resources/sandboxes");
+  const toggle = page.getByText("View constraints", { exact: true });
+  await expect(toggle).toBeVisible();
+  const geometry = () => page.locator("th, .page-heading").evaluateAll(nodes => nodes.map(node => {
+    const rect = node.getBoundingClientRect(); return { left: rect.left, width: rect.width };
+  }));
+  const before = await geometry();
+  await toggle.click();
+  expect(await geometry()).toEqual(before);
+  await toggle.click();
+  expect(await geometry()).toEqual(before);
 });

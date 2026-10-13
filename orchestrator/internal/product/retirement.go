@@ -56,6 +56,8 @@ func (a *Artifacts) RemoveProject(ctx context.Context, project string) error {
 }
 func (s *Store) purgeProject(ctx context.Context, tx *sql.Tx, project string) error {
 	statements := []string{
+		`DELETE FROM environment_update_executions WHERE project_id=?`,
+		`DELETE FROM project_environment_updates WHERE project_id=?`,
 		`DELETE FROM notification_reads WHERE notification_id IN (SELECT id FROM notifications WHERE project_id=?)`,
 		`DELETE FROM notifications WHERE project_id=?`,
 		`DELETE FROM share_files WHERE share_id IN (SELECT id FROM shares WHERE project_id=?)`,

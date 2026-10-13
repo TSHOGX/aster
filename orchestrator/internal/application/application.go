@@ -43,11 +43,15 @@ type Application struct {
 	publication     sync.Mutex
 	closeOnce       sync.Once
 	controlServer   *http.Server
+	browserServer   *http.Server
 	releaseIdentity ReleaseIdentity
 	retireOnce      sync.Once
 }
 
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application, result error) {
+	if err := cfg.Identity.CheckCredentials(); err != nil {
+		return nil, err
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -121,7 +125,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	recovery := &product.AgentRecovery{Store: store, Lifecycle: lifecycle, Backend: backend}
 	retirement := &product.ChildRetirement{Store: store, Lifecycle: lifecycle, Backend: backend, Captures: captures, Shares: shares}
 	app.Workers = &product.Workers{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Captures: captures, Recovery: recovery, Retirement: retirement, Titles: cfg.titleGenerator(), IdleAfter: time.Duration(cfg.Limits.IdleAfter), IdleAgentAfter: time.Duration(cfg.Limits.IdleAgentAfter), Interval: time.Duration(cfg.Limits.Interval), Report: func(kind string, err error) { logger.Warn("application work pending", "scope", kind, "error", err) }}
-	transportConfig := producthttp.Config{TrustForwardedHost: true}
+	transportConfig := producthttp.Config{TrustForwardedHost: true, Identity: cfg.Identity}
 	if cfg.HTTPMetrics {
 		transportConfig.ObserveHTTP = func(o producthttp.HTTPObservation) {
 			logger.Info("http timing", "category", o.Category, "status", o.Status, "bytes", o.Bytes, "duration_ms", o.Duration.Milliseconds())
@@ -130,6 +134,15 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	app.Auth = producthttp.NewAuthentication(store, transportConfig)
 	app.Auth.RuntimeInspector = app.Backend
 	app.Auth.ProjectInspector = app.Backend
+	app.Auth.VolumeImports = app.volumeImportHandler()
+	if cfg.Identity != nil {
+		listener, err := net.Listen("tcp", cfg.Identity.Listen)
+		if err != nil {
+			return app, err
+		}
+		app.listeners = append(app.listeners, listener)
+		app.servers = append(app.servers, app.server(app.Auth.IdentityServiceHandler()))
+	}
 	app.API = &producthttp.Server{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Bindings: bindings, Auth: app.Auth, Config: transportConfig}
 	api := app.API.Handler()
 	mux := http.NewServeMux()
@@ -148,7 +161,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	frontendURL, _ := url.Parse(cfg.Frontend)
 	adminURL, _ := url.Parse(cfg.AdminFrontend)
 	applicationURL, _ := url.Parse("http://project-application")
-	proxy, err := edge.New(edge.Config{Application: applicationURL, ApplicationSocket: cfg.ApplicationSocket, Frontend: frontendURL, AdminFrontend: adminURL, PageAccount: app.Auth.Actor})
+	proxy, err := edge.New(edge.Config{FrontDoor: cfg.FrontDoor, Application: applicationURL, ApplicationSocket: cfg.ApplicationSocket, Frontend: frontendURL, AdminFrontend: adminURL, PageAccount: app.Auth.Actor})
 	if err != nil {
 		return app, err
 	}
@@ -158,7 +171,8 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	}
 	app.BrowserAddress = browserListener.Addr().String()
 	app.listeners = append(app.listeners, browserListener)
-	app.servers = append(app.servers, app.server(proxy))
+	app.browserServer = app.server(proxy)
+	app.servers = append(app.servers, app.browserServer)
 	control, err := listenControl(cfg.ControlSocket)
 	if err != nil {
 		return app, err
@@ -212,6 +226,10 @@ func (a *Application) publishPrepared(ctx context.Context, sources []preparedPub
 }
 
 func (a *Application) Run(ctx context.Context) error {
+	if a.Config.VolumeImports != nil {
+		a.group.Add(1)
+		go func() { defer a.group.Done(); a.runVolumeImports(a.ctx) }()
+	}
 	a.group.Add(1)
 	go func() { defer a.group.Done(); a.Workers.Run(a.ctx) }()
 	a.group.Add(1)
@@ -223,7 +241,7 @@ func (a *Application) Run(ctx context.Context) error {
 		go func() {
 			defer a.group.Done()
 			var err error
-			if index == 1 && a.Config.TLSCert != "" {
+			if server == a.browserServer && a.Config.TLSCert != "" {
 				err = server.ServeTLS(a.listeners[index], a.Config.TLSCert, a.Config.TLSKey)
 			} else {
 				err = server.Serve(a.listeners[index])

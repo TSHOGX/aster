@@ -4,7 +4,7 @@ Office preview uses docx-preview 0.4.0 (Apache-2.0), @js-preview/excel 1.7.14
 (MIT), and pptx-preview 1.0.7 (ISC). The Excel and PowerPoint distributions
 contain hash-verified changes documented in `frontend/scripts/patch-office-viewers.mjs`.
 Bundled JavaScript retains upstream license comments in adjacent `.LEGAL.txt`
-files. The removed server Office parser is no longer shipped.
+files.
 
 ## docx-preview
 

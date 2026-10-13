@@ -1,4 +1,10 @@
 export const EN = {
+  "Environment details are unavailable.": "Environment details are unavailable.",
+  "Current environment is up to date.": "Current environment is up to date.",
+  "This project retains the versions selected by your administrator.": "This project retains the versions selected by your administrator.",
+  "This project keeps its current content until an update can be applied on a future start.": "This project keeps its current content until an update can be applied on a future start.",
+  "Last checked": "Last checked",
+
   "Saved template is unavailable": "Saved template is unavailable",
   "Loading projects…": "Loading projects…",
   "No projects yet.": "No projects yet.",

@@ -43,7 +43,7 @@ import {
 import { useT } from "@/lib/i18n";
 import { displayName, displayInitial } from "@web/brand";
 import { ACTIVE_APPEARANCE_KEY, applyAppearance, DEFAULT_APPEARANCE, clearAppearanceBinding } from "@web/appearance";
-import { adminReturnPath } from "@web/return-path";
+import { loginReturnPath } from "@web/return-path";
 import { useAccountAppearance } from "./account-appearance";
 import { AccountSettings } from "./account-settings";
 import {
@@ -124,7 +124,7 @@ export function ProjectWorkbench() {
     return () => system.removeEventListener("change", update);
   }, [booted, identity]);
   const adminReturn = identity && !identity.must_change_password
-    ? adminReturnPath(new URLSearchParams(window.location.search).get("return_to"), window.location.origin) : null;
+    ? loginReturnPath(new URLSearchParams(window.location.search).get("return_to"), window.location.origin) : null;
   useEffect(() => { if (adminReturn) window.location.replace(adminReturn); }, [adminReturn]);
   if (!booted)
     return (

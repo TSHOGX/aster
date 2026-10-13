@@ -56,6 +56,7 @@ test("appearance modes and accents persist with readable controls and follow sys
       await expect(dialog.getByRole("combobox", { name: "Accent color", exact: true })).toBeEnabled();
       await expect(page.locator("html")).toHaveAttribute("data-accent", accent);
       await expect(page.locator("html")).toHaveAttribute("data-theme", mode === "system" ? "light" : mode);
+      await dialog.getByRole("button", { name: "Change password", exact: true }).hover();
       const contrast = await dialog.getByRole("button", { name: "Change password", exact: true }).evaluate(node => {
         const style = getComputedStyle(node);
         const luminance = (color: string) => {
@@ -312,4 +313,48 @@ test("settings dropdown stays above the modal and Escape only closes the dropdow
  await page.keyboard.press("Escape");await expect(list).toHaveCount(0);await expect(dialog).toBeVisible();await expect(theme).toBeFocused();
  await theme.press("ArrowDown");await page.keyboard.press("End");await page.keyboard.press("Enter");await expect(theme).toHaveAttribute("data-value","dark");
  expect(await theme.evaluate(node=>getComputedStyle(node).textDecorationLine)).toBe("none");
+});
+
+test("environment update details are read-only and fetched only from advanced settings", async ({ page }) => {
+  const fixture=await workspaceFixture(page);
+  const network={id:"network",name:"Research network",enabled:true,description:"",sources:[]};
+  const environment={...network,id:"environment",name:"Research environment"};
+  await page.route("**/api/me/configuration",route=>route.fulfill({json:{networks:[network],environments:[environment],shared_volumes:[],preferences:{revision:1,network_template_id:"",environment_template_id:"",show_shared_volumes:false},default_network:network,default_environment:environment,selected_network:network,selected_environment:environment,network_default_source:[],environment_sources:[],needs_admin_resolution:false}}));
+  await page.route("**/api/me/project-configurations",route=>route.fulfill({json:{projects:[{project_id:"battery",title:"Battery research",state:"active",suspended:false,revision:1,network_template_id:"network",network_name:network.name,environment_name:environment.name}]}}));
+  let reads=0;
+  await page.route("**/api/me/project-configurations/battery/environment",route=>{reads++;return route.fulfill({json:{state:"deferred",updated_at:"2026-10-13T00:00:00Z",current:[{key:"knowledge",destination:"/knowledge",source:{version:"v1"}}]}})});
+  await page.goto("/?project=battery&session=analysis");
+  await expect(page.getByText("This project keeps its current content until an update can be applied on a future start.",{exact:true})).toHaveCount(0);
+  expect(reads).toBe(0);
+  const dialog=await openSettings(page);
+  expect(reads).toBe(0);
+  await dialog.getByText("Advanced / Developer",{exact:true}).click();
+  await dialog.getByText("Existing projects",{exact:true}).click();
+  await chooseValue(dialog.getByRole("combobox",{name:"Project",exact:true}),"battery");
+  expect(reads).toBe(0);
+  await dialog.locator("summary").filter({hasText:/^Environment$/}).click();
+  await expect(dialog.getByText("/knowledge · v1",{exact:true})).toBeVisible();
+  expect(reads).toBe(1);
+  await expect(dialog.getByRole("button",{name:/upgrade|rollback|publish|keep current versions/i})).toHaveCount(0);
+  await dialog.getByRole("button",{name:"Close settings",exact:true}).click();
+  await expect(page.getByText("/knowledge · v1",{exact:true})).toHaveCount(0);
+  expect(fixture.calls.some(call=>call.method!=="GET"&&call.path.includes("environment"))).toBe(false);
+});
+
+test("settings disclosures keep dialog and header geometry stable", async ({ page }) => {
+  await workspaceFixture(page);
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.goto("/?project=battery&session=analysis");
+  const dialog = await openSettings(page);
+  const header = dialog.locator(":scope > header");
+  const frame = await dialog.boundingBox();
+  const heading = await header.boundingBox();
+  const toggle = dialog.locator("summary").filter({ hasText: /^Advanced \/ Developer$/ });
+  await toggle.click();
+  await expect(toggle.locator("..")).toHaveAttribute("open", "");
+  expect(await dialog.boundingBox()).toEqual(frame);
+  expect(await header.boundingBox()).toEqual(heading);
+  await toggle.click();
+  expect(await dialog.boundingBox()).toEqual(frame);
+  expect(await header.boundingBox()).toEqual(heading);
 });

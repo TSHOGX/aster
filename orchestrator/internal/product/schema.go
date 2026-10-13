@@ -9,7 +9,7 @@ import (
 
 // SchemaVersion identifies the fresh schema lineage. Fingerprints, not version
 // ordering, decide whether a database belongs to this executable.
-const SchemaVersion = 6
+const SchemaVersion = 9
 
 var currentSchemaDigest = sync.OnceValues(func() (string, error) {
 	db, err := sql.Open("sqlite", ":memory:")

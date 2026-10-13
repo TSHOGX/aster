@@ -147,7 +147,7 @@ if [[ $suite == paths ]]; then
  run application '^TestReleasedRuntimePathsAndVersions$' paths 4m
  run product '^(TestGoAgentRunnersOnKhora|TestProjectFilesOnKhora|TestProjectTerminalsOnKhora|TestProjectVolumeSlotsOnKhora)$' role-paths 8m
 fi
-if [[ $suite == slots ]]; then run product '^(TestProjectVolumeSlotsOnKhora|TestProjectSeedFailuresOnKhora)$' slots 3m;fi
+if [[ $suite == slots ]]; then run product '^(TestEnvironmentPublicationUpdatesOnKhora|TestProjectVolumeSlotsOnKhora|TestProjectSeedFailuresOnKhora)$' slots 3m;fi
 if [[ $suite == network || $suite == all ]]; then run application '^TestReleasedDatabaseNetworkPolicy$' network 4m;fi
 if [[ $suite == suspension || $suite == all ]]; then run application '^TestReleasedAccountSuspensionReconcilesAfterOwnerRestart$' suspension 4m;fi
 if [[ $suite == files || $suite == all ]]; then run application '^TestReleasedPausedVolumeFiles$' files 4m;fi
@@ -159,7 +159,7 @@ if [[ $suite == combined ]]; then run application '^TestReleasedCombinedWorkload
 if [[ $suite == browser || $suite == all ]]; then run application '^(TestReleasedBrowser|TestReleasedQueueBrowser)$' browser 7m;fi
 if [[ $suite == realtime || $suite == all ]]; then run producthttp '^TestResourceHubOnKhora$' resource-hub 3m;fi
 if [[ $suite == faults || $suite == all ]]; then
- run product '^(TestProjectLifecycleOnKhora|TestProjectVolumeSlotsOnKhora|TestProjectSeedFailuresOnKhora|TestGoAgentRunnersOnKhora|TestProjectFilesOnKhora|TestProjectTerminalsOnKhora)$' product 12m
+ run product '^(TestProjectLifecycleOnKhora|TestEnvironmentPublicationUpdatesOnKhora|TestProjectVolumeSlotsOnKhora|TestProjectSeedFailuresOnKhora|TestGoAgentRunnersOnKhora|TestProjectFilesOnKhora|TestProjectTerminalsOnKhora)$' product 12m
  run producthttp '^TestComposedProjectRecoveryOnKhora$' recovery 9m
  run servicegateway '^TestProjectServiceAuthorityOnKhora$' services 6m
 fi

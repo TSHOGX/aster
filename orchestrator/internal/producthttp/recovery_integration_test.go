@@ -64,7 +64,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 	sharedVolume, err := api.SnapshotVolume(runctx, sharedBase.VolumeID, 8<<20)
 	must(t, err)
 	sharedEntries := []content.Entry{{Path: "sentinel", Size: int64(len("published-shared-asset")), Digest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("published-shared-asset")))}}
-	profile.Volumes = append(profile.Volumes, product.VolumePlan{Key: "shared", Role: "shared_assets", Destination: "/opt/shared-assets", Storage: "shared_readonly", Access: "read_only", CapacityBytes: 8 << 20, Source: &product.VolumeSource{Reference: product.ArtifactReference{ID: "shared_assets", Version: "v1", Digest: content.Digest(sharedEntries)}, VolumeID: sharedVolume, MinimumBytes: 8 << 20}})
+	profile.Volumes = append(profile.Volumes, product.VolumePlan{Key: "shared", Role: "shared_assets", Destination: "/opt/shared-assets", Storage: "shared_readonly", Access: "read_only", CapacityBytes: 8 << 20, Source: &product.VolumeSource{ContentProfile: "reviewed-v1", Reference: product.ArtifactReference{ID: "shared_assets", Version: "v1", Digest: content.Digest(sharedEntries)}, VolumeID: sharedVolume, MinimumBytes: 8 << 20}})
 
 	store, profile, err := producttest.OpenWithRuntime(runctx, dbPath, profile, backend, map[string][]content.Entry{content.Digest(sharedEntries): sharedEntries}, content.Publication{StoreID: identity.StoreID, Purpose: "assets", RevisionDigest: content.Digest(sharedEntries), Capacity: 8 << 20, Entries: sharedEntries, StagingVolumeID: sharedBase.VolumeID, DerivedVolumeID: sharedVolume, PublishedVolumeID: sharedVolume})
 	must(t, err)

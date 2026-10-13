@@ -92,6 +92,25 @@ CREATE TABLE auth_sessions (
 );
 CREATE INDEX auth_sessions_account ON auth_sessions(account_id);
 
+-- Narrow federation adapter. Neither codes nor derived grants contain a raw
+-- browser credential. Revocation follows the one central session via cascades.
+CREATE TABLE identity_codes (
+ code_digest TEXT PRIMARY KEY,
+ client_id TEXT NOT NULL,
+ redirect_uri TEXT NOT NULL,
+ challenge TEXT NOT NULL,
+ session_digest TEXT NOT NULL REFERENCES auth_sessions(token_digest) ON DELETE CASCADE,
+ expires_at TEXT NOT NULL
+);
+CREATE INDEX identity_codes_session ON identity_codes(session_digest);
+CREATE INDEX identity_codes_expiry ON identity_codes(expires_at);
+CREATE TABLE identity_grants (
+ grant_digest TEXT PRIMARY KEY,
+ client_id TEXT NOT NULL,
+ session_digest TEXT NOT NULL REFERENCES auth_sessions(token_digest) ON DELETE CASCADE
+);
+CREATE INDEX identity_grants_session ON identity_grants(session_digest);
+
 CREATE TABLE audit_events (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  actor_id TEXT NOT NULL,
@@ -232,6 +251,7 @@ CREATE TABLE project_configuration (
  environment_template_id TEXT NOT NULL REFERENCES environment_templates(id),
  network TEXT NOT NULL CHECK(json_valid(network)),
  environment TEXT NOT NULL CHECK(json_valid(environment)),
+ initial_environment TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(initial_environment)),
  revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0)
 );
 CREATE TABLE group_policy_bindings (
@@ -307,22 +327,23 @@ CREATE TABLE operator_receipts (
 
 
 CREATE TABLE content_publications (
+ generation INTEGER NOT NULL DEFAULT 0 CHECK(generation>=0),
  store_id TEXT NOT NULL,
- purpose TEXT NOT NULL CHECK(purpose IN ('assets','config','builtin')),
+ purpose TEXT NOT NULL CHECK(purpose IN ('assets','config','builtin','authored')),
  revision_digest TEXT NOT NULL CHECK(revision_digest LIKE 'sha256:%'),
  capacity INTEGER NOT NULL CHECK(capacity>0),
  entries TEXT NOT NULL,
  staging_volume_id TEXT NOT NULL DEFAULT '',
  derived_volume_id TEXT NOT NULL DEFAULT '',
  published_volume_id TEXT NOT NULL DEFAULT '',
- stage TEXT NOT NULL CHECK(stage IN ('preparing','staged','derived','published','failed')),
+ stage TEXT NOT NULL CHECK(stage IN ('preparing','staged','populating','populated','quarantined','derived','published','failed')),
  error TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
  PRIMARY KEY(store_id,purpose,revision_digest),
  CHECK((stage='published') = (published_volume_id<>'')),
  CHECK(published_volume_id='' OR published_volume_id=derived_volume_id),
- CHECK((stage IN ('preparing','staged','failed')) OR derived_volume_id<>''),
+ CHECK((stage IN ('preparing','staged','populating','populated','quarantined','failed')) OR derived_volume_id<>''),
  CHECK((stage IN ('preparing','failed')) OR staging_volume_id<>''),
  CHECK(staging_volume_id='' OR staging_volume_id<>derived_volume_id)
 );
@@ -1068,6 +1089,7 @@ UNION ALL SELECT 'file_write' AS kind,id AS id FROM file_operations INDEXED BY r
 UNION ALL SELECT 'session_cleanup' AS kind,id AS id FROM sessions INDEXED BY release_session_cleanup_pending WHERE deletion_intent=1
 UNION ALL SELECT 'terminal_cleanup' AS kind,id AS id FROM terminals INDEXED BY release_terminal_cleanup_pending WHERE deletion_intent=1
 UNION ALL SELECT 'content_publication' AS kind,revision_digest AS id FROM content_publications INDEXED BY release_content_publication_pending WHERE stage NOT IN ('published','failed')
+UNION ALL SELECT 'volume_import',id FROM volume_imports WHERE state IN ('acquiring','source_acquired','materializing','retiring') OR (state IN ('ready','canceled','retired') AND transfer_reserved>0)
 UNION ALL SELECT 'native_capture' AS kind,path AS id FROM native_captures INDEXED BY release_native_capture_pending WHERE state='guest'
 UNION ALL SELECT 'share_publication' AS kind,id AS id FROM shares INDEXED BY release_share_publication_pending WHERE state='pending' OR (state IN ('revoked','failed') AND cleaned=0)
 UNION ALL SELECT 'model_request' AS kind,audience||':'||slot AS id FROM service_request_slots INDEXED BY release_model_request_pending WHERE closed=0;
@@ -1656,3 +1678,84 @@ WHEN NEW.disposition IN ('handled','canceled') BEGIN
 END;
 
 CREATE TABLE runtime_store (id INTEGER PRIMARY KEY CHECK(id=1), store_id TEXT NOT NULL CHECK(length(store_id)>0));
+
+CREATE TABLE volume_imports (
+ id TEXT PRIMARY KEY,source_id TEXT NOT NULL,publisher_id TEXT NOT NULL,
+ library_id TEXT NOT NULL,version_id TEXT NOT NULL,manifest_digest TEXT NOT NULL,
+ manifest BLOB NOT NULL,content_profile TEXT NOT NULL CHECK(content_profile='authored-v1'),
+ store_id TEXT NOT NULL,tree_digest TEXT NOT NULL,capacity INTEGER NOT NULL CHECK(capacity>0),
+ actor_id TEXT NOT NULL REFERENCES accounts(id),publisher_actor TEXT NOT NULL DEFAULT '',
+ artifact_id TEXT NOT NULL,artifact_version TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN('acquiring','source_acquired','materializing','ready','paused','failed','canceled','retiring','retired')),
+ resume_state TEXT NOT NULL DEFAULT '',error TEXT NOT NULL DEFAULT '',
+ transfer_reserved INTEGER NOT NULL CHECK(transfer_reserved>=0),
+ created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+ UNIQUE(source_id,version_id,manifest_digest,content_profile,store_id)
+);
+CREATE INDEX volume_import_pending ON volume_imports(state,updated_at);
+CREATE TABLE content_publication_attempts (
+ store_id TEXT NOT NULL,purpose TEXT NOT NULL,revision_digest TEXT NOT NULL,
+ generation INTEGER NOT NULL,capacity INTEGER NOT NULL,
+ staging_volume_id TEXT NOT NULL,derived_volume_id TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN('quarantined','cleanup','absent')),
+ error TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(store_id,purpose,revision_digest,generation)
+);
+
+-- Update intent is independent of template edits and runtime operation ownership.
+CREATE TABLE environment_updates (
+ id TEXT PRIMARY KEY,
+ environment_id TEXT NOT NULL REFERENCES environment_templates(id),
+ sequence INTEGER NOT NULL CHECK(sequence>0),
+ revision INTEGER NOT NULL DEFAULT 1,
+ configuration_revision INTEGER NOT NULL,
+ kind TEXT NOT NULL CHECK(kind='publication_replace'),
+ state TEXT NOT NULL CHECK(state IN ('active','stopped','superseded','retired')),
+ stop_requested INTEGER NOT NULL DEFAULT 0 CHECK(stop_requested IN (0,1)),
+ note TEXT NOT NULL DEFAULT '', actor_id TEXT NOT NULL, created_at TEXT NOT NULL,
+ mounts TEXT NOT NULL CHECK(json_valid(mounts)),
+ UNIQUE(environment_id,sequence)
+);
+CREATE TABLE project_environment_updates (
+ project_id TEXT PRIMARY KEY REFERENCES projects(id),
+ policy TEXT NOT NULL DEFAULT 'follow' CHECK(policy IN ('follow','fixed')),
+ revision INTEGER NOT NULL DEFAULT 1,
+ target_id TEXT NOT NULL DEFAULT '', applied_id TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL DEFAULT 'current', reason TEXT NOT NULL DEFAULT '',
+ attempts INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+);
+CREATE INDEX project_environment_target ON project_environment_updates(target_id,state);
+CREATE TABLE environment_update_executions (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+ release_id TEXT NOT NULL REFERENCES environment_updates(id),
+ kind TEXT NOT NULL CHECK(kind='publication_replace'),
+ state TEXT NOT NULL CHECK(state IN ('pending','unknown','succeeded','deferred','canceled')),
+ before_mounts TEXT NOT NULL CHECK(json_valid(before_mounts)),
+ after_mounts TEXT NOT NULL CHECK(json_valid(after_mounts)),
+ reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ recovery_attempts INTEGER NOT NULL DEFAULT 0, retry_after TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX environment_execution_project ON environment_update_executions(project_id,created_at);
+CREATE UNIQUE INDEX environment_execution_pending ON environment_update_executions(project_id) WHERE state IN ('pending','unknown');
+
+CREATE TRIGGER environment_update_immutable BEFORE UPDATE OF environment_id,sequence,configuration_revision,kind,mounts,note,actor_id,created_at ON environment_updates
+BEGIN SELECT RAISE(ABORT,'immutable environment publication'); END;
+CREATE TRIGGER environment_execution_immutable BEFORE UPDATE OF project_id,release_id,kind,before_mounts,after_mounts ON environment_update_executions
+BEGIN SELECT RAISE(ABORT,'immutable environment execution'); END;
+
+CREATE TABLE volume_import_labels (
+ import_id TEXT PRIMARY KEY REFERENCES volume_imports(id),
+ library_name TEXT NOT NULL, version_label TEXT NOT NULL, version_note TEXT NOT NULL
+);
+
+CREATE INDEX project_configuration_environment ON project_configuration(environment_template_id,project_id);
+CREATE UNIQUE INDEX volume_import_artifact ON volume_imports(artifact_id,artifact_version);
+
+CREATE TABLE environment_update_members (
+ release_id TEXT NOT NULL REFERENCES environment_updates(id),
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ initial_state TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(release_id,project_id)
+);
+CREATE TRIGGER environment_update_member_immutable BEFORE UPDATE ON environment_update_members
+BEGIN SELECT RAISE(ABORT,'immutable deployment cohort'); END;

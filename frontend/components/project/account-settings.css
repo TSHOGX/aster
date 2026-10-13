@@ -1,4 +1,4 @@
-.account-settings.app-dialog { width: min(38rem, calc(100vw - 2rem)); max-height: min(90dvh, 56rem); padding: 0; overflow: hidden; }
+.account-settings.app-dialog { width: min(38rem, calc(100vw - 2rem)); height: min(90dvh, 56rem); max-height: min(90dvh, 56rem); padding: 0; overflow: hidden; }
 .account-settings > header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1.1rem 1.4rem; border-bottom: 1px solid var(--border); }
 .account-settings > header h2 { margin: 0; }
 .account-settings-body { max-height: calc(90dvh - 5rem); overflow: auto; overscroll-behavior: contain; padding: 0 1.4rem 1.4rem; }
@@ -27,7 +27,7 @@
 }
 .account-settings.app-dialog[open] { display: flex; flex-direction: column; }
 .account-settings.app-dialog > header { margin: 0; flex-shrink: 0; }
-.account-settings-body { min-height: 0; }
+.account-settings-body { min-height: 0; flex: 1; scrollbar-gutter: stable; overflow-anchor: none; }
 .account-settings input, .account-settings select { font-size: 1rem; }
 
 .account-usage { overflow-wrap: anywhere; }.account-usage details { border-top: 1px solid var(--border); padding: .8rem 0; }.account-usage summary { cursor: pointer; line-height: 1.5; }.account-usage dl { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; font-size: .85rem; }.account-usage dd { margin: 0; }.account-usage ul { padding-left: 1.3rem; font-size: .85rem; }
@@ -74,3 +74,19 @@
 }
 
 .advanced-files a:hover { background: var(--surface-muted); }
+
+/* Form actions, inline file actions and icon controls retain distinct sizes. */
+.account-settings button:not(.icon-button):not([role="combobox"]) { border: 1px solid var(--border); }
+.account-settings button.primary { border-color: var(--button-primary); }
+.account-settings button.primary:is(:hover, :focus-visible):not(:disabled) { background: var(--button-primary-hover); border-color: var(--button-primary-hover); color: var(--button-primary-foreground); }
+.account-settings button.icon-button { min-height: 32px; }
+.account-settings summary { display: list-item; border-radius: .4rem; min-height: 2.25rem; padding: .4rem .5rem; font-weight: 500; }
+.account-settings summary::marker { color: var(--accent); }
+.account-settings summary:hover { background: var(--surface-muted); }
+.account-settings .advanced-files button.advanced-file-name { border-color: transparent; min-height: 2rem; padding: .3rem .2rem; color: var(--accent); text-decoration: underline; text-underline-offset: .2em; }
+.advanced-files .settings-actions > :is(button, a) { min-height: 2rem; padding: .3rem .6rem; font-size: .85rem; border: 1px solid var(--border); border-radius: .4rem; color: var(--foreground); }
+.account-settings .settings-actions { align-items: end; }
+@media(pointer:coarse) {
+  .account-settings :is(button, summary), .advanced-files .settings-actions > :is(button, a), .advanced-files .advanced-file-name { min-height:44px; }
+  .account-settings button.icon-button { width:44px; height:44px; flex-basis:44px; }
+}

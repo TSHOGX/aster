@@ -1,0 +1,14 @@
+[
+  {
+    "name": "empty-directory",
+    "descriptor_digest": "sha256:83c902e76b9707d5a85ee264a4d1626899a872c18d719b43d83948c430eee29e"
+  },
+  {
+    "name": "binary-and-empty",
+    "descriptor_digest": "sha256:2d46b80db24f1184cfa94d6a600ea9f5776d58e37149aaaa791c9c3a8a96c28e"
+  },
+  {
+    "name": "unicode",
+    "descriptor_digest": "sha256:01ebdfeb7b4961408f8fcace38af1f326a4970ee1c0ba8612ab829d02f76c55c"
+  }
+]

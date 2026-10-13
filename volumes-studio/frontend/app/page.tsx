@@ -1,0 +1,363 @@
+/* eslint-disable react-hooks/set-state-in-effect -- Hydrate browser navigation and synchronize external workspace snapshots. */
+"use client";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import {
+  Search,
+  Plus,
+  RefreshCw,
+  ArrowDown,
+  ArrowUp,
+  ChevronsUpDown,
+} from "lucide-react";
+import { api, Library, requestID } from "../lib/api";
+import { storageRead, storageWrite } from "../lib/workbench";
+import { Page, query, relativeTime } from "../lib/workbench";
+import { LibraryDetails, ShellHeader } from "../components/shell";
+import { Menu, Picker } from "../components/ui";
+import { useStudio } from "../components/studio-provider";
+export default function Home() {
+  const studio = useStudio();
+  const router = useRouter();
+  const [q, setQ] = useState(""),
+    [status, setStatus] = useState("active"),
+    [changes, setChanges] = useState(""),
+    [sort, setSort] = useState("updated"),
+    [direction, setDirection] = useState("desc"),
+    [ready, setReady] = useState(false),
+    [page, setPage] = useState<Page<Library> | null>(null),
+    [error, setError] = useState(""),
+    [loading, setLoading] = useState(true),
+    [editing, setEditing] = useState<Library | null | undefined>(),
+    [refresh, setRefresh] = useState(0);
+  const scroll = useRef<HTMLDivElement>(null);
+  const navigating = useRef(false);
+  useEffect(() => {
+    const p = new URLSearchParams(location.search);
+    setQ(p.get("q") || "");
+    setStatus(p.get("status") || "active");
+    setChanges(p.get("changes") || "");
+    setSort(p.get("sort") || "updated");
+    setDirection(p.get("direction") || "desc");
+    setReady(true);
+  }, []);
+  const params = query({
+    mode: "workbench",
+    q,
+    status,
+    changes,
+    sort,
+    direction,
+    limit: 50,
+  });
+  useEffect(() => {
+    if (!ready) return;
+    const abort = new AbortController();
+    const timer = setTimeout(() => {
+      setLoading(true);
+      if (!navigating.current)
+        history.replaceState(
+          null,
+          "",
+          `?${query({ q, status, changes, sort, direction })}`,
+        );
+      void api<Page<Library>>(`/libraries?${params}`, { signal: abort.signal })
+        .then((p) => {
+          setPage(p);
+          setError("");
+          requestAnimationFrame(() => {
+            if (scroll.current)
+              scroll.current.scrollTop = Number(
+                storageRead("session", `studio-list-scroll:${params}`) || 0,
+              );
+          });
+        })
+        .catch((e) => {
+          if (!abort.signal.aborted) setError(String(e));
+        })
+        .finally(() => {
+          if (!abort.signal.aborted) setLoading(false);
+        });
+    }, 150);
+    return () => {
+      clearTimeout(timer);
+      abort.abort();
+    };
+  }, [ready, params, refresh, q, status, changes, sort, direction]);
+  const setOrder = (value: string) => {
+    if (sort === value) setDirection(direction === "asc" ? "desc" : "asc");
+    else {
+      setSort(value);
+      setDirection(value === "updated" ? "desc" : "asc");
+    }
+  };
+  const archive = async (l: Library) => {
+    if (
+      (await studio.ask(
+        l.archived ? "Restore library" : "Archive library",
+        l.archived
+          ? "Make this library active again?"
+          : "Archive this library? Existing imported copies are unaffected.",
+        ["Cancel", l.archived ? "Restore" : "Archive"],
+      )) === "Cancel"
+    )
+      return;
+    try {
+      await studio.write(
+        `/libraries/${l.id}`,
+        {
+          request_id: requestID(),
+          expected_revision: l.metadata_revision,
+          name: l.name,
+          description: l.description,
+          archived: !l.archived,
+        },
+        "PATCH",
+      );
+      setRefresh((n) => n + 1);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+  return (
+    <main className="studio-shell">
+      <ShellHeader />
+      <div className="catalog-heading">
+        <h1>
+          Libraries <span className="count">{page?.total ?? "…"}</span>
+        </h1>
+        <button className="primary" onClick={() => setEditing(null)}>
+          <Plus size={16} />
+          New library
+        </button>
+      </div>
+      <div className="catalog-toolbar">
+        <label className="search">
+          <Search size={16} />
+          <input
+            placeholder="Search libraries…"
+            aria-label="Search libraries"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </label>
+        <Picker
+          label="Library status"
+          value={status}
+          onChange={setStatus}
+          options={[
+            { value: "active", label: "Active" },
+            { value: "archived", label: "Archived" },
+            { value: "all", label: "All libraries" },
+          ]}
+        />
+        <Picker
+          label="Draft changes filter"
+          value={changes}
+          onChange={setChanges}
+          options={[
+            { value: "", label: "All drafts" },
+            { value: "yes", label: "With changes" },
+            { value: "no", label: "Without changes" },
+          ]}
+        />
+        <button
+          aria-label="Refresh libraries"
+          onClick={() => setRefresh((n) => n + 1)}
+        >
+          <RefreshCw size={16} />
+        </button>
+      </div>
+      {error && (
+        <p className="notice error" role="alert">
+          {error}
+        </p>
+      )}
+      <div
+        ref={scroll}
+        className="catalog-scroll"
+        onScroll={(e) =>
+          storageWrite(
+            "session",
+            `studio-list-scroll:${params}`,
+            String(e.currentTarget.scrollTop),
+          )
+        }
+        aria-busy={loading}
+      >
+        <table>
+          <thead>
+            <tr>
+              {[
+                ["name", "Name"],
+                ["status", "Status"],
+              ].map(([key, label]) => (
+                <th
+                  key={key}
+                  aria-sort={
+                    sort === key
+                      ? direction === "asc"
+                        ? "ascending"
+                        : "descending"
+                      : "none"
+                  }
+                >
+                  <button onClick={() => setOrder(key)}>
+                    {label}
+                    {sort === key ? (
+                      direction === "asc" ? (
+                        <ArrowUp size={13} />
+                      ) : (
+                        <ArrowDown size={13} />
+                      )
+                    ) : (
+                      <ChevronsUpDown size={13} />
+                    )}
+                  </button>
+                </th>
+              ))}
+              <th>Latest published version</th>
+              <th>Draft changes</th>
+              <th
+                aria-sort={
+                  sort === "updated"
+                    ? direction === "asc"
+                      ? "ascending"
+                      : "descending"
+                    : "none"
+                }
+              >
+                <button onClick={() => setOrder("updated")}>
+                  Updated
+                  {sort === "updated" ? (
+                    direction === "asc" ? (
+                      <ArrowUp size={13} />
+                    ) : (
+                      <ArrowDown size={13} />
+                    )
+                  ) : (
+                    <ChevronsUpDown size={13} />
+                  )}
+                </button>
+              </th>
+              <th>
+                <span className="visually-hidden">Actions</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {page?.items.map((l) => (
+              <tr key={l.id}>
+                <td>
+                  <Link className="library-name" href={`/libraries/${l.id}`}>
+                    {l.name}
+                  </Link>
+                  <p className="description">{l.description}</p>
+                </td>
+                <td>
+                  <span className="badge">
+                    {l.archived ? "Archived" : "Active"}
+                  </span>
+                </td>
+                <td>
+                  {l.latest_published_version ? (
+                    <Link
+                      href={`/libraries/${l.id}?version=${l.latest_published_version.id}`}
+                    >
+                      {l.latest_published_version.label}
+                    </Link>
+                  ) : (
+                    <span className="muted">No published version</span>
+                  )}
+                </td>
+                <td>
+                  {l.draft_change_count
+                    ? `${l.draft_change_count} changed`
+                    : "No changes"}
+                </td>
+                <td>
+                  <time
+                    title={
+                      l.updated_at
+                        ? new Date(l.updated_at * 1000).toLocaleString()
+                        : undefined
+                    }
+                  >
+                    {relativeTime(l.updated_at)}
+                  </time>
+                </td>
+                <td>
+                  <Menu
+                    label={`Actions for ${l.name}`}
+                    items={[
+                      {
+                        label: "Edit library details",
+                        action: () => setEditing(l),
+                      },
+                      {
+                        label: l.archived
+                          ? "Restore library"
+                          : "Archive library",
+                        action: () => void archive(l),
+                        danger: !l.archived,
+                      },
+                    ]}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!page && loading && <p className="empty-state">Loading libraries…</p>}
+        {page?.items.length === 0 && (
+          <div className="empty-state">
+            <h2>
+              {q || changes || status !== "active"
+                ? "No matching libraries"
+                : "No libraries yet"}
+            </h2>
+            <p>
+              {q || changes
+                ? "Adjust your search or filters."
+                : "Create a library to begin."}
+            </p>
+          </div>
+        )}
+        {page?.next && (
+          <button
+            className="load-more"
+            disabled={loading}
+            onClick={async () => {
+              setLoading(true);
+              try {
+                const p = await api<Page<Library>>(
+                  `/libraries?${params}&cursor=${encodeURIComponent(page.next)}`,
+                );
+                setPage({ ...p, items: [...page.items, ...p.items] });
+              } catch (e) {
+                setError(String(e));
+              } finally {
+                setLoading(false);
+              }
+            }}
+          >
+            Load more libraries
+          </button>
+        )}
+      </div>
+      {editing !== undefined && (
+        <LibraryDetails
+          library={editing || undefined}
+          onClose={() => setEditing(undefined)}
+          onSaved={(l) => {
+            if (!editing) {
+              navigating.current = true;
+              router.push(`/libraries/${l.id}`);
+            } else setRefresh((n) => n + 1);
+          }}
+        />
+      )}
+    </main>
+  );
+}

@@ -6,6 +6,7 @@ import (
 )
 
 func (a *Authentication) templateRoutes(mux *http.ServeMux) {
+	a.environmentUpdateRoutes(mux)
 	mux.HandleFunc("GET /api/me/project-configurations", func(w http.ResponseWriter, r *http.Request) {
 		out, err := a.Store.UserProjectConfigurations(r.Context(), requestToken(r))
 		if err != nil {

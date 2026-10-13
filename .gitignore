@@ -102,6 +102,8 @@ sandbox-image/files/usr/local/share/shared-assets/data/*/
 # Generated admin frontend checks and framework instructions.
 admin-frontend/test-results/
 admin-frontend/playwright-report/
+volumes-studio/frontend/test-results/
+volumes-studio/frontend/playwright-report/
 !admin-frontend/AGENTS.md
 
 # Generated TypeScript/Next declarations and incremental state.

@@ -67,7 +67,7 @@ func saveInitialConfiguration(ctx context.Context, tx *sql.Tx, actor, project st
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO project_configuration(project_id,network_template_id,environment_template_id,network,environment) VALUES(?,?,?,?,?)`, project, n.ID, e.ID, string(network), string(environment))
+	_, err = tx.ExecContext(ctx, `INSERT INTO project_configuration(project_id,network_template_id,environment_template_id,network,environment,initial_environment) VALUES(?,?,?,?,?,?)`, project, n.ID, e.ID, string(network), string(environment), string(environment))
 	return err
 }
 func authorizeProjectConfiguration(ctx context.Context, q queryer, actor, project string) (ProjectConfiguration, error) {
