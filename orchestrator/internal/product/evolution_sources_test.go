@@ -4,6 +4,7 @@ import (
 	"aster/contracts/evolution"
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 )
 
@@ -124,5 +125,28 @@ func TestEvolutionSourcePolicyHistoryRetainedWithoutAuthority(t *testing.T) {
 		return err
 	}); err == nil {
 		t.Fatal("policy history deleted")
+	}
+}
+
+func TestEvolutionSourcePolicyReplayRechecksVolumeAuthority(t *testing.T) {
+	s, admin := accountStore(t)
+	token := adminTestToken(t, s, admin)
+	for _, action := range []string{"volume.read", "volume.configure"} {
+		_, err := s.ApplyStudioGrant(ctx, token, StudioGrantCommand{RequestID: strings.ReplaceAll(action, ".", "-"), Kind: "account", SubjectID: admin.ID, LibraryID: "library", Action: action, Effect: "allow"})
+		must(t, err)
+	}
+	source := evolution.SourceBinding{ID: "source", Kind: "volume", ResourceID: "library", PolicyRevision: 1, AudienceGroups: []string{StandardUsersGroup}, DerivativePublication: true}
+	input := EvolutionSourcePolicyInput{"policy", 0, source}
+	_, err := s.SetEvolutionSourcePolicy(ctx, token, StandardUsersGroup, input)
+	must(t, err)
+	_, err = s.ApplyStudioGrant(ctx, token, StudioGrantCommand{RequestID: "revoke", Kind: "account", SubjectID: admin.ID, LibraryID: "library", Action: "volume.read", Effect: "deny", ExpectedRevision: 1})
+	must(t, err)
+	if _, err = s.SetEvolutionSourcePolicy(ctx, token, StandardUsersGroup, input); err != ErrForbidden {
+		t.Fatal("replay bypassed source revocation", err)
+	}
+	var count int
+	must(t, s.reader.QueryRowContext(ctx, "SELECT count(*) FROM evolution_source_policy_revisions WHERE source_id='source'").Scan(&count))
+	if count != 1 {
+		t.Fatal("rejected replay changed provenance", count)
 	}
 }

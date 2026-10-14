@@ -36,15 +36,15 @@ func (s *Store) SetEvolutionSourcePolicy(ctx context.Context, token, group strin
 		if err != nil {
 			return err
 		}
+		if err := authorizeEvolutionSourceIssuer(ctx, tx, session.Account.ID, source); err != nil {
+			return err
+		}
 		receipt, replayed, err := readAdminReceipt(ctx, tx, session.Account.ID, request)
 		if err != nil {
 			return err
 		}
 		if replayed {
 			return json.Unmarshal(receipt, &result)
-		}
-		if err := authorizeEvolutionSourceIssuer(ctx, tx, session.Account.ID, source); err != nil {
-			return err
 		}
 		var revision int64
 		var existingIssuer string
