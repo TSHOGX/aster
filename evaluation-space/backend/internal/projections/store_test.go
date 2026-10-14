@@ -122,3 +122,49 @@ func TestProjectionStartupRejectsSchemaTampering(t *testing.T) {
 		t.Fatal("startup modified mismatched schema", count, err)
 	}
 }
+
+func TestConcurrentProjectionAdoptionAndOperationReuse(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "space.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	makeProjection := func(operation, group string, revision int64) Projection {
+		config := evolution.Configuration{GroupID: group, Revision: revision, Budget: evolution.Budget{MaxTokens: 10, MaxAttempts: 1, TimeoutSeconds: 30, MaxArtifactBytes: 1024}}
+		raw, _ := json.Marshal(config)
+		return Projection{OperationID: operation, Digest: evolution.Digest(raw), Configuration: config}
+	}
+	start := make(chan struct{})
+	out := make(chan error, 2)
+	for _, operation := range []string{"first", "second"} {
+		go func(operation string) { <-start; out <- store.Adopt(ctx, makeProjection(operation, "alpha", 1)) }(operation)
+	}
+	close(start)
+	accepted, conflicted := 0, 0
+	for i := 0; i < 2; i++ {
+		err := <-out
+		if err == nil {
+			accepted++
+		} else if errors.Is(err, ErrConflict) {
+			conflicted++
+		} else {
+			t.Fatal(err)
+		}
+	}
+	if accepted != 1 || conflicted != 1 {
+		t.Fatal("multiple owners of revision", accepted, conflicted)
+	}
+	retained, err := store.Read(ctx, "alpha", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, other := range []Projection{makeProjection(retained.OperationID, "beta", 1), makeProjection(retained.OperationID, "alpha", 2)} {
+		if err := store.Adopt(ctx, other); !errors.Is(err, ErrConflict) {
+			t.Fatal("operation identity reused", err)
+		}
+	}
+	if err := store.Adopt(ctx, retained); err != nil {
+		t.Fatal("winning retry rejected", err)
+	}
+}
