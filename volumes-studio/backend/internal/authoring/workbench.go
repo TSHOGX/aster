@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"sort"
-	"strconv"
 	"strings"
 
 	"aster/contracts/volumemanifest"
@@ -139,51 +138,46 @@ func (s *Store) summaries(ctx context.Context, library string) ([]LibrarySummary
 	if err != nil {
 		return nil, err
 	}
-	// Batched relational reads avoid one HTTP/SQL query per visible row or file.
-	drafts := map[string][]manifest.Entry{}
-	rows, err = s.db.QueryContext(ctx, "SELECT library_id,path,kind,size,coalesce(digest,'') FROM draft_entries WHERE (?='' OR library_id=?)", library, library)
+	// Draft changes belong to working branches and compare against each branch's
+	// committed head, never the last published version of the library.
+	counts := map[string]int{}
+	rows, err = s.db.QueryContext(ctx, "SELECT id,library_id FROM branches WHERE state='ready' AND (?='' OR library_id=?)", library, library)
 	if err != nil {
 		return nil, err
 	}
+	type branchRef struct{ id, library string }
+	branches := []branchRef{}
 	for rows.Next() {
-		var id string
-		var e manifest.Entry
-		var size int64
-		if err = rows.Scan(&id, &e.Path, &e.Kind, &size, &e.Digest); err != nil {
+		var b branchRef
+		if err = rows.Scan(&b.id, &b.library); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		e.Size = strconv.FormatInt(size, 10)
-		drafts[id] = append(drafts[id], e)
+		branches = append(branches, b)
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
 		return nil, err
 	}
-	bases := map[string][]manifest.Entry{}
-	rows, err = s.db.QueryContext(ctx, "SELECT id,descriptor FROM versions WHERE id IN (SELECT base_version FROM libraries WHERE (?='' OR id=?))", library, library)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var id string
-		var raw []byte
-		if err = rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+	for _, b := range branches {
+		draft, err := entries(ctx, s.db, "branch_entries", "branch_id", b.id)
+		if err != nil {
 			return nil, err
 		}
-		d, e := manifest.Decode(bytes.NewReader(raw))
-		if e != nil {
-			rows.Close()
-			return nil, e
+		repo, err := s.historyRepository(ctx, b.library)
+		if err != nil {
+			return nil, err
 		}
-		bases[id] = d.Entries
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return nil, err
+		head, err := repo.Head(ctx, "refs/heads/"+b.id)
+		if err != nil {
+			return nil, err
+		}
+		snapshot, err := repo.Snapshot(ctx, head)
+		if err != nil {
+			return nil, err
+		}
+		counts[b.library] += len(compareEntries(snapshot.Entries, draft))
 	}
 	versions, err := s.versionSummaries(ctx, library)
 	if err != nil {
@@ -201,7 +195,7 @@ func (s *Store) summaries(ctx context.Context, library string) ([]LibrarySummary
 	}
 	for i := range out {
 		l := &out[i]
-		l.DraftChangeCount = len(changesBetween(drafts[l.ID], bases[l.BaseVersion]))
+		l.DraftChangeCount = counts[l.ID]
 		l.LatestPublishedVersion = latest[l.ID]
 	}
 	return out, nil

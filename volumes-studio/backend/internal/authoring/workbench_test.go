@@ -144,3 +144,32 @@ func TestWorkbenchVersionSearchBeyondFirstPage(t *testing.T) {
 		t.Fatal(found, err)
 	}
 }
+
+func TestCatalogCountsSavedBranchChangesAgainstHead(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	main, err := s.MainCommit(ctx, testActor, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateBranch(ctx, testActor, l.ID, CreateBranchInput{"summary-branch", "Work", main.CommitID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SaveBranchText(ctx, testActor, l.ID, b.ID, SaveBranchTextInput{"summary-save", 1, b.Head, "file", "draft"}); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := s.Summary(ctx, l.ID)
+	if err != nil || summary.DraftChangeCount != 1 {
+		t.Fatal(summary, err)
+	}
+	if _, err = s.Checkpoint(ctx, testActor, l.ID, b.ID, CheckpointInput{"summary-commit", b.Head, 2, "checkpoint"}); err != nil {
+		t.Fatal(err)
+	}
+	summary, err = s.Summary(ctx, l.ID)
+	if err != nil || summary.DraftChangeCount != 0 {
+		t.Fatal("committed content counted as draft", summary, err)
+	}
+}
