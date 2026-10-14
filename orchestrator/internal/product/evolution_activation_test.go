@@ -23,11 +23,11 @@ func TestEvolutionActivationDesiredActiveReceipts(t *testing.T) {
 	if desired.State != "activating" || desired.ActiveRevision != 0 {
 		t.Fatal(desired)
 	}
-	must(t, s.AcceptEvolutionParticipant(ctx, token, desired.OperationID, "evaluation-space", activationDigestFixture(1, true)))
+	must(t, acceptEvolutionFixture(s, ctx, token, desired.OperationID, "evaluation-space", activationDigestFixture(1, true)))
 	if _, err := s.SettleEvolutionActivation(ctx, token, desired.OperationID); err != ErrBusy {
 		t.Fatal("one receipt settled", err)
 	}
-	must(t, s.AcceptEvolutionParticipant(ctx, token, desired.OperationID, "studio", activationDigestFixture(1, true)))
+	must(t, acceptEvolutionFixture(s, ctx, token, desired.OperationID, "studio", activationDigestFixture(1, true)))
 	active, err := s.SettleEvolutionActivation(ctx, token, desired.OperationID)
 	must(t, err)
 	if active.State != "active" || active.ActiveRevision != 1 || active.ActiveDigest != activationDigestFixture(1, true) {
@@ -53,7 +53,7 @@ func TestEvolutionActivationAuthorizationReplayAndParticipantIdentity(t *testing
 	if _, err = s.EvolutionConfig(ctx, "", StandardUsersGroup); err == nil {
 		t.Fatal("unauthenticated config read")
 	}
-	if err = s.AcceptEvolutionParticipant(ctx, token, first.OperationID, "invented", evolution.Digest([]byte("digest"))); err != ErrInvalid {
+	if err = acceptEvolutionFixture(s, ctx, token, first.OperationID, "invented", evolution.Digest([]byte("digest"))); err != ErrInvalid {
 		t.Fatal("unknown participant accepted", err)
 	}
 	if _, err = s.SettleEvolutionActivation(ctx, token, first.OperationID); err != ErrBusy {
@@ -72,7 +72,7 @@ func TestEvolutionActivationPendingCannotBeOverwritten(t *testing.T) {
 		t.Fatal("pending operation overwritten", err)
 	}
 	for _, participant := range []string{"studio", "evaluation-space"} {
-		must(t, s.AcceptEvolutionParticipant(ctx, token, pending.OperationID, participant, digest))
+		must(t, acceptEvolutionFixture(s, ctx, token, pending.OperationID, participant, digest))
 	}
 	first, err := s.SettleEvolutionActivation(ctx, token, pending.OperationID)
 	must(t, err)
@@ -102,7 +102,7 @@ func TestEvolutionDisableDuringPendingActivation(t *testing.T) {
 		t.Fatal("disable retry changed result")
 	}
 	for _, participant := range []string{"studio", "evaluation-space"} {
-		must(t, s.AcceptEvolutionParticipant(ctx, token, pending.OperationID, participant, digest))
+		must(t, acceptEvolutionFixture(s, ctx, token, pending.OperationID, participant, digest))
 	}
 	active, err := s.SettleEvolutionActivation(ctx, token, pending.OperationID)
 	must(t, err)
@@ -119,25 +119,25 @@ func TestEvolutionFailureRetryRetainsAcceptedConfiguration(t *testing.T) {
 	first, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"first", 0, activationConfigFixture(0+1, true)})
 	must(t, err)
 	for _, participant := range []string{"studio", "evaluation-space"} {
-		must(t, s.AcceptEvolutionParticipant(ctx, token, first.OperationID, participant, digest))
+		must(t, acceptEvolutionFixture(s, ctx, token, first.OperationID, participant, digest))
 	}
 	_, err = s.SettleEvolutionActivation(ctx, token, first.OperationID)
 	must(t, err)
 	nextDigest := activationDigestFixture(2, true)
 	next, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"next", 1, activationConfigFixture(1+1, true)})
 	must(t, err)
-	must(t, s.AcceptEvolutionParticipant(ctx, token, next.OperationID, "studio", nextDigest))
+	must(t, acceptEvolutionFixture(s, ctx, token, next.OperationID, "studio", nextDigest))
 	must(t, s.FailEvolutionParticipant(ctx, token, next.OperationID, "evaluation-space", nextDigest, "offline"))
 	failed, err := s.EvolutionConfig(ctx, token, StandardUsersGroup)
 	must(t, err)
 	if failed.ActiveRevision != 1 || failed.ActiveDigest != digest || failed.State != "failed" {
 		t.Fatal(failed)
 	}
-	if err = s.AcceptEvolutionParticipant(ctx, token, next.OperationID, "evaluation-space", nextDigest); err != ErrConflict {
+	if err = acceptEvolutionFixture(s, ctx, token, next.OperationID, "evaluation-space", nextDigest); err != ErrConflict {
 		t.Fatal("failure bypassed explicit retry", err)
 	}
 	must(t, s.RetryEvolutionActivation(ctx, token, next.OperationID))
-	must(t, s.AcceptEvolutionParticipant(ctx, token, next.OperationID, "evaluation-space", nextDigest))
+	must(t, acceptEvolutionFixture(s, ctx, token, next.OperationID, "evaluation-space", nextDigest))
 	settled, err := s.SettleEvolutionActivation(ctx, token, next.OperationID)
 	must(t, err)
 	if settled.ActiveRevision != 2 || settled.OperationID != next.OperationID {
@@ -158,7 +158,7 @@ func TestEvolutionActivationRecoveryAfterRestart(t *testing.T) {
 	input := EvolutionActivationInput{"save", 0, activationConfigFixture(0+1, true)}
 	pending, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, input)
 	must(t, err)
-	must(t, s.AcceptEvolutionParticipant(ctx, token, pending.OperationID, "studio", digest))
+	must(t, acceptEvolutionFixture(s, ctx, token, pending.OperationID, "studio", digest))
 	must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evaluation-space", digest, "offline"))
 	_, err = s.DisableEvolution(ctx, token, StandardUsersGroup, DisableEvolutionInput{"disable", 1})
 	must(t, err)
@@ -181,7 +181,7 @@ func TestEvolutionActivationRecoveryAfterRestart(t *testing.T) {
 		t.Fatal("request replay admitted new operation")
 	}
 	must(t, s.RetryEvolutionActivation(ctx, token, pending.OperationID))
-	must(t, s.AcceptEvolutionParticipant(ctx, token, pending.OperationID, "evaluation-space", digest))
+	must(t, acceptEvolutionFixture(s, ctx, token, pending.OperationID, "evaluation-space", digest))
 	settled, err := s.SettleEvolutionActivation(ctx, token, pending.OperationID)
 	must(t, err)
 	if settled.AutoEnabled || settled.ActiveRevision != 1 {
@@ -230,4 +230,14 @@ func TestEvolutionConfigurationContentAndIdentity(t *testing.T) {
 	if _, err = s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, changed); !errors.Is(err, ErrConflict) {
 		t.Fatal("request replay replaced content", err)
 	}
+}
+
+// State machine tests supply participant receipts directly; production dispatch
+// obtains these only through authenticated participant transports.
+func acceptEvolutionFixture(s *Store, ctx context.Context, token, operation, participant, digest string) error {
+	var revision int64
+	if err := s.reader.QueryRowContext(ctx, "SELECT desired_revision FROM evolution_group_configs WHERE operation_id=?", operation).Scan(&revision); err != nil {
+		return err
+	}
+	return s.acceptEvolutionParticipant(ctx, token, evolution.ActivationReceipt{Participant: participant, OperationID: operation, ConfigurationDigest: digest, Generation: revision, State: "adopted"})
 }

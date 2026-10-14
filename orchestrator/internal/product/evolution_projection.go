@@ -41,9 +41,16 @@ func (s *Store) ReconcileEvolutionProjection(ctx context.Context, token, operati
 	if err != nil {
 		return err
 	}
+	allowed, err := s.AuthorizeEvolutionProjection(ctx, ProjectionScope{GroupID: projection.Configuration.GroupID, OperationID: operation, Revision: projection.Configuration.Revision, Digest: projection.Digest})
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrConflict
+	}
 	receipt, err := client.Reconcile(ctx, projection)
 	if err != nil {
 		return err
 	}
-	return s.AcceptEvolutionParticipant(ctx, token, operation, receipt.Participant, receipt.ConfigurationDigest)
+	return s.acceptEvolutionParticipant(ctx, token, receipt)
 }

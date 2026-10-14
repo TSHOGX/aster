@@ -24,12 +24,6 @@ type EvolutionActivationInput struct {
 	ExpectedRevision int64                   `json:"expected_revision"`
 	Configuration    evolution.Configuration `json:"configuration"`
 }
-type EvolutionActivationReceipt struct {
-	Participant  string `json:"participant"`
-	ConfigDigest string `json:"config_digest"`
-	State        string `json:"state"`
-	Error        string `json:"error"`
-}
 
 func (s *Store) EvolutionConfig(ctx context.Context, token, group string) (EvolutionGroupConfig, error) {
 	if !validID(group) {
@@ -102,8 +96,9 @@ func (s *Store) SaveEvolutionConfig(ctx context.Context, token, group string, in
 	})
 	return result, err
 }
-func (s *Store) AcceptEvolutionParticipant(ctx context.Context, token, operation, participant, digest string) error {
-	if participant != "studio" && participant != "evaluation-space" {
+func (s *Store) acceptEvolutionParticipant(ctx context.Context, token string, receipt evolution.ActivationReceipt) error {
+	operation, participant, digest := receipt.OperationID, receipt.Participant, receipt.ConfigurationDigest
+	if receipt.Generation < 1 || receipt.State != "adopted" || (participant != "studio" && participant != "evaluation-space") {
 		return ErrInvalid
 	}
 	return s.write(ctx, func(tx *sql.Tx) error {
@@ -112,7 +107,7 @@ func (s *Store) AcceptEvolutionParticipant(ctx context.Context, token, operation
 			return err
 		}
 		var group, state string
-		if err = tx.QueryRowContext(ctx, "SELECT group_id,state FROM evolution_group_configs WHERE operation_id=? AND desired_digest=?", operation, digest).Scan(&group, &state); err != nil {
+		if err = tx.QueryRowContext(ctx, "SELECT group_id,state FROM evolution_group_configs WHERE operation_id=? AND desired_digest=? AND desired_revision=?", operation, digest, receipt.Generation).Scan(&group, &state); err != nil {
 			return err
 		}
 		if state != "activating" && state != "active" {
