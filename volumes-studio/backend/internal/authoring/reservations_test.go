@@ -2,6 +2,7 @@ package authoring
 
 import (
 	"context"
+	"fmt"
 	"testing"
 )
 
@@ -98,5 +99,46 @@ func TestReservationCompensationOnlyOwnsPendingOperation(t *testing.T) {
 		if err := s.ReleaseEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix); err != nil {
 			t.Fatal("pending compensation failed", err)
 		}
+	}
+}
+
+func TestConcurrentPrefixReservations(t *testing.T) {
+	for _, scenario := range []struct {
+		name, left, right, secondGroup string
+		winners                        int
+	}{{"nested", "skills", "skills/sql", "alpha", 1}, {"disjoint", "skills", "lessons", "alpha", 2}, {"different-owner", "skills", "lessons", "beta", 1}} {
+		t.Run(scenario.name, func(t *testing.T) {
+			s, _ := testStore(t)
+			l := library(t, s)
+			s.config.Authority = &branchAuthority{true}
+			ctx := context.Background()
+			start := make(chan struct{})
+			results := make(chan error, 2)
+			for i, prefix := range []string{scenario.left, scenario.right} {
+				go func(i int, prefix string) {
+					<-start
+					group := "alpha"
+					if i == 1 {
+						group = scenario.secondGroup
+					}
+					operation := fmt.Sprintf("operation-%d", i)
+					_, err := s.ReserveEvolutionPrefix(ctx, testActor, PrefixReservation{LibraryID: l.ID, Prefix: prefix, GroupID: group, BindingID: operation, Generation: 1, OperationID: operation}, operation)
+					results <- err
+				}(i, prefix)
+			}
+			close(start)
+			winners := 0
+			for i := 0; i < 2; i++ {
+				err := <-results
+				if err == nil {
+					winners++
+				} else if err != ErrConflict {
+					t.Fatal(err)
+				}
+			}
+			if winners != scenario.winners {
+				t.Fatalf("got %d winners, expected %d", winners, scenario.winners)
+			}
+		})
 	}
 }
