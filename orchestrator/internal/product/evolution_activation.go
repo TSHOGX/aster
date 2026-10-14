@@ -31,7 +31,7 @@ func (s *Store) EvolutionConfig(ctx context.Context, token, group string) (Evolu
 	}
 	var c EvolutionGroupConfig
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := s.adminSession(ctx, tx, token); err != nil {
+		if _, err := s.evolutionGroupSession(ctx, tx, token, group, "config.read"); err != nil {
 			return err
 		}
 		return tx.QueryRowContext(ctx, "SELECT group_id,desired_revision,active_revision,desired_digest,active_digest,auto_enabled,state,operation_id FROM evolution_group_configs WHERE group_id=?", group).Scan(&c.GroupID, &c.DesiredRevision, &c.ActiveRevision, &c.DesiredDigest, &c.ActiveDigest, &c.AutoEnabled, &c.State, &c.OperationID)
@@ -60,7 +60,7 @@ func (s *Store) activateEvolutionConfig(ctx context.Context, token, group string
 		return result, err
 	}
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		actor, err := s.adminSession(ctx, tx, token)
+		actor, err := s.evolutionGroupSession(ctx, tx, token, group, "config.manage")
 		if err != nil {
 			return err
 		}

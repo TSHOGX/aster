@@ -1920,3 +1920,12 @@ CREATE TABLE evolution_source_policies (
  body TEXT NOT NULL CHECK(json_valid(body)),
  PRIMARY KEY(group_id,source_id)
 );
+
+CREATE TABLE evolution_group_grants (
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ account_id TEXT NOT NULL REFERENCES accounts(id),
+ action TEXT NOT NULL CHECK(action IN ('config.read','config.manage')),
+ effect TEXT NOT NULL CHECK(effect IN ('allow','deny')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ PRIMARY KEY(group_id,account_id,action)
+);

@@ -39,7 +39,7 @@ func (s *Store) SaveEvolutionDraft(ctx context.Context, token, group string, inp
 		return result, err
 	}
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		actor, err := s.adminSession(ctx, tx, token)
+		actor, err := s.evolutionGroupSession(ctx, tx, token, group, "config.manage")
 		if err != nil {
 			return err
 		}
@@ -83,7 +83,7 @@ func (s *Store) evolutionDraftRevision(ctx context.Context, token, group string,
 		return result, ErrInvalid
 	}
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := s.adminSession(ctx, tx, token); err != nil {
+		if _, err := s.evolutionGroupSession(ctx, tx, token, group, "config.read"); err != nil {
 			return err
 		}
 		var body string

@@ -65,3 +65,23 @@ Administrative conversation inspection is separate from routine Project metadata
 It requires current administrator authority and the explicit content-read grant,
 and successful reads are audited with their purpose. It does not grant arbitrary
 workspace, terminal or host-file access. See [Security](../reference/security.md).
+
+## Group configuration drafts
+
+Group configuration drafts are available through the authenticated API. An
+administrator can assign `config.read` and `config.manage` separately with
+`PUT /api/admin/groups/{group}/optimization/grants`. Supply `request_id`,
+`account_id`, `action`, `effect` (`allow` or `deny`), and `expected_revision`
+(zero for a new grant). Ordinary accounts also need current membership in that
+group. An explicit deny takes precedence, including for administrators.
+
+Use `GET /api/admin/groups/{group}/optimization/draft` to read the latest draft
+and `PUT` at the same path to save it. Saving requires `request_id`,
+`expected_revision` (the draft revision), and `configuration`. The configuration's
+`group_id` must match the path, `revision` must be zero, and `auto_enabled` must
+be false. Incomplete drafts are allowed. A save does not activate configuration
+or change running work. On a revision conflict, read the latest draft before
+reapplying edits; retry an unchanged request with its original request ID.
+
+These requests use the normal login session and same-origin mutation checks.
+Configuration grants do not confer source access or permission to publish content.

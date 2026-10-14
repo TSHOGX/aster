@@ -23,7 +23,7 @@ func (s *Store) DisableEvolution(ctx context.Context, token, group string, input
 		return result, err
 	}
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		actor, err := s.adminSession(ctx, tx, token)
+		actor, err := s.evolutionGroupSession(ctx, tx, token, group, "config.manage")
 		if err != nil {
 			return err
 		}
