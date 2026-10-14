@@ -26,6 +26,9 @@ func (s *Store) ReserveEvolutionPrefix(ctx context.Context, actor Actor, r Prefi
 		return r, ErrInvalid
 	}
 	return s.reservationResult(ctx, actor, r.LibraryID, func(tx *sql.Tx, actor Actor) (PrefixReservation, error) {
+		if err := writableReservationLibrary(ctx, tx, r.LibraryID); err != nil {
+			return r, err
+		}
 		var prior PrefixReservation
 		err := tx.QueryRowContext(ctx, "SELECT library_id,prefix,owner_group_id,binding_id,generation,state,operation_id FROM evolution_prefix_reservations WHERE library_id=? AND prefix=?", r.LibraryID, r.Prefix).Scan(&prior.LibraryID, &prior.Prefix, &prior.GroupID, &prior.BindingID, &prior.Generation, &prior.State, &prior.OperationID)
 		if err == nil {
@@ -67,6 +70,9 @@ func (s *Store) ReserveEvolutionPrefix(ctx context.Context, actor Actor, r Prefi
 func (s *Store) ActivateEvolutionPrefix(ctx context.Context, actor Actor, operation, library, prefix string, expectedGeneration int64) (PrefixReservation, error) {
 	var r PrefixReservation
 	err := s.reservationWrite(ctx, actor, library, func(tx *sql.Tx) error {
+		if err := writableReservationLibrary(ctx, tx, library); err != nil {
+			return err
+		}
 		var err error
 		err = tx.QueryRowContext(ctx, "SELECT library_id,prefix,owner_group_id,binding_id,generation,state,operation_id FROM evolution_prefix_reservations WHERE operation_id=? AND library_id=? AND prefix=?", operation, library, prefix).Scan(&r.LibraryID, &r.Prefix, &r.GroupID, &r.BindingID, &r.Generation, &r.State, &r.OperationID)
 		if err != nil {
@@ -134,4 +140,15 @@ func (s *Store) reservationResult(ctx context.Context, actor Actor, library stri
 func (s *Store) reservationAudit(ctx context.Context, tx *sql.Tx, actor Actor, action, library, operation string, generation int64) error {
 	_, err := tx.ExecContext(ctx, "INSERT INTO audit(issuer,subject,action,library_id,request_id,revision,created_at) VALUES(?,?,?,?,?,?,?)", actor.Issuer, actor.Subject, action, library, operation, generation, s.now().Unix())
 	return err
+}
+
+func writableReservationLibrary(ctx context.Context, tx *sql.Tx, library string) error {
+	var archived bool
+	if err := tx.QueryRowContext(ctx, "SELECT archived FROM libraries WHERE id=?", library).Scan(&archived); err != nil {
+		return normalizeDB(err)
+	}
+	if archived {
+		return ErrConflict
+	}
+	return nil
 }

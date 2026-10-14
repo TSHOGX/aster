@@ -142,3 +142,29 @@ func TestConcurrentPrefixReservations(t *testing.T) {
 		})
 	}
 }
+
+func TestArchivedLibraryBlocksReservationEffectsButAllowsCompensation(t *testing.T) {
+	s, _ := testStore(t)
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	ctx := context.Background()
+	r := PrefixReservation{LibraryID: l.ID, Prefix: "skills", GroupID: "group", BindingID: "binding", Generation: 1, OperationID: "pending"}
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, "UPDATE libraries SET archived=1 WHERE id=?", l.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ActivateEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix, 1); err != ErrConflict {
+		t.Fatal("archived library activated", err)
+	}
+	r.Prefix = "lessons"
+	r.BindingID = "second"
+	r.OperationID = "second"
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != ErrConflict {
+		t.Fatal("archived library reserved", err)
+	}
+	if err := s.ReleaseEvolutionPrefix(ctx, testActor, "pending", l.ID, "skills"); err != nil {
+		t.Fatal("cleanup blocked", err)
+	}
+}
