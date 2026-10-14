@@ -1,6 +1,7 @@
 package product
 
 import (
+	manifest "aster/contracts/volumemanifest"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -46,7 +47,7 @@ func (s *Store) EvolutionConfig(ctx context.Context, token, group string) (Evolu
 }
 func (s *Store) SaveEvolutionConfig(ctx context.Context, token, group string, input EvolutionActivationInput) (EvolutionGroupConfig, error) {
 	var result EvolutionGroupConfig
-	if !validID(group) || input.ExpectedRevision < 0 || !validDigestLike(input.Digest) {
+	if !validID(group) || input.ExpectedRevision < 0 || !manifest.ValidDigest(input.Digest) {
 		return result, ErrInvalid
 	}
 	request, err := mutationRequest(input.RequestID, "evolution.config.save", group, input)
@@ -75,6 +76,9 @@ func (s *Store) SaveEvolutionConfig(ctx context.Context, token, group string, in
 		}
 		if current.DesiredRevision != input.ExpectedRevision {
 			return ErrConflict
+		}
+		if current.State == "activating" {
+			return ErrBusy
 		}
 		result = EvolutionGroupConfig{GroupID: group, DesiredRevision: current.DesiredRevision + 1, ActiveRevision: current.ActiveRevision, DesiredDigest: input.Digest, ActiveDigest: current.ActiveDigest, AutoEnabled: input.AutoEnabled, State: "activating", OperationID: randomOperationID()}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO evolution_group_configs VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET desired_revision=excluded.desired_revision,desired_digest=excluded.desired_digest,auto_enabled=excluded.auto_enabled,state='activating',operation_id=excluded.operation_id,updated_at=excluded.updated_at`, group, result.DesiredRevision, result.ActiveRevision, result.DesiredDigest, result.ActiveDigest, result.AutoEnabled, result.State, result.OperationID, s.timestamp()); err != nil {
@@ -120,6 +124,12 @@ func (s *Store) SettleEvolutionActivation(ctx context.Context, token, operation 
 		if err = tx.QueryRowContext(ctx, "SELECT group_id,desired_revision,active_revision,desired_digest,active_digest,auto_enabled,state,operation_id FROM evolution_group_configs WHERE operation_id=?", operation).Scan(&result.GroupID, &result.DesiredRevision, &result.ActiveRevision, &result.DesiredDigest, &result.ActiveDigest, &result.AutoEnabled, &result.State, &result.OperationID); err != nil {
 			return err
 		}
+		if result.State == "active" {
+			return nil
+		}
+		if result.State != "activating" {
+			return ErrConflict
+		}
 		var count int
 		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_activation_receipts WHERE operation_id=? AND config_digest=? AND state='accepted' AND participant IN ('studio','evaluation-space')", operation, result.DesiredDigest).Scan(&count); err != nil {
 			return err
@@ -137,5 +147,4 @@ func (s *Store) SettleEvolutionActivation(ctx context.Context, token, operation 
 	})
 	return result, err
 }
-func validDigestLike(value string) bool { return len(value) > 0 && len(value) <= 256 }
-func randomOperationID() string         { return "evo-" + uuid.NewString() }
+func randomOperationID() string { return "evo-" + uuid.NewString() }
