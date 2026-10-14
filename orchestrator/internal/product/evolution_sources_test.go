@@ -93,3 +93,36 @@ func TestEvolutionSourceIssuerOwnershipAndDeletion(t *testing.T) {
 		t.Fatal("ungranted volume source", err)
 	}
 }
+
+func TestEvolutionSourcePolicyHistoryRetainedWithoutAuthority(t *testing.T) {
+	s, admin := accountStore(t)
+	token := adminTestToken(t, s, admin)
+	_, err := s.CreateProject(ctx, admin.ID, "source-project", "Source")
+	must(t, err)
+	source := evolution.SourceBinding{ID: "source", Kind: "project", ResourceID: "source-project", PolicyRevision: 1, AudienceGroups: []string{StandardUsersGroup}, DerivativePublication: true}
+	_, err = s.SetEvolutionSourcePolicy(ctx, token, StandardUsersGroup, EvolutionSourcePolicyInput{"first", 0, source})
+	must(t, err)
+	source.PolicyRevision = 2
+	source.DerivativePublication = false
+	_, err = s.SetEvolutionSourcePolicy(ctx, token, StandardUsersGroup, EvolutionSourcePolicyInput{"revoke", 1, source})
+	must(t, err)
+	old, err := s.EvolutionSourcePolicyRevision(ctx, token, StandardUsersGroup, source.ID, 1)
+	must(t, err)
+	if !old.DerivativePublication || old.PolicyRevision != 1 {
+		t.Fatal(old)
+	}
+	config := activationConfigFixture(1, true)
+	config.Sources = []evolution.SourceBinding{old}
+	if err = authorizeEvolutionSources(ctx, s.reader, config); err != ErrForbidden {
+		t.Fatal("historical policy restored authority", err)
+	}
+	if _, err = s.EvolutionSourcePolicyRevision(ctx, "", StandardUsersGroup, source.ID, 1); err == nil {
+		t.Fatal("anonymous history read")
+	}
+	if err = s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "DELETE FROM evolution_source_policy_revisions")
+		return err
+	}); err == nil {
+		t.Fatal("policy history deleted")
+	}
+}

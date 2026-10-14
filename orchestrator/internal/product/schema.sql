@@ -1957,3 +1957,24 @@ CREATE TRIGGER immutable_evolution_draft_revision BEFORE UPDATE ON evolution_con
 BEGIN SELECT RAISE(ABORT,'immutable evolution draft revision'); END;
 CREATE TRIGGER retained_evolution_draft_revision BEFORE DELETE ON evolution_configuration_drafts
 BEGIN SELECT RAISE(ABORT,'retain evolution draft replay provenance'); END;
+
+CREATE TABLE evolution_source_policy_revisions (
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ source_id TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),
+ issuer_id TEXT NOT NULL REFERENCES accounts(id),
+ body TEXT NOT NULL CHECK(json_valid(body)),
+ PRIMARY KEY(group_id,source_id,revision)
+);
+CREATE TRIGGER evolution_source_policy_created AFTER INSERT ON evolution_source_policies
+BEGIN
+ INSERT INTO evolution_source_policy_revisions VALUES(NEW.group_id,NEW.source_id,NEW.revision,NEW.issuer_id,NEW.body);
+END;
+CREATE TRIGGER evolution_source_policy_revised AFTER UPDATE ON evolution_source_policies
+BEGIN
+ INSERT INTO evolution_source_policy_revisions VALUES(NEW.group_id,NEW.source_id,NEW.revision,NEW.issuer_id,NEW.body);
+END;
+CREATE TRIGGER immutable_evolution_source_policy_revision BEFORE UPDATE ON evolution_source_policy_revisions
+BEGIN SELECT RAISE(ABORT,'immutable source policy revision'); END;
+CREATE TRIGGER retained_evolution_source_policy_revision BEFORE DELETE ON evolution_source_policy_revisions
+BEGIN SELECT RAISE(ABORT,'retain source policy provenance'); END;
