@@ -60,6 +60,29 @@ func TestConfigurationResolvesExactCompatibleCatalog(t *testing.T) {
 	if err = s.ValidateConfiguration(ctx, config); err != nil {
 		t.Fatal("compatible disabled evaluation", err)
 	}
+	disable := ServiceStateInput{RequestID: "disable", ServiceID: service.Ref.ID, ExpectedRevision: 1, Enabled: false}
+	revision, err := s.SetServiceState(ctx, disable)
+	if err != nil || revision != 2 {
+		t.Fatal("disable", revision, err)
+	}
+	if _, err = s.SetServiceState(ctx, disable); err != nil {
+		t.Fatal("disable replay", err)
+	}
+	if err = s.ValidateConfiguration(ctx, config); err == nil {
+		t.Fatal("revoked service still valid")
+	}
+	stale := disable
+	stale.RequestID = "stale"
+	stale.Enabled = true
+	if _, err = s.SetServiceState(ctx, stale); err != ErrConflict {
+		t.Fatal("stale state overwrite", err)
+	}
+	if _, err = s.SetServiceState(ctx, ServiceStateInput{RequestID: "enable", ServiceID: service.Ref.ID, ExpectedRevision: 2, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ValidateConfiguration(ctx, config); err != nil {
+		t.Fatal("restored service", err)
+	}
 	configRaw, _ := json.Marshal(config)
 	if err = s.Adopt(ctx, Projection{OperationID: "valid", Digest: evolution.Digest(configRaw), Configuration: config}); err != nil {
 		t.Fatal("compatible projection rejected", err)

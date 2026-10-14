@@ -98,6 +98,11 @@ func (s *Store) PublishDefinition(ctx context.Context, kind string, body []byte)
 	if _, err = tx.ExecContext(ctx, "INSERT INTO catalog_definitions(kind,id,revision,digest,body) VALUES(?,?,?,?,?)", kind, ref.ID, ref.Revision, ref.Digest, body); err != nil {
 		return err
 	}
+	if service, ok := value.(evolution.Service); ok {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO service_states(service_id,revision,enabled) VALUES(?,1,?) ON CONFLICT(service_id) DO NOTHING", ref.ID, service.Enabled); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 func readDefinition(ctx context.Context, tx *sql.Tx, kind string, ref evolution.Revision) (any, error) {
@@ -115,6 +120,15 @@ func readDefinition(ctx context.Context, tx *sql.Tx, kind string, ref evolution.
 	}
 	if stored != ref || digest != ref.Digest {
 		return nil, fmt.Errorf("definition identity mismatch")
+	}
+	if kind == "service" {
+		var enabled bool
+		if err = tx.QueryRowContext(ctx, "SELECT enabled FROM service_states WHERE service_id=?", ref.ID).Scan(&enabled); err != nil {
+			return nil, err
+		}
+		if !enabled {
+			return nil, fmt.Errorf("service disabled")
+		}
 	}
 	return value, nil
 }

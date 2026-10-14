@@ -15,7 +15,7 @@ func TestDefinitionCatalogValidatesDigestAndImmutableRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	service := evolution.Service{Ref: evolution.Revision{ID: "service", Revision: 1}, Kind: "evolution", ConnectionID: "connection", RunnerDigest: evolution.Digest([]byte("runner")), Capabilities: evolution.Capabilities{ProtocolVersion: 1}}
+	service := evolution.Service{Ref: evolution.Revision{ID: "service", Revision: 1}, Kind: "evolution", Enabled: true, ConnectionID: "connection", RunnerDigest: evolution.Digest([]byte("runner")), Capabilities: evolution.Capabilities{ProtocolVersion: 1}}
 	service.Ref.Digest, err = evolution.DefinitionDigest(service)
 	if err != nil {
 		t.Fatal(err)

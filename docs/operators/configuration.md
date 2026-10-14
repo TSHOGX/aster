@@ -270,3 +270,13 @@ Schemas without `$schema` use draft 2020-12. Binding parameters must satisfy bot
 the selected template and workflow schemas before projection adoption. Required
 fields, types, bounds, enums, and additional-property rules are enforced without
 coercing values or supplying defaults.
+
+To change a service's admission state while Evaluation Space is stopped, run
+`./evaluation-catalog --state-directory /absolute/evaluation-state --action service-state`
+with a JSON object on stdin containing `request_id`, `service_id`,
+`expected_revision`, and `enabled`. The admission-state revision starts at one
+when the first service definition is published. Successful changes return its next
+revision. Reuse the original request ID and body after an uncertain response.
+Disabling prevents new configuration validation from selecting any revision of that
+service; immutable definitions and previously adopted projection receipts remain
+available as provenance. Publishing another definition does not reset admission state.

@@ -70,13 +70,43 @@ func publish(ctx context.Context, directory string, input io.Reader, output io.W
 }
 func main() {
 	directory := flag.String("state-directory", "", "absolute private Evaluation Space state directory")
+	action := flag.String("action", "publish", "publish or service-state")
 	flag.Parse()
 	if flag.NArg() != 0 {
 		fmt.Fprintln(os.Stderr, "publication JSON is read from stdin")
 		os.Exit(1)
 	}
-	if err := publish(context.Background(), *directory, os.Stdin, os.Stdout); err != nil {
+	var err error
+	switch *action {
+	case "publish":
+		err = publish(context.Background(), *directory, os.Stdin, os.Stdout)
+	case "service-state":
+		err = serviceState(context.Background(), *directory, os.Stdin, os.Stdout)
+	default:
+		err = fmt.Errorf("unsupported catalog action")
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func serviceState(ctx context.Context, directory string, input io.Reader, output io.Writer) error {
+	if !filepath.IsAbs(directory) || directory == "/" {
+		return fmt.Errorf("absolute application state directory required")
+	}
+	request, err := evolution.Decode[projections.ServiceStateInput](input)
+	if err != nil {
+		return err
+	}
+	store, err := projections.Open(ctx, filepath.Join(directory, "projections.db"))
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	revision, err := store.SetServiceState(ctx, request)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(output).Encode(map[string]int64{"revision": revision})
 }
