@@ -1902,3 +1902,26 @@ CREATE TABLE evolution_group_grants (
  revision INTEGER NOT NULL CHECK(revision>0),
  PRIMARY KEY(group_id,account_id,action)
 );
+
+CREATE TABLE evolution_operation_states (
+ operation_id TEXT PRIMARY KEY,
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ digest TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('draft','activating','active','failed','discarding','discarded'))
+);
+CREATE TRIGGER evolution_operation_created AFTER INSERT ON evolution_group_configs
+BEGIN
+ INSERT INTO evolution_operation_states(operation_id,group_id,revision,digest,state)
+ VALUES(NEW.operation_id,NEW.group_id,NEW.desired_revision,NEW.desired_digest,NEW.state);
+END;
+CREATE TRIGGER evolution_operation_changed AFTER UPDATE OF operation_id,state ON evolution_group_configs
+BEGIN
+ INSERT INTO evolution_operation_states(operation_id,group_id,revision,digest,state)
+ VALUES(NEW.operation_id,NEW.group_id,NEW.desired_revision,NEW.desired_digest,NEW.state)
+ ON CONFLICT(operation_id) DO UPDATE SET state=excluded.state;
+END;
+CREATE TRIGGER retained_evolution_operation BEFORE DELETE ON evolution_operation_states
+BEGIN SELECT RAISE(ABORT,'retain evolution operation provenance'); END;
+CREATE TRIGGER immutable_evolution_operation_identity BEFORE UPDATE OF operation_id,group_id,revision,digest ON evolution_operation_states
+BEGIN SELECT RAISE(ABORT,'immutable evolution operation identity'); END;
