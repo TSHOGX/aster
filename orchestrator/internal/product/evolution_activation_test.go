@@ -3,6 +3,7 @@ package product
 import (
 	"aster/contracts/evolution"
 	"context"
+	"path/filepath"
 	"testing"
 )
 
@@ -138,6 +139,45 @@ func TestEvolutionFailureRetryRetainsAcceptedConfiguration(t *testing.T) {
 	settled, err := s.SettleEvolutionActivation(ctx, token, next.OperationID)
 	must(t, err)
 	if settled.ActiveRevision != 2 || settled.OperationID != next.OperationID {
+		t.Fatal(settled)
+	}
+}
+
+func TestEvolutionActivationRecoveryAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "evolution.db")
+	s, err := Open(ctx, path)
+	must(t, err)
+	defer func() { s.Close() }()
+	admin, err := s.BootstrapAccount(ctx, "admin", "permanent-admin-password", bootstrapSeedFixture(t))
+	must(t, err)
+	token := adminTestToken(t, s, admin)
+	digest := evolution.Digest([]byte("retained"))
+	input := EvolutionActivationInput{"save", 0, digest, true}
+	pending, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, input)
+	must(t, err)
+	must(t, s.AcceptEvolutionParticipant(ctx, token, pending.OperationID, "studio", digest))
+	must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evaluation-space", digest, "offline"))
+	_, err = s.DisableEvolution(ctx, token, StandardUsersGroup, DisableEvolutionInput{"disable", 1})
+	must(t, err)
+	must(t, s.Close())
+	s, err = Open(ctx, path)
+	must(t, err)
+	current, err := s.EvolutionConfig(ctx, token, StandardUsersGroup)
+	must(t, err)
+	if current.State != "failed" || current.AutoEnabled || current.OperationID != pending.OperationID {
+		t.Fatal("lost activation state", current)
+	}
+	replay, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, input)
+	must(t, err)
+	if replay.OperationID != pending.OperationID {
+		t.Fatal("request replay admitted new operation")
+	}
+	must(t, s.RetryEvolutionActivation(ctx, token, pending.OperationID))
+	must(t, s.AcceptEvolutionParticipant(ctx, token, pending.OperationID, "evaluation-space", digest))
+	settled, err := s.SettleEvolutionActivation(ctx, token, pending.OperationID)
+	must(t, err)
+	if settled.AutoEnabled || settled.ActiveRevision != 1 {
 		t.Fatal(settled)
 	}
 }
