@@ -6,6 +6,7 @@ toolchain go1.24.13
 
 require (
 	aster/contracts v0.0.0
+	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	modernc.org/sqlite v1.40.1
 )
 

@@ -82,6 +82,9 @@ func (s *Store) PublishDefinition(ctx context.Context, kind string, body []byte)
 		return ErrConflict
 	}
 	if template, ok := value.(evolution.Template); ok {
+		if _, err = compileParameters(template.ParametersSchema); err != nil {
+			return err
+		}
 		for _, workflowRef := range template.Workflows {
 			workflow, err := (workflowResolver{tx}).ResolveWorkflow(ctx, workflowRef)
 			if err != nil {

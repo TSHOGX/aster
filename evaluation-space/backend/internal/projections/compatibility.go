@@ -32,6 +32,12 @@ func validateConfigurationCatalog(ctx context.Context, tx *sql.Tx, config evolut
 			return fmt.Errorf("binding %s template: %w", binding.ID, err)
 		}
 		template := definition.(evolution.Template)
+		if err = validateParameters(template.ParametersSchema, binding.Parameters); err != nil {
+			return fmt.Errorf("binding %s template parameters: %w", binding.ID, err)
+		}
+		if err = validateParameters(workflow.ParametersSchema, binding.Parameters); err != nil {
+			return fmt.Errorf("binding %s workflow parameters: %w", binding.ID, err)
+		}
 		if err = template.SupportsWorkflow(binding.Workflow, workflow, binding.Output.Profile); err != nil {
 			return err
 		}

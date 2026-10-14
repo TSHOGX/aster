@@ -36,6 +36,9 @@ func (s *Store) PublishWorkflow(ctx context.Context, ref evolution.Revision, bod
 	if err != nil || workflow.ID != ref.ID {
 		return fmt.Errorf("invalid workflow document")
 	}
+	if _, err = compileParameters(workflow.ParametersSchema); err != nil {
+		return err
+	}
 	canonical, err := workflow.Canonical()
 	if err != nil || !bytes.Equal(canonical, body) {
 		return fmt.Errorf("canonical workflow document required")

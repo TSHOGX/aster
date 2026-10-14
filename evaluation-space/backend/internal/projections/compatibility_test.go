@@ -64,6 +64,21 @@ func TestConfigurationResolvesExactCompatibleCatalog(t *testing.T) {
 	if err = s.Adopt(ctx, Projection{OperationID: "valid", Digest: evolution.Digest(configRaw), Configuration: config}); err != nil {
 		t.Fatal("compatible projection rejected", err)
 	}
+	strict := template
+	strict.Ref.Revision = 2
+	strict.ParametersSchema = json.RawMessage(`{"type":"object","required":["count"],"properties":{"count":{"type":"integer"}}}`)
+	strict.Ref.Digest, _ = evolution.DefinitionDigest(strict)
+	strictRaw, _ := json.Marshal(strict)
+	if err = s.PublishDefinition(ctx, "template", strictRaw); err != nil {
+		t.Fatal(err)
+	}
+	config.Bindings[0].Template = strict.Ref
+	config.Revision = 2
+	invalidRaw, _ := json.Marshal(config)
+	if err = s.Adopt(ctx, Projection{OperationID: "invalid-parameters", Digest: evolution.Digest(invalidRaw), Configuration: config}); !errors.Is(err, ErrCatalog) {
+		t.Fatal("invalid parameters adopted", err)
+	}
+	config.Bindings[0].Template = template.Ref
 	config.Revision = 2
 	config.Bindings[0].Workflow.Revision = 2
 	if err = s.ValidateConfiguration(ctx, config); err == nil {

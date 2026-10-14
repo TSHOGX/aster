@@ -263,3 +263,10 @@ Projection adoption rejects missing or incompatible catalog revisions, including
 unsupported workflow capabilities and incompatible output profiles. A validation
 error leaves the central operation pending; publishing the missing compatible
 revision allows reconciliation to retry.
+
+Parameter schemas must be self-contained JSON Schema documents. Local `$ref`
+references are supported; remote URLs and filesystem references are rejected.
+Schemas without `$schema` use draft 2020-12. Binding parameters must satisfy both
+the selected template and workflow schemas before projection adoption. Required
+fields, types, bounds, enums, and additional-property rules are enforced without
+coercing values or supplying defaults.
