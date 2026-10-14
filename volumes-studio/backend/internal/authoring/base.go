@@ -1,6 +1,7 @@
 package authoring
 
 import (
+	"bytes"
 	"context"
 	"strconv"
 
@@ -65,4 +66,33 @@ func (s *Store) seedSharedAssets(ctx context.Context) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// The installation seed is the only release established before human review.
+// Link it only after proving its descriptor and Git snapshot have identical bytes.
+func (s *Store) linkBuiltinBootstrap(ctx context.Context, library, commit string) error {
+	if library != "aster-shared-assets" {
+		return nil
+	}
+	var raw []byte
+	if err := s.db.QueryRowContext(ctx, "SELECT descriptor FROM versions WHERE id='aster-shared-assets-v1' AND library_id=?", library).Scan(&raw); err != nil {
+		return err
+	}
+	descriptor, err := manifest.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	repo, err := s.historyRepository(ctx, library)
+	if err != nil {
+		return err
+	}
+	snapshot, err := repo.Snapshot(ctx, commit)
+	if err != nil {
+		return err
+	}
+	if snapshot.Profile != descriptor.Profile || snapshot.TreeDigest() != descriptor.TreeDigest {
+		return ErrInvalid
+	}
+	_, err = s.db.ExecContext(ctx, "UPDATE versions SET accepted_commit=? WHERE id='aster-shared-assets-v1' AND accepted_commit=''", commit)
+	return err
 }

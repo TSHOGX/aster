@@ -103,3 +103,24 @@ func TestSharedAssetsBaseSeedIsStableAcrossRestart(t *testing.T) {
 		t.Fatal(validation, err)
 	}
 }
+
+func TestBuiltinReleaseHasVerifiedBranchOrigin(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, Config{Directory: t.TempDir(), PublisherID: "publisher", QuotaBytes: 32 << 20, SeedSharedAssets: true, Authority: &branchAuthority{true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	v, err := s.Version(ctx, "aster-shared-assets-v1")
+	if err != nil || v.AcceptedCommit == "" {
+		t.Fatal("missing seed lineage", v, err)
+	}
+	b, err := s.CreateBranch(ctx, testActor, v.LibraryID, CreateBranchInput{"branch-seed", "Extend seed", v.AcceptedCommit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := s.BranchTree(ctx, testActor, v.LibraryID, b.ID, "", "", 1)
+	if err != nil || len(tree.Entries) != 2 {
+		t.Fatal("seed branch lost required content", tree, err)
+	}
+}

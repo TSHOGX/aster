@@ -265,7 +265,11 @@ func (s *Store) reconcileLibraryHistory(ctx context.Context) error {
 	}
 	for _, l := range all {
 		if l.state == "preparing" {
-			if _, err = s.bootstrapHistory(ctx, l.id, l.profile); err != nil {
+			head, bootstrapErr := s.bootstrapHistory(ctx, l.id, l.profile)
+			if bootstrapErr != nil {
+				return bootstrapErr
+			}
+			if err = s.linkBuiltinBootstrap(ctx, l.id, head); err != nil {
 				return err
 			}
 			if _, err = s.db.ExecContext(ctx, "UPDATE libraries SET history_state='ready' WHERE id=?", l.id); err != nil {
