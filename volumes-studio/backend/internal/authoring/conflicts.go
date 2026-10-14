@@ -66,7 +66,11 @@ func (s *Store) conflictWorkspace(ctx context.Context, library, id string) (Conf
 	if err = s.db.QueryRowContext(ctx, "SELECT revision,digest FROM library_merge_policies WHERE library_id=?", library).Scan(&revision, &digest); err != nil {
 		return workspace, err
 	}
-	workspace.Stale = branch.Head != workspace.SourceCommit || main != workspace.MainCommit || revision != workspace.PolicyRevision || digest != workspace.PolicyDigest
+	l, err := s.Library(ctx, library)
+	if err != nil {
+		return workspace, err
+	}
+	workspace.Stale = l.Archived || branch.Head != workspace.SourceCommit || main != workspace.MainCommit || revision != workspace.PolicyRevision || digest != workspace.PolicyDigest
 	rows, err := s.db.QueryContext(ctx, "SELECT path,choice,text FROM conflict_resolutions WHERE workspace_id=? ORDER BY path", id)
 	if err != nil {
 		return workspace, err

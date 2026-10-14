@@ -86,6 +86,18 @@ func TestConflictedPreparationPersistsExactInputs(t *testing.T) {
 	if err != nil || len(workspace.Resolutions) != 1 || workspace.Resolutions[0].Text != "resolved" {
 		t.Fatal(workspace, err)
 	}
+	if _, err = s.db.ExecContext(ctx, "UPDATE libraries SET archived=1 WHERE id=?", l.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.CompleteConflict(ctx, testActor, l.ID, workspace.ID, CompleteConflictInput{"archived-completion", 2}); err != ErrConflict {
+		t.Fatal("archived conflict completed", err)
+	}
+	if _, err = s.SaveConflictResolution(ctx, testActor, l.ID, workspace.ID, ConflictResolutionInput{RequestID: "archived-save", ExpectedRevision: 2, Path: "note", Choice: "main"}); err != ErrConflict {
+		t.Fatal("archived conflict edited", err)
+	}
+	if _, err = s.db.ExecContext(ctx, "UPDATE libraries SET archived=0 WHERE id=?", l.ID); err != nil {
+		t.Fatal(err)
+	}
 	completed, err := s.CompleteConflict(ctx, testActor, l.ID, workspace.ID, CompleteConflictInput{"complete-conflict", 2})
 	if err != nil || completed.Identity == nil {
 		t.Fatal(completed, err)
