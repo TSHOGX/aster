@@ -65,23 +65,32 @@ func (s *Store) evolutionGroupSession(ctx context.Context, q queryer, token, gro
 	if err != nil {
 		return Account{}, err
 	}
-	var effect string
-	err = q.QueryRowContext(ctx, "SELECT effect FROM evolution_group_grants WHERE group_id=? AND account_id=? AND action=?", group, session.Account.ID, action).Scan(&effect)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := authorizeEvolutionGroup(ctx, q, session.Account, group, action); err != nil {
 		return Account{}, err
-	}
-	if effect == "deny" {
-		return Account{}, ErrForbidden
-	}
-	if session.Account.Role == "admin" {
-		return session.Account, nil
-	}
-	var member int
-	if err = q.QueryRowContext(ctx, "SELECT count(*) FROM account_memberships WHERE group_id=? AND account_id=?", group, session.Account.ID).Scan(&member); err != nil {
-		return Account{}, err
-	}
-	if member != 1 || effect != "allow" {
-		return Account{}, ErrForbidden
 	}
 	return session.Account, nil
+}
+func authorizeEvolutionGroup(ctx context.Context, q queryer, account Account, group, action string) error {
+	if err := activeAccount(ctx, q, account.ID); err != nil {
+		return err
+	}
+	var effect string
+	err := q.QueryRowContext(ctx, "SELECT effect FROM evolution_group_grants WHERE group_id=? AND account_id=? AND action=?", group, account.ID, action).Scan(&effect)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if effect == "deny" {
+		return ErrForbidden
+	}
+	if account.Role == "admin" {
+		return nil
+	}
+	var member int
+	if err := q.QueryRowContext(ctx, "SELECT count(*) FROM account_memberships WHERE group_id=? AND account_id=?", group, account.ID).Scan(&member); err != nil {
+		return err
+	}
+	if member != 1 || effect != "allow" {
+		return ErrForbidden
+	}
+	return nil
 }

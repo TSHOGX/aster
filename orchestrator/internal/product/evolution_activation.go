@@ -101,7 +101,7 @@ func (s *Store) activateEvolutionConfig(ctx context.Context, token, group string
 		if _, err = tx.ExecContext(ctx, `INSERT INTO evolution_group_configs VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET desired_revision=excluded.desired_revision,desired_digest=excluded.desired_digest,auto_enabled=excluded.auto_enabled,state='activating',operation_id=excluded.operation_id,updated_at=excluded.updated_at`, group, result.DesiredRevision, result.ActiveRevision, result.DesiredDigest, result.ActiveDigest, result.AutoEnabled, result.State, result.OperationID, s.timestamp()); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO evolution_configuration_revisions(group_id,revision,operation_id,digest,body,created_at) VALUES(?,?,?,?,?,?)`, group, result.DesiredRevision, result.OperationID, digest, string(body), s.timestamp()); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO evolution_configuration_revisions(actor_id,group_id,revision,operation_id,digest,body,created_at) VALUES(?,?,?,?,?,?,?)`, actor.ID, group, result.DesiredRevision, result.OperationID, digest, string(body), s.timestamp()); err != nil {
 			return err
 		}
 		raw, err = json.Marshal(result)

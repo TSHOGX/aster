@@ -1895,6 +1895,7 @@ BEFORE DELETE ON evolution_catalog_revisions
 BEGIN SELECT RAISE(ABORT,'retire evolution catalog revisions instead of deleting'); END;
 
 CREATE TABLE evolution_configuration_revisions (
+ actor_id TEXT NOT NULL REFERENCES accounts(id),
  group_id TEXT NOT NULL REFERENCES account_groups(id),
  revision INTEGER NOT NULL CHECK(revision>0),
  operation_id TEXT NOT NULL UNIQUE,

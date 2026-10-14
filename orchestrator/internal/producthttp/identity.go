@@ -32,6 +32,7 @@ func (a *Authentication) IdentityServiceHandler() http.Handler {
 	mux.HandleFunc("POST /api/identity/v1/principal", a.identityPrincipal)
 	mux.HandleFunc("POST /api/identity/v1/studio-access", a.identityStudioAccess)
 	mux.HandleFunc("POST /api/identity/v1/projection-authority", a.identityProjectionAuthority)
+	mux.HandleFunc("POST /api/identity/v1/studio-participant-authority", a.identityStudioParticipantAuthority)
 	return mux
 }
 func identityHeaders(w http.ResponseWriter) {
@@ -226,4 +227,28 @@ func (a *Authentication) identityProjectionAuthority(w http.ResponseWriter, r *h
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"allowed": allowed})
+}
+
+func (a *Authentication) identityStudioParticipantAuthority(w http.ResponseWriter, r *http.Request) {
+	client, ok := a.identityService(w, r)
+	if !ok {
+		return
+	}
+	if client.ID != "studio" {
+		writeError(w, 403, "Studio service required")
+		return
+	}
+	var input struct {
+		Scope  product.ProjectionScope `json:"scope"`
+		Action string                  `json:"action"`
+	}
+	if !decode(w, r, 4096, &input) {
+		return
+	}
+	subject, err := a.Store.EvolutionParticipantActor(r.Context(), input.Scope, input.Action)
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]string{"issuer": a.Config.Identity.Issuer, "subject": subject})
 }

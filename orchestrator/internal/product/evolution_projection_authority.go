@@ -43,5 +43,15 @@ func authorizeEvolutionProjection(ctx context.Context, q queryer, scope Projecti
 		}
 		return false, err
 	}
+	var account Account
+	if err = q.QueryRowContext(ctx, "SELECT a.id,a.role FROM evolution_configuration_revisions r JOIN accounts a ON a.id=r.actor_id WHERE r.operation_id=?", scope.OperationID).Scan(&account.ID, &account.Role); err != nil {
+		return false, err
+	}
+	if err = authorizeEvolutionGroup(ctx, q, account, scope.GroupID, "config.manage"); err != nil {
+		if errors.Is(err, ErrForbidden) || errors.Is(err, ErrUnauthorized) {
+			return false, nil
+		}
+		return false, err
+	}
 	return true, nil
 }
