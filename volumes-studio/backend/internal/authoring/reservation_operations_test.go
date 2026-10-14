@@ -108,6 +108,15 @@ func TestEvolutionConfigurationReservationAtomicAndLookupable(t *testing.T) {
 		}
 	}
 	assertCurrent(input.OperationID, 1)
+	oldOutput := input.Configuration.Bindings[0].Output
+	newOutput := update.Configuration.Bindings[0].Output
+	if err = s.CheckEvolutionOutput(ctx, testActor, "group", input.Configuration.Bindings[0].ID, oldOutput); err != nil {
+		t.Fatal("candidate revoked active generation", err)
+	}
+	if err = s.CheckEvolutionOutput(ctx, testActor, "group", input.Configuration.Bindings[0].ID, newOutput); err != ErrConflict {
+		t.Fatal("pending candidate authorized effects", err)
+	}
+
 	contender := update
 	contender.OperationID = "competing-update"
 	if _, err = s.ReserveEvolutionConfiguration(ctx, testActor, contender); err != ErrConflict {
@@ -124,6 +133,17 @@ func TestEvolutionConfigurationReservationAtomicAndLookupable(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCurrent(contender.OperationID, 2)
+	if err = s.CheckEvolutionOutput(ctx, testActor, "group", input.Configuration.Bindings[0].ID, oldOutput); err != ErrConflict {
+		t.Fatal("stale run generation retained authority", err)
+	}
+	if err = s.CheckEvolutionOutput(ctx, testActor, "group", input.Configuration.Bindings[0].ID, newOutput); err != nil {
+		t.Fatal("adopted generation not authorized", err)
+	}
+	historical, err := s.EvolutionReservationOperation(ctx, testActor, input.OperationID, input.Digest)
+	if err != nil || historical.State != "adopted" {
+		t.Fatal("historical receipt lost", historical, err)
+	}
+
 	if _, err = s.CancelEvolutionReservation(ctx, testActor, update.OperationID, update.Digest); err != nil {
 		t.Fatal("cancelled candidate replay", err)
 	}
