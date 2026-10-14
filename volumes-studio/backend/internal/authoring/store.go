@@ -154,6 +154,9 @@ func Open(ctx context.Context, c Config) (*Store, error) {
 	if err = s.reconcileConflictPins(ctx); err != nil {
 		return fail(err)
 	}
+	if err = s.reconcilePreparedPins(ctx); err != nil {
+		return fail(err)
+	}
 	return s, nil
 }
 func (s *Store) Close() error { return s.db.Close() }

@@ -182,18 +182,6 @@ func (s *Store) persistPrepared(ctx context.Context, a Actor, library, request, 
 		return result, err
 	}
 	result.Identity = &identity
-	coordinator, err := history.Coordinate(ctx, repo)
-	if err != nil {
-		return result, err
-	}
-	defer coordinator.Close()
-	op, err := coordinator.Update(ctx, "prepare-"+result.Digest[7:], "refs/prepared/"+result.Digest[7:], "", commit)
-	if err != nil {
-		return result, err
-	}
-	if op.State != "settled" {
-		return result, ErrConflict
-	}
 	raw, _ := json.Marshal(identity)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -214,5 +202,80 @@ func (s *Store) persistPrepared(ctx context.Context, a Actor, library, request, 
 			return result, err
 		}
 	}
-	return result, tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return result, err
+	}
+	if s.branchCrash != nil {
+		if err = s.branchCrash("prepare_after_intent"); err != nil {
+			s.poisoned = true
+			return result, err
+		}
+	}
+	if err = s.pinPrepared(ctx, library, result); err != nil {
+		s.poisoned = true
+		return result, err
+	}
+	return result, nil
+}
+
+func (s *Store) pinPrepared(ctx context.Context, library string, result PreparedResult) error {
+	repo, err := s.historyRepository(ctx, library)
+	if err != nil {
+		return err
+	}
+	coordinator, err := history.Coordinate(ctx, repo)
+	if err != nil {
+		return err
+	}
+	defer coordinator.Close()
+	op, err := coordinator.Update(ctx, "prepare-"+result.Digest[7:], "refs/prepared/"+result.Digest[7:], "", result.Identity.Result.CommitID)
+	if err != nil {
+		return err
+	}
+	if op.State != "settled" {
+		return ErrConflict
+	}
+	return nil
+}
+func (s *Store) reconcilePreparedPins(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, "SELECT library_id,digest,identity FROM prepared_merges ORDER BY digest")
+	if err != nil {
+		return err
+	}
+	type pending struct {
+		library string
+		result  PreparedResult
+	}
+	all := []pending{}
+	for rows.Next() {
+		var p pending
+		var raw []byte
+		if err = rows.Scan(&p.library, &p.result.Digest, &raw); err != nil {
+			rows.Close()
+			return err
+		}
+		var identity evolution.PreparedIdentity
+		if err = json.Unmarshal(raw, &identity); err != nil {
+			rows.Close()
+			return err
+		}
+		computed, err := identity.ApprovalDigest()
+		if err != nil || computed != p.result.Digest {
+			rows.Close()
+			return ErrInvalid
+		}
+		p.result.Identity = &identity
+		all = append(all, p)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, p := range all {
+		if err = s.pinPrepared(ctx, p.library, p.result); err != nil {
+			return err
+		}
+	}
+	return nil
 }
