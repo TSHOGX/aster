@@ -22,7 +22,3 @@ func (a *AuthoringAPI) search(w http.ResponseWriter, r *http.Request) {
 	p, err := a.Store.WorkbenchTree(r.Context(), r.PathValue("library"), r.PathValue("version"), workbenchQuery(r), true)
 	respond(w, 200, p, err)
 }
-func (a *AuthoringAPI) entry(w http.ResponseWriter, r *http.Request) {
-	p, err := a.Store.Entry(r.Context(), r.PathValue("library"), r.URL.Query().Get("path"))
-	respond(w, 200, p, err)
-}

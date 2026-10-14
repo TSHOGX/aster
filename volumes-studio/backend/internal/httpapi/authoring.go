@@ -158,32 +158,6 @@ func (a *AuthoringAPI) metadata(w http.ResponseWriter, r *http.Request) {
 	l, err := a.Store.Update(r.Context(), actor(r), r.PathValue("library"), b)
 	respond(w, 200, l, err)
 }
-func (a *AuthoringAPI) tree(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("mode") == "workbench" {
-		p, err := a.Store.WorkbenchTree(r.Context(), r.PathValue("library"), "", workbenchQuery(r), false)
-		respond(w, 200, p, err)
-		return
-	}
-	page, err := a.Store.Tree(r.Context(), r.PathValue("library"), r.URL.Query().Get("parent"), r.URL.Query().Get("after"), revision(r))
-	respond(w, 200, page, err)
-}
-func (a *AuthoringAPI) mutate(w http.ResponseWriter, r *http.Request) {
-	var b authoring.Mutation
-	if !decodeBody(w, r, &b) {
-		return
-	}
-	result, err := a.Store.Mutate(r.Context(), actor(r), r.PathValue("library"), b)
-	respond(w, 200, result, err)
-}
-func (a *AuthoringAPI) diff(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("mode") == "workbench" {
-		p, err := a.Store.WorkbenchDiff(r.Context(), r.PathValue("library"), workbenchQuery(r))
-		respond(w, 200, p, err)
-		return
-	}
-	changes, next, err := a.Store.Diff(r.Context(), r.PathValue("library"), r.URL.Query().Get("after"), revision(r))
-	respond(w, 200, map[string]any{"changes": changes, "next": next}, err)
-}
 func (a *AuthoringAPI) publish(w http.ResponseWriter, r *http.Request) {
 	var b authoring.ReleaseInput
 	if !decodeBody(w, r, &b) {
