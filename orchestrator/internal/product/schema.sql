@@ -1879,3 +1879,25 @@ CREATE TABLE evolution_activation_receipts (
  created_at TEXT NOT NULL,
  PRIMARY KEY(operation_id,participant)
 );
+
+CREATE TABLE evolution_catalog_revisions (
+ kind TEXT NOT NULL CHECK(kind IN('service','template','workflow','profile')),
+ id TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),
+ digest TEXT NOT NULL,
+ body TEXT NOT NULL CHECK(json_valid(body)),
+ enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),
+ retired INTEGER NOT NULL CHECK(retired IN(0,1)),
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(kind,id,revision),
+ UNIQUE(kind,id,digest)
+);
+CREATE TABLE evolution_catalog_bindings (
+ group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
+ binding_id TEXT NOT NULL,
+ kind TEXT NOT NULL,
+ catalog_id TEXT NOT NULL,
+ revision INTEGER NOT NULL,
+ PRIMARY KEY(group_id,binding_id,kind),
+ FOREIGN KEY(kind,catalog_id,revision) REFERENCES evolution_catalog_revisions(kind,id,revision)
+);
