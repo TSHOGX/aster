@@ -79,14 +79,14 @@ func (s *Store) EvolutionReservationOperation(ctx context.Context, actor Actor, 
 	if !manifest.ValidID(operation) || !manifest.ValidDigest(digest) {
 		return result, ErrInvalid
 	}
-	var body, stored, state string
+	var body, stored, state, group string
 	var revision int64
-	err := s.db.QueryRowContext(ctx, "SELECT body,digest,revision,state FROM evolution_reservation_operations WHERE operation_id=?", operation).Scan(&body, &stored, &revision, &state)
+	err := s.db.QueryRowContext(ctx, "SELECT body,digest,revision,state,group_id FROM evolution_reservation_operations WHERE operation_id=?", operation).Scan(&body, &stored, &revision, &state, &group)
 	if err != nil {
 		return result, normalizeDB(err)
 	}
 	var config evolution.Configuration
-	if json.Unmarshal([]byte(body), &config) != nil || evolution.Digest([]byte(body)) != stored {
+	if json.Unmarshal([]byte(body), &config) != nil || evolution.Digest([]byte(body)) != stored || config.GroupID != group || config.Revision != revision || config.Validate() != nil {
 		return result, ErrInvalid
 	}
 	for _, binding := range config.Bindings {
@@ -182,4 +182,20 @@ func (s *Store) transitionEvolutionReservation(ctx context.Context, actor Actor,
 	}
 	result.State = target
 	return result, nil
+}
+
+// ScopedEvolutionReservation checks caller scope against immutable stored identity.
+func (s *Store) ScopedEvolutionReservation(ctx context.Context, actor Actor, group, operation, digest string, revision int64) (evolution.ActivationReceipt, error) {
+	receipt, err := s.EvolutionReservationOperation(ctx, actor, operation, digest)
+	if err != nil {
+		return receipt, err
+	}
+	var storedGroup string
+	if err = s.db.QueryRowContext(ctx, "SELECT group_id FROM evolution_reservation_operations WHERE operation_id=?", operation).Scan(&storedGroup); err != nil {
+		return evolution.ActivationReceipt{}, normalizeDB(err)
+	}
+	if storedGroup != group || receipt.Generation != revision {
+		return evolution.ActivationReceipt{}, ErrConflict
+	}
+	return receipt, nil
 }

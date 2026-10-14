@@ -73,7 +73,7 @@ func (a EvolutionParticipantAPI) call(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 	if action == "adopt" || action == "cancel" {
-		existing, lookupErr := a.Store.EvolutionReservationOperation(r.Context(), actor, scope.OperationID, scope.Digest)
+		existing, lookupErr := a.Store.ScopedEvolutionReservation(r.Context(), actor, scope.GroupID, scope.OperationID, scope.Digest, scope.Revision)
 		if lookupErr != nil {
 			authoringError(w, lookupErr)
 			return
@@ -88,7 +88,7 @@ func (a EvolutionParticipantAPI) call(w http.ResponseWriter, r *http.Request, ac
 	case "reserve":
 		receipt, err = a.Store.ReserveEvolutionConfiguration(r.Context(), actor, input)
 	case "lookup":
-		receipt, err = a.Store.EvolutionReservationOperation(r.Context(), actor, scope.OperationID, scope.Digest)
+		receipt, err = a.Store.ScopedEvolutionReservation(r.Context(), actor, scope.GroupID, scope.OperationID, scope.Digest, scope.Revision)
 	case "adopt":
 		receipt, err = a.Store.AdoptEvolutionConfiguration(r.Context(), actor, scope.OperationID, scope.Digest)
 	case "cancel":

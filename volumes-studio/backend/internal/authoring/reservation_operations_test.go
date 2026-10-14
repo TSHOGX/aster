@@ -199,3 +199,25 @@ func TestEvolutionConfigurationReservationAtomicAndLookupable(t *testing.T) {
 	}
 
 }
+
+func TestReservationLookupRejectsStoredScopeSubstitution(t *testing.T) {
+	s, _ := testStore(t)
+	config := evolution.Configuration{GroupID: "group", Revision: 1, Budget: evolution.Budget{MaxTokens: 1, MaxAttempts: 1, TimeoutSeconds: 1, MaxArtifactBytes: 1}}
+	raw, _ := json.Marshal(config)
+	input := EvolutionReservationOperation{OperationID: "operation", Digest: evolution.Digest(raw), Configuration: config}
+	_, err := s.ReserveEvolutionConfiguration(context.Background(), testActor, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range []struct {
+		group    string
+		revision int64
+	}{{"other", 1}, {"group", 2}} {
+		if _, err = s.ScopedEvolutionReservation(context.Background(), testActor, scope.group, input.OperationID, input.Digest, scope.revision); err != ErrConflict {
+			t.Fatal("scope substitution", scope, err)
+		}
+	}
+	if _, err = s.ScopedEvolutionReservation(context.Background(), testActor, "group", input.OperationID, input.Digest, 1); err != nil {
+		t.Fatal(err)
+	}
+}
