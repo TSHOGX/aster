@@ -171,3 +171,11 @@ List the group's current source declarations with
 page requires current `config.read`. This list contains explicit policy declarations,
 not a grant to inspect source content; activation still checks current issuer access
 and policy revision. Policies in another group are never merged into this list.
+
+Retrieve exact saved configuration content at
+`GET /api/admin/groups/{group}/optimization/revisions/{revision}` using a desired
+or active revision from the status response. This requires current `config.read`
+and returns the configuration, its digest, and its operation ID. The saved content
+is immutable: immediate disable changes current admission state without rewriting
+that revision's original `auto_enabled` value. Consult configuration status for the
+current automatic-admission setting.

@@ -152,3 +152,18 @@ func (a *Authentication) evolutionOperationEvents(w http.ResponseWriter, r *http
 	}
 	writeJSON(w, 200, value)
 }
+
+func (a *Authentication) evolutionConfigurationRevision(w http.ResponseWriter, r *http.Request) {
+	raw := r.PathValue("revision")
+	revision, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || revision < 1 || strconv.FormatInt(revision, 10) != raw {
+		writeError(w, 400, "invalid configuration revision")
+		return
+	}
+	value, err := a.Store.EvolutionConfigurationRevision(r.Context(), requestToken(r), r.PathValue("group"), revision)
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, 200, value)
+}
