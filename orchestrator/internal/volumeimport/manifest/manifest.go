@@ -18,14 +18,15 @@ import (
 )
 
 const (
-	Format                 = "volume-manifest-v1"
-	Profile                = "authored-v1"
-	MaxManifestBytes       = 16 << 20
-	MaxFileBytes     int64 = 256 << 20
-	MaxTreeBytes     int64 = 1 << 30
-	MaxEntries             = 10000
-	MaxPathBytes           = 512
-	MaxDepth               = 16
+	Format                    = "volume-manifest-v1"
+	Profile                   = "authored-v1"
+	SharedAssetsProfile       = "shared-assets-v1"
+	MaxManifestBytes          = 16 << 20
+	MaxFileBytes        int64 = 256 << 20
+	MaxTreeBytes        int64 = 1 << 30
+	MaxEntries                = 10000
+	MaxPathBytes              = 512
+	MaxDepth                  = 16
 )
 
 // Field order is part of the canonical wire encoding. Every field is required;
@@ -126,8 +127,22 @@ func ValidPath(value string, directory bool) error {
 }
 
 func (d Descriptor) Validate() error {
-	if d.Format != Format || d.Profile != Profile {
+	if d.Format != Format || d.Profile != Profile && d.Profile != SharedAssetsProfile {
 		return fmt.Errorf("unsupported manifest format or content profile")
+	}
+	if d.Profile == SharedAssetsProfile {
+		hasAgents := false
+		for _, e := range d.Entries {
+			if e.Path == "AGENTS.md" && e.Kind == "file" {
+				hasAgents = true
+			}
+			if strings.HasPrefix(e.Path, "skills/") && e.Kind == "file" && path.Base(e.Path) != "SKILL.md" {
+				return fmt.Errorf("invalid shared-assets skill path")
+			}
+		}
+		if !hasAgents {
+			return fmt.Errorf("shared-assets profile requires AGENTS.md")
+		}
 	}
 	if !ValidID(d.PublisherID) || !ValidID(d.LibraryID) || !ValidID(d.VersionID) {
 		return fmt.Errorf("invalid immutable identity")

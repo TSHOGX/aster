@@ -32,6 +32,9 @@ func ProfileLimits(profile string) (Limits, error) {
 // Purpose persists the source's trust category alongside every publication and
 // registry entry. Authored data can never inherit reviewed system capabilities.
 func ProfileForPurpose(purpose string) string {
+	if purpose == "shared_assets" {
+		return SharedAssetsProfile
+	}
 	if purpose == "authored" {
 		return AuthoredProfile
 	}

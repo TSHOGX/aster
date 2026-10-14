@@ -423,5 +423,5 @@ func contextWithoutCancelTimeout(ctx context.Context) (context.Context, context.
 // ValidPurpose separates system publications from operator-authored builtin
 // content while sharing the same immutable transport and accounting.
 func ValidPurpose(purpose string) bool {
-	return purpose == "assets" || purpose == "config" || purpose == "builtin" || purpose == "authored"
+	return purpose == "assets" || purpose == "config" || purpose == "builtin" || purpose == "authored" || purpose == "shared_assets"
 }
