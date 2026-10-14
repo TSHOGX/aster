@@ -20,7 +20,7 @@ type EvolutionWorker struct {
 }
 
 func (w *EvolutionWorker) Step(ctx context.Context) error {
-	if w.Store == nil || w.Evaluation == nil {
+	if w.Store == nil {
 		return nil
 	}
 	if w.Studio != nil {
@@ -28,6 +28,9 @@ func (w *EvolutionWorker) Step(ctx context.Context) error {
 		if handled || err != nil {
 			return err
 		}
+	}
+	if w.Evaluation == nil {
+		return nil
 	}
 	var group, operation string
 	query := `SELECT c.group_id,c.operation_id FROM evolution_group_configs c WHERE c.state='activating' AND c.group_id>? AND (? OR NOT EXISTS(SELECT 1 FROM evolution_activation_receipts r WHERE r.operation_id=c.operation_id AND r.participant='evaluation-space' AND r.state='accepted' AND r.config_digest=c.desired_digest)) ORDER BY c.group_id LIMIT 1`

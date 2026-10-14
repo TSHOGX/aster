@@ -136,7 +136,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	}
 	if cfg.StudioParticipant != nil {
 		if app.Workers.Evolution == nil {
-			return app, errors.New("Studio participant requires Evaluation Space configuration")
+			app.Workers.Evolution = &product.EvolutionWorker{Store: store}
 		}
 		client, err := studioclient.New(cfg.StudioParticipant.Endpoint, os.Getenv(cfg.StudioParticipant.CredentialEnv))
 		if err != nil {

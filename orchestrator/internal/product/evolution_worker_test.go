@@ -7,6 +7,7 @@ import (
 	"harness-platform/orchestrator/internal/studioclient"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -190,5 +191,61 @@ func TestEvolutionDiscardCompensatesOnlyPendingReservations(t *testing.T) {
 			}
 			must(t, s.DiscardEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, input))
 		})
+	}
+}
+
+func TestEvolutionDiscardRecoveryAfterCentralRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "recovery.db")
+	s, err := Open(ctx, path)
+	must(t, err)
+	defer func() { s.Close() }()
+	admin, err := s.BootstrapAccount(ctx, "admin", "permanent-admin-password", bootstrapSeedFixture(t))
+	must(t, err)
+	token := adminTestToken(t, s, admin)
+	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
+	must(t, err)
+	must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evaluation-space", pending.DesiredDigest, "catalog_rejected"))
+	input := EvolutionRetryInput{"discard", 1}
+	must(t, s.DiscardEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, input))
+	must(t, s.Close())
+	s, err = Open(ctx, path)
+	must(t, err)
+	current, err := s.EvolutionConfig(ctx, token, StandardUsersGroup)
+	must(t, err)
+	if current.State != "discarding" {
+		t.Fatal("lost discard intent", current)
+	}
+	// Studio committed cancellation before central persisted its completion.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/lookup") {
+			t.Error("already released reservation cancelled again")
+		}
+		json.NewEncoder(w).Encode(evolution.ActivationReceipt{Participant: "studio", OperationID: pending.OperationID, ConfigurationDigest: pending.DesiredDigest, Generation: 1, State: "released"})
+	}))
+	defer server.Close()
+	studio, err := studioclient.New(server.URL, strings.Repeat("x", 32))
+	must(t, err)
+	// Cleanup requires no Evaluation Space connection.
+	worker := &EvolutionWorker{Store: s, Studio: studio}
+	must(t, worker.Step(ctx))
+	must(t, s.DiscardEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, input))
+	events, err := s.EvolutionOperationEvents(ctx, token, StandardUsersGroup, pending.OperationID, 0, 100)
+	must(t, err)
+	expected := []string{"activating", "failed", "discarding", "discarded"}
+	if len(events.Events) != len(expected) {
+		t.Fatal(events)
+	}
+	for i, state := range expected {
+		if events.Events[i].State != state || events.Events[i].Sequence != int64(i+1) {
+			t.Fatal(events)
+		}
+	}
+	must(t, s.Close())
+	s, err = Open(ctx, path)
+	must(t, err)
+	current, err = s.EvolutionConfig(ctx, token, StandardUsersGroup)
+	must(t, err)
+	if current.State != "discarded" {
+		t.Fatal("lost cleanup completion", current)
 	}
 }

@@ -230,9 +230,10 @@ library configure authority. Central identity outages prevent new participant
 effects. The listener supports reservation lookup, reserve, adopt, and cancellation;
 configure central dispatch with `studio_participant.endpoint` and
 `studio_participant.credential_env`. The credential must match Studio’s central
-participant secret. This requires `evaluation_space` configuration as well. The
+participant secret. New activation requires `evaluation_space` configuration as well. The
 worker reserves Studio outputs before Evaluation Space adoption, then adopts Studio
-reservations and settles only after both exact receipts are recorded.
+reservations and settles only after both exact receipts are recorded. Pending
+Studio discard cleanup can run with only `studio_participant` configured.
 
 Register Evaluation Space in central `identity.clients` with ID `evaluation-space`
 and the exact callback `${identity.issuer}/evaluation-space/auth/callback`.
