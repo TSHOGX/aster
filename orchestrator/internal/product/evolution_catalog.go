@@ -21,14 +21,19 @@ type CatalogRevision struct {
 func validCatalogKind(k string) bool {
 	return k == "service" || k == "template" || k == "workflow" || k == "profile"
 }
-func (s *Store) CatalogRevision(ctx context.Context, kind, id string, revision int64) (CatalogRevision, error) {
+func (s *Store) CatalogRevision(ctx context.Context, token, kind, id string, revision int64) (CatalogRevision, error) {
 	var c CatalogRevision
 	var body string
 	var enabled, retired int
 	if !validCatalogKind(kind) || !validID(id) || revision < 1 {
 		return c, ErrInvalid
 	}
-	err := s.reader.QueryRowContext(ctx, "SELECT kind,id,revision,digest,body,enabled,retired FROM evolution_catalog_revisions WHERE kind=? AND id=? AND revision=?", kind, id, revision).Scan(&c.Kind, &c.ID, &c.Revision, &c.Digest, &body, &enabled, &retired)
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		if _, err := s.adminSession(ctx, tx, token); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, "SELECT kind,id,revision,digest,body,enabled,retired FROM evolution_catalog_revisions WHERE kind=? AND id=? AND revision=?", kind, id, revision).Scan(&c.Kind, &c.ID, &c.Revision, &c.Digest, &body, &enabled, &retired)
+	})
 	if err != nil {
 		return c, err
 	}
