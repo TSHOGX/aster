@@ -127,7 +127,13 @@ func (s *Store) Backup(ctx context.Context, target string) error {
 			}
 			dest := filepath.Join(target, rel)
 			if entry.IsDir() {
-				return os.MkdirAll(dest, 0700)
+				if err := os.MkdirAll(dest, 0700); err != nil {
+					return err
+				}
+				if err := syncDir(dest); err != nil {
+					return err
+				}
+				return syncDir(filepath.Dir(dest))
 			}
 			if !entry.Type().IsRegular() {
 				return ErrInvalid
