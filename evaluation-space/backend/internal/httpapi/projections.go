@@ -31,6 +31,7 @@ type ProjectionAPI struct {
 func (a ProjectionAPI) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /evaluation-space/api/v1/projections", a.adopt)
+	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/projections/{revision}", a.lookup)
 	return mux
 }
 func write(w http.ResponseWriter, status int, value any) {
@@ -82,4 +83,40 @@ func (a ProjectionAPI) adopt(w http.ResponseWriter, r *http.Request) {
 	}
 	// Adoption is a participant receipt, never a claim that central activation has settled.
 	write(w, 200, map[string]string{"operation_id": value.OperationID, "configuration_digest": value.Digest, "revision": strconv.FormatInt(value.Configuration.Revision, 10), "state": "adopted"})
+}
+
+func (a ProjectionAPI) lookup(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Cookie") != "" || r.Header.Get("Origin") != "" {
+		write(w, 403, map[string]string{"error": "service_identity_required"})
+		return
+	}
+	raw := r.PathValue("revision")
+	revision, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || revision < 1 || strconv.FormatInt(revision, 10) != raw {
+		write(w, 422, map[string]string{"error": "invalid_revision"})
+		return
+	}
+	scope := ProjectionScope{GroupID: r.PathValue("group"), Revision: revision, OperationID: r.URL.Query().Get("operation_id"), Digest: r.URL.Query().Get("digest")}
+	if a.Authority == nil || a.Authority.AuthorizeProjection(r, scope) != nil {
+		write(w, 403, map[string]string{"error": "projection_authority_required"})
+		return
+	}
+	if a.Store == nil {
+		write(w, 503, map[string]string{"error": "projection_store_unavailable"})
+		return
+	}
+	projection, err := a.Store.Read(r.Context(), scope.GroupID, scope.Revision)
+	if errors.Is(err, projections.ErrNotFound) {
+		write(w, 404, map[string]string{"error": "projection_not_found"})
+		return
+	}
+	if err != nil {
+		write(w, 503, map[string]string{"error": "projection_store_unavailable"})
+		return
+	}
+	if projection.OperationID != scope.OperationID || projection.Digest != scope.Digest {
+		write(w, 409, map[string]string{"error": "projection_conflict"})
+		return
+	}
+	write(w, 200, map[string]string{"operation_id": projection.OperationID, "configuration_digest": projection.Digest, "revision": raw, "state": "adopted"})
 }
