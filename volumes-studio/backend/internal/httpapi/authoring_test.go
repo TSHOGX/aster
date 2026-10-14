@@ -40,12 +40,24 @@ func TestAuthoringHTTPJourneyAndActiveContentIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := "libraries/" + l.ID
+	main, err := store.MainCommit(context.Background(), authoring.Actor{Issuer: session.Issuer, Subject: session.Subject}, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch, err := store.CreateBranch(context.Background(), authoring.Actor{Issuer: session.Issuer, Subject: session.Subject}, l.ID, authoring.CreateBranchInput{RequestID: "editing", Name: "Editing", BaseCommit: main.CommitID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draftRoot := root + "/branches/" + branch.ID + "/draft"
+	if response := call("GET", root+"/draft/tree", nil); response.Code != 404 {
+		t.Fatal("obsolete draft route remains", response.Code)
+	}
 	html := `<html><script>document.body.innerHTML='active'</script></html>`
-	w = call("POST", root+"/draft/mutations", map[string]any{"request_id": "save", "expected_revision": 1, "action": "text", "path": "active.html", "text": html})
+	w = call("POST", draftRoot+"/text", map[string]any{"request_id": "save", "expected_revision": 1, "expected_head": branch.Head, "path": "active.html", "text": html})
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	r := httptest.NewRequest("GET", "https://example.com"+apiPrefix+root+"/draft/content?path=active.html", nil)
+	r := httptest.NewRequest("GET", "https://example.com"+apiPrefix+draftRoot+"/content?path=active.html&revision=2", nil)
 	r.Header.Set("Range", "bytes=0-5")
 	w = httptest.NewRecorder()
 	api.Serve(session, w, r)
@@ -61,15 +73,7 @@ func TestAuthoringHTTPJourneyAndActiveContentIsolation(t *testing.T) {
 	data := []byte{0, 1, 2, 255}
 	sum := sha256.Sum256(data)
 	digest := "sha256:" + hex.EncodeToString(sum[:])
-	main, err := store.MainCommit(context.Background(), authoring.Actor{Issuer: session.Issuer, Subject: session.Subject}, l.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	branch, err := store.CreateBranch(context.Background(), authoring.Actor{Issuer: session.Issuer, Subject: session.Subject}, l.ID, authoring.CreateBranchInput{RequestID: "upload-branch", Name: "Uploads", BaseCommit: main.CommitID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	w = call("POST", root+"/uploads", map[string]any{"request_id": "upload", "branch_id": branch.ID, "expected_revision": 1, "path": "binary", "size": "4", "digest": digest})
+	w = call("POST", root+"/uploads", map[string]any{"request_id": "upload", "branch_id": branch.ID, "expected_revision": 2, "path": "binary", "size": "4", "digest": digest})
 	if w.Code != 201 {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -87,10 +91,10 @@ func TestAuthoringHTTPJourneyAndActiveContentIsolation(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	if w = call("POST", root+"/uploads/"+u.ID+"/complete", map[string]any{"request_id": "complete", "expected_revision": 1}); w.Code != 200 {
+	if w = call("POST", root+"/uploads/"+u.ID+"/complete", map[string]any{"request_id": "complete", "expected_revision": 2}); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	w = call("POST", root+"/draft/mutations", map[string]any{"request_id": "invalid", "expected_revision": 2, "action": "text", "path": "../escape", "text": "x"})
+	w = call("POST", draftRoot+"/text", map[string]any{"request_id": "invalid", "expected_revision": 3, "expected_head": branch.Head, "path": "../escape", "text": "x"})
 	if w.Code != 422 {
 		t.Fatal("path validation", w.Code)
 	}

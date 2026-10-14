@@ -3,6 +3,7 @@ package httpapi
 import (
 	"mime"
 	"net/http"
+	"strings"
 	"time"
 
 	"volume-studio/backend/internal/authoring"
@@ -55,6 +56,10 @@ func (a *AuthoringAPI) registerBranches() {
 		respond(w, 200, page, err)
 	})
 	a.mux.HandleFunc("GET "+root+"/{branch}/draft/content", func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.Header.Get("Range"), ",") {
+			writeError(w, 416, "single_range_required")
+			return
+		}
 		f, entry, err := a.Store.BranchContent(r.Context(), actor(r), r.PathValue("library"), r.PathValue("branch"), r.URL.Query().Get("path"), revision(r))
 		if err != nil {
 			authoringError(w, err)
