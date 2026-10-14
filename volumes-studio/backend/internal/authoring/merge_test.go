@@ -185,3 +185,36 @@ func TestArchivedLibraryCannotPrepareApproveOrMerge(t *testing.T) {
 		t.Fatal("archive allowed main change", err)
 	}
 }
+
+func TestMergeRequiresDistinctCurrentReviewers(t *testing.T) {
+	s, l, b, _ := reviewFixture(t)
+	ctx := context.Background()
+	policy, err := s.SetMergePolicy(ctx, testActor, l.ID, MergePolicyInput{"two-reviewers", 1, 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	main, err := s.MainCommit(ctx, testActor, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := s.PrepareMerge(ctx, testActor, l.ID, PrepareInput{"prepare-two", b.ID, b.Head, main.CommitID, policy.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range []string{"approve-once", "approve-twice"} {
+		if _, err = s.Review(ctx, testActor, l.ID, ReviewInput{request, prepared.Digest, "approve", ""}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	input := MergeInput{"merge-two", prepared.Digest, main.CommitID}
+	if _, err = s.Merge(ctx, testActor, l.ID, input); err != ErrAuthority {
+		t.Fatal("duplicate reviewer counted twice", err)
+	}
+	second := Actor{Issuer: testActor.Issuer, Subject: "second-expert"}
+	if _, err = s.Review(ctx, second, l.ID, ReviewInput{"second-approval", prepared.Digest, "approve", ""}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Merge(ctx, testActor, l.ID, input); err != nil {
+		t.Fatal("two distinct approvals rejected", err)
+	}
+}
