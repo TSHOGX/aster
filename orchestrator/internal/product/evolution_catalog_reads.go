@@ -20,12 +20,12 @@ func (s *Store) GroupCatalog(ctx context.Context, token, group string) ([]Catalo
 	}
 	out := []CatalogBindingView{}
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		account, err := s.adminSession(ctx, tx, token)
+		session, err := s.normalLogin(ctx, tx, token)
 		if err != nil {
 			return err
 		}
 		var member int
-		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM account_memberships WHERE account_id=? AND group_id=?", account.ID, group).Scan(&member); err != nil {
+		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM account_memberships WHERE account_id=? AND group_id=?", session.Account.ID, group).Scan(&member); err != nil {
 			return err
 		}
 		if member == 0 {
