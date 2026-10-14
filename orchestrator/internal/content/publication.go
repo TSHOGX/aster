@@ -103,6 +103,9 @@ func (p Publisher) Publish(ctx context.Context, purpose string, revision Revisio
 	if capacity <= 0 || capacity < minimum {
 		return "", fmt.Errorf("content volume capacity must be at least %d bytes", minimum)
 	}
+	if err := revision.ValidateContent(); err != nil {
+		return "", fmt.Errorf("%w: %v", ErrContentRefused, err)
+	}
 	identity, err := p.Backend.Identity(ctx)
 	if err != nil {
 		return "", err
@@ -423,5 +426,5 @@ func contextWithoutCancelTimeout(ctx context.Context) (context.Context, context.
 // ValidPurpose separates system publications from operator-authored builtin
 // content while sharing the same immutable transport and accounting.
 func ValidPurpose(purpose string) bool {
-	return purpose == "assets" || purpose == "config" || purpose == "builtin" || purpose == "authored" || purpose == "shared_assets"
+	return purpose == "config" || purpose == "builtin" || purpose == "authored" || purpose == "shared_assets"
 }

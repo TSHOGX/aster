@@ -12,7 +12,7 @@ func TestPlatformStorageCountsPublicationObjectsAndRetainsUncertainIntent(t *tes
 	l, scope, _ := lifecycleFixture(t)
 	s := l.Store
 	entries := []content.Entry{{Path: "seed", Size: 1, Digest: "sha256:" + strings.Repeat("a", 64)}}
-	input := content.Publication{StoreID: "engine", Purpose: "assets", RevisionDigest: content.Digest(entries), Capacity: 8 << 20, Entries: entries}
+	input := content.Publication{StoreID: "engine", Purpose: "builtin", RevisionDigest: content.Digest(entries), Capacity: 8 << 20, Entries: entries}
 	check := func(allocated, reserved, published int64) PlatformStorage {
 		t.Helper()
 		usage, err := s.OperatorStorageUsage(ctx)
@@ -44,7 +44,7 @@ func TestPlatformStorageCountsPublicationObjectsAndRetainsUncertainIntent(t *tes
 	// One publication can be selected by many registry identities and mounts.
 	// References add no physical capacity: only the two source objects count.
 	for _, id := range []string{"examples", "reference"} {
-		err = s.RegisterBuiltinVolume(ctx, BuiltinVolume{Reference: ArtifactReference{ID: id, Version: "v1", Digest: input.RevisionDigest}, StoreID: "engine", PublicationPurpose: "assets", MinimumBytes: 1, Roles: []string{"data"}, Entries: entries})
+		err = s.RegisterBuiltinVolume(ctx, BuiltinVolume{Reference: ArtifactReference{ID: id, Version: "v1", Digest: input.RevisionDigest}, StoreID: "engine", PublicationPurpose: "builtin", MinimumBytes: 1, Roles: []string{"data"}, Entries: entries})
 		must(t, err)
 	}
 	check(16<<20, 0, 8<<20)
@@ -86,7 +86,7 @@ func TestPlatformStorageCountsPublicationObjectsAndRetainsUncertainIntent(t *tes
 func TestPublicationReservationOverflowRollsBackNewClaim(t *testing.T) {
 	s := testStore(t)
 	entries := []content.Entry{{Path: "seed", Directory: true}}
-	input := content.Publication{StoreID: "engine", Purpose: "assets", RevisionDigest: content.Digest(entries), Capacity: math.MaxInt64 / 2, Entries: entries}
+	input := content.Publication{StoreID: "engine", Purpose: "builtin", RevisionDigest: content.Digest(entries), Capacity: math.MaxInt64 / 2, Entries: entries}
 	_, err := s.ClaimContentPublication(ctx, input)
 	must(t, err)
 	input.Purpose = "config"

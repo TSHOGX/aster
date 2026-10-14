@@ -112,7 +112,7 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 	deletedProjects := float64(1)
 	editPaths := func(workspace, runtimeRoot, requestID string) {
 		t.Helper()
-		template := a.resourceTemplate("environment", "environment-default")
+		template := a.resourceTemplate("environment", "standard-agent")
 		current := template["environment"].(map[string]any)
 		mounts := current["mounts"].([]any)
 		for _, raw := range mounts {
@@ -202,7 +202,7 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 			t.Fatal(registered)
 		}
 		// Registration alone cannot select the new image.
-		unchanged := a.resourceTemplate("environment", "environment-default")["environment"].(map[string]any)
+		unchanged := a.resourceTemplate("environment", "standard-agent")["environment"].(map[string]any)
 		if unchanged["sandbox_release"].(map[string]any)["digest"] == digest {
 			t.Fatal("registration changed default")
 		}
@@ -280,11 +280,12 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 	reach := cfg["project"].(map[string]any)["reachability"].(map[string]any)
 	reach["resolvers"] = []string{"192.0.2.1"}
 	reach["direct"] = []any{map[string]any{"cidr": "192.0.2.1/32", "port": port, "protocol": "tcp"}}
+	customNetwork := a.copyFixtureNetwork()
 	change := 0
 	apply := func() any {
 		t.Helper()
 		change++
-		current := a.resourceTemplate("network", "network-default")
+		current := a.resourceTemplate("network", customNetwork["id"].(string))
 		result := a.saveResourceTemplate("network", current, map[string]any{"direct": reach["direct"], "resolvers": reach["resolvers"]}, fmt.Sprintf("network-change-%d", change))
 		return result["network"].(map[string]any)["revision"]
 	}
@@ -305,7 +306,7 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 		for _, item := range configurations {
 			config := item.(map[string]any)
 			if config["project_id"] == "network" {
-				a.request("PATCH", "/api/me/project-configurations/network", map[string]any{"request_id": fmt.Sprintf("select-network-%d", change), "expected_revision": config["revision"], "network_template_id": "network-default"}, 200)
+				a.request("PATCH", "/api/me/project-configurations/network", map[string]any{"request_id": fmt.Sprintf("select-network-%d", change), "expected_revision": config["revision"], "network_template_id": customNetwork["id"]}, 200)
 			}
 		}
 		a.request("POST", base+"/resume", nil, 202)

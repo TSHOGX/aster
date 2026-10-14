@@ -5,6 +5,7 @@ CREATE TABLE blobs(
 );
 CREATE TABLE libraries(
  id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,description TEXT NOT NULL,
+ profile TEXT NOT NULL DEFAULT 'authored-v1' CHECK(profile IN('authored-v1','shared-assets-v1')),
  metadata_revision INTEGER NOT NULL DEFAULT 1,
  draft_revision INTEGER NOT NULL DEFAULT 1,
  base_version TEXT NOT NULL DEFAULT '',
@@ -81,3 +82,6 @@ CREATE INDEX reader_pin_blobs ON reader_pins(digest);
 CREATE INDEX libraries_workbench_name ON libraries(name COLLATE NOCASE,id);
 CREATE INDEX versions_workbench_time ON versions(library_id,created_at,id);
 CREATE INDEX audit_workbench_time ON audit(library_id,created_at);
+
+CREATE TRIGGER immutable_library_profile BEFORE UPDATE OF profile ON libraries
+BEGIN SELECT RAISE(ABORT,'immutable library content profile'); END;

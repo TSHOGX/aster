@@ -22,8 +22,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"aster/contracts/volumemanifest"
 	"volume-studio/backend/internal/database"
-	"volume-studio/backend/internal/manifest"
 )
 
 var (
@@ -48,9 +48,10 @@ func (a Actor) valid() bool {
 }
 
 type Config struct {
-	Directory   string
-	PublisherID string
-	QuotaBytes  int64
+	SeedSharedAssets bool
+	Directory        string
+	PublisherID      string
+	QuotaBytes       int64
 }
 type Store struct {
 	mu          sync.Mutex
@@ -62,9 +63,11 @@ type Store struct {
 	now         func() time.Time
 }
 type Library struct {
+	Builtin          bool   `json:"builtin"`
 	ID               string `json:"id"`
 	Name             string `json:"name"`
 	Description      string `json:"description"`
+	Profile          string `json:"profile"`
 	MetadataRevision int64  `json:"metadata_revision"`
 	DraftRevision    int64  `json:"draft_revision"`
 	BaseVersion      string `json:"base_version"`
@@ -75,6 +78,7 @@ type Version struct {
 	PublisherID      string `json:"publisher_id"`
 	ID               string `json:"id"`
 	LibraryID        string `json:"library_id"`
+	Profile          string `json:"profile"`
 	Label            string `json:"label"`
 	Note             string `json:"note"`
 	SourceRevision   int64  `json:"source_revision"`
@@ -124,6 +128,11 @@ func Open(ctx context.Context, c Config) (*Store, error) {
 	}
 	if err = s.reconcileUploads(ctx); err != nil {
 		return fail(err)
+	}
+	if c.SeedSharedAssets {
+		if err = s.seedSharedAssets(ctx); err != nil {
+			return fail(err)
+		}
 	}
 	return s, nil
 }
@@ -354,13 +363,14 @@ func validText(value string, max int) bool {
 	return utf8.ValidString(value) && len(value) <= max && !strings.ContainsRune(value, 0)
 }
 
-const libraryColumns = "id,name,description,metadata_revision,draft_revision,base_version,archived"
+const libraryColumns = "id,name,description,profile,metadata_revision,draft_revision,base_version,archived"
 
 type scanner interface{ Scan(...any) error }
 
 func scanLibrary(row scanner) (Library, error) {
 	var l Library
-	err := row.Scan(&l.ID, &l.Name, &l.Description, &l.MetadataRevision, &l.DraftRevision, &l.BaseVersion, &l.Archived)
+	err := row.Scan(&l.ID, &l.Name, &l.Description, &l.Profile, &l.MetadataRevision, &l.DraftRevision, &l.BaseVersion, &l.Archived)
+	l.Builtin = l.ID == "aster-shared-assets"
 	return l, normalizeDB(err)
 }
 func (s *Store) Library(ctx context.Context, id string) (Library, error) {
@@ -424,10 +434,11 @@ type CreateInput struct {
 	RequestID   string `json:"request_id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Profile     string `json:"profile,omitempty"`
 }
 
 func (s *Store) Create(ctx context.Context, a Actor, input CreateInput) (Library, error) {
-	if !validText(input.Name, 200) || strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Name) != input.Name || !validText(input.Description, 4000) {
+	if !validText(input.Name, 200) || strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Name) != input.Name || !validText(input.Description, 4000) || input.Profile != "" && input.Profile != manifest.Profile && input.Profile != manifest.SharedAssetsProfile {
 		return Library{}, ErrInvalid
 	}
 	s.mu.Lock()
@@ -452,8 +463,11 @@ func (s *Store) Create(ctx context.Context, a Actor, input CreateInput) (Library
 	if exists != 0 {
 		return l, ErrConflict
 	}
-	l = Library{ID: randomID(), Name: input.Name, Description: input.Description, MetadataRevision: 1, DraftRevision: 1}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO libraries(id,name,description,issuer,subject,created_at) VALUES(?,?,?,?,?,?)", l.ID, l.Name, l.Description, a.Issuer, a.Subject, s.now().Unix()); err != nil {
+	l = Library{ID: randomID(), Name: input.Name, Description: input.Description, Profile: input.Profile, MetadataRevision: 1, DraftRevision: 1}
+	if l.Profile == "" {
+		l.Profile = manifest.Profile
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO libraries(id,name,description,profile,issuer,subject,created_at) VALUES(?,?,?,?,?,?,?)", l.ID, l.Name, l.Description, l.Profile, a.Issuer, a.Subject, s.now().Unix()); err != nil {
 		return l, err
 	}
 	if err = s.record(ctx, tx, a, input.RequestID, body, "library.create", l.ID, 1, l); err != nil {

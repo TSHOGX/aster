@@ -13,7 +13,7 @@ func TestEnvironmentResourceFitAccountsForAllOwnedAndSharedSlots(t *testing.T) {
 	environment := bootstrapSeedFixture(t).Environment
 	artifacts := []BuiltinVolume{}
 	for _, role := range []string{"agent_config", "shared_assets", "data"} {
-		artifact := BuiltinVolume{Reference: ArtifactReference{ID: role, Version: "v1", Digest: content.Digest(nil)}, MinimumBytes: 1, SourceCapacityBytes: 1, Roles: []string{role}}
+		artifact := BuiltinVolume{PublicationPurpose: map[string]string{"agent_config": "config", "shared_assets": "shared_assets", "data": "builtin"}[role], Reference: ArtifactReference{ID: role, Version: "v1", Digest: content.Digest(nil)}, MinimumBytes: 1, SourceCapacityBytes: 1, Roles: []string{role}}
 		artifacts = append(artifacts, artifact)
 		destination := map[string]string{"agent_config": "/opt/agent-config", "shared_assets": "/opt/shared-assets", "data": "/datasets/reference"}[role]
 		environment.Mounts = append(environment.Mounts, EnvironmentMount{Key: role, Role: role, Destination: destination, Storage: "shared_readonly", Access: "read_only", Source: MountSource{Kind: "builtin", ArtifactID: artifact.Reference.ID, Version: artifact.Reference.Version, Digest: artifact.Reference.Digest}})

@@ -25,12 +25,12 @@ func TestReleasedBuiltinVolumePublication(t *testing.T) {
 	measured := a.cli("volume", "inspect-source", "--source", source)
 	digest := measured["digest"].(string)
 	args := []string{"volume", "publish", "--socket", socket, "--source", source, "--id", "examples", "--version", "v1", "--digest", digest, "--capacity-bytes", "8388608", "--minimum-bytes", "4194304", "--roles", "workspace,data"}
-	before := a.resourceTemplate("environment", "environment-default")
+	before := a.resourceTemplate("environment", "standard-agent")
 	first := a.cli(args...)
 	if replay := a.cli(args...); !reflect.DeepEqual(first, replay) || replay["default_changed"] != false {
 		t.Fatal(first, replay)
 	}
-	after := a.resourceTemplate("environment", "environment-default")
+	after := a.resourceTemplate("environment", "standard-agent")
 	if !reflect.DeepEqual(before, after) {
 		t.Fatal("publication selected a new default")
 	}

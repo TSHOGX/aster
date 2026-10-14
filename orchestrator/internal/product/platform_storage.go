@@ -142,7 +142,7 @@ func platformStorage(ctx context.Context, q queryer) (out PlatformStorage, err e
 	}
 	// Import admission reserves both future engine objects before a publication row
 	// exists. Shared materialization identities are counted only once.
-	rows, err = q.QueryContext(ctx, `SELECT max(i.capacity) FROM volume_imports i WHERE i.state NOT IN ('retired','canceled') AND NOT EXISTS(SELECT 1 FROM content_publications p WHERE p.store_id=i.store_id AND p.purpose='authored' AND p.revision_digest=i.tree_digest) GROUP BY i.store_id,i.tree_digest`)
+	rows, err = q.QueryContext(ctx, `SELECT max(i.capacity) FROM volume_imports i WHERE i.state NOT IN ('retired','canceled') AND NOT EXISTS(SELECT 1 FROM content_publications p WHERE p.store_id=i.store_id AND p.purpose=CASE i.content_profile WHEN 'shared-assets-v1' THEN 'shared_assets' ELSE 'authored' END AND p.revision_digest=i.tree_digest) GROUP BY i.store_id,i.content_profile,i.tree_digest`)
 	if err != nil {
 		return out, err
 	}

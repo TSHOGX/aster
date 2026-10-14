@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"volume-studio/backend/internal/manifest"
+	"aster/contracts/volumemanifest"
 )
 
 var testActor = Actor{Issuer: "https://identity.example", Subject: "admin-subject"}

@@ -26,6 +26,7 @@ export default function Home() {
   const router = useRouter();
   const [q, setQ] = useState(""),
     [status, setStatus] = useState("active"),
+ [profile,setProfile] = useState(""),
     [changes, setChanges] = useState(""),
     [sort, setSort] = useState("updated"),
     [direction, setDirection] = useState("desc"),
@@ -41,6 +42,7 @@ export default function Home() {
     const p = new URLSearchParams(location.search);
     setQ(p.get("q") || "");
     setStatus(p.get("status") || "active");
+ setProfile(p.get("profile") || "");
     setChanges(p.get("changes") || "");
     setSort(p.get("sort") || "updated");
     setDirection(p.get("direction") || "desc");
@@ -50,6 +52,7 @@ export default function Home() {
     mode: "workbench",
     q,
     status,
+    profile,
     changes,
     sort,
     direction,
@@ -64,7 +67,7 @@ export default function Home() {
         history.replaceState(
           null,
           "",
-          `?${query({ q, status, changes, sort, direction })}`,
+          `?${query({ q, profile, status, changes, sort, direction })}`,
         );
       void api<Page<Library>>(`/libraries?${params}`, { signal: abort.signal })
         .then((p) => {
@@ -88,7 +91,7 @@ export default function Home() {
       clearTimeout(timer);
       abort.abort();
     };
-  }, [ready, params, refresh, q, status, changes, sort, direction]);
+  }, [ready, params, refresh, q, profile, status, changes, sort, direction]);
   const setOrder = (value: string) => {
     if (sort === value) setDirection(direction === "asc" ? "desc" : "asc");
     else {
@@ -145,7 +148,8 @@ export default function Home() {
             onChange={(e) => setQ(e.target.value)}
           />
         </label>
-        <Picker
+        <Picker label="Content profile" value={profile} onChange={setProfile} options={[{value:"",label:"All profiles"},{value:"authored-v1",label:"Ordinary data"},{value:"shared-assets-v1",label:"Shared assets"}]} />
+ <Picker
           label={tr("Library status")}
           value={status}
           onChange={setStatus}
@@ -248,6 +252,8 @@ export default function Home() {
                     {l.name}
                   </Link>
                   <p className="description">{l.description}</p>
+                  {l.builtin && <small>Built-in origin · Publish a new version to extend</small>}
+                  <small className="catalog-status">{l.profile === "shared-assets-v1" ? tr("Shared assets") : tr("Ordinary data")}</small>
                 </td>
                 <td>
                   <span className="badge">

@@ -16,7 +16,12 @@ PI_NODE_VERSION=24.15.0
 PI_CODING_AGENT_VERSION=0.77.0
 PI_PACKAGE=@earendil-works/pi-coding-agent
 PI_PACKAGE_INTEGRITY='sha512-huS+k+dhQRR9PlTK7crLfeSRUw3a96V6JYfP0ZH3Zkko/m10gsYk8dKQmwScSy5Dll516pXorz19BURfD6S2qQ=='
-APT_PACKAGES=(ca-certificates curl fonts-wqy-microhei fonts-wqy-zenhei git mysql-client-core-8.0 nodejs npm python3 python3-pip python3-venv xz-utils)
+SANDBOX_FAMILY=${SANDBOX_FAMILY:-minimal}
+case "$SANDBOX_FAMILY" in minimal|work) ;; *) echo 'SANDBOX_FAMILY must be minimal or work' >&2; exit 2;; esac
+APT_PACKAGES=(ca-certificates curl git xz-utils)
+if [[ $SANDBOX_FAMILY == work ]]; then
+ APT_PACKAGES+=(fonts-wqy-microhei fonts-wqy-zenhei mysql-client-core-8.0 python3 python3-pip python3-venv)
+fi
 log(){ printf '[build-rootfs] %s\n' "$*"; }
 
 install_duckdb_extensions() {
@@ -116,11 +121,17 @@ if [[ -n ${SANDBOX_BUILD_DNS_HOOK:-} ]]; then "$SANDBOX_BUILD_DNS_HOOK" "$ROOTFS
 chroot "$ROOTFS_DIR" apt-get update
 chroot "$ROOTFS_DIR" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${APT_PACKAGES[@]}"
 chroot "$ROOTFS_DIR" apt-get clean
+# debootstrap on rootless-device hosts may leave a plain /dev/null placeholder.
+# Chroot package tooling still needs a writable sink during this disposable build.
+chmod 0666 "$ROOTFS_DIR/dev/null"
+if [[ $SANDBOX_FAMILY == work ]]; then
 cp "$SCRIPT_DIR/requirements.lock" "$ROOTFS_DIR/tmp/project-requirements.lock"
 chroot "$ROOTFS_DIR" env PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.org/simple}" PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST:-}" python3 -m pip install --break-system-packages --no-cache-dir --require-hashes -r /tmp/project-requirements.lock
 unlink "$ROOTFS_DIR/tmp/project-requirements.lock"
 install_duckdb_extensions
 patch_matplotlibrc_for_cjk
+fi
+printf '%s\n' "$SANDBOX_FAMILY" > "$ROOTFS_DIR/etc/aster-sandbox-family"
 chroot "$ROOTFS_DIR" env NODE_DIST_BASE_URL="$NODE_DIST_BASE_URL" NODE_VERSION="$PI_NODE_VERSION" /bin/bash -s <<'NATIVE'
 set -euo pipefail
 case $(dpkg --print-architecture) in amd64) architecture=x64;; arm64) architecture=arm64;; *) exit 2;; esac

@@ -50,6 +50,15 @@ def validate(build, plan):
     if (build / "runtime/etc/project-runtime/manifest.json").read_bytes() != (build / "runtime.manifest.json").read_bytes():
         raise ValueError("guest and exported runtime manifests differ")
     run([build / "bin/runtime-verify", "--root", build / "runtime", digest])
+    work_manifest = build / "runtime-work.manifest.json"
+    if hashlib.sha256(work_manifest.read_bytes()).hexdigest() != report["work_runtime_manifest_sha256"]:
+        raise ValueError("work runtime manifest changed")
+    work_digest = report["work_runtime_digest"]
+    if (build / "runtime-work.manifest.json.sha256").read_text().strip() != work_digest:
+        raise ValueError("work runtime digest sidecar changed")
+    if (build / "runtime-work/etc/project-runtime/manifest.json").read_bytes() != work_manifest.read_bytes():
+        raise ValueError("guest and exported work runtime manifests differ")
+    run([build / "bin/runtime-verify", "--root", build / "runtime-work", work_digest])
     engine = subprocess.check_output([str(build / "bin/khora"), "--version"], text=True).strip()
     if engine != "orchestrator " + report["engine_revision"]:
         raise ValueError("engine server identity mismatch")
@@ -68,9 +77,11 @@ def validate(build, plan):
         raise ValueError("runtime contract digest mismatch")
     if not re.fullmatch(r"[a-zA-Z0-9_-]+", plan["namespace"]):
         raise ValueError("invalid network namespace")
+    if config.get("work_template", {}).get("manifest") != str(work_manifest) or config["work_template"].get("digest") != work_digest:
+        raise ValueError("configuration must select the newly built Work release")
     templates = Path(plan["unit_templates"]).resolve()
     replacements = {"@APPLICATION@": str(build / "application"), "@STUDIO@": str(build / "studio"),
-                    "@ENGINE@": str(build / "bin/khora"), "@RUNTIME@": str(build / "runtime"),
+                    "@ENGINE@": str(build / "bin/khora"), "@RUNTIME@": str(build / "runtime"), "@WORK_RUNTIME@": str(build / "runtime-work"),
                     "@CONFIG@": str(config_path)}
     units = {}
     for service in SERVICES:

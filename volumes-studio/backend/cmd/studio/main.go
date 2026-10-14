@@ -53,7 +53,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer sessions.Close()
-	store, err := authoring.Open(ctx, authoring.Config{Directory: *directory, PublisherID: *publisher, QuotaBytes: *quota})
+	store, err := authoring.Open(ctx, authoring.Config{SeedSharedAssets: true, Directory: *directory, PublisherID: *publisher, QuotaBytes: *quota})
 	if err != nil {
 		log.Fatal(err)
 	}

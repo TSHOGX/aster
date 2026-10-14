@@ -151,8 +151,8 @@ function Inventory({ kind }: { kind: "sandbox" | "volume" }) {
               {items.map((item) => (
                 <tr key={artifactKey(item.reference)}>
                   <td>
-                    {item.reference.id}
-                    <small>{item.reference.version}</small>
+                    {item.name || item.library_name || item.reference.id}
+                    <small>{item.reference.version}</small><small>{item.purpose}</small>
                   </td>
                   <td>{item.enabled ? tr(item.availability) : tr("Disabled")}</td>
                   <td>
@@ -274,7 +274,7 @@ function TemplateCatalog({
               <button
                 onClick={() => setEditing({ value: item, duplicate: true })}
               >
-                 {tr("Duplicate")} </button>
+                 {tr(item.builtin ? "Copy and customize" : "Duplicate")} </button>
             </div>
           </article>
         ))}
@@ -419,7 +419,7 @@ function TemplateEditor({
            {tr("Back to templates")} </button>
       </header>
       {kind==="environment" && initial && !duplicate && <nav className="catalog-tabs" aria-label={tr("Environment sections")}>{(["configuration","updates","projects"] as const).map(value=><button key={value} aria-current={tab===value ? "page" : undefined} disabled={mutation.blocked||updatesDirty||(!!changed&&value!=="configuration")} onClick={()=>setTab(value)}>{value==="configuration" ? tr("Configuration") : value==="updates" ? tr("Updates") : tr("Projects")}</button>)}</nav>}
-      {tab!=="configuration" && initial ? <EnvironmentUpdates environment={initial.id} revision={initial.revision} hasPublications={!!initial.environment?.mounts.some(m=>m.role==="data"&&m.storage==="shared_readonly")} tab={tab} onDirty={setUpdatesDirty}/> : <>
+      {tab!=="configuration" && initial ? <EnvironmentUpdates environment={initial.id} revision={initial.revision} hasPublications={!!initial.environment?.mounts.some(m=>["data","shared_assets"].includes(m.role)&&m.storage==="shared_readonly")} tab={tab} onDirty={setUpdatesDirty}/> : <>
       {error && (
         <p className="error" role="alert">
           {tr(error)}{" "}
@@ -633,7 +633,7 @@ function TemplateEditor({
                             !r.enabled || r.availability === "unavailable"
                           }
                         >
-                          {r.reference.id} · {r.reference.version}
+                          {r.name || r.reference.id} · {r.reference.version} · {r.purpose}
                         </option>
                       ))}
                   </Select>
@@ -643,9 +643,9 @@ function TemplateEditor({
                 {environment.mounts.map((m) => (
                   <section className="runtime-mount" key={m.key}>
                     <h4>
-                      {m.role === "data" ? tr("Data directory") : m.role.replaceAll("_", " ")}
+                      {m.role === "data" ? tr("Data directory") : m.role === "agent_config" ? "Agent configuration" : m.role === "shared_assets" ? "Shared assets" : m.role.replaceAll("_", " ")}
                     </h4>
-                    {["runtime","agent_config","shared_assets"].includes(m.role)&&<p className="hint">{m.role==="runtime" ? tr("Private runtime state. Use an empty directory or an operator-reviewed clean seed.") : tr("Required read-only system content, registered by an operator for this sandbox release. Studio manages ordinary workspace and data content.")}</p>}
+                    {["runtime","agent_config","shared_assets"].includes(m.role)&&<p className="hint">{m.role==="runtime" ? tr("Private runtime state. Use an empty directory or an operator-reviewed clean seed.") : m.role === "agent_config" ? "Platform-managed Pi settings and runner configuration. Select a reviewed operator release." : "AGENTS.md is appended to the Agent system prompt. Select an exact shared-assets version; skills are optional."}</p>}
                     <label>
                        {tr("Mount path")} <input
                         required
@@ -768,7 +768,7 @@ function TemplateEditor({
                                   required.some(
                                     (role) =>
                                       role.role === m.role &&
-                                      role.artifact_id === s.reference.id,
+                                      (role.role === "shared_assets" ? s.content_profile === "shared-assets-v1" : role.artifact_id === s.reference.id),
                                   )),
                             )
                             .map((s) => (
@@ -785,7 +785,7 @@ function TemplateEditor({
                                   ].includes(s.availability)
                                 }
                               >
-                                {s.library_name || s.reference.id} · {s.version_label || s.reference.version}
+                                {s.library_name || s.reference.id} · {s.version_label || s.reference.version}{m.role === "shared_assets" ? ` · ${s.reference.digest.slice(-8)} · ${s.agents_status || s.availability}` : ""}
                               </option>
                             ))}
                         </Select>

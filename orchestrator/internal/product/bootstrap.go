@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"net/netip"
 
 	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/runtimerelease"
@@ -14,16 +15,18 @@ const StandardUsersGroup = "standard-users"
 const standardUsersPolicy = "standard-user-policy"
 
 type BootstrapSeed struct {
-	Resources   ResourceSeed
-	Environment DefaultEnvironment
-	Sandbox     RegisteredSandbox
-	Volumes     []BuiltinVolume
-	Network     NetworkPolicy
+	WorkSandbox     *RegisteredSandbox
+	WorkEnvironment *DefaultEnvironment
+	Resources       ResourceSeed
+	Environment     DefaultEnvironment
+	Sandbox         RegisteredSandbox
+	Volumes         []BuiltinVolume
+	PublicDNS       []netip.Addr
 }
 
 // NewBootstrapSeed constructs the initial selection from current, validated
 // operator declarations. It is not an importer and is never run over saved data.
-func NewBootstrapSeed(resources ResourceSeed, release RegisteredSandbox, volumes []BuiltinVolume, network NetworkPolicy) (BootstrapSeed, error) {
+func NewBootstrapSeed(resources ResourceSeed, release RegisteredSandbox, volumes []BuiltinVolume, publicDNS []netip.Addr) (BootstrapSeed, error) {
 	if len(resources.AdditionalOwned) != 0 {
 		return BootstrapSeed{}, ErrInvalid
 	}
@@ -37,7 +40,7 @@ func NewBootstrapSeed(resources ResourceSeed, release RegisteredSandbox, volumes
 		}
 		role := artifact.Roles[0]
 		required, ok := release.Manifest.Mounts.Publication(role)
-		if !ok || required.ArtifactID != artifact.Reference.ID {
+		if !ok || role != "shared_assets" && required.ArtifactID != artifact.Reference.ID {
 			return BootstrapSeed{}, ErrInvalid
 		}
 		destination := required.Destination
@@ -48,10 +51,25 @@ func NewBootstrapSeed(resources ResourceSeed, release RegisteredSandbox, volumes
 		return BootstrapSeed{}, ErrInvalid
 	}
 	resources.Mounts = int64(len(environment.Mounts))
-	seed := BootstrapSeed{resources, environment, release, volumes, network}
+	seed := BootstrapSeed{Resources: resources, Environment: environment, Sandbox: release, Volumes: volumes, PublicDNS: publicDNS}
 	return seed, seed.Validate()
 }
 func (s BootstrapSeed) Validate() error {
+	if s.WorkSandbox != nil {
+		if s.WorkEnvironment == nil || s.WorkSandbox.Manifest.Family != "work" || s.WorkSandbox.Reference == s.Sandbox.Reference || s.WorkSandbox.StoreID != s.Sandbox.StoreID {
+			return ErrInvalid
+		}
+		work := s
+		work.WorkSandbox = nil
+		work.WorkEnvironment = nil
+		work.Sandbox = *s.WorkSandbox
+		work.Environment = *s.WorkEnvironment
+		if err := work.Validate(); err != nil {
+			return err
+		}
+	} else if s.WorkEnvironment != nil {
+		return ErrInvalid
+	}
 	if err := s.Sandbox.Reference.validate(); err != nil {
 		return err
 	}
@@ -67,14 +85,17 @@ func (s BootstrapSeed) Validate() error {
 	}
 	seen := map[string]bool{}
 	for _, artifact := range s.Volumes {
+		if err := ValidateBuiltinVolume(artifact); err != nil {
+			return err
+		}
 		if err := artifact.Reference.validate(); err != nil {
 			return err
 		}
-		if len(artifact.Roles) != 1 || artifact.PublicationPurpose == "config" && artifact.Roles[0] != "agent_config" || artifact.PublicationPurpose == "assets" && artifact.Roles[0] != "shared_assets" {
+		if len(artifact.Roles) != 1 || artifact.PublicationPurpose == "config" && artifact.Roles[0] != "agent_config" || artifact.PublicationPurpose == "shared_assets" && artifact.Roles[0] != "shared_assets" {
 			return ErrInvalid
 		}
 		key := artifact.Reference.ID + "/" + artifact.Reference.Version
-		if seen[key] || artifact.StoreID != s.Sandbox.StoreID || artifact.MinimumBytes <= 0 || (artifact.PublicationPurpose != "config" && artifact.PublicationPurpose != "assets") || len(artifact.Roles) != 1 || artifact.CleanRuntime {
+		if seen[key] || artifact.StoreID != s.Sandbox.StoreID || artifact.MinimumBytes <= 0 || (artifact.PublicationPurpose != "config" && artifact.PublicationPurpose != "shared_assets") || len(artifact.Roles) != 1 || artifact.CleanRuntime {
 			return ErrInvalid
 		}
 		seen[key] = true
@@ -127,12 +148,9 @@ func (s BootstrapSeed) Validate() error {
 	if _, _, err = s.Resources.Resolve(); err != nil {
 		return err
 	}
-	network, err := NewNetworkPolicy(Reachability{Direct: s.Network.Direct, Resolvers: s.Network.Resolvers})
+	_, err = NewNetworkPolicy(Reachability{Resolvers: s.PublicDNS})
 	if err != nil {
 		return err
-	}
-	if network.Revision != s.Network.Revision {
-		return ErrInvalid
 	}
 	return nil
 }
@@ -165,13 +183,18 @@ func (s *Store) insertBootstrapSeed(ctx context.Context, tx *sql.Tx, seed Bootst
 			return err
 		}
 	}
-	release := seed.Sandbox
-	manifest, err := json.Marshal(release.Manifest)
-	if err != nil {
-		return err
+	releases := []RegisteredSandbox{seed.Sandbox}
+	if seed.WorkSandbox != nil {
+		releases = append(releases, *seed.WorkSandbox)
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO registered_sandboxes(id,version,digest,store_id,template_id,manifest,created_at) VALUES(?,?,?,?,?,?,?)`, release.Reference.ID, release.Reference.Version, release.Reference.Digest, release.StoreID, release.TemplateID, string(manifest), now); err != nil {
-		return err
+	for _, release := range releases {
+		manifest, err := json.Marshal(release.Manifest)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO registered_sandboxes(id,version,digest,store_id,template_id,manifest,created_at) VALUES(?,?,?,?,?,?,?)`, release.Reference.ID, release.Reference.Version, release.Reference.Digest, release.StoreID, release.TemplateID, string(manifest), now); err != nil {
+			return err
+		}
 	}
 	for _, artifact := range seed.Volumes {
 		roles, err := json.Marshal(artifact.Roles)
@@ -190,4 +213,14 @@ func (s *Store) insertBootstrapSeed(ctx context.Context, tx *sql.Tx, seed Bootst
 		return err
 	}
 	return s.seedResourceTemplates(ctx, tx, seed)
+}
+
+func (s BootstrapSeed) WithWorkRelease(release RegisteredSandbox) (BootstrapSeed, error) {
+	work, err := NewBootstrapSeed(s.Resources, release, s.Volumes, s.PublicDNS)
+	if err != nil {
+		return s, err
+	}
+	s.WorkSandbox = &release
+	s.WorkEnvironment = &work.Environment
+	return s, s.Validate()
 }

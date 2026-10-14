@@ -76,6 +76,9 @@ func ValidateBuiltinVolume(artifact BuiltinVolume) error {
 		if !validID(role) || len(role) > 64 {
 			return ErrInvalid
 		}
+		if role == "shared_assets" && artifact.PublicationPurpose != "shared_assets" || role == "agent_config" && artifact.PublicationPurpose != "config" {
+			return ErrInvalid
+		}
 		if role == "runtime" && !artifact.CleanRuntime {
 			return ErrInvalid
 		}
@@ -95,6 +98,11 @@ func ValidateBuiltinVolume(artifact BuiltinVolume) error {
 			if role != "data" && role != "workspace" {
 				return ErrInvalid
 			}
+		}
+	}
+	if artifact.PublicationPurpose == "shared_assets" {
+		if artifact.CleanRuntime || len(artifact.Roles) != 1 || artifact.Roles[0] != "shared_assets" {
+			return ErrInvalid
 		}
 	}
 

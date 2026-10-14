@@ -38,6 +38,10 @@ const ManifestPath = "/etc/project-runtime/manifest.json"
 const NativeRoot = "/usr/local/lib/node_modules"
 
 type Manifest struct {
+	Family           string            `json:"family"`
+	ReleaseVersion   string            `json:"release_version"`
+	Name             string            `json:"name"`
+	Purpose          string            `json:"purpose"`
 	HistoryProtocol  int               `json:"history_protocol"`
 	Mounts           MountContract     `json:"mounts"`
 	ScheduleProtocol int               `json:"schedule_protocol"`
@@ -100,6 +104,12 @@ func Load(reader io.Reader, expected string) (Manifest, error) {
 	digest, err := Digest(raw)
 	if err != nil || !ValidDigest(expected) || digest != expected {
 		return manifest, errors.New("runtime manifest does not match its release digest")
+	}
+	if manifest.Family != "minimal" && manifest.Family != "work" || !mountRole.MatchString(manifest.ReleaseVersion) {
+		return manifest, errors.New("invalid sandbox release identity")
+	}
+	if manifest.Name != FamilyName(manifest.Family) || manifest.Purpose != FamilyPurpose(manifest.Family) {
+		return manifest, errors.New("invalid sandbox release description")
 	}
 	if manifest.Version != ManifestVersion || manifest.HistoryProtocol != HistoryProtocol || manifest.ScheduleProtocol != ScheduleProtocol || manifest.NativeProtocol != NativeProtocol || manifest.ReaderProtocol != ReaderProtocol || manifest.EngineModule != EngineModule || manifest.EngineRevision != EngineRevision || manifest.AgentProtocol != agentwire.Version || manifest.PiPackage != PiPackage || manifest.PiVersion != PiVersion || manifest.PiIntegrity != PiIntegrity || manifest.NodeVersion != NodeVersion || !ValidDigest(manifest.NativeTree) {
 		return manifest, errors.New("incompatible Project runtime release")
@@ -252,13 +262,24 @@ func nativeTree(root string) (string, error) {
 	}
 	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
 }
-func Generate(root string) (Manifest, error) {
+func Generate(root string) (Manifest, error) { return GenerateFamily(root, "minimal", "v1") }
+func GenerateFamily(root, family, version string) (Manifest, error) {
+	if family != "minimal" && family != "work" || !mountRole.MatchString(version) {
+		return Manifest{}, errors.New("invalid sandbox family or version")
+	}
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return Manifest{}, err
 	}
 	if root == "/" {
 		return Manifest{}, errors.New("release generation requires a separate build root")
+	}
+	identityPath := filepath.Join(root, "usr/local/share/project-runtime/system.md")
+	if err := os.MkdirAll(filepath.Dir(identityPath), 0755); err != nil {
+		return Manifest{}, err
+	}
+	if err := os.WriteFile(identityPath, []byte(ReleasePrompt(family, version)), 0644); err != nil {
+		return Manifest{}, err
 	}
 	if err := cleanRoot(root); err != nil {
 		return Manifest{}, err
@@ -273,7 +294,7 @@ func Generate(root string) (Manifest, error) {
 	if err = mounts.ValidateDestination("runtime", "/runtime"); err != nil {
 		return Manifest{}, err
 	}
-	manifest := Manifest{Version: ManifestVersion, HistoryProtocol: HistoryProtocol, Mounts: mounts, ScheduleProtocol: ScheduleProtocol, NativeProtocol: NativeProtocol, ReaderProtocol: ReaderProtocol, EngineModule: EngineModule, EngineRevision: EngineRevision, AgentProtocol: agentwire.Version, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: PiPackage, PiVersion: PiVersion, PiIntegrity: PiIntegrity, NodeVersion: NodeVersion, Files: map[string]string{}}
+	manifest := Manifest{Family: family, ReleaseVersion: version, Name: FamilyName(family), Purpose: FamilyPurpose(family), Version: ManifestVersion, HistoryProtocol: HistoryProtocol, Mounts: mounts, ScheduleProtocol: ScheduleProtocol, NativeProtocol: NativeProtocol, ReaderProtocol: ReaderProtocol, EngineModule: EngineModule, EngineRevision: EngineRevision, AgentProtocol: agentwire.Version, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: PiPackage, PiVersion: PiVersion, PiIntegrity: PiIntegrity, NodeVersion: NodeVersion, Files: map[string]string{}}
 	packagePath, err := resolve(root, NativeRoot+"/"+PiPackage+"/package.json")
 	if err != nil {
 		return manifest, err
@@ -419,4 +440,20 @@ func cleanRoot(root string) error {
 		}
 	}
 	return nil
+}
+
+func FamilyName(family string) string {
+	if family == "work" {
+		return "Work Environment"
+	}
+	return "Minimal Agent"
+}
+func FamilyPurpose(family string) string {
+	if family == "work" {
+		return "Python, data analysis, charts and document authoring."
+	}
+	return "Agent runner, Node, Git and basic shell tools."
+}
+func ReleasePrompt(family, version string) string {
+	return "This sandbox is " + FamilyName(family) + " " + version + ".\n"
 }

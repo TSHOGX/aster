@@ -47,7 +47,7 @@ func TestFirstAllocationSelectsDatabaseEnvironmentAndUserRequests(t *testing.T) 
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE environment_templates SET revision=?,document=? WHERE id='environment-default'`, selected.Revision, string(raw))
+		_, err = tx.ExecContext(ctx, `UPDATE environment_templates SET revision=?,document=? WHERE id='standard-agent'`, selected.Revision, string(raw))
 		return err
 	}))
 	settings, err := s.UserResourceSettings(ctx, token, admin.ID)

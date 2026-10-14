@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"volume-studio/backend/internal/manifest"
+	"aster/contracts/volumemanifest"
 )
 
 const ExportLifetime = 15 * time.Minute

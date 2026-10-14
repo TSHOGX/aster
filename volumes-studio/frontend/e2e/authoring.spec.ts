@@ -745,3 +745,26 @@ test("language changes keep Studio unsaved content, selection, and confirmation 
   await expect(page.getByRole("link", { name: "Libraries", exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test("shared assets show actionable validation and publish immutable system context",async({page})=>{
+ await signIn(page);
+ await page.getByRole("button",{name:"New library",exact:true}).click();
+ await page.getByLabel("Name",{exact:true}).fill(`Shared context ${Date.now()}`);
+ await page.getByRole("dialog").getByRole("radio",{name:"Shared assets",exact:true}).check();
+ await page.getByRole("button",{name:"Create draft",exact:true}).click();
+ await expect(page.getByText("Add the required root UTF-8 text file.",{exact:false})).toBeVisible();
+ await page.getByRole("button",{name:"Review & publish",exact:true}).click();
+ await expect(page.getByRole("alert").filter({hasText:"AGENTS.md"})).toBeVisible();
+ await createFile(page,"AGENTS.md");
+ await editorText(page,"AGENTS.md","# Aster context\nUse the available runtime tools.");
+ await page.getByRole("button",{name:"Save file",exact:true}).click();
+ await page.getByRole("button",{name:"Review & publish",exact:true}).click();
+ await expect(page.getByText("Content profile: Shared assets · Immutable version",{exact:true})).toBeVisible();
+ await page.getByLabel("Version label").fill("v1");
+ await page.getByRole("button",{name:"Publish version",exact:true}).click();
+ await expect(page.getByText("published",{exact:true})).toBeVisible();
+ await page.getByRole("button",{name:"Inspect files",exact:true}).click();
+ await page.getByRole("button",{name:"Open AGENTS.md",exact:true}).click();
+ await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable","false");
+ await expect(page.locator(".cm-content")).toContainText("Use the available runtime tools.");
+});

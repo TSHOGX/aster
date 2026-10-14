@@ -10,11 +10,12 @@ import (
 	"strconv"
 	"strings"
 
-	"volume-studio/backend/internal/manifest"
+	"aster/contracts/volumemanifest"
 )
 
 // Workbench queries use the current cursor and ordering contracts.
 type Query struct {
+	Profile     string `json:"profile"`
 	Q           string `json:"q"`
 	Status      string `json:"status"`
 	Changes     string `json:"changes"`
@@ -131,10 +132,11 @@ func (s *Store) summaries(ctx context.Context, library string) ([]LibrarySummary
 	out := []LibrarySummary{}
 	for rows.Next() {
 		var l LibrarySummary
-		if err = rows.Scan(&l.ID, &l.Name, &l.Description, &l.MetadataRevision, &l.DraftRevision, &l.BaseVersion, &l.Archived, &l.UpdatedAt); err != nil {
+		if err = rows.Scan(&l.ID, &l.Name, &l.Description, &l.Profile, &l.MetadataRevision, &l.DraftRevision, &l.BaseVersion, &l.Archived, &l.UpdatedAt); err != nil {
 			rows.Close()
 			return nil, err
 		}
+		l.Builtin = l.ID == "aster-shared-assets"
 		out = append(out, l)
 	}
 	err = rows.Err()
@@ -218,7 +220,7 @@ func versionTime(v VersionSummary) int64 {
 func (s *Store) WorkbenchCatalog(ctx context.Context, q Query) (Page[LibrarySummary], error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if q.Status != "" && q.Status != "active" && q.Status != "archived" && q.Status != "all" || q.Changes != "" && q.Changes != "yes" && q.Changes != "no" || q.Sort != "" && q.Sort != "name" && q.Sort != "status" && q.Sort != "updated" || q.Direction != "" && q.Direction != "asc" && q.Direction != "desc" {
+	if q.Profile != "" && !manifest.SupportedProfile(q.Profile) || q.Status != "" && q.Status != "active" && q.Status != "archived" && q.Status != "all" || q.Changes != "" && q.Changes != "yes" && q.Changes != "no" || q.Sort != "" && q.Sort != "name" && q.Sort != "status" && q.Sort != "updated" || q.Direction != "" && q.Direction != "asc" && q.Direction != "desc" {
 		return Page[LibrarySummary]{}, ErrInvalid
 	}
 	all, err := s.summaries(ctx, "")
@@ -228,6 +230,9 @@ func (s *Store) WorkbenchCatalog(ctx context.Context, q Query) (Page[LibrarySumm
 	items := []LibrarySummary{}
 	needle := strings.ToLower(q.Q)
 	for _, l := range all {
+		if q.Profile != "" && q.Profile != l.Profile {
+			continue
+		}
 		if !strings.Contains(strings.ToLower(l.Name+"\n"+l.Description), needle) || q.Status == "active" && l.Archived || q.Status == "archived" && !l.Archived || q.Changes == "yes" && l.DraftChangeCount == 0 || q.Changes == "no" && l.DraftChangeCount != 0 {
 			continue
 		}
@@ -293,7 +298,7 @@ func (s *Store) versionSummaries(ctx context.Context, library string) ([]Version
 	out := []VersionSummary{}
 	for rows.Next() {
 		var v VersionSummary
-		if err = rows.Scan(&v.ID, &v.LibraryID, &v.Label, &v.Note, &v.SourceRevision, &v.DescriptorDigest, &v.State, &v.Publisher.Issuer, &v.Publisher.Subject, &v.Error, &v.Generation, &v.PublisherID, &v.CreatedAt, &v.PublishedAt); err != nil {
+		if err = rows.Scan(&v.ID, &v.LibraryID, &v.Label, &v.Note, &v.SourceRevision, &v.DescriptorDigest, &v.State, &v.Publisher.Issuer, &v.Publisher.Subject, &v.Error, &v.Generation, &v.PublisherID, &v.Profile, &v.CreatedAt, &v.PublishedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)

@@ -1,15 +1,17 @@
 package content
 
 import (
+	"aster/contracts/volumemanifest"
 	"fmt"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 )
 
 const ReviewedProfile = "reviewed-v1"
-const AuthoredProfile = "authored-v1"
-const SharedAssetsProfile = "shared-assets-v1"
+const AuthoredProfile = manifest.Profile
+const SharedAssetsProfile = manifest.SharedAssetsProfile
 
 type Limits struct {
 	Entries              int
@@ -19,7 +21,7 @@ type Limits struct {
 func ProfileLimits(profile string) (Limits, error) {
 	switch profile {
 	case SharedAssetsProfile:
-		return Limits{MaxEntries, MaxFileBytes, MaxTotalBytes}, nil
+		return Limits{manifest.SharedAssetsMaxEntries, manifest.SharedAssetsMaxFileBytes, manifest.SharedAssetsMaxTreeBytes}, nil
 	case ReviewedProfile:
 		return Limits{MaxEntries, MaxFileBytes, MaxTotalBytes}, nil
 	case AuthoredProfile:
@@ -49,17 +51,8 @@ func ValidateEntries(entries []Entry, profile string) (int64, error) {
 		return 0, fmt.Errorf("content entry count outside profile")
 	}
 	if profile == SharedAssetsProfile {
-		hasAgents := false
-		for _, e := range entries {
-			if e.Path == "AGENTS.md" && !e.Directory {
-				hasAgents = true
-			}
-			if strings.HasPrefix(e.Path, "skills/") && !e.Directory && path.Base(e.Path) != "SKILL.md" {
-				return 0, fmt.Errorf("shared-assets skill files must be SKILL.md")
-			}
-		}
-		if !hasAgents {
-			return 0, fmt.Errorf("shared-assets profile requires root AGENTS.md")
+		if _, err := manifest.NewProfile("content", "content", "version", profile, ManifestEntries(entries)); err != nil {
+			return 0, err
 		}
 	}
 	sorted := append([]Entry(nil), entries...)
@@ -95,7 +88,11 @@ func ValidateEntries(entries []Entry, profile string) (int64, error) {
 // MaterializationCapacity applies checked bounded headroom to an authored tree.
 // It is a reservation policy, not a promise about physical CoW block usage.
 func MaterializationCapacity(entries []Entry) (int64, error) {
-	total, err := ValidateEntries(entries, AuthoredProfile)
+	return MaterializationCapacityForProfile(entries, AuthoredProfile)
+}
+
+func MaterializationCapacityForProfile(entries []Entry, profile string) (int64, error) {
+	total, err := ValidateEntries(entries, profile)
 	if err != nil {
 		return 0, err
 	}
@@ -109,4 +106,29 @@ func MaterializationCapacity(entries []Entry) (int64, error) {
 		capacity = 64 << 20
 	}
 	return ((capacity + (64 << 20) - 1) / (64 << 20)) * (64 << 20), nil
+}
+
+func ManifestEntries(entries []Entry) []manifest.Entry {
+	out := make([]manifest.Entry, 0, len(entries))
+	for _, e := range entries {
+		kind := "file"
+		if e.Directory {
+			kind = "directory"
+		}
+		out = append(out, manifest.Entry{Path: e.Path, Kind: kind, Size: strconv.FormatInt(e.Size, 10), Digest: e.Digest})
+	}
+	return out
+}
+func (r Revision) ValidateContent() error {
+	if r.Profile != SharedAssetsProfile {
+		return nil
+	}
+	d, err := manifest.NewProfile("content", "content", "version", r.Profile, ManifestEntries(r.Entries))
+	if err != nil {
+		return err
+	}
+	if r.Reader == nil {
+		return fmt.Errorf("shared assets require a verified content reader")
+	}
+	return d.ValidateContent(r.Reader.ReadFile)
 }

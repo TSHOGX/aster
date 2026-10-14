@@ -60,11 +60,11 @@ func digestJSON(value any) (string, error) {
 
 func readPublications(cfg Config) ([]preparedPublication, error) {
 	var out []preparedPublication
-	for _, source := range []struct{ path, purpose string }{{cfg.Content.AgentConfig, "config"}, {cfg.Content.SharedAssets, "assets"}} {
+	for _, source := range []struct{ path, purpose, profile string }{{cfg.Content.AgentConfig, "config", content.ReviewedProfile}, {cfg.Content.SharedAssets, "shared_assets", content.SharedAssetsProfile}} {
 		if source.path == "" {
 			continue
 		}
-		revision, err := content.Read(source.path)
+		revision, err := content.ReadProfile(source.path, source.profile)
 		if err != nil {
 			return nil, err
 		}

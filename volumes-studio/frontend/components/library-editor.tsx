@@ -25,6 +25,7 @@ import {
 import { storageRead, storageWrite } from "../lib/workbench";
 import { Page, parentPath, query, encodeText } from "../lib/workbench";
 import { deleteRecovery } from "../lib/recovery";
+import { SharedAssetsValidation } from "./shared-assets-validation";
 import { ShellHeader, LibraryDetails, contentURL } from "./shell";
 import { BufferFile, useStudio } from "./studio-provider";
 import { Menu, Modal, TextDialog } from "./ui";
@@ -64,6 +65,7 @@ export function LibraryEditor({ id }: { id: string }) {
     [preview, setPreview] = useState<{
       entry_count: number;
       total_bytes: string;
+      tree_digest: string;
       revision: number;
       base_version: string;
     } | null>(null),
@@ -415,6 +417,7 @@ export function LibraryEditor({ id }: { id: string }) {
       const p = await studio.write<{
         entry_count: number;
         total_bytes: string;
+      tree_digest: string;
         revision: number;
       }>(`${root}/publish-preview`, { expected_revision: l.draft_revision });
       setPreview({
@@ -612,6 +615,7 @@ export function LibraryEditor({ id }: { id: string }) {
           </>
         )}
         <section className="workspace-main">
+ {library?.profile === "shared-assets-v1" && <SharedAssetsValidation key={`${id}:${version}:${library.draft_revision}:${studio.model.epoch}`} library={id} version={version} onOpen={()=>void run(()=>openPath("AGENTS.md"))} />}
           <div className="workspace-nav">
             {(!sidebar || mobile) && (
               <button
@@ -963,6 +967,9 @@ export function LibraryEditor({ id }: { id: string }) {
           </p>
           <p className="muted">
              {tr("This publishes the exact saved draft reviewed here.")} </p>
+ <details><summary>Immutable content digest</summary><code>{preview?.tree_digest}</code></details>
+ <p>Content profile: {library?.profile === "shared-assets-v1" ? "Shared assets" : "Ordinary data"} · Immutable version</p>
+ {library?.profile === "shared-assets-v1" && <SharedAssetsValidation library={id} version="" />}
           {preview &&
             library &&
             (preview.revision !== library.draft_revision ||

@@ -169,7 +169,7 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 		must(t, e)
 		artifacts = append(artifacts, product.BuiltinVolume{Reference: product.ArtifactReference{ID: item.Required.ArtifactID, Version: p.RevisionDigest, Digest: p.RevisionDigest}, StoreID: p.StoreID, PublicationPurpose: p.Purpose, MinimumBytes: p.Capacity, SourceCapacityBytes: p.Capacity, Roles: []string{item.Required.Role}, Entries: p.Entries})
 	}
-	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: profile.CPUMillis, Memory: profile.MemoryBytes, Overlay: profile.DiskBytes, Workspace: profile.CapacityForRole("workspace"), Runtime: profile.CapacityForRole("runtime"), MaxMounts: 8, ProjectSlots: 4, AgentSlots: 8, TerminalSlots: 8}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: "agent-runtime", Version: "v1", Digest: releaseDigest}, StoreID: identity.StoreID, TemplateID: profile.TemplateID, Manifest: manifest}, artifacts, network)
+	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: profile.CPUMillis, Memory: profile.MemoryBytes, Overlay: profile.DiskBytes, Workspace: profile.CapacityForRole("workspace"), Runtime: profile.CapacityForRole("runtime"), MaxMounts: 8, ProjectSlots: 4, AgentSlots: 8, TerminalSlots: 8}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: "agent-runtime", Version: "v1", Digest: releaseDigest}, StoreID: identity.StoreID, TemplateID: profile.TemplateID, Manifest: manifest}, artifacts, network.Resolvers)
 	must(t, err)
 
 	lifecycle := &product.Lifecycle{VerifyRuntime: backend.VerifyRuntime, Store: store, Backend: fixture, MaxProjects: 4}

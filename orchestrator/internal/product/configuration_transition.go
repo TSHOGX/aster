@@ -188,7 +188,7 @@ func (l *Lifecycle) checkPublicationTarget(ctx context.Context, project string, 
 	}
 	// A newer publication cannot rewrite this already captured target.
 	for _, plan := range request.Volumes {
-		if plan.Role != "data" || plan.Storage != "shared_readonly" {
+		if !updatablePublication(plan) {
 			continue
 		}
 		if _, err := registeredBuiltin(ctx, l.Store.reader, plan.Source.Reference, true); err != nil {
@@ -209,14 +209,14 @@ func (l *Lifecycle) checkPublicationTarget(ctx context.Context, project string, 
 	return nil
 }
 
-func configurationResources(r Resources, target Profile, replaceData bool) Resources {
+func configurationResources(r Resources, target Profile, replaceContent bool) Resources {
 	targetResources := r
 	targetResources.Profile = target
 	targetResources.Volumes = append([]VolumeSlot(nil), r.Volumes...)
-	if replaceData {
+	if replaceContent {
 		for i, slot := range targetResources.Volumes {
 			for _, plan := range target.Volumes {
-				if plan.Key == slot.Key && plan.Role == "data" && plan.Storage == "shared_readonly" {
+				if plan.Key == slot.Key && updatablePublication(plan) {
 					targetResources.Volumes[i].VolumeID = plan.Source.VolumeID
 				}
 			}
@@ -257,7 +257,7 @@ func (l *Lifecycle) prepareInitialConfiguration(ctx context.Context, o operation
 	}
 	return l.Store.write(ctx, func(tx *sql.Tx) error {
 		for _, plan := range target.Volumes {
-			if plan.Role == "data" && plan.Storage == "shared_readonly" {
+			if updatablePublication(plan) {
 				if _, err := tx.ExecContext(ctx, `UPDATE project_volume_slots SET volume_id=? WHERE project_id=? AND slot_key=?`, plan.Source.VolumeID, o.ProjectID, plan.Key); err != nil {
 					return err
 				}
@@ -395,4 +395,13 @@ func (l *Lifecycle) resumeWithoutOptionalUpdate(ctx context.Context, o operation
 		}
 		return l.newOperation(ctx, tx, o.ProjectID, "resume", "sandbox", operationRequest{Reference: latest.Reference, SkipEnvironmentUpdate: true})
 	})
+}
+
+// Both supported content update kinds use immutable read-only bindings. System
+// content additionally requires its dedicated profile; config is never mutable.
+func updatablePublication(plan VolumePlan) bool {
+	if plan.Source == nil || plan.Storage != "shared_readonly" || plan.Access != "read_only" {
+		return false
+	}
+	return plan.Role == "data" && (plan.Source.ContentProfile == "authored-v1" || plan.Source.ContentProfile == "reviewed-v1") || plan.Role == "shared_assets" && plan.Source.ContentProfile == "shared-assets-v1"
 }

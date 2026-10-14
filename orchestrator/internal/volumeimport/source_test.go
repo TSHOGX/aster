@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"harness-platform/orchestrator/internal/volumeimport/manifest"
+	"aster/contracts/volumemanifest"
 )
 
 func TestConnectorResumeLostAdmissionAndOfflineAcquisition(t *testing.T) {

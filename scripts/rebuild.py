@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import shutil
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +21,7 @@ def output(*args, cwd=ROOT, env=None):
     return subprocess.check_output(args, cwd=cwd, env=env, text=True).strip()
 
 
-def build(destination, source_ref=None, os_base=None):
+def build(destination, source_ref=None, os_base=None, work_os_base=None):
     destination = destination.resolve()
     if destination.exists() or destination.is_relative_to(ROOT):
         raise ValueError("choose a new build directory outside the checkout")
@@ -65,17 +66,25 @@ def build(destination, source_ref=None, os_base=None):
         verifier = destination / "bin/runtime-verify"
         run(["go", "build", "-mod=readonly", "-trimpath", "-buildvcs=false", "-o", verifier, "./cmd/runtime-verify"],
             cwd=source / "orchestrator", env=dict(env, CGO_ENABLED="0"))
+        for family, directory, base in (("minimal", "runtime", os_base), ("work", "runtime-work", work_os_base)):
+            runtime = destination / directory
+            command = ["sudo", "-n", "env", "GOTOOLCHAIN=" + env["GOTOOLCHAIN"],
+                       "GOSUMDB=" + env["GOSUMDB"],
+                       "GOPATH=" + output("go", "env", "GOPATH", env=env),
+                       "GOMODCACHE=" + output("go", "env", "GOMODCACHE", env=env),
+                       "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=safe.directory",
+                       "GIT_CONFIG_VALUE_0=" + str(source),
+                       "SANDBOX_FAMILY=" + family, "SANDBOX_RELEASE_VERSION=v1",
+                       "PATH=" + os.environ["PATH"], source / "sandbox-image/build-khora-template.sh", runtime]
+            if base:
+                command.append(base.resolve())
+            run(command, cwd=source)
+            digest = (destination / (directory + ".manifest.json.sha256")).read_text().strip()
+            run([verifier, "--root", runtime, digest])
         runtime = destination / "runtime"
-        command = ["sudo", "-n", "env", "GOTOOLCHAIN=" + env["GOTOOLCHAIN"],
-                   "GOSUMDB=" + env["GOSUMDB"],
-                   "GOPATH=" + output("go", "env", "GOPATH", env=env),
-                   "GOMODCACHE=" + output("go", "env", "GOMODCACHE", env=env),
-                   "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=safe.directory",
-                   "GIT_CONFIG_VALUE_0=" + str(source),
-                   "PATH=" + os.environ["PATH"], source / "sandbox-image/build-khora-template.sh", runtime]
-        if os_base:
-            command.append(os_base.resolve())
-        run(command, cwd=source)
+        shutil.copytree(source / "config/agent-config.example", destination / "content/agent-config")
+        shutil.copytree(source / "config/shared-assets", destination / "content/shared-assets")
+        (destination / "content/shared-assets/skills").mkdir(exist_ok=True)
         app = json.loads((destination / "application/candidate.json").read_text())
         studio = json.loads((destination / "studio/studio-release.json").read_text())
         if app["commit"] != commit or studio["source_commit"] != commit:
@@ -92,6 +101,9 @@ def build(destination, source_ref=None, os_base=None):
             "engine_sha256": hashlib.sha256(engine.read_bytes()).hexdigest(),
             "engine_module": output("go", "list", "-m", "-f", "{{.Version}}", "github.com/TSHOGX/khora", cwd=source / "orchestrator", env=env),
             "runtime": "runtime", "runtime_manifest": "runtime.manifest.json",
+            "work_runtime": "runtime-work", "work_runtime_manifest": "runtime-work.manifest.json",
+            "work_runtime_digest": (destination / "runtime-work.manifest.json.sha256").read_text().strip(),
+            "work_runtime_manifest_sha256": hashlib.sha256((destination / "runtime-work.manifest.json").read_bytes()).hexdigest(),
             "runtime_manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
             "public_brand": app["public_brand"],
         }
@@ -104,8 +116,9 @@ def main():
     parser.add_argument("directory", type=Path)
     parser.add_argument("--source-ref", help="explicit committed revision; otherwise require a clean checkout")
     parser.add_argument("--os-base", type=Path, help="optional reviewed pure OS/Pi base; never an application runtime")
+    parser.add_argument("--work-os-base", type=Path, help="fresh Work OS/Pi base with its family marker")
     args = parser.parse_args()
-    build(args.directory, args.source_ref, args.os_base)
+    build(args.directory, args.source_ref, args.os_base, args.work_os_base)
 
 
 if __name__ == "__main__":

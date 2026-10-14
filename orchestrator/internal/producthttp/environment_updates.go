@@ -17,7 +17,7 @@ func (a *Authentication) environmentUpdateRoutes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("GET /api/admin/environments/{id}/updates/preview", func(w http.ResponseWriter, r *http.Request) {
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		out, err := a.Store.PreviewEnvironmentProjects(r.Context(), requestToken(r), r.PathValue("id"), r.URL.Query().Get("release_id"), r.URL.Query().Get("cursor"), r.URL.Query().Get("state"), limit)
+		out, err := a.Store.PreviewEnvironmentProjects(r.Context(), requestToken(r), r.PathValue("id"), r.URL.Query().Get("release_id"), r.URL.Query().Get("cursor"), r.URL.Query().Get("state"), limit, r.URL.Query().Get("kind"))
 		if err != nil {
 			adminFailure(w, err)
 			return

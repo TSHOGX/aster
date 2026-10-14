@@ -276,7 +276,7 @@ func bootstrapSeedFixture(t *testing.T) BootstrapSeed {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seed, err := NewBootstrapSeed(ResourceSeed{CPU: 1000, Memory: 1 << 30, Overlay: 256 << 20, Workspace: 1 << 30, Runtime: 1 << 29, MaxMounts: 8, ProjectSlots: 4, AgentSlots: 32, TerminalSlots: 32}, RegisteredSandbox{Reference: ArtifactReference{ID: "test", Version: "v1", Digest: digest}, StoreID: "engine", TemplateID: "agent-runtime", Manifest: manifest}, nil, network)
+	seed, err := NewBootstrapSeed(ResourceSeed{CPU: 1000, Memory: 1 << 30, Overlay: 256 << 20, Workspace: 1 << 30, Runtime: 1 << 29, MaxMounts: 8, ProjectSlots: 4, AgentSlots: 32, TerminalSlots: 32}, RegisteredSandbox{Reference: ArtifactReference{ID: "test", Version: "v1", Digest: digest}, StoreID: "engine", TemplateID: "agent-runtime", Manifest: manifest}, nil, network.Resolvers)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -87,6 +88,7 @@ type ProjectDefaults struct {
 	Reachability   product.Reachability `json:"reachability"`
 }
 type Config struct {
+	PublicDNS         []netip.Addr            `json:"public_dns_resolvers"`
 	VolumeImports     *VolumeImportConfig     `json:"volume_imports,omitempty"`
 	Identity          *identityconfig.Config  `json:"identity,omitempty"`
 	FrontDoor         *edge.FrontDoor         `json:"front_door,omitempty"`
@@ -99,6 +101,7 @@ type Config struct {
 	StateDirectory    string                  `json:"state_directory"`
 	ControlSocket     string                  `json:"control_socket"`
 	Engine            engineconfig.Connection `json:"engine"`
+	WorkTemplate      *Template               `json:"work_template,omitempty"`
 	Template          Template                `json:"template"`
 	Project           ProjectDefaults         `json:"project"`
 	Content           Content                 `json:"content"`
@@ -152,6 +155,9 @@ func LoadConfig(name string) (Config, error) {
 	cfg.ApplicationSocket = resolve(cfg.ApplicationSocket)
 	cfg.ControlSocket = resolve(cfg.ControlSocket)
 	cfg.Template.Manifest = resolve(cfg.Template.Manifest)
+	if cfg.WorkTemplate != nil {
+		cfg.WorkTemplate.Manifest = resolve(cfg.WorkTemplate.Manifest)
+	}
 	cfg.Content.AgentConfig = resolve(cfg.Content.AgentConfig)
 	cfg.Content.SharedAssets = resolve(cfg.Content.SharedAssets)
 	cfg.TLSCert = resolve(cfg.TLSCert)

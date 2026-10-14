@@ -252,6 +252,9 @@ func (l *Lifecycle) materializeSlot(ctx context.Context, r Resources, key string
 	}
 	if slot.State == "initializing" {
 		if plan.Source != nil {
+			if (plan.Role == "shared_assets") != (plan.Source.ContentProfile == content.SharedAssetsProfile) || plan.Role == "shared_assets" && (plan.Storage != "shared_readonly" || plan.Access != "read_only") {
+				return false, ErrInvalid
+			}
 			if _, err := content.ProfileLimits(plan.Source.ContentProfile); err != nil {
 				return false, ErrInvalid
 			}
@@ -429,6 +432,9 @@ func validateVolumePlan(plans []VolumePlan) error {
 			return ErrInvalid
 		}
 		if plan.Source != nil {
+			if (plan.Role == "shared_assets") != (plan.Source.ContentProfile == content.SharedAssetsProfile) || plan.Role == "shared_assets" && (plan.Storage != "shared_readonly" || plan.Access != "read_only") {
+				return ErrInvalid
+			}
 			if _, err := content.ProfileLimits(plan.Source.ContentProfile); err != nil {
 				return ErrInvalid
 			}

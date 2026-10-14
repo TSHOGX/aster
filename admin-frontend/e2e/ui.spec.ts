@@ -432,3 +432,36 @@ test("Chinese browser preferences apply throughout Admin navigation and policy c
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-Hans");
   await context.close();
 });
+
+test("shared-assets rollout retains an explicitly reviewed cohort after a lost response",async({page})=>{
+ await adminFixture(page);
+ const digest=`sha256:${"b".repeat(64)}`,reference={id:"runtime",version:"v1",digest};
+ const mount=(version:string)=>({key:"context",role:"shared_assets",destination:"/opt/shared-assets",storage:"shared_readonly",access:"read_only",source:{kind:"builtin",artifact_id:"context",version,digest},capacity:{}});
+ const template={id:"team",name:"Team environment",description:"",kind:"environment",revision:2,enabled:true,builtin:false,environment:{revision:2,sandbox_release:reference,mounts:[mount("v2")]}};
+ const project=(id:string,state="pending")=>({project_id:id,title:id,environment_id:"team",policy:"follow",revision:1,target_id:"",applied_id:"",state,reason:state==="pending"?"":"Target unavailable",attempts:0,updated_at:"",current:[mount("v1")],target:[mount("v2")]});
+ const release={id:"rollout",kind:"system_content_replace",sequence:1,revision:1,configuration_revision:2,state:"active",note:"",created_at:"2026-10-14T00:00:00Z",mounts:[mount("v2")]};
+ let lost=false,saved=false;const commits:Record<string,unknown>[]=[];
+ await page.route("**/api/admin/resource-templates/environment",route=>route.fulfill({json:{templates:[template]}}));
+ await page.route("**/api/admin/runtime/options?*",route=>route.fulfill({json:{max_mounts:"8",options:new URL(route.request().url()).searchParams.get("kind")==="sandbox"?[{kind:"sandbox",reference,enabled:true,availability:"available"}]:[]}}));
+ await page.route("**/api/admin/environments/team/updates**",async route=>{
+  if(route.request().method()==="POST"){
+   const body=route.request().postDataJSON();expect(body.kind).toBe("system_content_replace");expect(body.project_ids).toEqual(["Selected Project"]);
+   const result={can_publish:true,release,projects:[project("Selected Project")],counts:{pending:1}};
+   if(body.preview)return route.fulfill({json:{expected_dependencies:"reviewed",proposed:result,users:[],projects:[]}});
+   commits.push(body);saved=true;if(!lost){lost=true;return route.abort("failed")};return route.fulfill({json:result});
+  }
+  return route.fulfill({json:{releases:saved?[release]:[],projects:[project("Selected Project"),project("Unselected Project"),project("Blocked Project","incompatible")],counts:{pending:2,incompatible:1}}});
+ });
+ await page.goto("/admin/resources/environment");await page.getByRole("button",{name:"Edit",exact:true}).click();await page.getByRole("button",{name:"Updates",exact:true}).click();
+ await chooseValue(page.getByRole("combobox",{name:"Update content",exact:true}),"system_content_replace");
+ await expect(page.getByRole("button",{name:"Preview update",exact:true})).toBeDisabled();
+ await expect(page.getByRole("checkbox",{name:/Blocked Project/})).toBeDisabled();
+ await page.getByRole("checkbox",{name:/^Selected Project/}).check();
+ await page.getByRole("button",{name:"Preview update",exact:true}).click();
+ const review=page.getByRole("region",{name:"Review environment update",exact:true});
+ await expect(review).toContainText("Selected Project");await expect(review).not.toContainText("Unselected Project");
+ await review.getByRole("button",{name:"Confirm",exact:true}).click();
+ await page.getByRole("button",{name:"Check original request",exact:true}).click();
+ await expect(page.getByRole("heading",{name:"Update 1",exact:true})).toBeVisible();
+ expect(commits).toHaveLength(2);expect(commits[0]).toEqual(commits[1]);
+});

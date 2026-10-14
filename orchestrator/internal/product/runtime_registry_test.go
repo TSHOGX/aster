@@ -45,11 +45,11 @@ func TestOperatorRuntimeRegistrationIsImmutableFencedAndDoesNotSelect(t *testing
 func TestBuiltinRegistrationRequiresVerifiedPublicationAndImmutableMetadata(t *testing.T) {
 	s, _ := accountStore(t)
 	entries := []content.Entry{{Path: "data", Directory: true}}
-	artifact := BuiltinVolume{Reference: ArtifactReference{ID: "dataset", Version: "v1", Digest: content.Digest(entries)}, StoreID: "engine", PublicationPurpose: "assets", MinimumBytes: 1 << 20, Roles: []string{"data"}, Entries: entries}
+	artifact := BuiltinVolume{Reference: ArtifactReference{ID: "dataset", Version: "v1", Digest: content.Digest(entries)}, StoreID: "engine", PublicationPurpose: "builtin", MinimumBytes: 1 << 20, Roles: []string{"data"}, Entries: entries}
 	wantError(t, s.RegisterBuiltinVolume(ctx, artifact), ErrArtifactUnavailable)
 	encoded, err := json.Marshal(entries)
 	must(t, err)
-	_, err = s.db.Exec(`INSERT INTO content_publications(store_id,purpose,revision_digest,capacity,entries,staging_volume_id,derived_volume_id,published_volume_id,stage,created_at,updated_at) VALUES('engine','assets',?,? ,?,'staging','published','published','published',?,?)`, artifact.Reference.Digest, artifact.MinimumBytes, string(encoded), s.timestamp(), s.timestamp())
+	_, err = s.db.Exec(`INSERT INTO content_publications(store_id,purpose,revision_digest,capacity,entries,staging_volume_id,derived_volume_id,published_volume_id,stage,created_at,updated_at) VALUES('engine','builtin',?,? ,?,'staging','published','published','published',?,?)`, artifact.Reference.Digest, artifact.MinimumBytes, string(encoded), s.timestamp(), s.timestamp())
 	must(t, err)
 	must(t, s.RegisterBuiltinVolume(ctx, artifact))
 	must(t, s.RegisterBuiltinVolume(ctx, artifact))

@@ -74,9 +74,9 @@ func TestEnvironmentPreviewUsesPublishedCapacityInsteadOfCopyMinimum(t *testing.
 	reference := ArtifactReference{ID: "dataset", Version: "v1", Digest: content.Digest(entries)}
 	encoded, err := json.Marshal(entries)
 	must(t, err)
-	_, err = s.db.Exec(`INSERT INTO content_publications(store_id,purpose,revision_digest,capacity,entries,staging_volume_id,derived_volume_id,published_volume_id,stage,created_at,updated_at) VALUES('engine','assets',?,8388608,?,'staging','publication','publication','published',?,?)`, reference.Digest, string(encoded), s.timestamp(), s.timestamp())
+	_, err = s.db.Exec(`INSERT INTO content_publications(store_id,purpose,revision_digest,capacity,entries,staging_volume_id,derived_volume_id,published_volume_id,stage,created_at,updated_at) VALUES('engine','builtin',?,8388608,?,'staging','publication','publication','published',?,?)`, reference.Digest, string(encoded), s.timestamp(), s.timestamp())
 	must(t, err)
-	must(t, s.RegisterBuiltinVolume(ctx, BuiltinVolume{Reference: reference, StoreID: "engine", PublicationPurpose: "assets", MinimumBytes: 1 << 20, Roles: []string{"data"}, Entries: entries}))
+	must(t, s.RegisterBuiltinVolume(ctx, BuiltinVolume{Reference: reference, StoreID: "engine", PublicationPurpose: "builtin", MinimumBytes: 1 << 20, Roles: []string{"data"}, Entries: entries}))
 	_, err = s.db.Exec(`UPDATE group_resource_policy SET default_value=3 WHERE dimension='mount_count'`)
 	must(t, err)
 	before, _, err := testEnvironment(ctx, s.reader)

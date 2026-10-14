@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"aster/contracts/volumemanifest"
 	"volume-studio/backend/internal/authoring"
-	"volume-studio/backend/internal/manifest"
 )
 
 type Client struct {
@@ -87,7 +87,7 @@ func New(store *authoring.Store, config Config) (http.Handler, error) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /distribution/v1/capabilities", func(w http.ResponseWriter, r *http.Request) {
-		write(w, 200, map[string]any{"format": manifest.Format, "profile": manifest.Profile, "publisher_id": store.PublisherID(), "max_range_bytes": strconv.Itoa(authoring.MaxChunkBytes), "max_manifest_bytes": strconv.Itoa(manifest.MaxManifestBytes)})
+		write(w, 200, map[string]any{"format": manifest.Format, "profiles": []string{manifest.Profile, manifest.SharedAssetsProfile}, "publisher_id": store.PublisherID(), "max_range_bytes": strconv.Itoa(authoring.MaxChunkBytes), "max_manifest_bytes": strconv.Itoa(manifest.MaxManifestBytes)})
 	})
 	mux.HandleFunc("GET /distribution/v1/libraries", func(w http.ResponseWriter, r *http.Request) {
 		libraries, next, err := store.GrantedLibraries(r.Context(), r.Context().Value(grantKey{}).(authoring.ServiceGrant), r.URL.Query().Get("after"))

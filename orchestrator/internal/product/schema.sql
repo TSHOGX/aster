@@ -330,7 +330,7 @@ CREATE TABLE operator_receipts (
 CREATE TABLE content_publications (
  generation INTEGER NOT NULL DEFAULT 0 CHECK(generation>=0),
  store_id TEXT NOT NULL,
- purpose TEXT NOT NULL CHECK(purpose IN ('assets','config','builtin','authored')),
+ purpose TEXT NOT NULL CHECK(purpose IN ('config','builtin','authored','shared_assets')),
  revision_digest TEXT NOT NULL CHECK(revision_digest LIKE 'sha256:%'),
  capacity INTEGER NOT NULL CHECK(capacity>0),
  entries TEXT NOT NULL,
@@ -1690,7 +1690,7 @@ CREATE TABLE runtime_store (id INTEGER PRIMARY KEY CHECK(id=1), store_id TEXT NO
 CREATE TABLE volume_imports (
  id TEXT PRIMARY KEY,source_id TEXT NOT NULL,publisher_id TEXT NOT NULL,
  library_id TEXT NOT NULL,version_id TEXT NOT NULL,manifest_digest TEXT NOT NULL,
- manifest BLOB NOT NULL,content_profile TEXT NOT NULL CHECK(content_profile='authored-v1'),
+ manifest BLOB NOT NULL,content_profile TEXT NOT NULL CHECK(content_profile IN('authored-v1','shared-assets-v1')),
  store_id TEXT NOT NULL,tree_digest TEXT NOT NULL,capacity INTEGER NOT NULL CHECK(capacity>0),
  actor_id TEXT NOT NULL REFERENCES accounts(id),publisher_actor TEXT NOT NULL DEFAULT '',
  artifact_id TEXT NOT NULL,artifact_version TEXT NOT NULL,
@@ -1717,7 +1717,7 @@ CREATE TABLE environment_updates (
  sequence INTEGER NOT NULL CHECK(sequence>0),
  revision INTEGER NOT NULL DEFAULT 1,
  configuration_revision INTEGER NOT NULL,
- kind TEXT NOT NULL CHECK(kind='publication_replace'),
+ kind TEXT NOT NULL CHECK(kind IN ('publication_replace','system_content_replace')),
  state TEXT NOT NULL CHECK(state IN ('active','stopped','superseded','retired')),
  stop_requested INTEGER NOT NULL DEFAULT 0 CHECK(stop_requested IN (0,1)),
  note TEXT NOT NULL DEFAULT '', actor_id TEXT NOT NULL, created_at TEXT NOT NULL,
@@ -1736,7 +1736,7 @@ CREATE INDEX project_environment_target ON project_environment_updates(target_id
 CREATE TABLE environment_update_executions (
  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
  release_id TEXT NOT NULL REFERENCES environment_updates(id),
- kind TEXT NOT NULL CHECK(kind='publication_replace'),
+ kind TEXT NOT NULL CHECK(kind IN ('publication_replace','system_content_replace')),
  state TEXT NOT NULL CHECK(state IN ('pending','unknown','succeeded','deferred','canceled')),
  before_mounts TEXT NOT NULL CHECK(json_valid(before_mounts)),
  after_mounts TEXT NOT NULL CHECK(json_valid(after_mounts)),

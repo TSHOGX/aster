@@ -79,7 +79,10 @@ func SetRuntime(ctx context.Context, tx *sql.Tx, raw []byte, manifest runtimerel
 			if content.Digest(entries) != artifact.Reference.Digest {
 				return fmt.Errorf("explicit fixture source entries required for %s", artifact.Reference.ID)
 			}
-			purpose := "assets"
+			purpose := "builtin"
+			if volume.Role == "shared_assets" {
+				purpose = "shared_assets"
+			}
 			if volume.Role == "agent_config" {
 				purpose = "config"
 			}

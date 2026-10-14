@@ -32,7 +32,11 @@ import (
 	"harness-platform/orchestrator/internal/volumeimport"
 )
 
-func TestStudioImportOnRealKhora(t *testing.T) {
+func TestStudioImportOnRealKhora(t *testing.T) { qualifyStudioImport(t, content.AuthoredProfile) }
+func TestSharedAssetsImportOnRealKhora(t *testing.T) {
+	qualifyStudioImport(t, content.SharedAssetsProfile)
+}
+func qualifyStudioImport(t *testing.T, profile string) {
 	endpoint := os.Getenv("PROJECT_TEST_ENDPOINT")
 	studioBinary := os.Getenv("STUDIO_TEST_BINARY")
 	if endpoint == "" || studioBinary == "" {
@@ -177,16 +181,25 @@ func TestStudioImportOnRealKhora(t *testing.T) {
 	var library struct {
 		ID string `json:"id"`
 	}
-	must(json.Unmarshal(jsonCall("POST", "/libraries", map[string]any{"request_id": "library", "name": "Engine qualification"}, 201), &library))
+	must(json.Unmarshal(jsonCall("POST", "/libraries", map[string]any{"request_id": "library", "name": "Engine qualification", "profile": profile}, 201), &library))
 	base := "/libraries/" + library.ID
 	fileBytes := int64(32 << 20)
 	fileCount := 1
+	if profile == content.SharedAssetsProfile {
+		fileBytes = 8 << 20
+	}
 	if os.Getenv("STUDIO_TEST_MAX_SIZE") == "1" {
 		fileBytes = 256 << 20
 		fileCount = 4
 	}
 	chunk := make([]byte, 8<<20)
 	var revision int64 = 1
+	if profile == content.SharedAssetsProfile {
+		jsonCall("POST", base+"/draft/mutations", map[string]any{"request_id": "agents", "expected_revision": revision, "action": "text", "path": "AGENTS.md", "text": "Shared import qualification"}, 200)
+		revision++
+		jsonCall("POST", base+"/draft/mutations", map[string]any{"request_id": "skills", "expected_revision": revision, "action": "mkdir", "path": "skills"}, 200)
+		revision++
+	}
 	started := time.Now()
 	for file := 0; file < fileCount; file++ {
 		for i := range chunk {
@@ -245,12 +258,12 @@ func TestStudioImportOnRealKhora(t *testing.T) {
 	must(err)
 	descriptor, raw, err := connector.Manifest(ctx, version.ID, version.Digest)
 	must(err)
-	input := product.VolumeImportInput{RequestID: "import", SourceID: source.ID, VersionID: version.ID, ExpectedManifestDigest: version.Digest, ConsumerProfile: "authored-v1"}
+	input := product.VolumeImportInput{RequestID: "import", SourceID: source.ID, VersionID: version.ID, ExpectedManifestDigest: version.Digest, ConsumerProfile: profile}
 	imported, err := store.AdmitVolumeImport(ctx, token, input, raw, identity.StoreID, "central/author", 4<<30, 10<<30)
 	must(err)
 	cfg.VolumeImports = &VolumeImportConfig{Sources: []volumeimport.Source{source}, TransferBytes: 4 << 30, EngineBytes: 10 << 30}
 	app := &Application{Store: store, Backend: backend, Config: cfg}
-	cache, err := volumeimport.Admit(filepath.Join(cfg.StateDirectory, "volume-transfers", imported.ID), volumeimport.Identity{ID: imported.ID, SourceID: source.ID, PublisherID: "publisher", VersionID: version.ID, DescriptorDigest: version.Digest, Profile: "authored-v1"}, raw)
+	cache, err := volumeimport.Admit(filepath.Join(cfg.StateDirectory, "volume-transfers", imported.ID), volumeimport.Identity{ID: imported.ID, SourceID: source.ID, PublisherID: "publisher", VersionID: version.ID, DescriptorDigest: version.Digest, Profile: profile}, raw)
 	must(err)
 	must(connector.Acquire(ctx, cache))
 	must(cache.Close())
@@ -264,22 +277,22 @@ func TestStudioImportOnRealKhora(t *testing.T) {
 	if ready.State != "ready" || ready.TransferReserved != 0 {
 		t.Fatal(ready)
 	}
-	volume, found, err := store.FindPublishedContent(ctx, identity.StoreID, "authored", descriptor.TreeDigest)
+	volume, found, err := store.FindPublishedContent(ctx, identity.StoreID, ready.PublicationPurpose(), descriptor.TreeDigest)
 	must(err)
 	if !found {
 		t.Fatal("ready publication missing")
 	}
 	ref := sandbox.VolumeReference{StoreID: identity.StoreID, VolumeID: volume}
-	must(content.VerifyVolume(ctx, backend, ref, descriptor.TreeDigest, content.AuthoredProfile))
-	copyA, err := backend.SnapshotVolume(ctx, ref, "qualified-owned-a", ready.Capacity)
+	must(content.VerifyVolume(ctx, backend, ref, descriptor.TreeDigest, profile))
+	copyA, err := backend.SnapshotVolume(ctx, ref, "qualified-owned-a-"+profile, ready.Capacity)
 	must(err)
-	copyB, err := backend.SnapshotVolume(ctx, ref, "qualified-owned-b", ready.Capacity)
+	copyB, err := backend.SnapshotVolume(ctx, ref, "qualified-owned-b-"+profile, ready.Capacity)
 	must(err)
 	must(backend.WriteVolume(ctx, copyA.VolumeReference, "user-note.txt", []byte("user edits survive")))
 	if _, err = backend.LstatVolume(ctx, copyB.VolumeReference, "user-note.txt"); !sandbox.Is(err, sandbox.NotFound) {
 		t.Fatal("owned copies shared edits", err)
 	}
-	must(content.VerifyVolume(ctx, backend, ref, descriptor.TreeDigest, content.AuthoredProfile))
+	must(content.VerifyVolume(ctx, backend, ref, descriptor.TreeDigest, profile))
 	retiring, err := store.RetireImportedVolume(ctx, token, imported.ID, "retire")
 	must(err)
 	if err = app.cleanupVolumeImport(ctx, retiring); !sandbox.Is(err, sandbox.Conflict) {

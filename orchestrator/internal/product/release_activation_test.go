@@ -117,8 +117,8 @@ func TestReplacementCanPublishButRetiringOwnerCannot(t *testing.T) {
 	target := "sha256:" + strings.Repeat("e", 64)
 	_, err = s.ActivateRelease(ctx, drain.Owner, drain.Generation, target)
 	must(t, err)
-	entries := []content.Entry{{Path: "assets", Directory: true}}
-	publication := content.Publication{StoreID: "engine", Purpose: "assets", RevisionDigest: content.Digest(entries), Capacity: 1024, Entries: entries}
+	entries := []content.Entry{{Path: "builtin", Directory: true}}
+	publication := content.Publication{StoreID: "engine", Purpose: "builtin", RevisionDigest: content.Digest(entries), Capacity: 1024, Entries: entries}
 	_, err = s.ClaimContentPublication(ctx, publication)
 	wantError(t, err, ErrDraining)
 	must(t, s.Close())

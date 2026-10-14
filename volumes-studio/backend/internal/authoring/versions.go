@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
-	"volume-studio/backend/internal/manifest"
+	"aster/contracts/volumemanifest"
 )
 
 type PublishInput struct {
@@ -21,11 +23,11 @@ type PublishInput struct {
 	Note                string  `json:"note"`
 }
 
-const versionColumns = "id,library_id,label,note,source_revision,descriptor_digest,state,issuer,subject,error,generation,(SELECT value FROM metadata WHERE key='publisher_id')"
+const versionColumns = "id,library_id,label,note,source_revision,descriptor_digest,state,issuer,subject,error,generation,(SELECT value FROM metadata WHERE key='publisher_id'),json_extract(descriptor,'$.profile')"
 
 func scanVersion(row scanner) (Version, error) {
 	var v Version
-	err := row.Scan(&v.ID, &v.LibraryID, &v.Label, &v.Note, &v.SourceRevision, &v.DescriptorDigest, &v.State, &v.Publisher.Issuer, &v.Publisher.Subject, &v.Error, &v.Generation, &v.PublisherID)
+	err := row.Scan(&v.ID, &v.LibraryID, &v.Label, &v.Note, &v.SourceRevision, &v.DescriptorDigest, &v.State, &v.Publisher.Issuer, &v.Publisher.Subject, &v.Error, &v.Generation, &v.PublisherID, &v.Profile)
 	return v, normalizeDB(err)
 }
 func (s *Store) Freeze(ctx context.Context, a Actor, id string, input PublishInput) (Version, error) {
@@ -69,8 +71,11 @@ func (s *Store) Freeze(ctx context.Context, a Actor, id string, input PublishInp
 		return v, err
 	}
 	versionID := randomID()
-	descriptor, err := manifest.New(s.config.PublisherID, id, versionID, source)
+	descriptor, err := manifest.NewProfile(s.config.PublisherID, id, versionID, l.Profile, source)
 	if err != nil {
+		return v, errors.Join(ErrInvalid, err)
+	}
+	if err = s.validateProfileContent(descriptor); err != nil {
 		return v, errors.Join(ErrInvalid, err)
 	}
 	raw, err := descriptor.Canonical()
@@ -81,7 +86,7 @@ func (s *Store) Freeze(ctx context.Context, a Actor, id string, input PublishInp
 	if err != nil {
 		return v, err
 	}
-	v = Version{ID: versionID, LibraryID: id, Label: input.Label, Note: input.Note, SourceRevision: l.DraftRevision, DescriptorDigest: digest, State: "pending", Publisher: a, PublisherID: s.config.PublisherID}
+	v = Version{Profile: l.Profile, ID: versionID, LibraryID: id, Label: input.Label, Note: input.Note, SourceRevision: l.DraftRevision, DescriptorDigest: digest, State: "pending", Publisher: a, PublisherID: s.config.PublisherID}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO versions(id,library_id,label,note,source_revision,descriptor,descriptor_digest,state,issuer,subject,created_at) VALUES(?,?,?,?,?,?,?,'pending',?,?,?)`, v.ID, id, v.Label, v.Note, v.SourceRevision, raw, digest, a.Issuer, a.Subject, s.now().Unix()); err != nil {
 		return v, err
 	}
@@ -157,13 +162,16 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 		return true, err
 	}
 	// Reconstruct and compare the descriptor identity as well as file hashes.
-	d, err := manifest.New(s.config.PublisherID, v.LibraryID, v.ID, frozen)
+	d, err := manifest.NewProfile(s.config.PublisherID, v.LibraryID, v.ID, v.Profile, frozen)
 	if err == nil {
 		var digest string
 		digest, err = d.Digest()
 		if err == nil && digest != v.DescriptorDigest {
 			err = fmt.Errorf("frozen descriptor integrity mismatch")
 		}
+	}
+	if err == nil {
+		err = s.validateProfileContent(d)
 	}
 	// Frozen version references are durable GC pins. The validation job can release
 	// the owner mutex while hashing; later draft edits cannot change these blobs.
@@ -323,9 +331,23 @@ func (s *Store) Preview(ctx context.Context, id string, expected int64) (manifes
 	if err != nil {
 		return manifest.Descriptor{}, err
 	}
-	d, err := manifest.New(s.config.PublisherID, id, "preview", es)
+	d, err := manifest.NewProfile(s.config.PublisherID, id, "preview", l.Profile, es)
 	if err != nil {
-		return d, fmt.Errorf("%w: %v", ErrInvalid, err)
+		return d, errors.Join(ErrInvalid, err)
+	}
+	if err = s.validateProfileContent(d); err != nil {
+		return d, errors.Join(ErrInvalid, err)
 	}
 	return d, nil
+}
+
+func (s *Store) validateProfileContent(d manifest.Descriptor) error {
+	return d.ValidateContent(func(name string) (io.ReadCloser, error) {
+		for _, e := range d.Entries {
+			if e.Path == name {
+				return os.OpenFile(s.blobPath(e.Digest), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+			}
+		}
+		return nil, ErrNotFound
+	})
 }
