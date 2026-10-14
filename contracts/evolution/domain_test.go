@@ -83,3 +83,22 @@ func TestPatchAndOutputRejectReservedGitPaths(t *testing.T) {
 		t.Fatal("reserved output prefix accepted")
 	}
 }
+
+func TestPatchProfileAndFileLimits(t *testing.T) {
+	artifact := ArtifactRef{ID: "artifact", GroupID: "group", SchemaDigest: Digest([]byte("schema")), Digest: Digest([]byte("bytes")), MediaType: "application/octet-stream", GrantID: "grant", PolicyRevision: 1}
+	output := OutputBinding{"library", "skills", "shared-assets-v1", 1}
+	patch := Patch{RunID: "run", Fence: 1, Base: ContentRef{"library", strings.Repeat("a", 64), "shared-assets-v1", Digest([]byte("tree"))}, ReservationGeneration: 1, Entries: []PatchEntry{{Operation: "put", Path: "skills/file", Kind: "file", Artifact: &artifact}}}
+	artifact.Size = 8 << 20
+	if err := patch.Validate(output); err != nil {
+		t.Fatal(err)
+	}
+	artifact.Size++
+	if patch.Validate(output) == nil {
+		t.Fatal("oversized shared asset accepted")
+	}
+	artifact.Size = 0
+	patch.Base.Profile = "authored-v1"
+	if patch.Validate(output) == nil {
+		t.Fatal("profile conversion accepted")
+	}
+}

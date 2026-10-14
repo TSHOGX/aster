@@ -82,7 +82,7 @@ type Patch struct {
 }
 
 func (p Patch) Validate(output OutputBinding) error {
-	if !manifest.ValidID(p.RunID) || p.Fence < 1 || p.ReservationGeneration != output.ReservationGeneration || p.Base.LibraryID != output.LibraryID {
+	if !manifest.ValidID(p.RunID) || p.Fence < 1 || p.ReservationGeneration != output.ReservationGeneration || p.Base.LibraryID != output.LibraryID || p.Base.Profile != output.Profile {
 		return fmt.Errorf("patch identity or generation mismatch")
 	}
 	if err := p.Base.Validate(); err != nil {
@@ -90,6 +90,15 @@ func (p Patch) Validate(output OutputBinding) error {
 	}
 	if err := output.Validate(); err != nil {
 		return err
+	}
+	maxFile, maxEntries := manifest.MaxFileBytes, manifest.MaxEntries
+	if output.Profile == manifest.SharedAssetsProfile {
+		maxFile, maxEntries = manifest.SharedAssetsMaxFileBytes, manifest.SharedAssetsMaxEntries
+	}
+	// A patch may remove and replace every entry, so bound operations separately
+	// from the final tree's entry count, which full-tree validation enforces.
+	if len(p.Entries) > 2*maxEntries {
+		return fmt.Errorf("patch operation limit exceeded")
 	}
 	seen := map[string]bool{}
 	for _, e := range p.Entries {
@@ -108,6 +117,9 @@ func (p Patch) Validate(output OutputBinding) error {
 			if e.Kind == "file" {
 				if e.Artifact == nil {
 					return fmt.Errorf("file artifact required")
+				}
+				if e.Artifact.Size > maxFile {
+					return fmt.Errorf("patch file exceeds output profile limit")
 				}
 				if err := e.Artifact.Validate(); err != nil {
 					return err
