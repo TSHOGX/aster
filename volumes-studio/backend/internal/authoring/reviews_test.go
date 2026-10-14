@@ -263,3 +263,18 @@ func TestReviewHistoryRetainedAndLatestVerdictGatesMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPreparedIdentityAndReviewsCannotBeRewritten(t *testing.T) {
+	s, l, b, _ := reviewFixture(t)
+	ctx := context.Background()
+	input := approvedIntegration(t, s, l, b)
+	for _, query := range []string{"UPDATE prepared_merges SET identity='{}' WHERE digest=?", "UPDATE merge_reviews SET verdict='reject' WHERE prepared_digest=?", "DELETE FROM merge_reviews WHERE prepared_digest=?", "UPDATE prepared_sources SET head='changed' WHERE prepared_digest=?"} {
+		if _, err := s.db.ExecContext(ctx, query, input.PreparedDigest); err == nil {
+			t.Fatal("immutable history changed", query)
+		}
+	}
+	view, err := s.Integration(ctx, testActor, l.ID, input.PreparedDigest)
+	if err != nil || len(view.Reviews) != 1 || view.Reviews[0].Verdict != "approve" {
+		t.Fatal(view, err)
+	}
+}

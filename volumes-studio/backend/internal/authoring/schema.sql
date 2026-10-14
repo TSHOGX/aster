@@ -160,3 +160,16 @@ CREATE TABLE evolution_prefix_reservations (
  UNIQUE(operation_id,binding_id)
 );
 CREATE INDEX evolution_prefix_owner ON evolution_prefix_reservations(owner_group_id,state);
+
+CREATE TRIGGER immutable_prepared_identity
+BEFORE UPDATE OF digest,library_id,identity,created_at ON prepared_merges
+BEGIN SELECT RAISE(ABORT,'immutable prepared integration identity'); END;
+CREATE TRIGGER immutable_merge_review
+BEFORE UPDATE ON merge_reviews
+BEGIN SELECT RAISE(ABORT,'append a new review decision'); END;
+CREATE TRIGGER retained_merge_review
+BEFORE DELETE ON merge_reviews
+BEGIN SELECT RAISE(ABORT,'retain review provenance'); END;
+CREATE TRIGGER immutable_prepared_sources
+BEFORE UPDATE ON prepared_sources
+BEGIN SELECT RAISE(ABORT,'immutable prepared source identity'); END;
