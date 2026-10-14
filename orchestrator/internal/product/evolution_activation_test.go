@@ -107,3 +107,37 @@ func TestEvolutionDisableDuringPendingActivation(t *testing.T) {
 		t.Fatal("late activation reenabled automatic work", active)
 	}
 }
+
+func TestEvolutionFailureRetryRetainsAcceptedConfiguration(t *testing.T) {
+	s, admin := accountStore(t)
+	ctx := context.Background()
+	token := adminTestToken(t, s, admin)
+	digest := evolution.Digest([]byte("first"))
+	first, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"first", 0, digest, true})
+	must(t, err)
+	for _, participant := range []string{"studio", "evaluation-space"} {
+		must(t, s.AcceptEvolutionParticipant(ctx, token, first.OperationID, participant, digest))
+	}
+	_, err = s.SettleEvolutionActivation(ctx, token, first.OperationID)
+	must(t, err)
+	nextDigest := evolution.Digest([]byte("next"))
+	next, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"next", 1, nextDigest, true})
+	must(t, err)
+	must(t, s.AcceptEvolutionParticipant(ctx, token, next.OperationID, "studio", nextDigest))
+	must(t, s.FailEvolutionParticipant(ctx, token, next.OperationID, "evaluation-space", nextDigest, "offline"))
+	failed, err := s.EvolutionConfig(ctx, token, StandardUsersGroup)
+	must(t, err)
+	if failed.ActiveRevision != 1 || failed.ActiveDigest != digest || failed.State != "failed" {
+		t.Fatal(failed)
+	}
+	if err = s.AcceptEvolutionParticipant(ctx, token, next.OperationID, "evaluation-space", nextDigest); err != ErrConflict {
+		t.Fatal("failure bypassed explicit retry", err)
+	}
+	must(t, s.RetryEvolutionActivation(ctx, token, next.OperationID))
+	must(t, s.AcceptEvolutionParticipant(ctx, token, next.OperationID, "evaluation-space", nextDigest))
+	settled, err := s.SettleEvolutionActivation(ctx, token, next.OperationID)
+	must(t, err)
+	if settled.ActiveRevision != 2 || settled.OperationID != next.OperationID {
+		t.Fatal(settled)
+	}
+}
