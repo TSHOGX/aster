@@ -79,3 +79,31 @@ func TestEvolutionActivationPendingCannotBeOverwritten(t *testing.T) {
 		t.Fatal("settled retry changed config")
 	}
 }
+
+func TestEvolutionDisableDuringPendingActivation(t *testing.T) {
+	s, admin := accountStore(t)
+	ctx := context.Background()
+	token := adminTestToken(t, s, admin)
+	digest := evolution.Digest([]byte("config"))
+	pending, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"save", 0, digest, true})
+	must(t, err)
+	input := DisableEvolutionInput{"disable", 1}
+	disabled, err := s.DisableEvolution(ctx, token, StandardUsersGroup, input)
+	must(t, err)
+	if disabled.AutoEnabled || disabled.OperationID != pending.OperationID || disabled.State != "activating" {
+		t.Fatal("disable altered activation identity", disabled)
+	}
+	again, err := s.DisableEvolution(ctx, token, StandardUsersGroup, input)
+	must(t, err)
+	if again != disabled {
+		t.Fatal("disable retry changed result")
+	}
+	for _, participant := range []string{"studio", "evaluation-space"} {
+		must(t, s.AcceptEvolutionParticipant(ctx, token, pending.OperationID, participant, digest))
+	}
+	active, err := s.SettleEvolutionActivation(ctx, token, pending.OperationID)
+	must(t, err)
+	if active.AutoEnabled || active.ActiveRevision != 1 {
+		t.Fatal("late activation reenabled automatic work", active)
+	}
+}
