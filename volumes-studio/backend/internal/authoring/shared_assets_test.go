@@ -98,7 +98,11 @@ func TestSharedAssetsBaseSeedIsStableAcrossRestart(t *testing.T) {
 	if err != nil || !bytes.Equal(raw, after) {
 		t.Fatal("base overwritten", err)
 	}
-	validation, err := s.Validation(ctx, "aster-shared-assets", "")
+	tree, err := entries(ctx, s.db, "draft_entries", "library_id", "aster-shared-assets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	validation, err := s.validateTree(Validation{Profile: manifest.SharedAssetsProfile, Valid: true}, tree)
 	if err != nil || validation.AgentsPreview != "Draft edit" {
 		t.Fatal(validation, err)
 	}

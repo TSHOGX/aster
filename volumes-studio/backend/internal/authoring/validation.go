@@ -23,31 +23,23 @@ type Validation struct {
 }
 
 func (s *Store) Validation(ctx context.Context, library, version string) (Validation, error) {
+	if !manifest.ValidID(version) {
+		return Validation{}, ErrInvalid
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	l, err := s.Library(ctx, library)
+	v, err := s.Version(ctx, version)
 	if err != nil {
 		return Validation{}, err
 	}
-	out := Validation{Profile: l.Profile, Revision: l.DraftRevision, Findings: []manifest.Finding{}, Valid: true}
-	var tree []manifest.Entry
-	if version == "" {
-		tree, err = entries(ctx, s.db, "draft_entries", "library_id", library)
-	} else {
-		v, e := s.Version(ctx, version)
-		if e != nil {
-			return out, e
-		}
-		if v.LibraryID != library || v.State != "published" && v.State != "archived" {
-			return out, ErrNotFound
-		}
-		out.Profile, out.Revision = v.Profile, v.SourceRevision
-		tree, err = entries(ctx, s.db, "version_entries", "version_id", version)
+	if v.LibraryID != library || (v.State != "published" && v.State != "archived") {
+		return Validation{}, ErrNotFound
 	}
+	tree, err := entries(ctx, s.db, "version_entries", "version_id", version)
 	if err != nil {
-		return out, err
+		return Validation{}, err
 	}
-	return s.validateTree(out, tree)
+	return s.validateTree(Validation{Profile: v.Profile, Revision: v.SourceRevision, Findings: []manifest.Finding{}, Valid: true}, tree)
 }
 func (s *Store) validateTree(out Validation, tree []manifest.Entry) (Validation, error) {
 	if out.Profile != manifest.SharedAssetsProfile {
