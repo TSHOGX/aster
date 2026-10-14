@@ -13,10 +13,10 @@ import (
 	"testing"
 )
 
-type scopeAuthority struct{}
+type scopeAuthority struct{ digest string }
 
-func (scopeAuthority) AuthorizeProjection(r *http.Request, group, operation string) error {
-	if r.Header.Get("Authorization") != "Bearer fixture" || group != "alpha" || operation != "activation" {
+func (a scopeAuthority) AuthorizeProjection(r *http.Request, scope ProjectionScope) error {
+	if r.Header.Get("Authorization") != "Bearer fixture" || scope.GroupID != "alpha" || scope.OperationID != "activation" || scope.Revision != 1 || scope.Digest != a.digest {
 		return fmt.Errorf("denied")
 	}
 	return nil
@@ -27,10 +27,10 @@ func TestProjectionHTTPIdentityAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	handler := ProjectionAPI{Store: store, Authority: scopeAuthority{}}.Handler()
 	config := evolution.Configuration{GroupID: "alpha", Revision: 1, Budget: evolution.Budget{MaxTokens: 10, MaxAttempts: 1, TimeoutSeconds: 30, MaxArtifactBytes: 1024}}
 	raw, _ := json.Marshal(config)
 	value := projections.Projection{OperationID: "activation", Digest: evolution.Digest(raw), Configuration: config}
+	handler := ProjectionAPI{Store: store, Authority: scopeAuthority{digest: value.Digest}}.Handler()
 	call := func(value projections.Projection, auth, cookie string) int {
 		raw, _ := json.Marshal(value)
 		request := httptest.NewRequest("POST", "/evaluation-space/api/v1/projections", bytes.NewReader(raw))
@@ -55,8 +55,8 @@ func TestProjectionHTTPIdentityAndReplay(t *testing.T) {
 	value.Configuration.AutoEnabled = true
 	raw, _ = json.Marshal(value.Configuration)
 	value.Digest = evolution.Digest(raw)
-	if code := call(value, "Bearer fixture", ""); code != 409 {
-		t.Fatal("revision rewrite", code)
+	if code := call(value, "Bearer fixture", ""); code != 403 {
+		t.Fatal("unauthorized digest substitution", code)
 	}
 	value.Configuration.GroupID = "beta"
 	if code := call(value, "Bearer fixture", ""); code != 403 {

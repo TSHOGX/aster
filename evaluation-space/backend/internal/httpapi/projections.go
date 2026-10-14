@@ -14,8 +14,14 @@ import (
 
 // ServiceAuthorizer verifies current central service identity and exact operation
 // scope. Callers must implement this with installation authority, not body claims.
+type ProjectionScope struct {
+	GroupID     string
+	OperationID string
+	Revision    int64
+	Digest      string
+}
 type ServiceAuthorizer interface {
-	AuthorizeProjection(*http.Request, string, string) error
+	AuthorizeProjection(*http.Request, ProjectionScope) error
 }
 type ProjectionAPI struct {
 	Store     *projections.Store
@@ -49,7 +55,7 @@ func (a ProjectionAPI) adopt(w http.ResponseWriter, r *http.Request) {
 		write(w, 400, map[string]string{"error": "invalid_projection"})
 		return
 	}
-	if a.Authority == nil || a.Authority.AuthorizeProjection(r, value.Configuration.GroupID, value.OperationID) != nil {
+	if a.Authority == nil || a.Authority.AuthorizeProjection(r, ProjectionScope{GroupID: value.Configuration.GroupID, OperationID: value.OperationID, Revision: value.Configuration.Revision, Digest: value.Digest}) != nil {
 		write(w, 403, map[string]string{"error": "projection_authority_required"})
 		return
 	}
