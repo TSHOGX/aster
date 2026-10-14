@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"harness-platform/orchestrator/internal/testfixture"
 )
 
 func completedSharedHistory(t *testing.T, s *Store, scope Scope, session string) {
@@ -133,7 +135,9 @@ func TestPublicBundleAndIndependentCopy(t *testing.T) {
 	}
 	nativePath := filepath.Join(t.TempDir(), "import.jsonl")
 	must(t, os.WriteFile(nativePath, native, 0600))
-	if output, err := exec.Command("node", "../runtimerelease/history-import.test.mjs", nativePath).CombinedOutput(); err != nil {
+	command := exec.Command("node", "--import", "../runtimerelease/testdata/native-session-loader.mjs", "../runtimerelease/history-import.test.mjs", nativePath)
+	command.Env = append(os.Environ(), "ASTER_TEST_NATIVE_SESSION="+testfixture.NativeSessionModule(t))
+	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("native imported continuation: %v\n%s", err, output)
 	}
 	must(t, s.RebuildConversation(ctx, own, copy.SessionID))

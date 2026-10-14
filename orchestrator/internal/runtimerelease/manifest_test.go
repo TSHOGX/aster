@@ -55,6 +55,30 @@ func releaseFixture(t *testing.T) (string, Manifest, string) {
 	if err = os.WriteFile(filepath.Join(types, "rpc-mode.js"), original, 0644); err != nil {
 		t.Fatal(err)
 	}
+	sessionSource, err := os.ReadFile("testdata/pi-session-0.77.0.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Join(root, strings.TrimPrefix(NativeSessionPath, "/"))
+	if err = os.MkdirAll(filepath.Dir(sessionPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(sessionPath, sessionSource, 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, companion := range nativeSessionCompanions {
+		raw, err := os.ReadFile("testdata/" + companion.fixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file := filepath.Join(pkg, companion.suffix)
+		if err = os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(file, raw, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err = PatchNativeRPC(root); err != nil {
 		t.Fatal(err)
 	}
@@ -222,5 +246,26 @@ func TestScheduleExtensionIsMeasuredDataAndRequiredCapability(t *testing.T) {
 	}
 	if _, err = Generate(root); err == nil {
 		t.Fatal("unreviewed extension accepted into new manifest")
+	}
+}
+
+func TestTemplateRefusesCurrentUserState(t *testing.T) {
+	for _, name := range []string{"workspace", "runtime", "root/.pi", "root/.agents", "root/.ssh"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			directory := filepath.Join(root, name)
+			if err := os.MkdirAll(directory, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := cleanRoot(root); err != nil {
+				t.Fatal("empty state directory refused", err)
+			}
+			if err := os.WriteFile(filepath.Join(directory, "state"), []byte("private"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := cleanRoot(root); err == nil {
+				t.Fatal("template containing user state accepted")
+			}
+		})
 	}
 }

@@ -224,9 +224,9 @@ test("a render failure after first content preserves recovery and fences stale f
   const preview = page.locator(".office-preview");
   await expect(preview).toHaveAttribute("data-preview-phase", "ready");
   const content = page.frameLocator(".office-frame").locator("#content");
-  await content.evaluate(() => parent.postMessage({ channel: "office-visual-v2", token: "wrong-frame", kind: "failed" }, "*"));
+  await content.evaluate(() => parent.postMessage({ channel: "office-visual-v1", token: "wrong-frame", kind: "failed" }, "*"));
   await expect(preview).toHaveAttribute("data-preview-phase", "ready");
-  await content.evaluate(() => parent.postMessage({ channel: "office-visual-v2", token: location.hash.slice(1), kind: "failed" }, "*"));
+  await content.evaluate(() => parent.postMessage({ channel: "office-visual-v1", token: location.hash.slice(1), kind: "failed" }, "*"));
   await expect(preview).toHaveAttribute("data-preview-phase", "failed");
   await expect(page.getByText("The preview renderer stopped. Retry or download the file.")).toBeVisible();
   await expect(page.locator(".office-frame")).toBeVisible();

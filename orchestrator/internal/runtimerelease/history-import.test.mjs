@@ -1,7 +1,7 @@
 // Invoked by the product test with an actual Go-generated imported history.
 // Uses the pinned native engine with a mock model; no provider calls are made.
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager, createAgentSession } from "@earendil-works/pi-coding-agent";
@@ -12,7 +12,10 @@ const file = join(directory, "session.jsonl");
 try {
   copyFileSync(process.argv[2], file);
   for (let turn = 0; turn < 2; turn++) {
+    const before = readFileSync(file, "utf8");
     const manager = SessionManager.open(file, directory, directory);
+    assert.equal(manager.getHeader().version, 1);
+    assert.equal(readFileSync(file, "utf8"), before, "opening history must not rewrite IDs or content");
     const { session } = await createAgentSession({
       cwd: directory, agentDir: directory,
       model: getModel("anthropic", "claude-sonnet-4-5"),

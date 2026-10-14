@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"harness-platform/orchestrator/internal/agentwire"
+	"harness-platform/orchestrator/internal/readerprotocol"
 )
 
 const EngineModule = "v0.0.2-0.20260920024301-e8cd021a9c7c"
@@ -30,9 +31,9 @@ const NodeVersion = "24.15.0"
 
 // ReaderProtocol is the workspace reader capability required by this release.
 // Keep release inspection independent of guest filesystem implementation.
-const ReaderProtocol = 3
+const ReaderProtocol = readerprotocol.Version
 const HistoryProtocol = 1
-const ManifestVersion = 6
+const ManifestVersion = 1
 const ManifestPath = "/etc/project-runtime/manifest.json"
 const NativeRoot = "/usr/local/lib/node_modules"
 
@@ -402,17 +403,10 @@ func Verify(root, expected string) error {
 }
 
 func cleanRoot(root string) error {
-	// These names are rejection guards, not compatibility execution paths.
-	for _, name := range []string{"etc/harness-image", "harness-bridge", "harness-config", "harness-secrets", "sessions", "root/.pi", "root/.agents", "root/.ssh", "usr/local/share/harness", "usr/local/bin/harness-khora-launcher", "usr/local/bin/harness-bridge-client", "usr/local/bin/harness-workspace-helper", "usr/local/bin/harness-journal-replay", "usr/local/lib/harness_launch.py", "usr/local/lib/harness_stream.py", "usr/local/lib/harness_files.py", "usr/local/lib/harness_recovery.py", "usr/local/lib/harness_manifest.py"} {
-		if _, err := os.Lstat(filepath.Join(root, name)); err == nil {
-			return fmt.Errorf("template contains retired application state: %s", name)
-		} else if !os.IsNotExist(err) {
-			return err
-		}
-	}
-	for _, name := range []string{"workspace", "runtime"} {
+	// Current writable roles and native/user credential directories must be empty.
+	for _, name := range []string{"workspace", "runtime", "root/.pi", "root/.agents", "root/.ssh"} {
 		if info, err := os.Lstat(filepath.Join(root, name)); err == nil && !info.IsDir() {
-			return fmt.Errorf("runtime role root is not a directory: %s", name)
+			return fmt.Errorf("template state root is not a directory: %s", name)
 		} else if err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -421,7 +415,7 @@ func cleanRoot(root string) error {
 			return err
 		}
 		if len(entries) > 0 {
-			return fmt.Errorf("template contains user runtime data: %s", name)
+			return fmt.Errorf("template contains user state: %s", name)
 		}
 	}
 	return nil

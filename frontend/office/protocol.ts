@@ -1,5 +1,5 @@
 /** Versioned transport between the application and its authority-free viewer. */
-export const OFFICE_CHANNEL = 'office-visual-v2';
+export const OFFICE_CHANNEL = 'office-visual-v1';
 export type OfficeKind = 'document' | 'spreadsheet' | 'presentation';
 export type OfficeStage = 'loading-engine' | 'rendering';
 export type OfficePosition = { top: number; left: number; slide: number; focus?: string };

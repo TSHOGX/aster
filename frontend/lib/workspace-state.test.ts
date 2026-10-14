@@ -42,12 +42,12 @@ describe("workspace preferences", () => {
   it("uses only the selected Session and leaves panels initially closed", () => {
     expect(
       parsePreferences({
-        activeSessionId: "b",
+        version: 1,        activeSessionId: "b",
         terminals: ["t"],
         file: "x.md",
       }),
     ).toMatchObject({
-      version: 2,
+      version: 1,
       activeSessionId: "b",
       filesOpen: false,
       terminalOpen: false,
@@ -57,7 +57,7 @@ describe("workspace preferences", () => {
   it("sanitizes malformed storage and clamps dimensions", () => {
     expect(
       parsePreferences({
-        activeSessionId: "../bad",
+        version: 1,        activeSessionId: "../bad",
         treeWidth: 900,
         fileWidth: NaN,
         terminals: [null, "ok", "ok"],
@@ -112,4 +112,8 @@ it("keeps the latest draft in memory when storage rejects a replacement", () => 
   expect(recalled("project-view:bob:p:draft:s", "")).toBe("older draft");
   clearPreferenceMemory();
   expect(recalled("project-view:alice:p:draft:s", "")).toBe("older draft");
+});
+
+it.each([undefined, 0, 2, 99])("discards all preferences for unsupported version %s", version => {
+  expect(parsePreferences({ version, activeSessionId: "old", file: "old.md", terminals: ["old"], treeWidth: 300 })).toEqual(parsePreferences(null));
 });

@@ -130,11 +130,11 @@ func TestAcknowledgedResolvedPayloadCompactionKeepsIdentityAndUnknown(t *testing
 	}
 }
 
-func TestJournalRejectsPriorFormatWithoutAlteringEvidence(t *testing.T) {
+func TestJournalRejectsWrongV1StructureWithoutAlteringEvidence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "journal.db")
 	db, err := sql.Open("sqlite", path)
 	must(t, err)
-	// Historical shape exists only as a refusal fixture, never a decoder.
+	// A claimed v1 must still match the complete current structure.
 	_, err = db.Exec(`CREATE TABLE metadata(id INTEGER PRIMARY KEY CHECK(id=1),session TEXT NOT NULL,incarnation TEXT NOT NULL,owner INTEGER NOT NULL DEFAULT 0,ack INTEGER NOT NULL DEFAULT 0,sequence INTEGER NOT NULL DEFAULT 0,bytes INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE records(sequence INTEGER PRIMARY KEY,command_id TEXT NOT NULL,turn_id TEXT NOT NULL,kind TEXT NOT NULL,payload BLOB NOT NULL,size INTEGER NOT NULL);
 CREATE TABLE commands(id TEXT PRIMARY KEY,turn_id TEXT NOT NULL,kind TEXT NOT NULL,digest TEXT NOT NULL,payload BLOB NOT NULL,state TEXT NOT NULL,result BLOB NOT NULL,size INTEGER NOT NULL);
@@ -148,7 +148,7 @@ INSERT INTO records VALUES(1,'c','t','command.unknown',X'7b7d',250);`)
 		if journal != nil {
 			journal.Close()
 		}
-		t.Fatal("prior journal accepted", err)
+		t.Fatal("incorrect journal structure accepted", err)
 	}
 	db, err = sql.Open("sqlite", path)
 	must(t, err)

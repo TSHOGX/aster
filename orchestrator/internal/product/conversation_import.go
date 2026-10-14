@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"harness-platform/orchestrator/internal/runtimerelease"
 )
 
 func installBundle(ctx context.Context, tx *sql.Tx, session, project, bundle, stamp string) error {
@@ -142,7 +144,7 @@ func (s *Store) ImportedNativeHistory(ctx context.Context, session, workspace st
 	var buffer bytes.Buffer
 	enc := json.NewEncoder(&buffer)
 	stamp := time.Unix(0, 0).UTC().Format(time.RFC3339Nano)
-	_ = enc.Encode(map[string]any{"type": "session", "version": 3, "id": session, "timestamp": stamp, "cwd": workspace})
+	_ = enc.Encode(map[string]any{"type": "session", "version": runtimerelease.NativeSessionVersion, "id": session, "timestamp": stamp, "cwd": workspace})
 	rows, err := s.reader.QueryContext(ctx, `SELECT i.id,i.data,i.detail,coalesce(m.content,'') FROM bundle_items i LEFT JOIN bundle_messages m ON m.bundle_id=i.bundle_id AND m.id=json_extract(i.data,'$.message_id') WHERE i.bundle_id=? ORDER BY i.position,i.block_index,i.id`, bundle)
 	if err != nil {
 		return nil, err

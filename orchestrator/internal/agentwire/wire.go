@@ -10,7 +10,7 @@ import (
 	"io"
 )
 
-const Version = 2
+const Version = 1
 const MaxFrame = 4 << 20
 
 var ErrFrame = errors.New("invalid or oversized Agent protocol frame")

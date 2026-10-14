@@ -1,6 +1,6 @@
 import { recalled } from "./project-api";
 export type WorkspacePreferences = {
-  version: 2;
+  version: 1;
   activeSessionId: string;
   filesOpen: boolean;
   terminalOpen: boolean;
@@ -16,7 +16,9 @@ export const workspaceKey = (actor: string, project: string) =>
   `project-view:${actor}:${project}:views`;
 export function parsePreferences(value: unknown): WorkspacePreferences {
   const d =
-    value && typeof value === "object"
+    value &&
+    typeof value === "object" &&
+    (value as Record<string, unknown>).version === 1
       ? (value as Record<string, unknown>)
       : {};
   const id = (v: unknown) =>
@@ -28,10 +30,10 @@ export function parsePreferences(value: unknown): WorkspacePreferences {
       ? Math.max(min, Math.min(max, v))
       : fallback;
   return {
-    version: 2,
+    version: 1,
     activeSessionId: id(d.activeSessionId),
-    filesOpen: d.version === 2 && d.filesOpen === true,
-    terminalOpen: d.version === 2 && d.terminalOpen === true,
+    filesOpen: d.filesOpen === true,
+    terminalOpen: d.terminalOpen === true,
     terminals: ids(d.terminals),
     activeTerminal: id(d.activeTerminal) || ids(d.terminals)[0] || "",
     file: typeof d.file === "string" ? d.file.slice(0, 4096) : "",

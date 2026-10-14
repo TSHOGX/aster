@@ -6,9 +6,10 @@ Aster supports one current application schema and protocol set. A historical or
 mismatched database is refused; startup does not migrate, convert or delete it.
 An unsupported transition needs an explicitly planned fresh installation.
 
-The account language preference is part of the current product schema. Builds
-without that field have a different schema identity; upgrading such an installation
-requires a separately planned fresh installation under the same compatibility policy.
+All application schemas and protocols start independently at v1 and describe the
+complete current format. Development databases, runtime images and application
+builds can be discarded and rebuilt together; no historical-format conversion
+is provided. A version label alone does not establish schema or artifact identity.
 
 ## Inspect before upgrading
 
@@ -47,6 +48,6 @@ no rollback-candidate flag. Repair that candidate while admission remains closed
 A complete matching offline backup is a separate recovery resource, not permission
 to mix an old database with newer engine/volume state.
 
-Studio differs from Aster: its authoring database uses ordered migrations. Back it
-up before upgrading. Older Studio binaries refuse newer schemas; a binary-only
-downgrade is not a restore. See [Studio operations](../../volumes-studio/deploy/README.md).
+Studio also creates or verifies one complete v1 schema, without ordered migrations.
+A schema mismatch requires a fresh database and its associated state, not a binary
+swap. See [Studio operations](../../volumes-studio/deploy/README.md).

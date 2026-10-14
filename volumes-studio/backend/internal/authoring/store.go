@@ -38,18 +38,6 @@ var (
 //go:embed schema.sql
 var schema string
 
-//go:embed uploads.sql
-var uploadsSchema string
-
-//go:embed jobs.sql
-var jobsSchema string
-
-//go:embed distribution.sql
-var distributionSchema string
-
-//go:embed workbench.sql
-var workbenchSchema string
-
 type Actor struct {
 	Issuer  string `json:"issuer"`
 	Subject string `json:"subject"`
@@ -110,7 +98,7 @@ func Open(ctx context.Context, c Config) (*Store, error) {
 			return nil, err
 		}
 	}
-	db, err := database.Open(ctx, filepath.Join(c.Directory, "authoring.db"), []string{schema, uploadsSchema, jobsSchema, distributionSchema, workbenchSchema})
+	db, err := database.Open(ctx, filepath.Join(c.Directory, "authoring.db"), schema)
 	if err != nil {
 		return nil, err
 	}

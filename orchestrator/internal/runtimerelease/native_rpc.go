@@ -11,14 +11,14 @@ import (
 
 // NativeProtocol identifies the pinned Pi RPC extension that reports settlement
 // of the complete prompt Promise, including retry and compaction continuations.
-const NativeProtocol = 4
+const NativeProtocol = 1
 const NativeRPCPath = NativeRoot + "/" + PiPackage + "/dist/modes/rpc/rpc-mode.js"
 const nativeRPCOriginal = "sha256:d0f92418f6aedaa4c64da68f65cb6f93e18dc65d13969eba45349d99f36dfca7"
-const nativeRPCPatched = "sha256:34a017f9c66a4d2134d9f6d145c6a447685784b1c1b2dfdaff2adf09b3ce1fff"
+const nativeRPCPatched = "sha256:81f8486c512a7971d37c9d7b8916d2fde9169e90d1d51b744c50a3c0b0d864c2"
 
 const identityHooks = `    let session = runtimeHost.session;
     let activePrompt;
-    // Agent native protocol 4: correlate exact Agent message objects with
+    // Agent native protocol 1: correlate exact Agent message objects with
     // product delivery tokens. The WeakMap is never model or Session content.
     const inputContext = new AsyncLocalStorage();
     const inputIdentity = new WeakMap();
@@ -73,7 +73,7 @@ const identityHooks = `    let session = runtimeHost.session;
     };`
 
 const settledPrompt = `            case "prompt": {
-                // Agent native protocol 4: agent_end is only a loop boundary.
+                // Agent native protocol 1: agent_end is only a loop boundary.
                 if (cleanupFailed) return error(id, "prompt", "Native cleanup failed; process recovery required");
                 if (activePrompt) {
                     return error(id, "prompt", "A prompt is still settling");
@@ -181,7 +181,7 @@ func patchNativeRPC(raw []byte) ([]byte, error) {
 		{"        unsubscribe = session.subscribe((event) => {\n            output(event);\n        });", observePrompt},
 		{"            case \"steer\": {\n                await session.steer(command.message, command.images);", "            case \"steer\": {\n                const operation = activePrompt;\n                if (!operation || operation.id !== command.run_id || operation.abortRequested || operation.closed) return error(id, \"steer\", \"Target run ended\");\n                if (command.input_token) operation.inputTokens.add(command.input_token);\n                const preflight = inputContext.run(command.input_token, () => session.steer(command.message, command.images));\n                operation.preflights.add(preflight);\n                try {\n                    await preflight;\n                } catch (e) {\n                    // Rejection is safe only before the Agent enqueue boundary.\n                    if (!operation.enqueued.has(command.input_token)) {\n                        operation.inputTokens.delete(command.input_token);\n                        throw e;\n                    }\n                } finally {\n                    operation.preflights.delete(preflight);\n                }"},
 		{"            case \"abort\": {\n                await session.abort();", "            case \"abort\": {\n                if (!activePrompt || activePrompt.id !== command.run_id) return error(id, \"abort\", \"Target run ended\");\n                activePrompt.abortRequested = true;\n                try { clearInputs(); } catch { cleanupFailed = true; output({ type: \"input_cleanup_failed\", run_id: activePrompt.id }); }\n                session.abortCompaction();\n                await session.abort();"},
-		{"//# sourceMappingURL=rpc-mode.js.map", "// Agent native settlement protocol 4; upstream source map does not apply."},
+		{"//# sourceMappingURL=rpc-mode.js.map", "// Agent native settlement protocol 1; upstream source map does not apply."},
 	} {
 		if strings.Count(source, replacement[0]) != 1 {
 			return nil, errors.New("Pi RPC patch marker differs from pinned source")
@@ -206,10 +206,10 @@ func PatchNativeRPC(root string) error {
 		return err
 	}
 	if root == "/" {
-		return errors.New("native RPC patch requires a separate build root")
+		return errors.New("native runtime patch requires a separate build root")
 	}
 	if _, err = os.Stat(filepath.Join(root, strings.TrimPrefix(ManifestPath, "/"))); !os.IsNotExist(err) {
-		return errors.New("native RPC patch refuses an existing runtime release")
+		return errors.New("native runtime patch refuses an existing runtime release")
 	}
 	file, err := resolve(root, NativeRPCPath)
 	if err != nil {
@@ -223,7 +223,10 @@ func PatchNativeRPC(root string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(file, patched, 0644)
+	if err = os.WriteFile(file, patched, 0644); err != nil {
+		return err
+	}
+	return patchNativeSessionFile(root)
 }
 
 func verifyNativeRPC(root string) error {
@@ -238,5 +241,5 @@ func verifyNativeRPC(root string) error {
 	if digest != nativeRPCPatched {
 		return errors.New("native RPC settlement protocol is absent or modified")
 	}
-	return nil
+	return verifyNativeSession(root)
 }

@@ -27,7 +27,7 @@ test("global views clear Project selection and Back restores the conversation", 
 
 test("mixed global URLs do not restore remembered Sessions", async ({ page }) => {
   await workspaceFixture(page);
-  await page.addInitScript(() => localStorage.setItem("project-view:researcher:battery:views", JSON.stringify({ version: 2, activeSessionId: "analysis" })));
+  await page.addInitScript(() => localStorage.setItem("project-view:researcher:battery:views", JSON.stringify({ version: 1, activeSessionId: "analysis" })));
   await page.route("**/api/conversations?*", route => route.fulfill({ json: { conversations: [] } }));
   await page.goto("/?view=shared&project=battery&session=analysis&message=m1&history=1");
   await expect(page).toHaveURL("http://127.0.0.1:3107/?view=shared");

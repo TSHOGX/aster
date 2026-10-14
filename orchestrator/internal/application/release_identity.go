@@ -13,9 +13,12 @@ import (
 	"harness-platform/orchestrator/internal/servicegateway"
 )
 
+const releaseIdentityVersion = 1
+
 // ReleaseIdentity binds a candidate's executable to its declared compatibility
 // inputs. Matching compatibility is necessary, not sufficient, for a live owner
 // handoff: admission, durable work and stable gateway checks remain mandatory.
+
 type ReleaseIdentity struct {
 	Version             int    `json:"version"`
 	ExecutableDigest    string `json:"executable_digest"`
@@ -81,7 +84,7 @@ func InspectRelease(cfg Config) (id ReleaseIdentity, err error) {
 	if err != nil {
 		return id, err
 	}
-	id = ReleaseIdentity{Version: 7, PlatformProtocol: servicegateway.PlatformVersion, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, GatewayProtocol: servicegateway.AuthorityVersion}
+	id = ReleaseIdentity{Version: releaseIdentityVersion, PlatformProtocol: servicegateway.PlatformVersion, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, GatewayProtocol: servicegateway.AuthorityVersion}
 	id.SchemaVersion, id.SchemaDigest, err = product.SchemaIdentity()
 	if err != nil {
 		return id, err

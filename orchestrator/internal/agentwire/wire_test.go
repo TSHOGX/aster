@@ -32,7 +32,7 @@ func TestPartialCoalescedAndTruncatedFrames(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, raw := range []string{`{"version":2,"kind":"sync","session":"s","incarnation":"i","owner":1}`, `{"version":1,"kind":"sync","session":"s","incarnation":"i","owner":1}` + "\n", "{}\n", "bad\n", strings.Repeat("x", MaxFrame) + "\n"} {
+	for _, raw := range []string{`{"version":1,"kind":"sync","session":"s","incarnation":"i","owner":1}`, `{"version":2,"kind":"sync","session":"s","incarnation":"i","owner":1}` + "\n", "{}\n", "bad\n", strings.Repeat("x", MaxFrame) + "\n"} {
 		if _, err := NewDecoder(strings.NewReader(raw)).Next(); !errors.Is(err, ErrFrame) {
 			t.Fatalf("bad frame accepted: %v", err)
 		}

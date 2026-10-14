@@ -24,6 +24,8 @@ var ErrFull = errors.New("Agent journal capacity exhausted")
 var ErrUnknown = errors.New("unresolved native command; automatic replay forbidden")
 var ErrGap = errors.New("journal cursor is outside retained records")
 
+const SchemaVersion = 1
+
 const schema = `
 CREATE TABLE metadata(id INTEGER PRIMARY KEY CHECK(id=1),session TEXT NOT NULL,incarnation TEXT NOT NULL,owner INTEGER NOT NULL DEFAULT 0,ack INTEGER NOT NULL DEFAULT 0,sequence INTEGER NOT NULL DEFAULT 0,bytes INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE records(sequence INTEGER PRIMARY KEY,command_id TEXT NOT NULL,turn_id TEXT NOT NULL,kind TEXT NOT NULL,payload BLOB NOT NULL,size INTEGER NOT NULL);
@@ -31,7 +33,7 @@ CREATE TABLE commands(id TEXT PRIMARY KEY,turn_id TEXT NOT NULL,kind TEXT NOT NU
 CREATE INDEX commands_result_sequence ON commands(result_sequence,id);
 CREATE INDEX records_command ON records(command_id,kind,sequence);
 CREATE INDEX commands_compactable ON commands(result_sequence,id) WHERE length(payload)>2 AND (state IN ('completed','rejected') OR (state='applied' AND kind<>'prompt'));
-PRAGMA user_version=2;`
+`
 
 type Journal struct {
 	db                   *sql.DB
@@ -87,6 +89,9 @@ func Open(ctx context.Context, path, session, incarnation string, limit int64) (
 			return fail(err)
 		}
 		if _, err = tx.ExecContext(ctx, schema); err == nil {
+			_, err = tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", SchemaVersion))
+		}
+		if err == nil {
 			_, err = tx.ExecContext(ctx, `INSERT INTO metadata(id,session,incarnation) VALUES(1,?,?)`, session, incarnation)
 		}
 		if err != nil {
@@ -96,7 +101,18 @@ func Open(ctx context.Context, path, session, incarnation string, limit int64) (
 		if err = tx.Commit(); err != nil {
 			return fail(err)
 		}
-	} else if version != 2 {
+	} else if version != SchemaVersion {
+		return fail(ErrConflict)
+	}
+	expected, err := currentSchemaDigest()
+	if err != nil {
+		return fail(err)
+	}
+	actual, err := schemaDigest(ctx, db)
+	if err != nil {
+		return fail(err)
+	}
+	if actual != expected {
 		return fail(ErrConflict)
 	}
 	var storedSession, storedIncarnation, integrity string
@@ -110,15 +126,6 @@ func Open(ctx context.Context, path, session, incarnation string, limit int64) (
 		return fail(err)
 	}
 	if storedSession != session || storedIncarnation != incarnation {
-		return fail(ErrConflict)
-	}
-	// Current journals include indexed ACK compaction from creation. Older formats
-	// and missing required indexes need inspection, never an implicit upgrade.
-	var indexes int
-	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='index' AND name IN ('commands_result_sequence','records_command','commands_compactable')`).Scan(&indexes); err != nil {
-		return fail(err)
-	}
-	if indexes != 3 {
 		return fail(ErrConflict)
 	}
 	if err = sqlitex.VerifyPragmas(ctx, db, 1); err != nil {
@@ -441,3 +448,36 @@ func (j *Journal) Status(ctx context.Context, owner uint64, id string) (string, 
 	})
 	return state, err
 }
+
+// Fingerprint SQLite's actual DDL, not a claimed version or stored digest.
+func schemaDigest(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}) (string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT type,name,tbl_name,coalesce(sql,'') FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name`)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	h := sha256.New()
+	for rows.Next() {
+		var typ, name, table, ddl string
+		if err := rows.Scan(&typ, &name, &table, &ddl); err != nil {
+			return "", err
+		}
+		fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\n", typ, name, table, ddl)
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), rows.Err()
+}
+
+var currentSchemaDigest = sync.OnceValues(func() (string, error) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err = db.Exec(schema); err != nil {
+		return "", err
+	}
+	return schemaDigest(context.Background(), db)
+})

@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+
+	"harness-platform/orchestrator/internal/readerprotocol"
 )
 
-const ReaderProtocol = 3
+const ReaderProtocol = readerprotocol.Version
 const ReaderRequestBytes = 16 << 10
 const ReaderFrameBytes = 256 << 10
 const ReaderChunkBytes = 32 << 10

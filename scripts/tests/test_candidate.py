@@ -18,8 +18,17 @@ class CandidateIntegrityTest(unittest.TestCase):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("fixture")
-        self.report = {"format": 2, "commit": "a" * 40, "frontends": {name: {"build_id": "fixture", "base_path": base} for name, base in candidate.FRONTENDS.items()}, "files": candidate.inventory(self.root)}
+        self.report = {"format": 1, "commit": "a" * 40, "frontends": {name: {"build_id": "fixture", "base_path": base} for name, base in candidate.FRONTENDS.items()}, "files": candidate.inventory(self.root)}
         (self.root / candidate.MANIFEST).write_text(json.dumps(self.report))
+
+    def test_only_integer_v1_format_is_accepted(self):
+        candidate.verify(self.root)
+        for version in (None, 0, 2, 99, True, "1", 1.0):
+            with self.subTest(version=version):
+                self.report["format"] = version
+                (self.root / candidate.MANIFEST).write_text(json.dumps(self.report))
+                with self.assertRaisesRegex(ValueError, "invalid candidate identity"):
+                    candidate.verify(self.root)
 
     def test_detects_changed_missing_and_added_files(self):
         candidate.verify(self.root)

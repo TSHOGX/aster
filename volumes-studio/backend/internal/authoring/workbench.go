@@ -13,7 +13,7 @@ import (
 	"volume-studio/backend/internal/manifest"
 )
 
-// Workbench queries are additive: legacy cursor and ordering contracts remain intact.
+// Workbench queries use the current cursor and ordering contracts.
 type Query struct {
 	Q           string `json:"q"`
 	Status      string `json:"status"`

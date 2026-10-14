@@ -140,7 +140,9 @@ func TestPatchedRPCWithFullSession(t *testing.T) {
 	if err = os.WriteFile(file, patched, 0600); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command("node", "testdata/rpc-session.test.mjs", file)
+	sessionModule := patchedSessionModule(t)
+	command := exec.Command("node", "--import", "./testdata/native-session-loader.mjs", "testdata/rpc-session.test.mjs", file)
+	command.Env = append(os.Environ(), "ASTER_TEST_NATIVE_SESSION="+sessionModule)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("full Session RPC: %v\n%s", err, output)
 	}

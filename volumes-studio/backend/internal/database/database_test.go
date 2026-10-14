@@ -1,77 +1,132 @@
 package database
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestSchemaOwnershipMigrateAndRefuseNewer(t *testing.T) {
+const testSchema = "CREATE TABLE retained(id TEXT PRIMARY KEY,value TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1);"
+
+func TestSchemaOwnershipPersistenceAndDurability(t *testing.T) {
 	name := filepath.Join(t.TempDir(), "metadata.db")
 	ctx := context.Background()
-	v1 := []string{"CREATE TABLE retained(id TEXT PRIMARY KEY,value TEXT NOT NULL);"}
-	db, err := Open(ctx, name, v1)
+	db, err := Open(ctx, name, testSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if other, err := Open(ctx, name, v1); err == nil {
+	if other, err := Open(ctx, name, testSchema); err == nil {
 		other.Close()
 		t.Fatal("second owner accepted")
 	}
-	if _, err = db.Exec("INSERT INTO retained VALUES('one','history')"); err != nil {
+	if _, err = db.Exec("INSERT INTO retained(id,value) VALUES('one','history')"); err != nil {
 		t.Fatal(err)
 	}
 	var journal string
-	var sync, foreign int
-	if err = db.QueryRow("PRAGMA journal_mode").Scan(&journal); err != nil {
-		t.Fatal(err)
+	var sync, foreign, version int
+	for query, dest := range map[string]any{"PRAGMA journal_mode": &journal, "PRAGMA synchronous": &sync, "PRAGMA foreign_keys": &foreign, "PRAGMA user_version": &version} {
+		if err = db.QueryRow(query).Scan(dest); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err = db.QueryRow("PRAGMA synchronous").Scan(&sync); err != nil {
-		t.Fatal(err)
-	}
-	if err = db.QueryRow("PRAGMA foreign_keys").Scan(&foreign); err != nil {
-		t.Fatal(err)
-	}
-	if journal != "wal" || sync != 2 || foreign != 1 {
-		t.Fatal("durability settings", journal, sync, foreign)
+	if journal != "wal" || sync != 2 || foreign != 1 || version != 1 {
+		t.Fatal("durability/schema settings", journal, sync, foreign, version)
 	}
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	v2 := append(append([]string(nil), v1...), "ALTER TABLE retained ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;")
-	db, err = Open(ctx, name, v2)
+	db, err = Open(ctx, name, testSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close()
 	var value string
-	var rev int
-	if err = db.QueryRow("SELECT value,revision FROM retained WHERE id='one'").Scan(&value, &rev); err != nil {
+	var revision int
+	if err = db.QueryRow("SELECT value,revision FROM retained WHERE id='one'").Scan(&value, &revision); err != nil {
 		t.Fatal(err)
 	}
-	if value != "history" || rev != 1 {
-		t.Fatal("migration lost history")
+	if value != "history" || revision != 1 {
+		t.Fatal("reopen lost data", value, revision)
 	}
-	db.Close()
-	if old, err := Open(ctx, name, v1); err == nil {
-		old.Close()
-		t.Fatal("old schema writer accepted")
+}
+
+func TestMismatchedSchemaRefusedWithoutChangingDatabase(t *testing.T) {
+	for _, change := range []string{"PRAGMA user_version=2", "PRAGMA user_version=0", "ALTER TABLE retained ADD COLUMN extra TEXT", "CREATE INDEX extra ON retained(value)"} {
+		t.Run(change, func(t *testing.T) {
+			name := filepath.Join(t.TempDir(), "state.db")
+			ctx := context.Background()
+			db, err := Open(ctx, name, testSchema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(change); err != nil {
+				t.Fatal(err)
+			}
+			db.Close()
+			before, err := os.ReadFile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if db, err = Open(ctx, name, testSchema); err == nil {
+				db.Close()
+				t.Fatal("mismatched schema accepted")
+			}
+			after, err := os.ReadFile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatal("refusal changed database")
+			}
+		})
 	}
-	db, err = Open(ctx, name, v2)
+}
+
+func TestFailedInitializationRollsBack(t *testing.T) {
+	name := filepath.Join(t.TempDir(), "state.db")
+	ctx := context.Background()
+	if db, err := Open(ctx, name, "CREATE TABLE example(id TEXT); INSERT INTO absent VALUES(1);"); err == nil {
+		db.Close()
+		t.Fatal("invalid schema succeeded")
+	}
+	db, err := Open(ctx, name, "CREATE TABLE example(id TEXT);")
 	if err != nil {
-		t.Fatal("refused writer damaged db", err)
+		t.Fatal("failed initialization left partial schema", err)
 	}
 	db.Close()
 }
-func TestFailedMigrationRollsBack(t *testing.T) {
+
+func TestEmptyDatabaseWithUnknownVersionRefused(t *testing.T) {
 	name := filepath.Join(t.TempDir(), "state.db")
-	ctx := context.Background()
-	if db, err := Open(ctx, name, []string{"CREATE TABLE example(id TEXT); INSERT INTO absent VALUES(1);"}); err == nil {
-		db.Close()
-		t.Fatal("invalid migration succeeded")
-	}
-	db, err := Open(ctx, name, []string{"CREATE TABLE example(id TEXT);"})
+	db, err := sql.Open("sqlite", name)
 	if err != nil {
-		t.Fatal("failed migration left partial schema", err)
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("PRAGMA user_version=99"); err != nil {
+		t.Fatal(err)
 	}
 	db.Close()
+	if opened, err := Open(context.Background(), name, testSchema); err == nil {
+		opened.Close()
+		t.Fatal("versioned empty database accepted")
+	}
+	db, err = sql.Open("sqlite", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version, count int
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow("SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if version != 99 || count != 0 {
+		t.Fatal(fmt.Sprint(version, count))
+	}
 }

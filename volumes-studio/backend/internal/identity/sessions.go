@@ -51,7 +51,7 @@ type Session struct {
 }
 
 func OpenSessions(ctx context.Context, name string, client *Client) (*Sessions, error) {
-	db, err := database.Open(ctx, name, []string{sessionSchema})
+	db, err := database.Open(ctx, name, sessionSchema)
 	if err != nil {
 		return nil, err
 	}

@@ -204,10 +204,11 @@ uploads are retained independently of sessions.
 5. Check central login, draft/version history, resumed upload, published content and
    the private distribution catalog before restoring normal traffic.
 
-Studio applies ordered transactional authoring migrations. Unknown newer schemas
-are refused. An older binary cannot reopen a newer schema; rollback requires the
-corresponding complete backup, not just an executable downgrade. Do not delete state
-to force a schema mismatch to disappear.
+Studio creates or verifies the complete current v1 authoring and identity schemas.
+It does not migrate existing databases. Unknown versions and mismatched structures
+are refused without conversion. During development, stop Studio and rebuild its
+state and bundle together when the format changes; retaining historical data is
+not supported by this procedure.
 
 Studio's independent release does not require draining Aster. Aster-side imports
 and publication work still participate in Aster's own maintenance blockers. Ready

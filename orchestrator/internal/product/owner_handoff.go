@@ -13,7 +13,7 @@ import (
 
 // OwnerHandoffProtocol changes whenever retained native work cannot safely move
 // between owner builds even with identical schema, runtime and configuration.
-const OwnerHandoffProtocol = 3
+const OwnerHandoffProtocol = 1
 
 // GatewayObservation is collected by the host from its protected gateway socket,
 // never decoded from a release coordinator's request. Started retains monotonic

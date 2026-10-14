@@ -17,6 +17,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = "candidate.json"
+FORMAT = 1
 FRONTENDS = {"frontend": "", "admin-frontend": "/admin"}
 
 
@@ -55,7 +56,7 @@ def verify(root):
     if manifest_path.is_symlink():
         raise ValueError("candidate manifest must be a regular file")
     report = json.loads(manifest_path.read_text())
-    if report.get("format") != 2 or not re.fullmatch(r"[0-9a-f]{40}", report.get("commit", "")):
+    if type(report.get("format")) is not int or report.get("format") != FORMAT or not re.fullmatch(r"[0-9a-f]{40}", report.get("commit", "")):
         raise ValueError("invalid candidate identity")
     if inventory(root) != report["files"]:
         raise ValueError("candidate files, modes or links differ from the recorded inventory")
@@ -178,7 +179,7 @@ def build(destination, source_ref=None):
             ], cwd=source / "orchestrator", env={**os.environ, "CGO_ENABLED": "0"}, check=True)
         smoke(destination)
         report = {
-            "format": 2, "commit": commit, "version": version,
+            "format": FORMAT, "commit": commit, "version": version,
             "platform": output("go", "env", "GOOS") + "/" + output("go", "env", "GOARCH"),
             "go": output("go", "version"), "node": output("node", "--version"),
             "frontends": {name: {"build_id": (destination / name / ".next/BUILD_ID").read_text().strip(),
