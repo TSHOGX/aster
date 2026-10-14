@@ -36,6 +36,13 @@ func (c CheckRequirement) Validate() error {
 	default:
 		return fmt.Errorf("unknown reference strategy")
 	}
+	identity, err := c.IdentityDigest()
+	if err != nil {
+		return err
+	}
+	if identity != c.Digest {
+		return fmt.Errorf("check digest does not match policy contents")
+	}
 	return nil
 }
 

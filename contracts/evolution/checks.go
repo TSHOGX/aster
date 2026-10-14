@@ -43,3 +43,14 @@ func UnionChecks(sets ...[]CheckRequirement) ([]CheckRequirement, error) {
 	sort.Slice(result, func(i, j int) bool { return result[i].Digest < result[j].Digest })
 	return result, nil
 }
+
+// IdentityDigest excludes only the digest field itself. Policy provenance and
+// exact reference meaning participate, so changing either invalidates evidence.
+func (c CheckRequirement) IdentityDigest() (string, error) {
+	c.Digest = ""
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return "", err
+	}
+	return Digest(raw), nil
+}
