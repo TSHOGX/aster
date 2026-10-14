@@ -144,7 +144,7 @@ export function Versions({
       clearTimeout(timer);
       abort.abort();
     };
-  }, [root, params, studio.model.epoch, library.base_version]);
+  }, [root, params, studio.model.epoch]);
   useEffect(() => {
     const abort = new AbortController();
     let busy = false;

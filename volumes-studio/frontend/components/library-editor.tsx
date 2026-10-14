@@ -1009,7 +1009,7 @@ function MoveDialog({
   useEffect(() => {
     const abort = new AbortController();
     void branchAPI.tree(branch, parent, "", abort.signal)
-      .then(value => ({items:value.entries,next:value.next ?? "",revision:value.revision,total:value.descendant_count,base_version:""}))
+      .then(value => ({items:value.entries,next:value.next ?? "",revision:value.revision,total:value.descendant_count}))
       .then(setPage)
       .catch((e) => {
         if (!abort.signal.aborted) setError(String(e));
@@ -1040,7 +1040,7 @@ function MoveDialog({
           <button
             onClick={() =>
               void branchAPI.tree({...branch,draft_revision:page.revision}, parent, page.next)
-                .then(value => ({items:value.entries,next:value.next ?? "",revision:value.revision,total:value.descendant_count,base_version:""}))
+                .then(value => ({items:value.entries,next:value.next ?? "",revision:value.revision,total:value.descendant_count}))
                 .then((p) =>
                   setPage({ ...p, items: [...page.items, ...p.items] }),
                 )

@@ -9,7 +9,6 @@ export type Library = {
   profile: "authored-v1" | "shared-assets-v1";
   metadata_revision: number;
   draft_revision: number;
-  base_version: string;
   archived: boolean;
   updated_at?: number;
   draft_change_count?: number;

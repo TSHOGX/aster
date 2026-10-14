@@ -92,7 +92,7 @@ export function Changes({ library }: { library: Library }) {
       signal: abort.signal,
     })
       .then((p) => {
-        setPage({items:p.changes,next:p.next,total:p.total,revision:library.draft_revision,base_version:""});
+        setPage({items:p.changes,next:p.next,total:p.total,revision:library.draft_revision});
         setError("");
       })
       .catch((e) => {
@@ -168,7 +168,6 @@ export function Changes({ library }: { library: Library }) {
     selected,
     library.id,
     library.draft_revision,
-    library.base_version,
     root,
   ]);
   const dirty = studio.model.buffers.filter(

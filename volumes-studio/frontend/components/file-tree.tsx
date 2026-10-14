@@ -61,7 +61,7 @@ export function FileTree({
           `${root}/tree?${query({ mode: "workbench", parent, cursor })}`,
         ) : await api<{entries: Entry[]; next?: string; revision: number; descendant_count: number}>(
           `${root}/tree?${query({ parent, revision, after: cursor })}`,
-        ).then(page => ({items:page.entries,next:page.next ?? "",revision:page.revision,total:page.descendant_count,base_version:""}));
+        ).then(page => ({items:page.entries,next:page.next ?? "",revision:page.revision,total:page.descendant_count}));
         if (turn === generation.current)
           setPages((old) => ({
             ...old,

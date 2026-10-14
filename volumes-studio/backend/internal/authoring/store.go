@@ -74,7 +74,7 @@ type Library struct {
 	Profile          string `json:"profile"`
 	MetadataRevision int64  `json:"metadata_revision"`
 	DraftRevision    int64  `json:"draft_revision"`
-	BaseVersion      string `json:"base_version"`
+	BaseVersion      string `json:"-"`
 	Archived         bool   `json:"archived"`
 }
 type Version struct {

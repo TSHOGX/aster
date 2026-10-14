@@ -16,7 +16,7 @@ func workbenchQuery(r *http.Request) authoring.Query {
 			limit = -1
 		}
 	}
-	return authoring.Query{Profile: q.Get("profile"), Q: q.Get("q"), Status: q.Get("status"), Changes: q.Get("changes"), Sort: q.Get("sort"), Direction: q.Get("direction"), Parent: q.Get("parent"), Cursor: q.Get("cursor"), Limit: limit, Revision: revision(r), BaseVersion: q.Get("base_version")}
+	return authoring.Query{Profile: q.Get("profile"), Q: q.Get("q"), Status: q.Get("status"), Changes: q.Get("changes"), Sort: q.Get("sort"), Direction: q.Get("direction"), Parent: q.Get("parent"), Cursor: q.Get("cursor"), Limit: limit, Revision: revision(r)}
 }
 func (a *AuthoringAPI) search(w http.ResponseWriter, r *http.Request) {
 	p, err := a.Store.WorkbenchTree(r.Context(), r.PathValue("library"), r.PathValue("version"), workbenchQuery(r), true)

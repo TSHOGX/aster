@@ -4,7 +4,6 @@ export type Page<T> = {
   next: string;
   total: number;
   revision: number;
-  base_version: string;
 };
 export const query = (values: Record<string, string | number | undefined>) =>
   new URLSearchParams(
