@@ -119,6 +119,20 @@ func TestBranchHTTPJourney(t *testing.T) {
 		t.Fatal("release content differs", w.Code, w.Body.String())
 	}
 	authority.allowed = false
+	for _, method := range []string{"GET", "POST"} {
+		path := apiPrefix + "operations/" + version.ID
+		if method == "POST" {
+			path += "/retry"
+		}
+		request := httptest.NewRequest(method, path, bytes.NewBufferString(`{"request_id":"revoked-retry"}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		api.Serve(identity.Session{Issuer: actor.Issuer, Subject: actor.Subject}, response, request)
+		if response.Code != 403 {
+			t.Fatal("operation bypassed grant", method, response.Code, response.Body.String())
+		}
+	}
+	authority.allowed = false
 	for _, path := range []string{"", "/versions", "/versions/" + version.ID, "/versions/" + version.ID + "/tree", "/versions/" + version.ID + "/content?path=note.html", "/versions/" + version.ID + "/validation", "/versions/" + version.ID + "/search?q=note", "/versions/" + version.ID + "/retention"} {
 		response := call("GET", path, nil)
 		if response.Code != 403 {

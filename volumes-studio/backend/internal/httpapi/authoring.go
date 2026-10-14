@@ -303,6 +303,9 @@ func (a *AuthoringAPI) uploadCancel(w http.ResponseWriter, r *http.Request) {
 }
 func (a *AuthoringAPI) operation(w http.ResponseWriter, r *http.Request) {
 	v, err := a.Store.Version(r.Context(), r.PathValue("operation"))
+	if err == nil {
+		err = a.Store.AuthorizeLibrary(r.Context(), actor(r), v.LibraryID, "volume.read")
+	}
 	respond(w, 200, v, err)
 }
 func (a *AuthoringAPI) operationAction(w http.ResponseWriter, r *http.Request) {
@@ -315,6 +318,15 @@ func (a *AuthoringAPI) operationAction(w http.ResponseWriter, r *http.Request) {
 		RequestID string `json:"request_id"`
 	}
 	if !decodeBody(w, r, &b) {
+		return
+	}
+	version, err := a.Store.Version(r.Context(), r.PathValue("operation"))
+	if err != nil {
+		authoringError(w, err)
+		return
+	}
+	if err = a.Store.AuthorizeLibrary(r.Context(), actor(r), version.LibraryID, "volume.publish"); err != nil {
+		authoringError(w, err)
 		return
 	}
 	v, err := a.Store.Operation(r.Context(), actor(r), r.PathValue("operation"), authoring.OperationInput{RequestID: b.RequestID, Action: action})
