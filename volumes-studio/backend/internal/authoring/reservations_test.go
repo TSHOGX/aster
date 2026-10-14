@@ -194,3 +194,45 @@ func TestCompensationDoesNotTransferLibraryOwner(t *testing.T) {
 		t.Fatal("original owner cannot reserve disjoint output", err)
 	}
 }
+
+func TestReleasedReservationRequiresNextGeneration(t *testing.T) {
+	s, _ := testStore(t)
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	ctx := context.Background()
+	r := PrefixReservation{LibraryID: l.ID, Prefix: "skills", GroupID: "group", BindingID: "binding", Generation: 2, OperationID: "first"}
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != ErrConflict {
+		t.Fatal("uninitialized generation accepted", err)
+	}
+	r.Generation = 1
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix); err != nil {
+		t.Fatal(err)
+	}
+	old := r
+	r.OperationID = "second"
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != ErrConflict {
+		t.Fatal("reused stale generation", err)
+	}
+	r.Generation = 3
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != ErrConflict {
+		t.Fatal("skipped generation", err)
+	}
+	r.Generation = 2
+	next, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID)
+	if err != nil || next.State != "pending" {
+		t.Fatal(next, err)
+	}
+	if err := s.ReleaseEvolutionPrefix(ctx, testActor, old.OperationID, l.ID, r.Prefix); err == nil {
+		t.Fatal("old compensation released new owner")
+	}
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, old, old.OperationID); err != ErrConflict {
+		t.Fatal("old request rewound generation", err)
+	}
+	active, err := s.ActivateEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix, 2)
+	if err != nil || active.Generation != 2 {
+		t.Fatal(active, err)
+	}
+}

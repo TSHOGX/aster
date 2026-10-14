@@ -96,6 +96,26 @@ func TestEvolutionConfigurationReservationAtomicAndLookupable(t *testing.T) {
 		t.Fatal("cancelled operation resurrected", err)
 	}
 
+	next := input
+	next.OperationID = "replacement"
+	next.Configuration.Bindings = append([]evolution.Binding(nil), input.Configuration.Bindings...)
+	next.Configuration.Bindings[0].Output.ReservationGeneration = 2
+	nextRaw, _ := json.Marshal(next.Configuration)
+	next.Digest = evolution.Digest(nextRaw)
+	if _, err = s.ReserveEvolutionConfiguration(ctx, testActor, next); err != nil {
+		t.Fatal("cancelled prefix could not be reserved again", err)
+	}
+	oldReceipt, err := s.CancelEvolutionReservation(ctx, testActor, input.OperationID, input.Digest)
+	if err != nil || oldReceipt.State != "released" {
+		t.Fatal("old cancellation retry", err)
+	}
+	currentReceipt, err := s.EvolutionReservationOperation(ctx, testActor, next.OperationID, next.Digest)
+	if err != nil || currentReceipt.State != "reserved" {
+		t.Fatal("old cancellation affected replacement", err)
+	}
+	if _, err = s.AdoptEvolutionConfiguration(ctx, testActor, next.OperationID, next.Digest); err != nil {
+		t.Fatal("replacement adoption", err)
+	}
 	second, err := s.Create(ctx, testActor, CreateInput{RequestID: "second-library", Name: "Second"})
 	if err != nil {
 		t.Fatal(err)

@@ -54,10 +54,13 @@ func (s *Store) reserveEvolutionPrefix(ctx context.Context, tx *sql.Tx, actor Ac
 		if prior.GroupID == r.GroupID && prior.BindingID == r.BindingID && prior.Generation == r.Generation && prior.OperationID == r.OperationID {
 			return prior, nil
 		}
-		return r, ErrConflict
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
+		if prior.State != "released" || prior.GroupID != r.GroupID || prior.BindingID != r.BindingID || r.OperationID == prior.OperationID || r.Generation != prior.Generation+1 {
+			return r, ErrConflict
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return r, err
+	} else if r.Generation != 1 {
+		return r, ErrConflict
 	}
 	rows, err := tx.QueryContext(ctx, "SELECT prefix,owner_group_id FROM evolution_prefix_reservations WHERE library_id=? AND state IN ('pending','active')", r.LibraryID)
 	if err != nil {
@@ -79,7 +82,7 @@ func (s *Store) reserveEvolutionPrefix(ctx context.Context, tx *sql.Tx, actor Ac
 	if err != nil {
 		return r, err
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO evolution_prefix_reservations VALUES(?,?,?,?,?,'pending',?,?)", r.LibraryID, r.Prefix, r.GroupID, r.BindingID, r.Generation, r.OperationID, s.now().Unix()); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO evolution_prefix_reservations VALUES(?,?,?,?,?,'pending',?,?) ON CONFLICT(library_id,prefix) DO UPDATE SET generation=excluded.generation,state=excluded.state,operation_id=excluded.operation_id,created_at=excluded.created_at", r.LibraryID, r.Prefix, r.GroupID, r.BindingID, r.Generation, r.OperationID, s.now().Unix()); err != nil {
 		return r, err
 	}
 	r.State = "pending"
