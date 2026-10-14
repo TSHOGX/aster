@@ -5,7 +5,10 @@
 Volume Studio at `/volumes-studio/` prepares reusable file libraries and publishes
 immutable versions. Aster imports a version into local storage before Projects
 can use it. Studio publication and Aster availability are separate steps.
-You need an active central administrator account to author in Studio.
+Studio sign-in currently requires an active central administrator account. Library
+read, author, review, merge and publish permissions are separate grants; administrator
+status alone does not grant those actions. Ask your installation administrator to
+provision the required library permissions before editing.
 
 Shared-assets libraries use the immutable `shared-assets-v1` profile and are
 available only to administrators. A published version must contain root
@@ -17,9 +20,12 @@ version includes an empty `skills/` directory. These files mount read-only at
 
 1. Open Studio and create a library. Choose **Ordinary data** or **Shared assets**;
    the content profile cannot change after creation. Filter the catalog by profile.
-2. Add directories, create text files or upload files/folders.
-3. Edit files in tabs and save changes to the draft.
-4. Review Changes against the base version before publishing.
+2. Select a **Working branch**, or enter a **New branch name** and choose
+   **Create branch from main**. Each branch has its own saved draft.
+3. Add directories, create text files or upload files/folders. Edit files in tabs
+   and save changes to the selected branch.
+4. Review **Changes** against the branch's committed head. Save persists draft
+   content; **Commit saved draft** creates an immutable checkpoint.
 
 Text and Markdown editing supports UTF-8 files up to 1 MiB. Raster previews support
 PNG/JPEG/GIF/WebP up to 16 MiB. Other formats are available as authenticated downloads.
@@ -38,18 +44,19 @@ For shared assets, the validation panel reports path-specific problems, skill co
 reference-file warnings and an `AGENTS.md` text preview. Drafts may be incomplete;
 publication repeats structure, encoding and content-integrity checks. The built-in
 Aster library starts with published `v1`, containing only `AGENTS.md` and an empty
-`skills/` directory. Extend its draft and publish a new version; the original
-version remains immutable. Scheduling is supplied by runtime tools, not a skill.
+`skills/` directory. Create a working branch to extend it, then review and merge the changes before
+publishing a new version. The original version remains immutable. Scheduling is supplied by runtime tools, not a skill.
 
 ## Handle concurrent edits and recovery
 
 Before saving, Studio checks whether the target changed since editing began.
-A conflict retains your text for review. Changes elsewhere in the library do not
+A save conflict retains your text for review. Changes elsewhere in the branch do not
 automatically authorize overwriting this file. Save all stops at its first failure;
 a save acknowledges the submitted text, not additional typing made while it runs.
 
 The browser keeps local recovery records when its storage is available. Restoring
-is explicit and checks the current target. Recovery has a 50 MiB per-account budget;
+is explicit and checks the recorded branch and current target. A recovery record
+without branch identity cannot be restored into an arbitrary branch. Recovery has a 50 MiB per-account budget;
 storage failure or exhaustion is reported. It is not a backup: a sudden crash may
 lose the most recent edits, and explicit logout clears local recovery. Protect
 unsaved edits before clearing browser data or changing devices.
@@ -62,19 +69,45 @@ uploads report individual file outcomes, so check for partial failures.
 
 The Tasks drawer covers this browser session and visited libraries, not every
 upload on the server. Navigating within Studio keeps transfers alive; closing the
-browser stops active transfer. Unfinished server uploads, including another tab's,
-block publication until completed or canceled.
+browser stops active transfer. Unfinished uploads block checkpointing their own
+branch until completed or canceled; another branch can still be committed.
+
+## Review and merge committed changes
+
+1. Save the content you want to include and complete or cancel that branch's uploads.
+2. Enter a **Commit message** and choose **Commit saved draft**. Unsaved editor
+   changes are explicitly excluded from the checkpoint.
+3. Choose **Prepare integration** to combine the committed branch head with main.
+   Inspect the changed files and the **Integrated result** before approving.
+4. If conflicts appear, open each path in **Resolve merge conflicts**. Compare the
+   common ancestor, main and branch. Choose a side, delete the path or write
+   resolved text, then **Save resolution**. Complete every choice and choose
+   **Prepare resolved integration**. The new result needs its own approval.
+5. A qualified reviewer chooses **Approve integration**. A merger then chooses
+   **Merge approved integration**. A changed main, source head or review policy
+   requires preparing and reviewing a new result.
+
+Main advances only after acceptance. Reviewers can also request changes or reject
+an integration. Saved conflict choices remain accessible through the workspace URL.
+Binary and oversized content are identified explicitly when a text preview is
+unavailable; selecting a side preserves its file bytes.
 
 ## Publish a version
 
-1. Save the draft and resolve unfinished uploads.
-2. Open publication review and inspect the exact revision and changes.
-3. Confirm publication and follow its status until published.
-4. Record the version label for selection in Aster.
+1. Open the accepted integration and enter a **Version label** and **Release note**.
+2. Choose **Publish accepted commit** and follow the separate version status until
+   it is published.
+3. Record the version label for selection in Aster.
 
-Publication freezes the reviewed draft. Subsequent edits do not change that version.
-Admitted validation can continue after browser logout. If the author's account is
-disabled or demoted, unfinished work pauses for reassignment by another administrator.
+Publication uses the accepted immutable commit, not the current saved draft.
+Subsequent edits do not change that version. Publication failure does not undo the
+accepted merge. The worker rechecks current publish authority; revoked authority
+holds unfinished publication for an authorized retry. Admitted validation can
+continue after browser logout.
+
+To edit a published version, use **Create branch from version**. It creates a
+separate working branch from that release's accepted commit and leaves existing
+drafts intact. The resulting changes still require review and merge.
 
 ## Import into Aster
 
