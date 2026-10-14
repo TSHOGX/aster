@@ -93,7 +93,7 @@ func (p Patch) Validate(output OutputBinding) error {
 	}
 	seen := map[string]bool{}
 	for _, e := range p.Entries {
-		if err := manifest.ValidPath(e.Path, e.Kind == "directory"); err != nil {
+		if err := manifest.ValidAuthoringPath(e.Path, e.Kind == "directory"); err != nil {
 			return err
 		}
 		if !WithinPrefix(output.Prefix, e.Path) || seen[e.Path] {

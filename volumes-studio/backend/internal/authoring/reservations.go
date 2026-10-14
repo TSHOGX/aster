@@ -22,7 +22,7 @@ func prefixOverlap(a, b string) bool {
 	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
 func (s *Store) ReserveEvolutionPrefix(ctx context.Context, actor Actor, r PrefixReservation, expectedOperation string) (PrefixReservation, error) {
-	if !manifest.ValidID(r.LibraryID) || !manifest.ValidID(r.GroupID) || !manifest.ValidID(r.BindingID) || !manifest.ValidID(r.OperationID) || manifest.ValidPath(r.Prefix, true) != nil || r.Generation < 1 || expectedOperation != r.OperationID {
+	if !manifest.ValidID(r.LibraryID) || !manifest.ValidID(r.GroupID) || !manifest.ValidID(r.BindingID) || !manifest.ValidID(r.OperationID) || manifest.ValidAuthoringPath(r.Prefix, true) != nil || r.Generation < 1 || expectedOperation != r.OperationID {
 		return r, ErrInvalid
 	}
 	return s.reservationResult(ctx, actor, r.LibraryID, func(tx *sql.Tx, actor Actor) (PrefixReservation, error) {

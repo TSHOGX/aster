@@ -201,7 +201,7 @@ func (o OutputBinding) Validate() error {
 	if !manifest.ValidID(o.LibraryID) || !manifest.SupportedProfile(o.Profile) || o.ReservationGeneration < 1 {
 		return fmt.Errorf("invalid output reservation")
 	}
-	return manifest.ValidPath(o.Prefix, true)
+	return manifest.ValidAuthoringPath(o.Prefix, true)
 }
 func WithinPrefix(prefix, p string) bool { return p == prefix || strings.HasPrefix(p, prefix+"/") }
 func PrefixesOverlap(a, b string) bool   { return WithinPrefix(a, b) || WithinPrefix(b, a) }

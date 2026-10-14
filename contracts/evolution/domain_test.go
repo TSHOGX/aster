@@ -68,3 +68,18 @@ func TestWireRequiresExactFields(t *testing.T) {
 		}
 	}
 }
+
+func TestPatchAndOutputRejectReservedGitPaths(t *testing.T) {
+	output := OutputBinding{"library", "skills", "authored-v1", 1}
+	base := ContentRef{"library", strings.Repeat("a", 64), "authored-v1", Digest([]byte("tree"))}
+	for _, path := range []string{"skills/.git", "skills/.GiT/config"} {
+		patch := Patch{"run", 1, base, 1, []PatchEntry{{Operation: "remove", Path: path, Kind: "file"}}}
+		if patch.Validate(output) == nil {
+			t.Fatal("reserved patch path accepted", path)
+		}
+	}
+	output.Prefix = "skills/.git"
+	if output.Validate() == nil {
+		t.Fatal("reserved output prefix accepted")
+	}
+}

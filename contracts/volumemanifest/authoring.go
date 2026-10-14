@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"fmt"
-	"strings"
 )
 
 // ValidateAuthoring checks storage invariants without requiring a complete,
@@ -20,10 +19,8 @@ func ValidateAuthoring(profile string, entries []Entry) error {
 		return err
 	}
 	for _, e := range d.Entries {
-		for _, component := range strings.Split(e.Path, "/") {
-			if strings.EqualFold(component, ".git") {
-				return fmt.Errorf("reserved Git path: %s", e.Path)
-			}
+		if err := ValidAuthoringPath(e.Path, e.Kind == "directory"); err != nil {
+			return err
 		}
 	}
 	if profile == SharedAssetsProfile {
