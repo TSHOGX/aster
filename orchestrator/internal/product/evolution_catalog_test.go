@@ -2,9 +2,11 @@ package product
 
 import (
 	"aster/contracts/evolution"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
 	"testing"
 )
 
@@ -92,5 +94,28 @@ func TestCatalogReadAuthorityAndRetainedIntegrity(t *testing.T) {
 	}
 	if _, err = s.BindCatalogRevision(ctx, token, StandardUsersGroup, "binding", "template", "lesson", 1); err != ErrInvalid {
 		t.Fatal("corrupt definition bound", err)
+	}
+}
+
+func TestWorkflowCatalogUsesExecutableValidation(t *testing.T) {
+	s, admin := accountStore(t)
+	ctx := context.Background()
+	token := adminTestToken(t, s, admin)
+	raw, err := os.ReadFile("../../../contracts/evolution/testdata/corrections.valid.json")
+	must(t, err)
+	workflow, err := evolution.DecodeWorkflow(bytes.NewReader(raw))
+	must(t, err)
+	canonical, err := workflow.Canonical()
+	must(t, err)
+	_, err = s.PublishCatalogRevision(ctx, token, CatalogRevision{Kind: "workflow", ID: workflow.ID, Revision: 1, Digest: evolution.Digest(canonical), Body: canonical, Enabled: true})
+	must(t, err)
+	workflow.Nodes[0].Kind = "shell"
+	invalid, err := json.Marshal(workflow)
+	must(t, err)
+	if _, err = s.PublishCatalogRevision(ctx, token, CatalogRevision{Kind: "workflow", ID: workflow.ID, Revision: 2, Digest: evolution.Digest(invalid), Body: invalid, Enabled: true}); err != ErrInvalid {
+		t.Fatal("unsupported execution published", err)
+	}
+	if _, err = s.PublishCatalogRevision(ctx, token, CatalogRevision{Kind: "workflow", ID: "different-id", Revision: 1, Digest: evolution.Digest(canonical), Body: canonical, Enabled: true}); err != ErrInvalid {
+		t.Fatal("mismatched workflow identity published", err)
 	}
 }

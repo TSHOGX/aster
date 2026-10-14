@@ -52,6 +52,16 @@ func (s *Store) PublishCatalogRevision(ctx context.Context, token string, c Cata
 	if _, err := evolution.Decode[map[string]json.RawMessage](bytes.NewReader(c.Body)); err != nil {
 		return c, ErrInvalid
 	}
+	if c.Kind == "workflow" {
+		workflow, err := evolution.DecodeWorkflow(bytes.NewReader(c.Body))
+		if err != nil || workflow.ID != c.ID {
+			return c, ErrInvalid
+		}
+		canonical, err := workflow.Canonical()
+		if err != nil || !bytes.Equal(canonical, c.Body) {
+			return c, ErrInvalid
+		}
+	}
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		actor, err := s.adminSession(ctx, tx, token)
 		if err != nil {
