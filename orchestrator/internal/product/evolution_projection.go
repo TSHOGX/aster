@@ -16,17 +16,9 @@ func (s *Store) EvolutionProjection(ctx context.Context, token, operation string
 		if _, err := s.adminSession(ctx, tx, token); err != nil {
 			return err
 		}
-		var body, group string
-		var revision int64
-		if err := tx.QueryRowContext(ctx, `SELECT group_id,revision,operation_id,digest,body FROM evolution_configuration_revisions WHERE operation_id=?`, operation).Scan(&group, &revision, &result.OperationID, &result.Digest, &body); err != nil {
-			return err
-		}
-		config, err := evolution.Decode[evolution.Configuration](bytes.NewBufferString(body))
-		if err != nil || evolution.Digest([]byte(body)) != result.Digest || config.GroupID != group || config.Revision != revision || config.Validate() != nil {
-			return ErrInvalid
-		}
-		result.Configuration = config
-		return nil
+		var err error
+		result, err = readEvolutionProjection(ctx, tx, operation)
+		return err
 	})
 	return result, err
 }
@@ -56,4 +48,19 @@ func (s *Store) ReconcileEvolutionProjection(ctx context.Context, token, operati
 		return err
 	}
 	return s.acceptEvolutionParticipant(ctx, token, receipt)
+}
+
+func readEvolutionProjection(ctx context.Context, q queryer, operation string) (evaluationclient.Projection, error) {
+	var result evaluationclient.Projection
+	var body, group string
+	var revision int64
+	if err := q.QueryRowContext(ctx, `SELECT group_id,revision,operation_id,digest,body FROM evolution_configuration_revisions WHERE operation_id=?`, operation).Scan(&group, &revision, &result.OperationID, &result.Digest, &body); err != nil {
+		return result, err
+	}
+	config, err := evolution.Decode[evolution.Configuration](bytes.NewBufferString(body))
+	if err != nil || evolution.Digest([]byte(body)) != result.Digest || config.GroupID != group || config.Revision != revision || config.Validate() != nil {
+		return result, ErrInvalid
+	}
+	result.Configuration = config
+	return result, nil
 }

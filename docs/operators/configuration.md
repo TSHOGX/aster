@@ -27,6 +27,7 @@ configuration under `private/` or outside the repository.
 | `limits` | Global/per-Project capacities, bootstrap qualified `max_mounts_per_project`, idle deadlines and worker interval |
 | `http_metrics` | Enable optional HTTP metrics collection |
 | `volume_imports` | Trusted Studio sources and transfer/engine storage budgets; see below |
+| `evaluation_space` | Optional private participant endpoint and credential environment variable; see below |
 | `notifications` | Per-source Inbox notification policy; changes apply after application restart |
 | `gateways`, `agent_audience` | Independent gateway endpoints and upstream credential environment names |
 | `titles` | Optional host-side title model: `base_url`, `model`, `api_key_env` |
@@ -198,3 +199,19 @@ Aster declared engine storage at import/retry admission. Staging, derived copies
 and uncertain attempts can each retain capacity. Project allocation quotas still
 apply independently. Removing a source or rotating credentials stops future source
 access; it does not delete ready local copies or recall acquired bytes.
+
+## Evaluation Space participant
+
+Set `evaluation_space.endpoint` to the private Evaluation Space service origin and
+`evaluation_space.credential_env` to the name of an environment variable containing
+its central-service credential (at least 32 characters). The credential must match
+Evaluation Space's `EVALUATION_SPACE_CENTRAL_SECRET`. The origin requires HTTPS,
+except for numeric loopback HTTP addresses. Redirects and environment proxies are
+not used for this transport. Keep the private endpoint inaccessible to browsers.
+
+With this configuration, a dedicated worker reconciles pending Evaluation Space
+projections from the central database. It survives browser logout and application
+restart, verifies exact operation receipts, and retries uncertain transport outcomes
+by looking up participant state. It does not settle activation without Studio's
+receipt. Omitting this configuration disables automatic Evaluation Space dispatch;
+it does not erase pending operations. Studio coordination remains a separate step.

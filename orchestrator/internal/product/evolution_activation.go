@@ -116,44 +116,47 @@ func (s *Store) activateEvolutionConfig(ctx context.Context, token, group string
 	return result, err
 }
 func (s *Store) acceptEvolutionParticipant(ctx context.Context, token string, receipt evolution.ActivationReceipt) error {
-	operation, participant, digest := receipt.OperationID, receipt.Participant, receipt.ConfigurationDigest
-	if receipt.Generation < 1 || receipt.State != "adopted" || (participant != "studio" && participant != "evaluation-space") {
-		return ErrInvalid
-	}
 	return s.write(ctx, func(tx *sql.Tx) error {
 		actor, err := s.adminSession(ctx, tx, token)
 		if err != nil {
 			return err
 		}
-		var group, state string
-		if err = tx.QueryRowContext(ctx, "SELECT group_id,state FROM evolution_group_configs WHERE operation_id=? AND desired_digest=? AND desired_revision=?", operation, digest, receipt.Generation).Scan(&group, &state); err != nil {
-			return err
-		}
-		if state != "activating" && state != "active" {
-			return ErrConflict
-		}
-		allowed, err := authorizeEvolutionProjection(ctx, tx, ProjectionScope{GroupID: group, OperationID: operation, Revision: receipt.Generation, Digest: digest})
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			return ErrForbidden
-		}
-		var existing int
-		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_activation_receipts WHERE operation_id=? AND participant=? AND config_digest=? AND state='accepted'", operation, participant, digest).Scan(&existing); err != nil {
-			return err
-		}
-		if existing > 0 {
-			return nil
-		}
-		if state == "active" {
-			return ErrConflict
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO evolution_activation_receipts VALUES(?,?,?,'accepted','',?) ON CONFLICT(operation_id,participant) DO UPDATE SET state='accepted',error=''`, operation, participant, digest, s.timestamp()); err != nil {
-			return err
-		}
-		return s.auditEvent(ctx, tx, actor.ID, "evolution.activation.receipt", "group", group, operation, 0, map[string]string{"participant": participant})
+		return s.acceptEvolutionReceipt(ctx, tx, actor.ID, receipt)
 	})
+}
+func (s *Store) acceptEvolutionReceipt(ctx context.Context, tx *sql.Tx, actor string, receipt evolution.ActivationReceipt) error {
+	operation, participant, digest := receipt.OperationID, receipt.Participant, receipt.ConfigurationDigest
+	if receipt.Generation < 1 || receipt.State != "adopted" || (participant != "studio" && participant != "evaluation-space") {
+		return ErrInvalid
+	}
+	var group, state string
+	if err := tx.QueryRowContext(ctx, "SELECT group_id,state FROM evolution_group_configs WHERE operation_id=? AND desired_digest=? AND desired_revision=?", operation, digest, receipt.Generation).Scan(&group, &state); err != nil {
+		return err
+	}
+	if state != "activating" && state != "active" {
+		return ErrConflict
+	}
+	allowed, err := authorizeEvolutionProjection(ctx, tx, ProjectionScope{GroupID: group, OperationID: operation, Revision: receipt.Generation, Digest: digest})
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrForbidden
+	}
+	var existing int
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_activation_receipts WHERE operation_id=? AND participant=? AND config_digest=? AND state='accepted'", operation, participant, digest).Scan(&existing); err != nil {
+		return err
+	}
+	if existing > 0 {
+		return nil
+	}
+	if state == "active" {
+		return ErrConflict
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO evolution_activation_receipts VALUES(?,?,?,'accepted','',?) ON CONFLICT(operation_id,participant) DO UPDATE SET state='accepted',error=''`, operation, participant, digest, s.timestamp()); err != nil {
+		return err
+	}
+	return s.auditEvent(ctx, tx, actor, "evolution.activation.receipt", "group", group, operation, 0, map[string]string{"participant": participant})
 }
 func (s *Store) SettleEvolutionActivation(ctx context.Context, token, operation string) (EvolutionGroupConfig, error) {
 	var result EvolutionGroupConfig

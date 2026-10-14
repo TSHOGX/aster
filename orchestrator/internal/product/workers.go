@@ -12,6 +12,7 @@ import (
 // has its own bounded loop so file recovery and host-only work cannot stall
 // admission, process attachments or lifecycle observations.
 type Workers struct {
+	Evolution      *EvolutionWorker
 	Store          *Store
 	Lifecycle      *Lifecycle
 	Agents         *Agents
@@ -61,6 +62,9 @@ func (w *Workers) Run(ctx context.Context) {
 				}
 			}
 		}()
+	}
+	if w.Evolution != nil {
+		loop("evolution activation", time.Second, w.Evolution.Step)
 	}
 	loop("runtime", interval, w.Step)
 	loop("shared volumes", time.Second, func(ctx context.Context) error {

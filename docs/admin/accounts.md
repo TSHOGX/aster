@@ -98,8 +98,9 @@ POST the same fields plus `request_id` to the `/activate` endpoint to create a
 pending activation. This requires both configuration read and manage access.
 A `202` response acknowledges the operation; it does not confirm activation.
 Read `/api/admin/groups/{group}/optimization` to compare desired and active
-revisions. Participant orchestration is not automatically dispatched by this
-endpoint, so the operation remains pending until its receipts are reconciled.
+revisions. When the Evaluation Space participant worker is configured, it reconciles its
+receipt automatically. Studio coordination is not yet dispatched by that worker;
+activation remains pending until both required receipts are reconciled.
 
 POST `request_id` and `expected_revision` to the `/disable` endpoint to disable
 automatic admission immediately, including while activation is pending. This

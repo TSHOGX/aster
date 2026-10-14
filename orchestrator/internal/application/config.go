@@ -87,7 +87,13 @@ type ProjectDefaults struct {
 	RuntimeBytes   int64                `json:"runtime_bytes"`
 	Reachability   product.Reachability `json:"reachability"`
 }
+type EvaluationSpaceConfig struct {
+	Endpoint      string `json:"endpoint"`
+	CredentialEnv string `json:"credential_env"`
+}
+
 type Config struct {
+	EvaluationSpace   *EvaluationSpaceConfig  `json:"evaluation_space,omitempty"`
 	PublicDNS         []netip.Addr            `json:"public_dns_resolvers"`
 	VolumeImports     *VolumeImportConfig     `json:"volume_imports,omitempty"`
 	Identity          *identityconfig.Config  `json:"identity,omitempty"`
