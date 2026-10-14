@@ -330,28 +330,17 @@ func (s *Store) WorkbenchTree(ctx context.Context, id, version string, q Query, 
 	if q.Parent != "" && manifest.ValidPath(q.Parent, true) != nil {
 		return Page[manifest.Entry]{}, ErrInvalid
 	}
-	var all []manifest.Entry
-	var err error
-	if version == "" {
-		l, e := s.Library(ctx, id)
-		if e != nil {
-			return Page[manifest.Entry]{}, e
-		}
-		if q.Revision != 0 && q.Revision != l.DraftRevision || q.Cursor != "" && q.Revision == 0 {
-			return Page[manifest.Entry]{}, ErrConflict
-		}
-		q.Revision = l.DraftRevision
-		all, err = entries(ctx, s.db, "draft_entries", "library_id", id)
-	} else {
-		v, e := s.Version(ctx, version)
-		if e != nil {
-			return Page[manifest.Entry]{}, e
-		}
-		if v.LibraryID != id || v.State != "published" && v.State != "archived" {
-			return Page[manifest.Entry]{}, ErrNotFound
-		}
-		all, err = entries(ctx, s.db, "version_entries", "version_id", version)
+	if !manifest.ValidID(version) {
+		return Page[manifest.Entry]{}, ErrInvalid
 	}
+	v, err := s.Version(ctx, version)
+	if err != nil {
+		return Page[manifest.Entry]{}, err
+	}
+	if v.LibraryID != id || (v.State != "published" && v.State != "archived") {
+		return Page[manifest.Entry]{}, ErrNotFound
+	}
+	all, err := entries(ctx, s.db, "version_entries", "version_id", version)
 	if err != nil {
 		return Page[manifest.Entry]{}, err
 	}

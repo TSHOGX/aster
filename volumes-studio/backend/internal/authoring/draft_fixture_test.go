@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -427,4 +428,59 @@ func contentFixture(s *Store, ctx context.Context, id, name, version string, exp
 	}
 	s.readers[e.Digest]++
 	return &pinnedFile{File: f, store: s, digest: e.Digest}, e, nil
+}
+
+func workbenchTreeFixture(s *Store, ctx context.Context, id, version string, q Query, search bool) (Page[manifest.Entry], error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if q.Parent != "" && manifest.ValidPath(q.Parent, true) != nil {
+		return Page[manifest.Entry]{}, ErrInvalid
+	}
+	var all []manifest.Entry
+	var err error
+	if version == "" {
+		l, e := s.Library(ctx, id)
+		if e != nil {
+			return Page[manifest.Entry]{}, e
+		}
+		if q.Revision != 0 && q.Revision != l.DraftRevision || q.Cursor != "" && q.Revision == 0 {
+			return Page[manifest.Entry]{}, ErrConflict
+		}
+		q.Revision = l.DraftRevision
+		all, err = entries(ctx, s.db, "draft_entries", "library_id", id)
+	} else {
+		v, e := s.Version(ctx, version)
+		if e != nil {
+			return Page[manifest.Entry]{}, e
+		}
+		if v.LibraryID != id || v.State != "published" && v.State != "archived" {
+			return Page[manifest.Entry]{}, ErrNotFound
+		}
+		all, err = entries(ctx, s.db, "version_entries", "version_id", version)
+	}
+	if err != nil {
+		return Page[manifest.Entry]{}, err
+	}
+	out := []manifest.Entry{}
+	for _, e := range all {
+		if search {
+			if strings.Contains(strings.ToLower(e.Path), strings.ToLower(q.Q)) {
+				out = append(out, e)
+			}
+		} else if parentOf(e.Path) == q.Parent {
+			out = append(out, e)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if !search && a.Kind != b.Kind {
+			return a.Kind == "directory"
+		}
+		return a.Path < b.Path
+	})
+	mode := "tree"
+	if search {
+		mode = "search"
+	}
+	return pageOf(out, q, id+"/"+version+"/"+mode, 200)
 }

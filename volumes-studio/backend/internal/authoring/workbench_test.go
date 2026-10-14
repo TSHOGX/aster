@@ -52,15 +52,15 @@ func TestWorkbenchTreeEntryAndPinnedContent(t *testing.T) {
 	mutate("mkdir", "文档", "")
 	mutate("text", "文档/a_%.md", "original")
 	mutate("text", "a.txt", "alpha")
-	p, err := s.WorkbenchTree(ctx, l.ID, "", Query{Limit: 1}, false)
+	p, err := workbenchTreeFixture(s, ctx, l.ID, "", Query{Limit: 1}, false)
 	if err != nil || p.Items[0].Path != "文档" || p.Next == "" {
 		t.Fatal(p, err)
 	}
-	p2, err := s.WorkbenchTree(ctx, l.ID, "", Query{Limit: 1, Cursor: p.Next, Revision: p.Revision}, false)
+	p2, err := workbenchTreeFixture(s, ctx, l.ID, "", Query{Limit: 1, Cursor: p.Next, Revision: p.Revision}, false)
 	if err != nil || p2.Items[0].Path != "a.txt" {
 		t.Fatal(p2, err)
 	}
-	found, err := s.WorkbenchTree(ctx, l.ID, "", Query{Q: "_%", Revision: l.DraftRevision}, true)
+	found, err := workbenchTreeFixture(s, ctx, l.ID, "", Query{Q: "_%", Revision: l.DraftRevision}, true)
 	if err != nil || found.Total != 1 {
 		t.Fatal(found, err)
 	}
@@ -69,7 +69,7 @@ func TestWorkbenchTreeEntryAndPinnedContent(t *testing.T) {
 		t.Fatal(e, err)
 	}
 	mutate("text", "a.txt", "updated")
-	if _, err = s.WorkbenchTree(ctx, l.ID, "", Query{Limit: 1, Cursor: p.Next, Revision: p.Revision}, false); err != ErrConflict {
+	if _, err = workbenchTreeFixture(s, ctx, l.ID, "", Query{Limit: 1, Cursor: p.Next, Revision: p.Revision}, false); err != ErrConflict {
 		t.Fatal("stale page", err)
 	}
 	if r, _, err := contentFixture(s, ctx, l.ID, "文档/a_%.md", "", e.Revision); err != ErrConflict {

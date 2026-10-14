@@ -53,11 +53,11 @@ func TestTenThousandEntryFreezeAndOneOver(t *testing.T) {
 		t.Fatal("bounded list", len(page.Entries), err)
 	}
 	searchStarted := time.Now()
-	search, err := s.WorkbenchTree(ctx, l.ID, "", Query{Q: "file-09999", Revision: 1}, true)
+	search, err := workbenchTreeFixture(s, ctx, l.ID, "", Query{Q: "file-09999", Revision: 1}, true)
 	if err != nil || search.Total != 1 || search.Items[0].Path != "file-09999" {
 		t.Fatal("global workbench search", search, err)
 	}
-	window, err := s.WorkbenchTree(ctx, l.ID, "", Query{Revision: 1}, false)
+	window, err := workbenchTreeFixture(s, ctx, l.ID, "", Query{Revision: 1}, false)
 	if err != nil || len(window.Items) != 200 || window.Total != 10000 || window.Next == "" {
 		t.Fatal("bounded workbench window", len(window.Items), err)
 	}
