@@ -1,6 +1,9 @@
 package evolution
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // SupportsWorkflow checks advertised execution support without flattening a graph
 // into an opaque service. Health is advisory; disabled services cannot admit work.
@@ -39,4 +42,30 @@ func (s Service) SupportsWorkflow(w Workflow) error {
 		}
 	}
 	return nil
+}
+
+// SupportsClosure applies service capability checks to every expanded immutable
+// workflow, not just the wrapper graph. Validation retains all digest, interface,
+// recursion and nesting checks from ValidateClosure.
+func (s Service) SupportsClosure(ctx context.Context, w Workflow, resolver WorkflowResolver) error {
+	if err := s.SupportsWorkflow(w); err != nil {
+		return err
+	}
+	return ValidateClosure(ctx, w, capabilityResolver{service: s, resolver: resolver})
+}
+
+type capabilityResolver struct {
+	service  Service
+	resolver WorkflowResolver
+}
+
+func (r capabilityResolver) ResolveWorkflow(ctx context.Context, ref Revision) (Workflow, error) {
+	if r.resolver == nil {
+		return Workflow{}, fmt.Errorf("immutable workflow resolver required")
+	}
+	workflow, err := r.resolver.ResolveWorkflow(ctx, ref)
+	if err != nil {
+		return workflow, err
+	}
+	return workflow, r.service.SupportsWorkflow(workflow)
 }

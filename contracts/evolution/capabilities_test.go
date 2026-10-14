@@ -1,6 +1,9 @@
 package evolution
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestServiceWorkflowCapabilityMatching(t *testing.T) {
 	w := simpleWorkflow()
@@ -35,5 +38,20 @@ func TestServiceWorkflowCapabilityMatching(t *testing.T) {
 	w.Capabilities = nil
 	if service.SupportsWorkflow(w) == nil {
 		t.Fatal("disabled service accepted")
+	}
+}
+
+func TestServiceChecksNestedWorkflowCapabilities(t *testing.T) {
+	wrapper, body := nestedFixture(t)
+	service := Service{Ref: Revision{"native", 1, Digest([]byte("service"))}, Kind: "evolution", ConnectionID: "native", RunnerDigest: Digest([]byte("runner")), Enabled: true, Capabilities: Capabilities{ProtocolVersion: 1, WorkflowVersions: []int{1}, NodeKinds: []string{"subgraph"}}}
+	if err := service.SupportsWorkflow(wrapper); err != nil {
+		t.Fatal(err)
+	}
+	if service.SupportsClosure(context.Background(), wrapper, fixtureResolver{body.ID: body}) == nil {
+		t.Fatal("nested unsupported agent accepted")
+	}
+	service.Capabilities.NodeKinds = []string{"subgraph", "agent", "transform"}
+	if err := service.SupportsClosure(context.Background(), wrapper, fixtureResolver{body.ID: body}); err != nil {
+		t.Fatal(err)
 	}
 }
