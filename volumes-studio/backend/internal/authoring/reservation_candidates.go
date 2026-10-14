@@ -8,6 +8,9 @@ import (
 
 // An active generation remains authoritative until its candidate is adopted.
 func (s *Store) reserveEvolutionOutput(ctx context.Context, tx *sql.Tx, actor Actor, r PrefixReservation) (PrefixReservation, error) {
+	if err := sameEvolutionOutput(ctx, tx, r); err != nil {
+		return r, err
+	}
 	var prior PrefixReservation
 	err := tx.QueryRowContext(ctx, "SELECT owner_group_id,binding_id,generation,state,operation_id FROM evolution_prefix_reservations WHERE library_id=? AND prefix=?", r.LibraryID, r.Prefix).Scan(&prior.GroupID, &prior.BindingID, &prior.Generation, &prior.State, &prior.OperationID)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && prior.State != "active" {
@@ -64,4 +67,17 @@ func transitionEvolutionCandidate(ctx context.Context, tx *sql.Tx, r PrefixReser
 	}
 	_, err = tx.ExecContext(ctx, "DELETE FROM evolution_reservation_candidates WHERE library_id=? AND prefix=? AND operation_id=?", r.LibraryID, r.Prefix, r.OperationID)
 	return true, err
+}
+
+// Ordinary activation cannot transfer a binding's retained output ownership.
+// Transfers require their own impact/disposition operation, not another reserve.
+func sameEvolutionOutput(ctx context.Context, tx *sql.Tx, r PrefixReservation) error {
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM evolution_prefix_reservations WHERE owner_group_id=? AND binding_id=? AND state IN ('pending','active') AND (library_id<>? OR prefix<>?)`, r.GroupID, r.BindingID, r.LibraryID, r.Prefix).Scan(&count); err != nil {
+		return err
+	}
+	if count != 0 {
+		return ErrConflict
+	}
+	return nil
 }

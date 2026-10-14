@@ -129,6 +129,7 @@ func TestEvolutionConfigurationReservationAtomicAndLookupable(t *testing.T) {
 	}
 	assertCurrent(contender.OperationID, 2)
 	input.OperationID = "cancel-operation"
+	input.Configuration.Bindings[0].ID = "draft-binding"
 	input.Configuration.Bindings[0].Output.Prefix = "draft"
 	raw, _ = json.Marshal(input.Configuration)
 	input.Digest = evolution.Digest(raw)

@@ -33,6 +33,9 @@ func (s *Store) ReserveEvolutionPrefix(ctx context.Context, actor Actor, r Prefi
 	})
 }
 func (s *Store) reserveEvolutionPrefix(ctx context.Context, tx *sql.Tx, actor Actor, r PrefixReservation) (PrefixReservation, error) {
+	if err := sameEvolutionOutput(ctx, tx, r); err != nil {
+		return r, err
+	}
 	if err := writableReservationLibrary(ctx, tx, r.LibraryID); err != nil {
 		return r, err
 	}

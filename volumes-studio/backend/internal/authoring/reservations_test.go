@@ -236,3 +236,39 @@ func TestReleasedReservationRequiresNextGeneration(t *testing.T) {
 		t.Fatal(active, err)
 	}
 }
+
+func TestBindingCannotImplicitlyTransferRetainedOutput(t *testing.T) {
+	s, _ := testStore(t)
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	ctx := context.Background()
+	r := PrefixReservation{LibraryID: l.ID, Prefix: "skills", GroupID: "group", BindingID: "binding", Generation: 1, OperationID: "first"}
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	moved := r
+	moved.Prefix = "lessons"
+	moved.OperationID = "move"
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, moved, moved.OperationID); err != ErrConflict {
+		t.Fatal("pending ownership moved", err)
+	}
+	if _, err := s.ActivateEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, moved, moved.OperationID); err != ErrConflict {
+		t.Fatal("active ownership moved", err)
+	}
+	second, err := s.Create(ctx, testActor, CreateInput{RequestID: "second", Name: "Second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved.LibraryID = second.ID
+	moved.Prefix = "skills"
+	if _, err = s.ReserveEvolutionPrefix(ctx, testActor, moved, moved.OperationID); err != ErrConflict {
+		t.Fatal("cross-library ownership moved", err)
+	}
+	moved.BindingID = "independent"
+	if _, err = s.ReserveEvolutionPrefix(ctx, testActor, moved, moved.OperationID); err != nil {
+		t.Fatal("independent binding denied", err)
+	}
+}
