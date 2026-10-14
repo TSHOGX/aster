@@ -67,6 +67,7 @@ func adminPageLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
 func (a *Authentication) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/groups/{group}/optimization", a.evolutionConfiguration)
 	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/operations/{operation}", a.evolutionOperation)
+	mux.HandleFunc("POST /api/admin/groups/{group}/optimization/operations/{operation}/retry", a.retryEvolutionOperation)
 	mux.HandleFunc("POST /api/admin/groups/{group}/optimization/preview", a.previewEvolution)
 	mux.HandleFunc("POST /api/admin/groups/{group}/optimization/activate", a.activateEvolution)
 	mux.HandleFunc("POST /api/admin/groups/{group}/optimization/disable", a.disableEvolution)

@@ -43,25 +43,3 @@ func (s *Store) failEvolutionParticipant(ctx context.Context, tx *sql.Tx, actor,
 	}
 	return s.auditEvent(ctx, tx, actor, "evolution.activation.failed", "group", group, operation, 0, map[string]string{"participant": participant, "code": code})
 }
-func (s *Store) RetryEvolutionActivation(ctx context.Context, token, operation string) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
-		actor, err := s.adminSession(ctx, tx, token)
-		if err != nil {
-			return err
-		}
-		var group, state string
-		if err = tx.QueryRowContext(ctx, "SELECT group_id,state FROM evolution_group_configs WHERE operation_id=?", operation).Scan(&group, &state); err != nil {
-			return err
-		}
-		if state == "activating" {
-			return nil
-		}
-		if state != "failed" {
-			return ErrConflict
-		}
-		if _, err = tx.ExecContext(ctx, "UPDATE evolution_group_configs SET state='activating' WHERE operation_id=?", operation); err != nil {
-			return err
-		}
-		return s.auditEvent(ctx, tx, actor.ID, "evolution.activation.retry", "group", group, operation, 0, nil)
-	})
-}

@@ -136,7 +136,7 @@ func TestEvolutionFailureRetryRetainsAcceptedConfiguration(t *testing.T) {
 	if err = acceptEvolutionFixture(s, ctx, token, next.OperationID, "evaluation-space", nextDigest); err != ErrConflict {
 		t.Fatal("failure bypassed explicit retry", err)
 	}
-	must(t, s.RetryEvolutionActivation(ctx, token, next.OperationID))
+	must(t, s.RetryEvolutionOperation(ctx, token, StandardUsersGroup, next.OperationID, EvolutionRetryInput{RequestID: "retry", ExpectedRevision: next.DesiredRevision}))
 	must(t, acceptEvolutionFixture(s, ctx, token, next.OperationID, "evaluation-space", nextDigest))
 	settled, err := s.SettleEvolutionActivation(ctx, token, next.OperationID)
 	must(t, err)
@@ -180,7 +180,7 @@ func TestEvolutionActivationRecoveryAfterRestart(t *testing.T) {
 	if replay.OperationID != pending.OperationID {
 		t.Fatal("request replay admitted new operation")
 	}
-	must(t, s.RetryEvolutionActivation(ctx, token, pending.OperationID))
+	must(t, s.RetryEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, EvolutionRetryInput{RequestID: "retry", ExpectedRevision: pending.DesiredRevision}))
 	must(t, acceptEvolutionFixture(s, ctx, token, pending.OperationID, "evaluation-space", digest))
 	settled, err := s.SettleEvolutionActivation(ctx, token, pending.OperationID)
 	must(t, err)

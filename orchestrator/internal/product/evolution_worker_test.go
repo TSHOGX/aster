@@ -129,7 +129,7 @@ func TestEvolutionWorkerRecordsExplicitCatalogRejection(t *testing.T) {
 	if code != "catalog_rejected" {
 		t.Fatal(code)
 	}
-	must(t, s.RetryEvolutionActivation(ctx, token, pending.OperationID))
+	must(t, s.RetryEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, EvolutionRetryInput{RequestID: "retry", ExpectedRevision: pending.DesiredRevision}))
 	must(t, worker.Step(ctx))
 	if calls != 4 {
 		t.Fatal("explicit retry not dispatched", calls)

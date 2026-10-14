@@ -32,7 +32,7 @@ func TestEvolutionParticipantUsesSavedActorAndCurrentGrant(t *testing.T) {
 	if subject != admin.ID {
 		t.Fatal(subject)
 	}
-	must(t, s.RetryEvolutionActivation(ctx, token, pending.OperationID))
+	must(t, s.RetryEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, EvolutionRetryInput{RequestID: "retry", ExpectedRevision: pending.DesiredRevision}))
 	_, err = s.SetEvolutionGroupGrant(ctx, token, StandardUsersGroup, EvolutionGroupGrantInput{"deny", admin.ID, "config.manage", "deny", 0})
 	must(t, err)
 	if _, err = s.EvolutionParticipantActor(ctx, scope, "adopt"); err != ErrForbidden {

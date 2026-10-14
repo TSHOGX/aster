@@ -99,3 +99,16 @@ func (a *Authentication) evolutionOperation(w http.ResponseWriter, r *http.Reque
 	}
 	writeJSON(w, 200, value)
 }
+
+func (a *Authentication) retryEvolutionOperation(w http.ResponseWriter, r *http.Request) {
+	input, err := evolution.Decode[product.EvolutionRetryInput](http.MaxBytesReader(w, r.Body, 1<<16))
+	if err != nil {
+		writeError(w, 400, "invalid retry request")
+		return
+	}
+	if err = a.Store.RetryEvolutionOperation(r.Context(), requestToken(r), r.PathValue("group"), r.PathValue("operation"), input); err != nil {
+		adminFailure(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

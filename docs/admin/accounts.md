@@ -114,3 +114,12 @@ revision/digest plus recorded participant states and bounded failure codes. Miss
 participant entries mean no receipt has been recorded. `catalog_rejected` indicates
 Evaluation Space rejected the configuration's catalog validation. Operation lookup
 is scoped to the group and its current operation.
+
+After correcting a failed operation's cause, POST `request_id` and
+`expected_revision` to
+`/api/admin/groups/{group}/optimization/operations/{operation}/retry`.
+This requires `config.manage` and retains the same configuration and operation ID.
+A successful request returns `204`. Retry an uncertain response with the same
+request ID. If activation fails again, inspect the new failure and use a new
+request ID for another deliberate retry; replaying the previous request cannot
+restart a later failure.
