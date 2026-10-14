@@ -61,7 +61,11 @@ func (s *Store) ChargeRunUsage(ctx context.Context, lease RunLease, request stri
 	if err != nil {
 		return total, err
 	}
-	if usage.Tokens > run.Budget.MaxTokens-total.Tokens || usage.CostMicros > run.Budget.MaxCostMicros-total.CostMicros {
+	var held RunUsage
+	if err = tx.QueryRowContext(ctx, "SELECT coalesce(sum(tokens),0),coalesce(sum(cost_micros),0) FROM run_budget_reservations WHERE run_id=? AND state='held'", lease.RunID).Scan(&held.Tokens, &held.CostMicros); err != nil {
+		return total, err
+	}
+	if usage.Tokens > run.Budget.MaxTokens-total.Tokens-held.Tokens || usage.CostMicros > run.Budget.MaxCostMicros-total.CostMicros-held.CostMicros {
 		return total, ErrRunBudget
 	}
 	total.Tokens += usage.Tokens

@@ -65,7 +65,11 @@ CREATE TRIGGER immutable_artifact BEFORE UPDATE ON artifacts BEGIN SELECT RAISE(
 CREATE TRIGGER retained_artifact BEFORE DELETE ON artifacts BEGIN SELECT RAISE(ABORT,'retain artifact provenance'); END;
 CREATE TABLE run_usage_receipts(run_id TEXT NOT NULL REFERENCES runs(id),request_id TEXT NOT NULL,request BLOB NOT NULL,result BLOB NOT NULL,PRIMARY KEY(run_id,request_id));
 CREATE TRIGGER immutable_run_usage BEFORE UPDATE ON run_usage_receipts BEGIN SELECT RAISE(ABORT,'immutable usage receipt'); END;
-CREATE TRIGGER retained_run_usage BEFORE DELETE ON run_usage_receipts BEGIN SELECT RAISE(ABORT,'retain usage receipt'); END;`
+CREATE TRIGGER retained_run_usage BEFORE DELETE ON run_usage_receipts BEGIN SELECT RAISE(ABORT,'retain usage receipt'); END;
+CREATE TABLE run_budget_reservations(run_id TEXT NOT NULL REFERENCES runs(id),id TEXT NOT NULL,tokens INTEGER NOT NULL CHECK(tokens>=0),cost_micros INTEGER NOT NULL CHECK(cost_micros>=0),state TEXT NOT NULL CHECK(state IN ('held','settled')),actual_tokens INTEGER NOT NULL DEFAULT 0 CHECK(actual_tokens>=0),actual_cost_micros INTEGER NOT NULL DEFAULT 0 CHECK(actual_cost_micros>=0),PRIMARY KEY(run_id,id));
+CREATE TRIGGER immutable_budget_reservation BEFORE UPDATE OF run_id,id,tokens,cost_micros ON run_budget_reservations BEGIN SELECT RAISE(ABORT,'immutable budget reservation'); END;
+CREATE TRIGGER terminal_budget_reservation BEFORE UPDATE ON run_budget_reservations WHEN OLD.state='settled' BEGIN SELECT RAISE(ABORT,'settled budget reservation'); END;
+CREATE TRIGGER retained_budget_reservation BEFORE DELETE ON run_budget_reservations BEGIN SELECT RAISE(ABORT,'retain budget reservation'); END;`
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	if !filepath.IsAbs(path) {
