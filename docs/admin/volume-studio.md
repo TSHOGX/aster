@@ -15,7 +15,8 @@ version includes an empty `skills/` directory. These files mount read-only at
 
 ## Create and edit a library
 
-1. Open Studio and create a library.
+1. Open Studio and create a library. Choose **Ordinary data** or **Shared assets**;
+   the content profile cannot change after creation. Filter the catalog by profile.
 2. Add directories, create text files or upload files/folders.
 3. Edit files in tabs and save changes to the draft.
 4. Review Changes against the base version before publishing.
@@ -29,6 +30,16 @@ Empty files and directories retain their paths. Symlinks, special files, path
 traversal, invalid parents and directory names with leading/trailing whitespace
 are refused. Ordinary internal spaces are supported. A library version supports
 up to 256 MiB per file, 1 GiB total and 10,000 entries, subject to deployment capacity.
+Shared assets are limited to 8 MiB per file, 64 MiB total and 4,096 entries.
+Each skill may include supporting reference files alongside its `SKILL.md`.
+Runtime state and secret paths, including `.env`, `.ssh` and `.aws`, are refused.
+
+For shared assets, the validation panel reports path-specific problems, skill count,
+reference-file warnings and an `AGENTS.md` text preview. Drafts may be incomplete;
+publication repeats structure, encoding and content-integrity checks. The built-in
+Aster library starts with published `v1`, containing only `AGENTS.md` and an empty
+`skills/` directory. Extend its draft and publish a new version; the original
+version remains immutable. Scheduling is supplied by runtime tools, not a skill.
 
 ## Handle concurrent edits and recovery
 
@@ -70,10 +81,12 @@ disabled or demoted, unfinished work pauses for reassignment by another administ
 1. Open **Administration → Resource Center → Volumes**.
 2. Select a release from an operator-configured trusted Studio source and import it.
 3. Follow acquisition and preparation until the local artifact is ready.
-4. Select that exact version in an environment as read-only shared data, an owned
-   workspace seed, or independent owned data, as permitted by the source and policy.
+4. Select an ordinary data version as shared data, a workspace seed or independent
+   data as permitted by policy. Select a shared-assets version in the environment
+   **Shared assets** row. The profiles cannot be interchanged.
 5. Save the template for new Projects. To change existing compatible read-only
-   data mounts, separately [publish an environment update](environment-updates.md).
+   data or shared-assets mounts, separately [review a rollout](environment-updates.md).
+   Importing or publishing alone never changes an environment or retained Project.
 
 An import may be acquiring bytes, preparing runtime storage, failed or awaiting
 cleanup. Source catalog availability is separate from local readiness. Once acquired,

@@ -44,7 +44,7 @@ keep qualification records private. Runtime assembly and registration are covere
 in [runtime inventory](runtime-inventory.md).
 
 To assemble the application, independent Studio bundle, pinned engine and a fresh
-guest runtime together from one committed revision, use `scripts/rebuild.py` on
+Minimal and Work guest runtimes together from one committed revision, use `scripts/rebuild.py` on
 a privileged Linux builder with the runtime prerequisites above. See the
 [installation tools](../../scripts/README.md) for arguments and current limitations.
 The builder does not activate services. Use a new output directory and qualify
@@ -55,8 +55,9 @@ the complete build before deployment.
 Copy [application.example.json](../../config/application.example.json) to a private
 configuration location such as `/etc/agent-workbench/application.json`. Review every
 path: relative paths resolve against that file's directory, not the checkout.
-Replace the engine store identity, manifest path/digest, service endpoints and
-content paths. The example denies guest egress until you declare it.
+Replace the engine store identity, Minimal and Work manifest paths/digests, service endpoints and
+content paths. Set `public_dns_resolvers` for the Public built-in. Restricted is
+the standard-user default.
 
 Read [configuration](configuration.md) before enabling model gateways: deployments
 using Khora's dedicated gateway UID need reachable **non-loopback** engine TLS,
@@ -64,7 +65,7 @@ frontend and model-upstream addresses. The example's loopback topology alone is
 not a complete Agent deployment.
 
 Keep the initial template/content/resource declarations for bootstrap. Confirm that
-the referenced engine template is installed, that its manifest matches, and that
+both referenced engine templates are installed, their manifests match, and
 the content directories contain only reviewed material.
 
 ## Bootstrap the first administrator
@@ -80,7 +81,8 @@ orchestrator account bootstrap \
 
 Use the verified candidate's executable for `orchestrator` in these commands.
 Bootstrap creates the first administrator, standard group/policy, resource bounds
-and initial environment registrations. It refuses to overwrite an existing account
+and initial environment registrations: `standard-agent` uses Minimal and is granted
+to standard users; `work-environment` uses Work and needs an explicit policy grant. It refuses to overwrite an existing account
 database. Passwords are not command-line arguments; requirements are documented
 under [account administration](../admin/accounts.md).
 
