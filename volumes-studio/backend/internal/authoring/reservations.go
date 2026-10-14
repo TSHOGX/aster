@@ -26,6 +26,9 @@ func (s *Store) ReserveEvolutionPrefix(ctx context.Context, actor Actor, r Prefi
 		return r, ErrInvalid
 	}
 	return s.reservationResult(ctx, actor, r.LibraryID, func(tx *sql.Tx, actor Actor) (PrefixReservation, error) {
+		if err := standaloneReservation(ctx, tx, r.OperationID); err != nil {
+			return r, err
+		}
 		return s.reserveEvolutionPrefix(ctx, tx, actor, r)
 	})
 }
@@ -85,6 +88,9 @@ func (s *Store) reserveEvolutionPrefix(ctx context.Context, tx *sql.Tx, actor Ac
 func (s *Store) ActivateEvolutionPrefix(ctx context.Context, actor Actor, operation, library, prefix string, expectedGeneration int64) (PrefixReservation, error) {
 	var r PrefixReservation
 	err := s.reservationWrite(ctx, actor, library, func(tx *sql.Tx) error {
+		if err := standaloneReservation(ctx, tx, operation); err != nil {
+			return err
+		}
 		if err := writableReservationLibrary(ctx, tx, library); err != nil {
 			return err
 		}
@@ -109,6 +115,9 @@ func (s *Store) ActivateEvolutionPrefix(ctx context.Context, actor Actor, operat
 }
 func (s *Store) ReleaseEvolutionPrefix(ctx context.Context, actor Actor, operation, library, prefix string) error {
 	return s.reservationWrite(ctx, actor, library, func(tx *sql.Tx) error {
+		if err := standaloneReservation(ctx, tx, operation); err != nil {
+			return err
+		}
 		var err error
 		var state string
 		err = tx.QueryRowContext(ctx, "SELECT state FROM evolution_prefix_reservations WHERE operation_id=? AND library_id=? AND prefix=?", operation, library, prefix).Scan(&state)
@@ -163,6 +172,17 @@ func writableReservationLibrary(ctx context.Context, tx *sql.Tx, library string)
 		return normalizeDB(err)
 	}
 	if archived {
+		return ErrConflict
+	}
+	return nil
+}
+
+func standaloneReservation(ctx context.Context, tx *sql.Tx, operation string) error {
+	var count int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_reservation_operations WHERE operation_id=?", operation).Scan(&count); err != nil {
+		return err
+	}
+	if count != 0 {
 		return ErrConflict
 	}
 	return nil

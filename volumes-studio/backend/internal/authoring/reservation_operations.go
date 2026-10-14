@@ -99,3 +99,81 @@ func (s *Store) EvolutionReservationOperation(ctx context.Context, actor Actor, 
 	}
 	return evolution.ActivationReceipt{Participant: "studio", OperationID: operation, ConfigurationDigest: stored, Generation: revision, State: state}, nil
 }
+
+func (s *Store) AdoptEvolutionConfiguration(ctx context.Context, actor Actor, operation, digest string) (evolution.ActivationReceipt, error) {
+	return s.transitionEvolutionReservation(ctx, actor, operation, digest, "adopted")
+}
+func (s *Store) CancelEvolutionReservation(ctx context.Context, actor Actor, operation, digest string) (evolution.ActivationReceipt, error) {
+	return s.transitionEvolutionReservation(ctx, actor, operation, digest, "released")
+}
+
+// Transition every output and the operation receipt in one transaction. A
+// cancellation can release pending work only, never already adopted ownership.
+func (s *Store) transitionEvolutionReservation(ctx context.Context, actor Actor, operation, digest, target string) (evolution.ActivationReceipt, error) {
+	result, err := s.EvolutionReservationOperation(ctx, actor, operation, digest)
+	if err != nil {
+		return result, err
+	}
+	var body string
+	if err = s.db.QueryRowContext(ctx, "SELECT body FROM evolution_reservation_operations WHERE operation_id=?", operation).Scan(&body); err != nil {
+		return result, normalizeDB(err)
+	}
+	var config evolution.Configuration
+	if json.Unmarshal([]byte(body), &config) != nil || evolution.Digest([]byte(body)) != digest {
+		return result, ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.poisoned {
+		return result, ErrBusy
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
+	var state string
+	if err = tx.QueryRowContext(ctx, "SELECT state FROM evolution_reservation_operations WHERE operation_id=? AND digest=?", operation, digest).Scan(&state); err != nil {
+		return result, normalizeDB(err)
+	}
+	if state == target {
+		result.State = target
+		return result, nil
+	}
+	if state != "reserved" {
+		return result, ErrConflict
+	}
+	prefixState := "released"
+	if target == "adopted" {
+		prefixState = "active"
+	}
+	for _, binding := range config.Bindings {
+		if target == "adopted" {
+			if err = writableReservationLibrary(ctx, tx, binding.Output.LibraryID); err != nil {
+				return result, err
+			}
+		}
+		changed, err := tx.ExecContext(ctx, `UPDATE evolution_prefix_reservations SET state=? WHERE operation_id=? AND library_id=? AND prefix=? AND owner_group_id=? AND binding_id=? AND generation=? AND state='pending'`, prefixState, operation, binding.Output.LibraryID, binding.Output.Prefix, config.GroupID, binding.ID, binding.Output.ReservationGeneration)
+		if err != nil {
+			return result, err
+		}
+		count, err := changed.RowsAffected()
+		if err != nil {
+			return result, err
+		}
+		if count != 1 {
+			return result, ErrConflict
+		}
+		if err = s.reservationAudit(ctx, tx, actor, "evolution.configuration."+target, binding.Output.LibraryID, operation, binding.Output.ReservationGeneration); err != nil {
+			return result, err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE evolution_reservation_operations SET state=? WHERE operation_id=?", target, operation); err != nil {
+		return result, err
+	}
+	if err = tx.Commit(); err != nil {
+		return result, err
+	}
+	result.State = target
+	return result, nil
+}

@@ -59,4 +59,72 @@ func TestEvolutionConfigurationReservationAtomicAndLookupable(t *testing.T) {
 	if _, err = s.EvolutionReservationOperation(ctx, testActor, input.OperationID, input.Digest); err == nil {
 		t.Fatal("lookup ignored revoked authority")
 	}
+	s.config.Authority = &branchAuthority{true}
+	if _, err = s.ActivateEvolutionPrefix(ctx, testActor, input.OperationID, l.ID, "skills", 1); err != ErrConflict {
+		t.Fatal("partial batch activation allowed", err)
+	}
+	if err = s.ReleaseEvolutionPrefix(ctx, testActor, input.OperationID, l.ID, "skills"); err != ErrConflict {
+		t.Fatal("partial batch release allowed", err)
+	}
+	adopted, err := s.AdoptEvolutionConfiguration(ctx, testActor, input.OperationID, input.Digest)
+	if err != nil || adopted.State != "adopted" {
+		t.Fatal(adopted, err)
+	}
+	replay, err = s.AdoptEvolutionConfiguration(ctx, testActor, input.OperationID, input.Digest)
+	if err != nil || replay != adopted {
+		t.Fatal("adoption replay", err)
+	}
+	if _, err = s.CancelEvolutionReservation(ctx, testActor, input.OperationID, input.Digest); err != ErrConflict {
+		t.Fatal("adopted ownership released", err)
+	}
+	input.OperationID = "cancel-operation"
+	input.Configuration.Bindings[0].Output.Prefix = "draft"
+	raw, _ = json.Marshal(input.Configuration)
+	input.Digest = evolution.Digest(raw)
+	if _, err = s.ReserveEvolutionConfiguration(ctx, testActor, input); err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err := s.CancelEvolutionReservation(ctx, testActor, input.OperationID, input.Digest)
+	if err != nil || cancelled.State != "released" {
+		t.Fatal(cancelled, err)
+	}
+	replay, err = s.CancelEvolutionReservation(ctx, testActor, input.OperationID, input.Digest)
+	if err != nil || replay != cancelled {
+		t.Fatal("cancellation replay", err)
+	}
+	if _, err = s.AdoptEvolutionConfiguration(ctx, testActor, input.OperationID, input.Digest); err != ErrConflict {
+		t.Fatal("cancelled operation resurrected", err)
+	}
+
+	second, err := s.Create(ctx, testActor, CreateInput{RequestID: "second-library", Name: "Second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstBinding := input.Configuration.Bindings[0]
+	firstBinding.ID = "first-batch"
+	firstBinding.Output.Prefix = "atomic"
+	secondBinding := firstBinding
+	secondBinding.ID = "second-batch"
+	secondBinding.Output.LibraryID = second.ID
+	input.Configuration.Bindings = []evolution.Binding{firstBinding, secondBinding}
+	input.OperationID = "atomic-adopt"
+	raw, _ = json.Marshal(input.Configuration)
+	input.Digest = evolution.Digest(raw)
+	if _, err = s.ReserveEvolutionConfiguration(ctx, testActor, input); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.ExecContext(ctx, "UPDATE libraries SET archived=1 WHERE id=?", second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.AdoptEvolutionConfiguration(ctx, testActor, input.OperationID, input.Digest); err != ErrConflict {
+		t.Fatal("archived output adopted", err)
+	}
+	var state string
+	if err = s.db.QueryRowContext(ctx, "SELECT state FROM evolution_prefix_reservations WHERE operation_id=? AND library_id=?", input.OperationID, l.ID).Scan(&state); err != nil || state != "pending" {
+		t.Fatal("partial adoption escaped rollback", state, err)
+	}
+	if _, err = s.CancelEvolutionReservation(ctx, testActor, input.OperationID, input.Digest); err != nil {
+		t.Fatal("archived batch cleanup failed", err)
+	}
+
 }
