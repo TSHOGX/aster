@@ -38,4 +38,23 @@ func TestGroupCatalogHTTPRouteAndAuthentication(t *testing.T) {
 	if response.Code != 403 {
 		t.Fatal("unrelated group discovery", response.Code, response.Body.String())
 	}
+	created, err := store.CreateAccount(ctx, token, product.AccountCreate{RequestID: "ordinary", Username: "catalog-reader", DisplayName: "Reader", Role: "user"})
+	must(t, err)
+	_, temporary, err := store.Authenticate(ctx, "catalog-reader", created.TemporaryPassword)
+	must(t, err)
+	response = call(temporary, product.StandardUsersGroup)
+	if response.Code == 200 {
+		t.Fatal("restricted session reached group discovery")
+	}
+	_, memberToken, err := store.ChangePassword(ctx, temporary, "", "permanent-reader-password", true)
+	must(t, err)
+	response = call(memberToken, product.StandardUsersGroup)
+	if response.Code != 200 {
+		t.Fatal("ordinary member denied by HTTP", response.Code, response.Body.String())
+	}
+	response = call(memberToken, "unrelated")
+	if response.Code != 403 {
+		t.Fatal("ordinary member crossed group", response.Code, response.Body.String())
+	}
+
 }
