@@ -72,7 +72,7 @@ func TestWorkbenchTreeEntryAndPinnedContent(t *testing.T) {
 	if _, err = s.WorkbenchTree(ctx, l.ID, "", Query{Limit: 1, Cursor: p.Next, Revision: p.Revision}, false); err != ErrConflict {
 		t.Fatal("stale page", err)
 	}
-	if r, _, err := s.Content(ctx, l.ID, "文档/a_%.md", "", e.Revision); err != ErrConflict {
+	if r, _, err := contentFixture(s, ctx, l.ID, "文档/a_%.md", "", e.Revision); err != ErrConflict {
 		if r != nil {
 			r.Close()
 		}

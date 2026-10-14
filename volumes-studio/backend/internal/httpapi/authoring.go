@@ -209,7 +209,7 @@ func (a *AuthoringAPI) content(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 416, "single_range_required")
 		return
 	}
-	reader, e, err := a.Store.Content(r.Context(), r.PathValue("library"), r.URL.Query().Get("path"), r.PathValue("version"), revision(r))
+	reader, e, err := a.Store.Content(r.Context(), r.PathValue("library"), r.URL.Query().Get("path"), r.PathValue("version"))
 	if err != nil {
 		authoringError(w, err)
 		return

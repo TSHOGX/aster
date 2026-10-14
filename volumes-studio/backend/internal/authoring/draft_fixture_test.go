@@ -8,8 +8,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io"
+	"os"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 type fixtureMutation struct {
@@ -379,4 +382,49 @@ func workbenchDiffFixture(s *Store, ctx context.Context, id string, q Query) (Pa
 		out = append(out, item)
 	}
 	return pageOf(out, q, id+"/diff", 200)
+}
+
+func contentFixture(s *Store, ctx context.Context, id, name, version string, expectedRevision ...int64) (io.ReadSeekCloser, manifest.Entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if version == "" && len(expectedRevision) > 0 && expectedRevision[0] != 0 {
+		l, err := s.Library(ctx, id)
+		if err != nil {
+			return nil, manifest.Entry{}, err
+		}
+		if l.DraftRevision != expectedRevision[0] {
+			return nil, manifest.Entry{}, ErrConflict
+		}
+	}
+	if manifest.ValidPath(name, false) != nil {
+		return nil, manifest.Entry{}, ErrInvalid
+	}
+	var e manifest.Entry
+	var size int64
+	query := `SELECT path,kind,size,coalesce(digest,'') FROM draft_entries WHERE library_id=? AND path=?`
+	key := id
+	if version != "" {
+		var owner, state string
+		if err := s.db.QueryRowContext(ctx, "SELECT library_id,state FROM versions WHERE id=?", version).Scan(&owner, &state); err != nil {
+			return nil, e, normalizeDB(err)
+		}
+		if owner != id || (state != "published" && state != "archived") {
+			return nil, e, ErrNotFound
+		}
+		query = `SELECT path,kind,size,coalesce(digest,'') FROM version_entries WHERE version_id=? AND path=?`
+		key = version
+	}
+	if err := s.db.QueryRowContext(ctx, query, key, name).Scan(&e.Path, &e.Kind, &size, &e.Digest); err != nil {
+		return nil, e, normalizeDB(err)
+	}
+	if e.Kind != "file" || !manifest.ValidDigest(e.Digest) {
+		return nil, e, ErrInvalid
+	}
+	e.Size = strconv.FormatInt(size, 10)
+	f, err := os.OpenFile(s.blobPath(e.Digest), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, e, err
+	}
+	s.readers[e.Digest]++
+	return &pinnedFile{File: f, store: s, digest: e.Digest}, e, nil
 }

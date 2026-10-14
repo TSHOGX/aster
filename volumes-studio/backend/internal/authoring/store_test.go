@@ -76,7 +76,7 @@ func TestRevisionReceiptsFreezeRestoreAndRestart(t *testing.T) {
 	if worked, err := s.ValidateNext(ctx, allow); err != nil || !worked {
 		t.Fatal(worked, err)
 	}
-	read, entry, err := s.Content(ctx, l.ID, "readme.txt", v.ID)
+	read, entry, err := contentFixture(s, ctx, l.ID, "readme.txt", v.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestBlobGCHonorsReaderAndFrozenVersionPins(t *testing.T) {
 	ctx := context.Background()
 	l := library(t, s)
 	mutate(t, s, l.ID, fixtureMutation{RequestID: "one", ExpectedRevision: 1, Action: "text", Path: "one", Text: "retained"})
-	reader, entry, err := s.Content(ctx, l.ID, "one", "")
+	reader, entry, err := contentFixture(s, ctx, l.ID, "one", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +284,7 @@ func TestQuotaPreservesExistingDraftAndEmptyTreeRejected(t *testing.T) {
 	if _, err := mutateFixture(s, ctx, testActor, l.ID, fixtureMutation{RequestID: "large", ExpectedRevision: 2, Action: "text", Path: "file", Text: strings.Repeat("a", MaxTextBytes)}); !errors.Is(err, ErrQuota) {
 		t.Fatal("quota", err)
 	}
-	f, _, err := s.Content(ctx, l.ID, "file", "")
+	f, _, err := contentFixture(s, ctx, l.ID, "file", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,11 +392,11 @@ func TestSourceContentReaderCannotBeCollectedByRepeatedClose(t *testing.T) {
 	l := library(t, s)
 	ctx := context.Background()
 	mutate(t, s, l.ID, fixtureMutation{RequestID: "file", ExpectedRevision: 1, Action: "text", Path: "file", Text: "same"})
-	first, _, err := s.Content(ctx, l.ID, "file", "")
+	first, _, err := contentFixture(s, ctx, l.ID, "file", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := s.Content(ctx, l.ID, "file", "")
+	second, _, err := contentFixture(s, ctx, l.ID, "file", "")
 	if err != nil {
 		t.Fatal(err)
 	}
