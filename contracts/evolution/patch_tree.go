@@ -26,14 +26,30 @@ func (p Patch) ApplyTree(output OutputBinding, base []manifest.Entry) ([]manifes
 	for _, e := range base {
 		tree[e.Path] = e
 	}
+	paths := make([]string, 0, len(p.Entries))
+	for _, operation := range p.Entries {
+		paths = append(paths, operation.Path)
+	}
+	sort.Strings(paths)
+	basePaths := make([]string, 0, len(base))
+	for _, entry := range base {
+		basePaths = append(basePaths, entry.Path)
+	}
+	sort.Strings(basePaths)
+	removeDescendants := func(parent string) {
+		prefix := parent + "/"
+		for i := sort.SearchStrings(basePaths, prefix); i < len(basePaths) && strings.HasPrefix(basePaths[i], prefix); i++ {
+			delete(tree, basePaths[i])
+		}
+	}
 	for _, operation := range p.Entries {
 		before, exists := tree[operation.Path]
 		destructive := operation.Operation == "remove" || (exists && before.Kind == "directory" && operation.Kind == "file")
 		if destructive {
-			for _, other := range p.Entries {
-				if strings.HasPrefix(other.Path, operation.Path+"/") {
-					return nil, fmt.Errorf("overlapping destructive patch operations")
-				}
+			prefix := operation.Path + "/"
+			i := sort.SearchStrings(paths, prefix)
+			if i < len(paths) && strings.HasPrefix(paths[i], prefix) {
+				return nil, fmt.Errorf("overlapping destructive patch operations")
 			}
 		}
 		if operation.Operation == "remove" && (!exists || before.Kind != operation.Kind) {
@@ -43,19 +59,12 @@ func (p Patch) ApplyTree(output OutputBinding, base []manifest.Entry) ([]manifes
 	// Validation above reads only the immutable base, never partially applied edits.
 	for _, operation := range p.Entries {
 		if operation.Operation == "remove" {
-			for name := range tree {
-				if name == operation.Path || strings.HasPrefix(name, operation.Path+"/") {
-					delete(tree, name)
-				}
-			}
+			delete(tree, operation.Path)
+			removeDescendants(operation.Path)
 			continue
 		}
 		if operation.Kind == "file" {
-			for name := range tree {
-				if strings.HasPrefix(name, operation.Path+"/") {
-					delete(tree, name)
-				}
-			}
+			removeDescendants(operation.Path)
 			tree[operation.Path] = manifest.Entry{Path: operation.Path, Kind: "file", Size: strconv.FormatInt(operation.Artifact.Size, 10), Digest: operation.Artifact.Digest}
 		} else {
 			tree[operation.Path] = manifest.Entry{Path: operation.Path, Kind: "directory", Size: "0"}

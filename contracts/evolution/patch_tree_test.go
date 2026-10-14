@@ -35,3 +35,17 @@ func TestPatchRejectsAmbiguousRemovalAndMissingParents(t *testing.T) {
 		t.Fatal("missing parent accepted")
 	}
 }
+
+func TestPatchDestructivePrefixSearchHandlesLexicalNeighbors(t *testing.T) {
+	base := []manifest.Entry{{Path: "skills", Kind: "directory", Size: "0"}, {Path: "skills/a", Kind: "directory", Size: "0"}}
+	output := OutputBinding{"library", "skills", "authored-v1", 1}
+	patch := Patch{RunID: "run", Fence: 1, Base: ContentRef{"library", strings.Repeat("a", 64), output.Profile, manifest.TreeDigest(base)}, ReservationGeneration: 1, Entries: []PatchEntry{{Operation: "remove", Path: "skills/a", Kind: "directory"}, {Operation: "put", Path: "skills/a-else", Kind: "directory"}, {Operation: "put", Path: "skills/a/child", Kind: "directory"}}}
+	if _, err := patch.ApplyTree(output, base); err == nil {
+		t.Fatal("lexical neighbor hid destructive overlap")
+	}
+	patch.Entries = patch.Entries[:2]
+	result, err := patch.ApplyTree(output, base)
+	if err != nil || len(result) != 2 || result[1].Path != "skills/a-else" {
+		t.Fatal(result, err)
+	}
+}
