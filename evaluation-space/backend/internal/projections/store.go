@@ -50,7 +50,10 @@ CREATE TABLE service_state_receipts(request_id TEXT PRIMARY KEY,request TEXT NOT
 CREATE TABLE runs(worker_id TEXT NOT NULL DEFAULT '',fence INTEGER NOT NULL DEFAULT 0 CHECK(fence>=0),lease_until INTEGER NOT NULL DEFAULT 0,id TEXT PRIMARY KEY,group_id TEXT NOT NULL,binding_id TEXT NOT NULL,configuration_revision INTEGER NOT NULL,occurrence_id TEXT NOT NULL,request BLOB NOT NULL,body BLOB NOT NULL,state TEXT NOT NULL CHECK(state IN ('queued','running','paused','completed','failed','cancelled')),UNIQUE(group_id,binding_id,configuration_revision,occurrence_id));
 CREATE UNIQUE INDEX one_active_binding_run ON runs(group_id,binding_id) WHERE state IN ('queued','running','paused');
 CREATE TRIGGER immutable_run_admission BEFORE UPDATE OF id,group_id,binding_id,configuration_revision,occurrence_id,request,body ON runs BEGIN SELECT RAISE(ABORT,'immutable run admission'); END;
-CREATE TRIGGER retained_run BEFORE DELETE ON runs BEGIN SELECT RAISE(ABORT,'retain run provenance'); END;`
+CREATE TRIGGER retained_run BEFORE DELETE ON runs BEGIN SELECT RAISE(ABORT,'retain run provenance'); END;
+CREATE TABLE run_control_receipts(request_id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id),request BLOB NOT NULL,result BLOB NOT NULL);
+CREATE TRIGGER immutable_run_control BEFORE UPDATE ON run_control_receipts BEGIN SELECT RAISE(ABORT,'immutable run control receipt'); END;
+CREATE TRIGGER retained_run_control BEFORE DELETE ON run_control_receipts BEGIN SELECT RAISE(ABORT,'retain run control receipt'); END;`
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	if !filepath.IsAbs(path) {
