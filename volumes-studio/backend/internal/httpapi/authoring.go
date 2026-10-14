@@ -53,7 +53,7 @@ func NewAuthoringAPI(store *authoring.Store) *AuthoringAPI {
 	m.HandleFunc("DELETE "+apiPrefix+"libraries/{library}/uploads/{upload}", a.uploadCancel)
 	m.HandleFunc("GET "+apiPrefix+"operations/{operation}", a.operation)
 	m.HandleFunc("POST "+apiPrefix+"operations/{operation}/{action}", a.operationAction)
-	m.HandleFunc("GET "+apiPrefix+"events", a.events)
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/events", a.events)
 	return a
 }
 func (a *AuthoringAPI) Serve(session identity.Session, w http.ResponseWriter, r *http.Request) {
@@ -380,7 +380,7 @@ func (a *AuthoringAPI) events(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 422, "invalid_cursor")
 		return
 	}
-	events, err := a.Store.Events(r.Context(), after)
+	events, err := a.Store.Events(r.Context(), actor(r), r.PathValue("library"), after)
 	next := after
 	if len(events) > 0 {
 		next = events[len(events)-1].Sequence

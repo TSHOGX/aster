@@ -1,6 +1,7 @@
 package authoring
 
 import (
+	manifest "aster/contracts/volumemanifest"
 	"context"
 	"strings"
 )
@@ -147,8 +148,14 @@ type Event struct {
 	Revision  int64  `json:"revision"`
 }
 
-func (s *Store) Events(ctx context.Context, after int64) ([]Event, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT sequence,action,library_id,revision FROM audit WHERE sequence>? ORDER BY sequence LIMIT 200", after)
+func (s *Store) Events(ctx context.Context, actor Actor, library string, after int64) ([]Event, error) {
+	if after < 0 || !manifest.ValidID(library) {
+		return nil, ErrInvalid
+	}
+	if err := s.authorizeLibrary(ctx, actor, library, "volume.read"); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, "WITH scoped AS (SELECT row_number() OVER (ORDER BY sequence) AS sequence,action,library_id,revision FROM audit WHERE library_id=?) SELECT sequence,action,library_id,revision FROM scoped WHERE sequence>? ORDER BY sequence LIMIT 200", library, after)
 	if err != nil {
 		return nil, err
 	}
