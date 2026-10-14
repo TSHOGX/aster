@@ -233,3 +233,9 @@ configure central dispatch with `studio_participant.endpoint` and
 participant secret. This requires `evaluation_space` configuration as well. The
 worker reserves Studio outputs before Evaluation Space adoption, then adopts Studio
 reservations and settles only after both exact receipts are recorded.
+
+Register Evaluation Space in central `identity.clients` with ID `evaluation-space`
+and the exact callback `${identity.issuer}/evaluation-space/auth/callback`.
+Studio's callback remains `${identity.issuer}/volumes-studio/auth/callback`.
+The two services cannot exchange callback paths. Each registration references its
+own identity credential environment variable; participant credentials are separate.
