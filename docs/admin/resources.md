@@ -11,8 +11,9 @@ groups supply defaults; account settings can select among authorized choices.
 1. Ensure the operator has registered an enabled, compatible sandbox release and
    any required content. Imported Studio versions must be locally ready.
 2. Provision shared directories and wait for **ready** before using them in a template.
-3. Create the network and environment templates. Select exact source versions,
-   destinations and access modes, then preview and save.
+3. Select the immutable Restricted or Public network built-in and create or edit
+   environment templates. Select exact source versions, destinations and access
+   modes, then preview and save. Copy a built-in before customizing it.
 4. Grant the templates through policies. Each policy grants at most one network
    and one environment template; grant shared-directory access separately.
 5. Bind policies to a group and select defaults granted by that group's own policies.
@@ -46,8 +47,9 @@ Direct rules allow IPv4 CIDR, port and protocol (`tcp` or `udp`) combinations.
 They are not domain-name or HTTP filters. DNS resolvers authorize UDP port 53;
 TCP fallback needs an explicit TCP/53 rule. DNS alone does not grant HTTPS access.
 
-For general public web access, declare TCP ports 80 and 443 for `0.0.0.0/0`, plus
-DNS resolvers. This wildcard covers public IPv4 ranges; it excludes private,
+The Restricted built-in has no direct or DNS rules and is the standard-user
+default. The Public built-in permits TCP ports 80 and 443 for `0.0.0.0/0` plus
+deployment-provided DNS resolvers. This wildcard covers public IPv4 ranges; it excludes private,
 loopback, link-local, shared, multicast and reserved ranges. It does not grant
 IPv6 or other ports. More specific rules and engine restrictions still apply.
 The operator must also provide functioning forwarding/NAT and upstream access.

@@ -7,6 +7,12 @@ immutable versions. Aster imports a version into local storage before Projects
 can use it. Studio publication and Aster availability are separate steps.
 You need an active central administrator account to author in Studio.
 
+Shared-assets libraries use the immutable `shared-assets-v1` profile and are
+available only to administrators. A published version must contain root
+`AGENTS.md`; skill entries must be directories containing `SKILL.md`. The base
+version includes an empty `skills/` directory. These files mount read-only at
+`/opt/shared-assets` as system context rather than ordinary Project data.
+
 ## Create and edit a library
 
 1. Open Studio and create a library.
