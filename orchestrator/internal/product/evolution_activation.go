@@ -38,7 +38,11 @@ func (s *Store) EvolutionConfig(ctx context.Context, token, group string) (Evolu
 	})
 	return c, err
 }
-func (s *Store) SaveEvolutionConfig(ctx context.Context, token, group string, input EvolutionActivationInput) (EvolutionGroupConfig, error) {
+func (s *Store) ActivateEvolutionConfig(ctx context.Context, token, group string, input EvolutionActivationInput) (EvolutionGroupConfig, error) {
+	return s.activateEvolutionConfig(ctx, token, group, input, 0)
+}
+
+func (s *Store) activateEvolutionConfig(ctx context.Context, token, group string, input EvolutionActivationInput, draftRevision int64) (EvolutionGroupConfig, error) {
 	var result EvolutionGroupConfig
 	if !validID(group) || input.ExpectedRevision < 0 || input.Configuration.GroupID != group || input.Configuration.Revision != input.ExpectedRevision+1 || input.Configuration.Validate() != nil {
 		return result, ErrInvalid
@@ -48,7 +52,10 @@ func (s *Store) SaveEvolutionConfig(ctx context.Context, token, group string, in
 		return result, ErrInvalid
 	}
 	digest := evolution.Digest(body)
-	request, err := mutationRequest(input.RequestID, "evolution.config.save", group, input)
+	request, err := mutationRequest(input.RequestID, "evolution.config.activate", group, struct {
+		Input         EvolutionActivationInput
+		DraftRevision int64
+	}{input, draftRevision})
 	if err != nil {
 		return result, err
 	}
@@ -63,6 +70,15 @@ func (s *Store) SaveEvolutionConfig(ctx context.Context, token, group string, in
 		}
 		if replayed {
 			return json.Unmarshal(raw, &result)
+		}
+		if draftRevision > 0 {
+			var currentDraft int64
+			if err := tx.QueryRowContext(ctx, "SELECT revision FROM evolution_configuration_drafts WHERE group_id=? ORDER BY revision DESC LIMIT 1", group).Scan(&currentDraft); err != nil {
+				return err
+			}
+			if currentDraft != draftRevision {
+				return ErrConflict
+			}
 		}
 		var current EvolutionGroupConfig
 		scanErr := tx.QueryRowContext(ctx, "SELECT group_id,desired_revision,active_revision,desired_digest,active_digest,auto_enabled,state,operation_id FROM evolution_group_configs WHERE group_id=?", group).Scan(&current.GroupID, &current.DesiredRevision, &current.ActiveRevision, &current.DesiredDigest, &current.ActiveDigest, &current.AutoEnabled, &current.State, &current.OperationID)
@@ -92,7 +108,7 @@ func (s *Store) SaveEvolutionConfig(ctx context.Context, token, group string, in
 		if err = s.writeAdminReceipt(ctx, tx, actor.ID, request, raw); err != nil {
 			return err
 		}
-		return s.auditEvent(ctx, tx, actor.ID, "evolution.config.save", "group", group, "", result.DesiredRevision, result)
+		return s.auditEvent(ctx, tx, actor.ID, "evolution.config.activate", "group", group, "", result.DesiredRevision, result)
 	})
 	return result, err
 }

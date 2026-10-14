@@ -18,7 +18,7 @@ func TestEvolutionActivationDesiredActiveReceipts(t *testing.T) {
 	if err == nil || current.GroupID != "" {
 		t.Fatal("unexpected uninitialized config", current, err)
 	}
-	desired, err := s.SaveEvolutionConfig(ctx, token, group, EvolutionActivationInput{"config", 0, activationConfigFixture(0+1, true)})
+	desired, err := s.ActivateEvolutionConfig(ctx, token, group, EvolutionActivationInput{"config", 0, activationConfigFixture(0+1, true)})
 	must(t, err)
 	if desired.State != "activating" || desired.ActiveRevision != 0 {
 		t.Fatal(desired)
@@ -33,7 +33,7 @@ func TestEvolutionActivationDesiredActiveReceipts(t *testing.T) {
 	if active.State != "active" || active.ActiveRevision != 1 || active.ActiveDigest != activationDigestFixture(1, true) {
 		t.Fatal(active)
 	}
-	if _, err := s.SaveEvolutionConfig(ctx, token, group, EvolutionActivationInput{"stale", 0, activationConfigFixture(0+1, false)}); err != ErrConflict {
+	if _, err := s.ActivateEvolutionConfig(ctx, token, group, EvolutionActivationInput{"stale", 0, activationConfigFixture(0+1, false)}); err != ErrConflict {
 		t.Fatal("stale desired revision accepted", err)
 	}
 }
@@ -43,9 +43,9 @@ func TestEvolutionActivationAuthorizationReplayAndParticipantIdentity(t *testing
 	ctx := context.Background()
 	token := adminTestToken(t, s, admin)
 	input := EvolutionActivationInput{"save-once", 0, activationConfigFixture(0+1, false)}
-	first, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, input)
+	first, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, input)
 	must(t, err)
-	again, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, input)
+	again, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, input)
 	must(t, err)
 	if first != again {
 		t.Fatal("retry changed operation", first, again)
@@ -66,9 +66,9 @@ func TestEvolutionActivationPendingCannotBeOverwritten(t *testing.T) {
 	ctx := context.Background()
 	token := adminTestToken(t, s, admin)
 	digest := activationDigestFixture(1, true)
-	pending, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"first", 0, activationConfigFixture(0+1, true)})
+	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"first", 0, activationConfigFixture(0+1, true)})
 	must(t, err)
-	if _, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"second", 1, activationConfigFixture(1+1, false)}); err != ErrBusy {
+	if _, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"second", 1, activationConfigFixture(1+1, false)}); err != ErrBusy {
 		t.Fatal("pending operation overwritten", err)
 	}
 	for _, participant := range []string{"studio", "evaluation-space"} {
@@ -88,7 +88,7 @@ func TestEvolutionDisableDuringPendingActivation(t *testing.T) {
 	ctx := context.Background()
 	token := adminTestToken(t, s, admin)
 	digest := activationDigestFixture(1, true)
-	pending, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"save", 0, activationConfigFixture(0+1, true)})
+	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"save", 0, activationConfigFixture(0+1, true)})
 	must(t, err)
 	input := DisableEvolutionInput{"disable", 1}
 	disabled, err := s.DisableEvolution(ctx, token, StandardUsersGroup, input)
@@ -116,7 +116,7 @@ func TestEvolutionFailureRetryRetainsAcceptedConfiguration(t *testing.T) {
 	ctx := context.Background()
 	token := adminTestToken(t, s, admin)
 	digest := activationDigestFixture(1, true)
-	first, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"first", 0, activationConfigFixture(0+1, true)})
+	first, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"first", 0, activationConfigFixture(0+1, true)})
 	must(t, err)
 	for _, participant := range []string{"studio", "evaluation-space"} {
 		must(t, acceptEvolutionFixture(s, ctx, token, first.OperationID, participant, digest))
@@ -124,7 +124,7 @@ func TestEvolutionFailureRetryRetainsAcceptedConfiguration(t *testing.T) {
 	_, err = s.SettleEvolutionActivation(ctx, token, first.OperationID)
 	must(t, err)
 	nextDigest := activationDigestFixture(2, true)
-	next, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"next", 1, activationConfigFixture(1+1, true)})
+	next, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"next", 1, activationConfigFixture(1+1, true)})
 	must(t, err)
 	must(t, acceptEvolutionFixture(s, ctx, token, next.OperationID, "studio", nextDigest))
 	must(t, s.FailEvolutionParticipant(ctx, token, next.OperationID, "evaluation-space", nextDigest, "offline"))
@@ -156,7 +156,7 @@ func TestEvolutionActivationRecoveryAfterRestart(t *testing.T) {
 	token := adminTestToken(t, s, admin)
 	digest := activationDigestFixture(1, true)
 	input := EvolutionActivationInput{"save", 0, activationConfigFixture(0+1, true)}
-	pending, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, input)
+	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, input)
 	must(t, err)
 	must(t, acceptEvolutionFixture(s, ctx, token, pending.OperationID, "studio", digest))
 	must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evaluation-space", digest, "offline"))
@@ -175,7 +175,7 @@ func TestEvolutionActivationRecoveryAfterRestart(t *testing.T) {
 	if current.State != "failed" || current.AutoEnabled || current.OperationID != pending.OperationID {
 		t.Fatal("lost activation state", current)
 	}
-	replay, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, input)
+	replay, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, input)
 	must(t, err)
 	if replay.OperationID != pending.OperationID {
 		t.Fatal("request replay admitted new operation")
@@ -209,11 +209,11 @@ func TestEvolutionConfigurationContentAndIdentity(t *testing.T) {
 	} {
 		invalid := input
 		mutate(&invalid.Configuration)
-		if _, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, invalid); err != ErrInvalid {
+		if _, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, invalid); err != ErrInvalid {
 			t.Fatalf("invalid configuration accepted: %v", err)
 		}
 	}
-	saved, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, input)
+	saved, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, input)
 	must(t, err)
 	_, err = s.DisableEvolution(ctx, token, StandardUsersGroup, DisableEvolutionInput{"off", 1})
 	must(t, err)
@@ -227,7 +227,7 @@ func TestEvolutionConfigurationContentAndIdentity(t *testing.T) {
 	}
 	changed := input
 	changed.Configuration.Budget.MaxTokens++
-	if _, err = s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, changed); !errors.Is(err, ErrConflict) {
+	if _, err = s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, changed); !errors.Is(err, ErrConflict) {
 		t.Fatal("request replay replaced content", err)
 	}
 }

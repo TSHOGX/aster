@@ -1903,3 +1903,11 @@ CREATE TABLE evolution_configuration_revisions (
  created_at TEXT NOT NULL,
  PRIMARY KEY(group_id,revision)
 );
+
+CREATE TABLE evolution_configuration_drafts (
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ body TEXT NOT NULL CHECK(json_valid(body)),
+ updated_at TEXT NOT NULL,
+ PRIMARY KEY(group_id,revision)
+);

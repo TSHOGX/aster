@@ -15,7 +15,7 @@ func TestEvolutionReconcileRecordsVerifiedProjection(t *testing.T) {
 	s, admin := accountStore(t)
 	ctx := context.Background()
 	token := adminTestToken(t, s, admin)
-	pending, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"save", 0, activationConfigFixture(1, true)})
+	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"save", 0, activationConfigFixture(1, true)})
 	must(t, err)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -51,7 +51,7 @@ func TestEvolutionReconcileRecordsVerifiedProjection(t *testing.T) {
 func TestEvolutionProjectionFencesFailedDispatchAndLateReceipt(t *testing.T) {
 	s, admin := accountStore(t)
 	token := adminTestToken(t, s, admin)
-	pending, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"save", 0, activationConfigFixture(1, true)})
+	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"save", 0, activationConfigFixture(1, true)})
 	must(t, err)
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +86,7 @@ func TestEvolutionProjectionFencesFailedDispatchAndLateReceipt(t *testing.T) {
 func TestEvolutionReceiptRequiresExactGeneration(t *testing.T) {
 	s, admin := accountStore(t)
 	token := adminTestToken(t, s, admin)
-	pending, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"save", 0, activationConfigFixture(1, true)})
+	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"save", 0, activationConfigFixture(1, true)})
 	must(t, err)
 	receipt := evolution.ActivationReceipt{Participant: "evaluation-space", OperationID: pending.OperationID, ConfigurationDigest: pending.DesiredDigest, Generation: 2, State: "adopted"}
 	if err = s.acceptEvolutionParticipant(ctx, token, receipt); err == nil {

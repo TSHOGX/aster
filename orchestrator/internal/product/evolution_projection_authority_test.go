@@ -11,7 +11,7 @@ func TestProjectionAuthorityBindsCurrentOperation(t *testing.T) {
 	ctx := context.Background()
 	token := adminTestToken(t, s, admin)
 	digest := activationDigestFixture(1, false)
-	config, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"save-scope", 0, activationConfigFixture(1, false)})
+	config, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"save-scope", 0, activationConfigFixture(1, false)})
 	must(t, err)
 	scope := ProjectionScope{StandardUsersGroup, config.OperationID, 1, digest}
 	allowed, err := s.AuthorizeEvolutionProjection(ctx, scope)
