@@ -174,3 +174,13 @@ CREATE TABLE evolution_reservation_operations (
  body TEXT NOT NULL CHECK(json_valid(body)),
  state TEXT NOT NULL CHECK(state IN ('reserved','adopted','released'))
 );
+
+CREATE TABLE evolution_reservation_candidates (
+ library_id TEXT NOT NULL,
+ prefix TEXT NOT NULL,
+ operation_id TEXT NOT NULL,
+ previous_operation_id TEXT NOT NULL,
+ generation INTEGER NOT NULL CHECK(generation>1),
+ PRIMARY KEY(library_id,prefix),
+ FOREIGN KEY(library_id,prefix) REFERENCES evolution_prefix_reservations(library_id,prefix)
+);

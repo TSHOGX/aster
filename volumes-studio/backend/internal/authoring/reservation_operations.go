@@ -61,7 +61,7 @@ func (s *Store) ReserveEvolutionConfiguration(ctx context.Context, actor Actor, 
 			return result, ErrConflict
 		}
 		r := PrefixReservation{LibraryID: binding.Output.LibraryID, Prefix: binding.Output.Prefix, GroupID: input.Configuration.GroupID, BindingID: binding.ID, Generation: binding.Output.ReservationGeneration, OperationID: input.OperationID}
-		if _, err = s.reserveEvolutionPrefix(ctx, tx, actor, r); err != nil {
+		if _, err = s.reserveEvolutionOutput(ctx, tx, actor, r); err != nil {
 			return result, err
 		}
 	}
@@ -153,16 +153,22 @@ func (s *Store) transitionEvolutionReservation(ctx context.Context, actor Actor,
 				return result, err
 			}
 		}
-		changed, err := tx.ExecContext(ctx, `UPDATE evolution_prefix_reservations SET state=? WHERE operation_id=? AND library_id=? AND prefix=? AND owner_group_id=? AND binding_id=? AND generation=? AND state='pending'`, prefixState, operation, binding.Output.LibraryID, binding.Output.Prefix, config.GroupID, binding.ID, binding.Output.ReservationGeneration)
+		candidate, err := transitionEvolutionCandidate(ctx, tx, PrefixReservation{LibraryID: binding.Output.LibraryID, Prefix: binding.Output.Prefix, GroupID: config.GroupID, BindingID: binding.ID, Generation: binding.Output.ReservationGeneration, OperationID: operation}, target == "adopted")
 		if err != nil {
 			return result, err
 		}
-		count, err := changed.RowsAffected()
-		if err != nil {
-			return result, err
-		}
-		if count != 1 {
-			return result, ErrConflict
+		if !candidate {
+			changed, err := tx.ExecContext(ctx, `UPDATE evolution_prefix_reservations SET state=? WHERE operation_id=? AND library_id=? AND prefix=? AND owner_group_id=? AND binding_id=? AND generation=? AND state='pending'`, prefixState, operation, binding.Output.LibraryID, binding.Output.Prefix, config.GroupID, binding.ID, binding.Output.ReservationGeneration)
+			if err != nil {
+				return result, err
+			}
+			count, err := changed.RowsAffected()
+			if err != nil {
+				return result, err
+			}
+			if count != 1 {
+				return result, ErrConflict
+			}
 		}
 		if err = s.reservationAudit(ctx, tx, actor, "evolution.configuration."+target, binding.Output.LibraryID, operation, binding.Output.ReservationGeneration); err != nil {
 			return result, err

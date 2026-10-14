@@ -77,6 +77,44 @@ func TestEvolutionConfigurationReservationAtomicAndLookupable(t *testing.T) {
 	if _, err = s.CancelEvolutionReservation(ctx, testActor, input.OperationID, input.Digest); err != ErrConflict {
 		t.Fatal("adopted ownership released", err)
 	}
+	update := input
+	update.Configuration.Bindings = append([]evolution.Binding(nil), input.Configuration.Bindings...)
+	update.Configuration.Bindings[0].Output.ReservationGeneration = 2
+	update.OperationID = "update-active"
+	updateRaw, _ := json.Marshal(update.Configuration)
+	update.Digest = evolution.Digest(updateRaw)
+	if _, err = s.ReserveEvolutionConfiguration(ctx, testActor, update); err != nil {
+		t.Fatal("active candidate reservation", err)
+	}
+	assertCurrent := func(operation string, generation int64) {
+		t.Helper()
+		var current string
+		var gen int64
+		if err := s.db.QueryRowContext(ctx, "SELECT operation_id,generation FROM evolution_prefix_reservations WHERE library_id=? AND prefix='skills'", l.ID).Scan(&current, &gen); err != nil || current != operation || gen != generation {
+			t.Fatal("active generation changed", current, gen, err)
+		}
+	}
+	assertCurrent(input.OperationID, 1)
+	contender := update
+	contender.OperationID = "competing-update"
+	if _, err = s.ReserveEvolutionConfiguration(ctx, testActor, contender); err != ErrConflict {
+		t.Fatal("concurrent candidate won", err)
+	}
+	if _, err = s.CancelEvolutionReservation(ctx, testActor, update.OperationID, update.Digest); err != nil {
+		t.Fatal(err)
+	}
+	assertCurrent(input.OperationID, 1)
+	if _, err = s.ReserveEvolutionConfiguration(ctx, testActor, contender); err != nil {
+		t.Fatal("candidate after cancellation", err)
+	}
+	if _, err = s.AdoptEvolutionConfiguration(ctx, testActor, contender.OperationID, contender.Digest); err != nil {
+		t.Fatal(err)
+	}
+	assertCurrent(contender.OperationID, 2)
+	if _, err = s.CancelEvolutionReservation(ctx, testActor, update.OperationID, update.Digest); err != nil {
+		t.Fatal("cancelled candidate replay", err)
+	}
+	assertCurrent(contender.OperationID, 2)
 	input.OperationID = "cancel-operation"
 	input.Configuration.Bindings[0].Output.Prefix = "draft"
 	raw, _ = json.Marshal(input.Configuration)
