@@ -20,17 +20,17 @@ func TestSharedAssetsDraftPublicationAndCatalog(t *testing.T) {
 		revision = mutate(t, s, l.ID, Mutation{RequestID: fmt.Sprint(revision), ExpectedRevision: revision, Action: action, Path: path, Text: text}).Revision
 	}
 	mutateDraft("mkdir", "skills", "")
-	if _, err = s.Preview(ctx, l.ID, revision); err == nil {
+	if _, err = previewFixture(s, ctx, l.ID, revision); err == nil {
 		t.Fatal("incomplete draft published")
 	}
 	mutateDraft("text", "AGENTS.md", "Use the tools available to this Project.")
 	mutateDraft("mkdir", "skills/reference", "")
-	if _, err = s.Freeze(ctx, testActor, l.ID, PublishInput{RequestID: "incomplete", ExpectedRevision: revision, Label: "incomplete"}); err == nil {
+	if _, err = freezeFixture(s, ctx, testActor, l.ID, fixturePublicationInput{RequestID: "incomplete", ExpectedRevision: revision, Label: "incomplete"}); err == nil {
 		t.Fatal("missing SKILL.md accepted")
 	}
 	mutateDraft("text", "skills/reference/SKILL.md", "# Reference\nConsult the supplied reference.")
 	mutateDraft("text", "skills/reference/example.txt", "reference bytes")
-	d, err := s.Preview(ctx, l.ID, revision)
+	d, err := previewFixture(s, ctx, l.ID, revision)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -92,7 +92,7 @@ func TestWorkbenchDiffPinsBaseWithoutRevisionChange(t *testing.T) {
 	if err != nil || p.Total != 1 {
 		t.Fatal(p, err)
 	}
-	v, err := s.Freeze(ctx, testActor, l.ID, PublishInput{RequestID: "freeze", ExpectedRevision: result.Revision, Label: "v1"})
+	v, err := freezeFixture(s, ctx, testActor, l.ID, fixturePublicationInput{RequestID: "freeze", ExpectedRevision: result.Revision, Label: "v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestWorkbenchVersionSearchBeyondFirstPage(t *testing.T) {
 	}
 	l.DraftRevision = result.Revision
 	for i := 0; i < 205; i++ {
-		_, err := s.Freeze(ctx, testActor, l.ID, PublishInput{RequestID: fmt.Sprintf("publish-%d", i), ExpectedRevision: l.DraftRevision, Label: fmt.Sprintf("version-%03d", i)})
+		_, err := freezeFixture(s, ctx, testActor, l.ID, fixturePublicationInput{RequestID: fmt.Sprintf("publish-%d", i), ExpectedRevision: l.DraftRevision, Label: fmt.Sprintf("version-%03d", i)})
 		if err != nil {
 			t.Fatal(err)
 		}

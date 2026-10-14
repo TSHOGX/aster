@@ -44,7 +44,7 @@ func mutate(t *testing.T, s *Store, id string, m Mutation) MutationResult {
 }
 func publish(t *testing.T, s *Store, id string, rev int64) Version {
 	t.Helper()
-	v, err := s.Freeze(context.Background(), testActor, id, PublishInput{RequestID: "publish", ExpectedRevision: rev, Label: "v1"})
+	v, err := freezeFixture(s, context.Background(), testActor, id, fixturePublicationInput{RequestID: "publish", ExpectedRevision: rev, Label: "v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestQuotaPreservesExistingDraftAndEmptyTreeRejected(t *testing.T) {
 	s.config.QuotaBytes = 1 << 20
 	l := library(t, s)
 	ctx := context.Background()
-	if _, err := s.Freeze(ctx, testActor, l.ID, PublishInput{RequestID: "empty", ExpectedRevision: 1, Label: "empty"}); !errors.Is(err, ErrInvalid) {
+	if _, err := freezeFixture(s, ctx, testActor, l.ID, fixturePublicationInput{RequestID: "empty", ExpectedRevision: 1, Label: "empty"}); !errors.Is(err, ErrInvalid) {
 		t.Fatal("empty publication", err)
 	}
 	mutate(t, s, l.ID, Mutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "file", Text: "kept"})
@@ -356,7 +356,7 @@ func TestRevokedPublisherPausesWithoutStarvingOtherLibrary(t *testing.T) {
 	if _, err = s.Mutate(ctx, other, second.ID, Mutation{RequestID: "two", ExpectedRevision: 1, Action: "text", Path: "file", Text: "two"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Freeze(ctx, other, second.ID, PublishInput{RequestID: "publish", ExpectedRevision: 2, Label: "v1"}); err != nil {
+	if _, err = freezeFixture(s, ctx, other, second.ID, fixturePublicationInput{RequestID: "publish", ExpectedRevision: 2, Label: "v1"}); err != nil {
 		t.Fatal(err)
 	}
 	check := func(ctx context.Context, a Actor) error {

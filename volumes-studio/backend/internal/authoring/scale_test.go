@@ -65,7 +65,7 @@ func TestTenThousandEntryFreezeAndOneOver(t *testing.T) {
 	var times []time.Duration
 	for n := 0; n < 5; n++ {
 		started := time.Now()
-		v, err := s.Freeze(ctx, testActor, l.ID, PublishInput{RequestID: fmt.Sprintf("freeze-%d", n), ExpectedRevision: 1, Label: fmt.Sprintf("v%d", n)})
+		v, err := freezeFixture(s, ctx, testActor, l.ID, fixturePublicationInput{RequestID: fmt.Sprintf("freeze-%d", n), ExpectedRevision: 1, Label: fmt.Sprintf("v%d", n)})
 		if err != nil {
 			t.Fatal(err)
 		}
