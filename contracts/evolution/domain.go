@@ -95,6 +95,13 @@ func (s Service) Validate() error {
 	if !manifest.ValidID(s.ConnectionID) || !manifest.ValidDigest(s.RunnerDigest) || s.Capabilities.ProtocolVersion != ProtocolVersion {
 		return fmt.Errorf("invalid service capabilities or connection")
 	}
+	if s.CredentialRef == "" {
+		if s.CredentialGeneration != 0 {
+			return fmt.Errorf("credential generation without reference")
+		}
+	} else if !manifest.ValidID(s.CredentialRef) || s.CredentialGeneration < 1 {
+		return fmt.Errorf("credential requires registered reference and generation")
+	}
 	return s.Capabilities.Validate()
 }
 
