@@ -1911,3 +1911,11 @@ CREATE TABLE evolution_configuration_drafts (
  updated_at TEXT NOT NULL,
  PRIMARY KEY(group_id,revision)
 );
+
+CREATE TABLE evolution_source_policies (
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ source_id TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),
+ body TEXT NOT NULL CHECK(json_valid(body)),
+ PRIMARY KEY(group_id,source_id)
+);

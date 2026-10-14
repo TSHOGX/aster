@@ -80,6 +80,9 @@ func (s *Store) activateEvolutionConfig(ctx context.Context, token, group string
 				return ErrConflict
 			}
 		}
+		if err := authorizeEvolutionSources(ctx, tx, input.Configuration); err != nil {
+			return err
+		}
 		var current EvolutionGroupConfig
 		scanErr := tx.QueryRowContext(ctx, "SELECT group_id,desired_revision,active_revision,desired_digest,active_digest,auto_enabled,state,operation_id FROM evolution_group_configs WHERE group_id=?", group).Scan(&current.GroupID, &current.DesiredRevision, &current.ActiveRevision, &current.DesiredDigest, &current.ActiveDigest, &current.AutoEnabled, &current.State, &current.OperationID)
 		if scanErr != nil && !errors.Is(scanErr, sql.ErrNoRows) {
@@ -129,6 +132,13 @@ func (s *Store) acceptEvolutionParticipant(ctx context.Context, token string, re
 		if state != "activating" && state != "active" {
 			return ErrConflict
 		}
+		allowed, err := authorizeEvolutionProjection(ctx, tx, ProjectionScope{GroupID: group, OperationID: operation, Revision: receipt.Generation, Digest: digest})
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return ErrForbidden
+		}
 		var existing int
 		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_activation_receipts WHERE operation_id=? AND participant=? AND config_digest=? AND state='accepted'", operation, participant, digest).Scan(&existing); err != nil {
 			return err
@@ -160,6 +170,13 @@ func (s *Store) SettleEvolutionActivation(ctx context.Context, token, operation 
 		}
 		if result.State != "activating" {
 			return ErrConflict
+		}
+		allowed, err := authorizeEvolutionProjection(ctx, tx, ProjectionScope{GroupID: result.GroupID, OperationID: operation, Revision: result.DesiredRevision, Digest: result.DesiredDigest})
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return ErrForbidden
 		}
 		var count int
 		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_activation_receipts WHERE operation_id=? AND config_digest=? AND state='accepted' AND participant IN ('studio','evaluation-space')", operation, result.DesiredDigest).Scan(&count); err != nil {

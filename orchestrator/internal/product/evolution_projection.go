@@ -41,6 +41,9 @@ func (s *Store) ReconcileEvolutionProjection(ctx context.Context, token, operati
 	if err != nil {
 		return err
 	}
+	if err := authorizeEvolutionSources(ctx, s.reader, projection.Configuration); err != nil {
+		return err
+	}
 	allowed, err := s.AuthorizeEvolutionProjection(ctx, ProjectionScope{GroupID: projection.Configuration.GroupID, OperationID: operation, Revision: projection.Configuration.Revision, Digest: projection.Digest})
 	if err != nil {
 		return err
