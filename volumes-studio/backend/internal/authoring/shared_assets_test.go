@@ -69,7 +69,7 @@ func TestSharedAssetsDraftPublicationAndCatalog(t *testing.T) {
 
 func TestSharedAssetsBaseSeedIsStableAcrossRestart(t *testing.T) {
 	ctx := context.Background()
-	cfg := Config{Directory: t.TempDir(), PublisherID: "publisher", QuotaBytes: 32 << 20, SeedSharedAssets: true}
+	cfg := Config{Directory: t.TempDir(), PublisherID: "publisher", QuotaBytes: 32 << 20, SeedSharedAssets: true, Authority: &branchAuthority{true}}
 	s, err := Open(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +85,17 @@ func TestSharedAssetsBaseSeedIsStableAcrossRestart(t *testing.T) {
 	if len(d.Entries) != 2 || d.Entries[1].Path != "skills" || d.Entries[1].Kind != "directory" {
 		t.Fatal(d)
 	}
-	mutate(t, s, "aster-shared-assets", fixtureMutation{RequestID: "edit-base", ExpectedRevision: 1, Action: "text", Path: "AGENTS.md", Text: "Draft edit"})
+	main, err := s.MainCommit(ctx, testActor, "aster-shared-assets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch, err := s.CreateBranch(ctx, testActor, "aster-shared-assets", CreateBranchInput{"edit-branch", "Seed edits", main.CommitID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SaveBranchText(ctx, testActor, "aster-shared-assets", branch.ID, SaveBranchTextInput{"edit-base", 1, main.CommitID, "AGENTS.md", "Draft edit"}); err != nil {
+		t.Fatal(err)
+	}
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -98,11 +108,7 @@ func TestSharedAssetsBaseSeedIsStableAcrossRestart(t *testing.T) {
 	if err != nil || !bytes.Equal(raw, after) {
 		t.Fatal("base overwritten", err)
 	}
-	tree, err := entries(ctx, s.db, "draft_entries", "library_id", "aster-shared-assets")
-	if err != nil {
-		t.Fatal(err)
-	}
-	validation, err := s.validateTree(Validation{Profile: manifest.SharedAssetsProfile, Valid: true}, tree)
+	validation, err := s.BranchValidation(ctx, testActor, "aster-shared-assets", branch.ID, 2)
 	if err != nil || validation.AgentsPreview != "Draft edit" {
 		t.Fatal(validation, err)
 	}

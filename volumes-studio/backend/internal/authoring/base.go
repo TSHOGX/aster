@@ -55,9 +55,6 @@ func (s *Store) seedSharedAssets(ctx context.Context) error {
 		if e.Kind == "directory" {
 			blob = nil
 		}
-		if _, err = tx.ExecContext(ctx, "INSERT INTO draft_entries VALUES(?,?,?,?,?)", library, e.Path, e.Kind, size, blob); err != nil {
-			return err
-		}
 		if _, err = tx.ExecContext(ctx, "INSERT INTO version_entries VALUES(?,?,?,?,?)", version, e.Path, e.Kind, size, blob); err != nil {
 			return err
 		}
