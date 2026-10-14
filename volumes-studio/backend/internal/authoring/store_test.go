@@ -34,9 +34,9 @@ func library(t *testing.T, s *Store) Library {
 	}
 	return l
 }
-func mutate(t *testing.T, s *Store, id string, m Mutation) MutationResult {
+func mutate(t *testing.T, s *Store, id string, m fixtureMutation) MutationResult {
 	t.Helper()
-	r, err := s.Mutate(context.Background(), testActor, id, m)
+	r, err := mutateFixture(s, context.Background(), testActor, id, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,21 +55,21 @@ func TestRevisionReceiptsFreezeRestoreAndRestart(t *testing.T) {
 	s, c := testStore(t)
 	ctx := context.Background()
 	l := library(t, s)
-	m := Mutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "readme.txt", Text: "first"}
+	m := fixtureMutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "readme.txt", Text: "first"}
 	r := mutate(t, s, l.ID, m)
 	if r.Revision != 2 {
 		t.Fatal(r)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "edit", ExpectedRevision: 2, Action: "text", Path: "readme.txt", Text: "second"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "edit", ExpectedRevision: 2, Action: "text", Path: "readme.txt", Text: "second"})
 	if replay := mutate(t, s, l.ID, m); replay.Revision != 2 {
 		t.Fatal("receipt after stale revision lost")
 	}
 	m.Text = "different"
-	if _, err := s.Mutate(ctx, testActor, l.ID, m); !errors.Is(err, ErrConflict) {
+	if _, err := mutateFixture(s, ctx, testActor, l.ID, m); !errors.Is(err, ErrConflict) {
 		t.Fatal("request body rebound", err)
 	}
 	v := publish(t, s, l.ID, 3)
-	mutate(t, s, l.ID, Mutation{RequestID: "later", ExpectedRevision: 3, Action: "text", Path: "readme.txt", Text: "later"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "later", ExpectedRevision: 3, Action: "text", Path: "readme.txt", Text: "later"})
 	if _, err := s.Descriptor(ctx, v.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatal("pending source exported", err)
 	}
@@ -92,7 +92,7 @@ func TestRevisionReceiptsFreezeRestoreAndRestart(t *testing.T) {
 	if err != nil || len(diff) != 1 || diff[0].Kind != "changed" {
 		t.Fatal(diff, err)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "restore", ExpectedRevision: 4, Action: "restore", VersionID: v.ID})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "restore", ExpectedRevision: 4, Action: "restore", VersionID: v.ID})
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestRevisionReceiptsFreezeRestoreAndRestart(t *testing.T) {
 	if err != nil || page.Revision != 5 || page.Entries[0].Digest != entry.Digest {
 		t.Fatal(page, err)
 	}
-	if got := mutate(t, s, l.ID, Mutation{RequestID: "restore", ExpectedRevision: 4, Action: "restore", VersionID: v.ID}); got.Revision != 5 {
+	if got := mutate(t, s, l.ID, fixtureMutation{RequestID: "restore", ExpectedRevision: 4, Action: "restore", VersionID: v.ID}); got.Revision != 5 {
 		t.Fatal("restore receipt lost")
 	}
 	raw, err := s.Descriptor(ctx, v.ID)
@@ -137,7 +137,7 @@ func TestTwoTabsCannotOverwriteAndParentsRemainValid(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, err := s.Mutate(ctx, testActor, l.ID, Mutation{RequestID: fmt.Sprintf("tab-%d", i), ExpectedRevision: 1, Action: "text", Path: "file", Text: fmt.Sprint(i)})
+			_, err := mutateFixture(s, ctx, testActor, l.ID, fixtureMutation{RequestID: fmt.Sprintf("tab-%d", i), ExpectedRevision: 1, Action: "text", Path: "file", Text: fmt.Sprint(i)})
 			outcomes <- err
 		}(i)
 	}
@@ -156,27 +156,27 @@ func TestTwoTabsCannotOverwriteAndParentsRemainValid(t *testing.T) {
 	if success != 1 || conflict != 1 {
 		t.Fatal(success, conflict)
 	}
-	for _, m := range []Mutation{{Action: "text", Path: "missing/file"}, {Action: "text", Path: "file/child"}, {Action: "mkdir", Path: " bad "}, {Action: "text", Path: "../escape"}} {
+	for _, m := range []fixtureMutation{{Action: "text", Path: "missing/file"}, {Action: "text", Path: "file/child"}, {Action: "mkdir", Path: " bad "}, {Action: "text", Path: "../escape"}} {
 		m.RequestID = randomID()
 		m.ExpectedRevision = 2
-		if _, err := s.Mutate(ctx, testActor, l.ID, m); err == nil {
+		if _, err := mutateFixture(s, ctx, testActor, l.ID, m); err == nil {
 			t.Fatal("invalid tree accepted", m.Action, m.Path)
 		}
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "mkdir", ExpectedRevision: 2, Action: "mkdir", Path: "目录"})
-	mutate(t, s, l.ID, Mutation{RequestID: "child", ExpectedRevision: 3, Action: "text", Path: "目录/child", Text: "text"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "mkdir", ExpectedRevision: 2, Action: "mkdir", Path: "目录"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "child", ExpectedRevision: 3, Action: "text", Path: "目录/child", Text: "text"})
 	page, err := s.Tree(ctx, l.ID, "目录", "", 4)
 	if err != nil || len(page.Entries) != 1 || page.Entries[0].Path != "目录/child" {
 		t.Fatal(page, err)
 	}
-	if _, err := s.Mutate(ctx, testActor, l.ID, Mutation{RequestID: "delete", ExpectedRevision: 4, Action: "remove", Path: "目录"}); !errors.Is(err, ErrConflict) {
+	if _, err := mutateFixture(s, ctx, testActor, l.ID, fixtureMutation{RequestID: "delete", ExpectedRevision: 4, Action: "remove", Path: "目录"}); !errors.Is(err, ErrConflict) {
 		t.Fatal("recursive delete unconfirmed", err)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "rename", ExpectedRevision: 4, Action: "move", Path: "目录", To: "renamed"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "rename", ExpectedRevision: 4, Action: "move", Path: "目录", To: "renamed"})
 	if page, err := s.Tree(ctx, l.ID, "renamed", "", 5); err != nil || page.Entries[0].Path != "renamed/child" {
 		t.Fatal(page, err)
 	}
-	removed := mutate(t, s, l.ID, Mutation{RequestID: "delete", ExpectedRevision: 5, Action: "remove", Path: "renamed", Recursive: true})
+	removed := mutate(t, s, l.ID, fixtureMutation{RequestID: "delete", ExpectedRevision: 5, Action: "remove", Path: "renamed", Recursive: true})
 	if removed.Affected != 2 {
 		t.Fatal(removed)
 	}
@@ -185,12 +185,12 @@ func TestBlobGCHonorsReaderAndFrozenVersionPins(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	l := library(t, s)
-	mutate(t, s, l.ID, Mutation{RequestID: "one", ExpectedRevision: 1, Action: "text", Path: "one", Text: "retained"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "one", ExpectedRevision: 1, Action: "text", Path: "one", Text: "retained"})
 	reader, entry, err := s.Content(ctx, l.ID, "one", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "remove", ExpectedRevision: 2, Action: "remove", Path: "one"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "remove", ExpectedRevision: 2, Action: "remove", Path: "one"})
 	if n, err := s.Collect(ctx); err != nil || n != 0 {
 		t.Fatal("reader collected", n, err)
 	}
@@ -202,9 +202,9 @@ func TestBlobGCHonorsReaderAndFrozenVersionPins(t *testing.T) {
 	if _, err = os.Stat(s.blobPath(entry.Digest)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("unreferenced file retained", err)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "again", ExpectedRevision: 3, Action: "text", Path: "one", Text: "retained"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "again", ExpectedRevision: 3, Action: "text", Path: "one", Text: "retained"})
 	publish(t, s, l.ID, 4)
-	mutate(t, s, l.ID, Mutation{RequestID: "clear", ExpectedRevision: 4, Action: "remove", Path: "one"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "clear", ExpectedRevision: 4, Action: "remove", Path: "one"})
 	if n, err := s.Collect(ctx); err != nil || n != 0 {
 		t.Fatal("pending validation pin collected", n, err)
 	}
@@ -216,7 +216,7 @@ func TestDurableOrphansAndMissingReferencedBlobRecovery(t *testing.T) {
 	s, c := testStore(t)
 	l := library(t, s)
 	ctx := context.Background()
-	mutate(t, s, l.ID, Mutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "one", Text: "source"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "one", Text: "source"})
 	s.Close()
 	orphan := []byte("orphan")
 	digest := digestBytes(orphan)
@@ -247,7 +247,7 @@ func TestPublicationChecksPrincipalAtFinalization(t *testing.T) {
 	s, _ := testStore(t)
 	l := library(t, s)
 	ctx := context.Background()
-	mutate(t, s, l.ID, Mutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "file", Text: "source"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "file", Text: "source"})
 	v := publish(t, s, l.ID, 2)
 	checks := 0
 	denied := errors.New("principal revoked")
@@ -280,8 +280,8 @@ func TestQuotaPreservesExistingDraftAndEmptyTreeRejected(t *testing.T) {
 	if _, err := freezeFixture(s, ctx, testActor, l.ID, fixturePublicationInput{RequestID: "empty", ExpectedRevision: 1, Label: "empty"}); !errors.Is(err, ErrInvalid) {
 		t.Fatal("empty publication", err)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "file", Text: "kept"})
-	if _, err := s.Mutate(ctx, testActor, l.ID, Mutation{RequestID: "large", ExpectedRevision: 2, Action: "text", Path: "file", Text: strings.Repeat("a", MaxTextBytes)}); !errors.Is(err, ErrQuota) {
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "file", Text: "kept"})
+	if _, err := mutateFixture(s, ctx, testActor, l.ID, fixtureMutation{RequestID: "large", ExpectedRevision: 2, Action: "text", Path: "file", Text: strings.Repeat("a", MaxTextBytes)}); !errors.Is(err, ErrQuota) {
 		t.Fatal("quota", err)
 	}
 	f, _, err := s.Content(ctx, l.ID, "file", "")
@@ -299,7 +299,7 @@ func TestCanceledValidationCannotFinalizeReplacementGeneration(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	l := library(t, s)
-	mutate(t, s, l.ID, Mutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "file", Text: "source"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "file", Text: "source"})
 	v := publish(t, s, l.ID, 2)
 	atFinal := make(chan struct{})
 	release := make(chan struct{})
@@ -346,14 +346,14 @@ func TestRevokedPublisherPausesWithoutStarvingOtherLibrary(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	first := library(t, s)
-	mutate(t, s, first.ID, Mutation{RequestID: "one", ExpectedRevision: 1, Action: "text", Path: "file", Text: "one"})
+	mutate(t, s, first.ID, fixtureMutation{RequestID: "one", ExpectedRevision: 1, Action: "text", Path: "file", Text: "one"})
 	v := publish(t, s, first.ID, 2)
 	other := Actor{Issuer: testActor.Issuer, Subject: "other-admin"}
 	second, err := s.Create(ctx, other, CreateInput{RequestID: "other-library", Name: "Other"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Mutate(ctx, other, second.ID, Mutation{RequestID: "two", ExpectedRevision: 1, Action: "text", Path: "file", Text: "two"}); err != nil {
+	if _, err = mutateFixture(s, ctx, other, second.ID, fixtureMutation{RequestID: "two", ExpectedRevision: 1, Action: "text", Path: "file", Text: "two"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = freezeFixture(s, ctx, other, second.ID, fixturePublicationInput{RequestID: "publish", ExpectedRevision: 2, Label: "v1"}); err != nil {
@@ -391,7 +391,7 @@ func TestSourceContentReaderCannotBeCollectedByRepeatedClose(t *testing.T) {
 	s, _ := testStore(t)
 	l := library(t, s)
 	ctx := context.Background()
-	mutate(t, s, l.ID, Mutation{RequestID: "file", ExpectedRevision: 1, Action: "text", Path: "file", Text: "same"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "file", ExpectedRevision: 1, Action: "text", Path: "file", Text: "same"})
 	first, _, err := s.Content(ctx, l.ID, "file", "")
 	if err != nil {
 		t.Fatal(err)
@@ -400,7 +400,7 @@ func TestSourceContentReaderCannotBeCollectedByRepeatedClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "remove", ExpectedRevision: 2, Action: "remove", Path: "file"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "remove", ExpectedRevision: 2, Action: "remove", Path: "file"})
 	first.Close()
 	first.Close()
 	if n, err := s.Collect(ctx); err != nil || n != 0 {

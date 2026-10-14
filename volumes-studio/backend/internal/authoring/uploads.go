@@ -308,7 +308,7 @@ func (s *Store) CompleteUpload(ctx context.Context, a Actor, id string, input Co
 	if !replaced {
 		after = append(after, replacement)
 	}
-	if err = validateDraft(after); err != nil {
+	if err = manifest.ValidateAuthoring(l.Profile, after); err != nil {
 		return result, errors.Join(ErrInvalid, err)
 	}
 	size, _ := manifest.ParseSize(u.Size)

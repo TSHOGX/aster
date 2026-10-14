@@ -11,7 +11,7 @@ import (
 func released(t *testing.T, s *Store) (Library, Version) {
 	t.Helper()
 	l := library(t, s)
-	mutate(t, s, l.ID, Mutation{RequestID: "file", ExpectedRevision: 1, Action: "text", Path: "file", Text: "portable bytes"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "file", ExpectedRevision: 1, Action: "text", Path: "file", Text: "portable bytes"})
 	v := publish(t, s, l.ID, 2)
 	if _, err := s.ValidateNext(context.Background(), allow); err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestExportPinsMembershipArchiveAndRetirement(t *testing.T) {
 	if changes, _, err := s.Diff(ctx, l.ID, "", 2); err != nil || len(changes) != 0 {
 		t.Fatal("retirement erased base diff", changes, err)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "remove", ExpectedRevision: 2, Action: "remove", Path: "file"})
+	mutate(t, s, l.ID, fixtureMutation{RequestID: "remove", ExpectedRevision: 2, Action: "remove", Path: "file"})
 	if n, err := s.Collect(ctx); err != nil || n != 1 {
 		t.Fatal("unreferenced source not collected", n, err)
 	}

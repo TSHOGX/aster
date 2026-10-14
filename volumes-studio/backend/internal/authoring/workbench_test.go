@@ -43,7 +43,7 @@ func TestWorkbenchTreeEntryAndPinnedContent(t *testing.T) {
 	l := library(t, s)
 	mutate := func(action, path, text string) {
 		t.Helper()
-		result, err := s.Mutate(ctx, testActor, l.ID, Mutation{RequestID: fmt.Sprint(l.DraftRevision), ExpectedRevision: l.DraftRevision, Action: action, Path: path, Text: text})
+		result, err := mutateFixture(s, ctx, testActor, l.ID, fixtureMutation{RequestID: fmt.Sprint(l.DraftRevision), ExpectedRevision: l.DraftRevision, Action: action, Path: path, Text: text})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -83,7 +83,7 @@ func TestWorkbenchDiffPinsBaseWithoutRevisionChange(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	l := library(t, s)
-	result, err := s.Mutate(ctx, testActor, l.ID, Mutation{RequestID: "file", ExpectedRevision: l.DraftRevision, Action: "text", Path: "a.txt", Text: "one"})
+	result, err := mutateFixture(s, ctx, testActor, l.ID, fixtureMutation{RequestID: "file", ExpectedRevision: l.DraftRevision, Action: "text", Path: "a.txt", Text: "one"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestWorkbenchVersionSearchBeyondFirstPage(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	l := library(t, s)
-	result, err := s.Mutate(ctx, testActor, l.ID, Mutation{RequestID: "seed", ExpectedRevision: l.DraftRevision, Action: "mkdir", Path: "empty"})
+	result, err := mutateFixture(s, ctx, testActor, l.ID, fixtureMutation{RequestID: "seed", ExpectedRevision: l.DraftRevision, Action: "mkdir", Path: "empty"})
 	if err != nil {
 		t.Fatal(err)
 	}

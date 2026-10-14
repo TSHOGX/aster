@@ -17,7 +17,7 @@ func TestSharedAssetsDraftPublicationAndCatalog(t *testing.T) {
 	}
 	revision := int64(1)
 	mutateDraft := func(action, path, text string) {
-		revision = mutate(t, s, l.ID, Mutation{RequestID: fmt.Sprint(revision), ExpectedRevision: revision, Action: action, Path: path, Text: text}).Revision
+		revision = mutate(t, s, l.ID, fixtureMutation{RequestID: fmt.Sprint(revision), ExpectedRevision: revision, Action: action, Path: path, Text: text}).Revision
 	}
 	mutateDraft("mkdir", "skills", "")
 	if _, err = previewFixture(s, ctx, l.ID, revision); err == nil {
@@ -85,7 +85,7 @@ func TestSharedAssetsBaseSeedIsStableAcrossRestart(t *testing.T) {
 	if len(d.Entries) != 2 || d.Entries[1].Path != "skills" || d.Entries[1].Kind != "directory" {
 		t.Fatal(d)
 	}
-	mutate(t, s, "aster-shared-assets", Mutation{RequestID: "edit-base", ExpectedRevision: 1, Action: "text", Path: "AGENTS.md", Text: "Draft edit"})
+	mutate(t, s, "aster-shared-assets", fixtureMutation{RequestID: "edit-base", ExpectedRevision: 1, Action: "text", Path: "AGENTS.md", Text: "Draft edit"})
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}

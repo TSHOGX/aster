@@ -45,7 +45,7 @@ func TestTenThousandEntryFreezeAndOneOver(t *testing.T) {
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Mutate(ctx, testActor, l.ID, Mutation{RequestID: "over", ExpectedRevision: 1, Action: "text", Path: "one-more", Text: "x"}); err == nil {
+	if _, err = mutateFixture(s, ctx, testActor, l.ID, fixtureMutation{RequestID: "over", ExpectedRevision: 1, Action: "text", Path: "one-more", Text: "x"}); err == nil {
 		t.Fatal("10001 entries accepted")
 	}
 	page, err := s.Tree(ctx, l.ID, "", "", 1)
