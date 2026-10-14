@@ -115,6 +115,16 @@ func (s *Store) BindCatalogRevision(ctx context.Context, token, group, binding, 
 		if !c.Enabled || c.Retired {
 			return ErrConflict
 		}
+		if c.Kind == "workflow" {
+			workflow, err := evolution.DecodeWorkflow(bytes.NewReader(c.Body))
+			if err != nil {
+				return ErrInvalid
+			}
+			if err = evolution.ValidateClosure(ctx, workflow, catalogWorkflowResolver{tx}); err != nil {
+				return ErrConflict
+			}
+		}
+
 		if _, err = tx.ExecContext(ctx, `INSERT INTO evolution_catalog_bindings VALUES(?,?,?,?,?) ON CONFLICT(group_id,binding_id,kind) DO UPDATE SET catalog_id=excluded.catalog_id,revision=excluded.revision`, group, binding, kind, id, revision); err != nil {
 			return err
 		}
