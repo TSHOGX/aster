@@ -2,11 +2,12 @@
 import { useEffect, useRef, useState } from "react";
 import { api, APIError, requestID, type Version } from "../lib/api";
 import { branchAPI, conflictAPI, type Branch, type PreparedIntegration } from "../lib/branches";
+import { currentReviews, type ReviewDecision } from "../lib/reviews";
 import { useT } from "../lib/i18n";
 import { ConflictEditor } from "./conflict-workspace";
 import { useStudio } from "./studio-provider";
 
-type View = { digest: string; identity: NonNullable<PreparedIntegration["identity"]>; readiness: string; acceptance: string; accepted_commit?: string; reviews: { id: string; verdict: string; rationale: string }[] };
+type View = { digest: string; identity: NonNullable<PreparedIntegration["identity"]>; readiness: string; acceptance: string; accepted_commit?: string; reviews: ReviewDecision[] };
 type Change = { path: string; change: string };
 type FilePreview = { commit_id: string; text?: string; preview: string };
 export function IntegrationReview({ branch }: { branch: Branch }) {
@@ -126,7 +127,7 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
         <button disabled={busy || view.readiness !== "ready_for_review"} onClick={() => void run(() => review("approve"))}>{tr("Approve integration")}</button>
         <button disabled={busy} onClick={() => void run(() => review("changes_requested"))}>{tr("Request changes")}</button>
         <button disabled={busy} onClick={() => void run(() => review("reject"))}>{tr("Reject integration")}</button>
-        <button disabled={busy || view.readiness !== "ready_for_review" || !view.reviews.some(review => review.verdict === "approve")} onClick={() => void run(merge)}>{tr("Merge approved integration")}</button>
+        <button disabled={busy || view.readiness !== "ready_for_review" || !currentReviews(view.reviews).some(review => review.verdict === "approve")} onClick={() => void run(merge)}>{tr("Merge approved integration")}</button>
       </>}
     </>}
   </section>;
