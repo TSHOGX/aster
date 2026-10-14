@@ -60,7 +60,7 @@ func (s *Store) Merge(ctx context.Context, a Actor, library string, input MergeI
 	if err = s.db.QueryRowContext(ctx, "SELECT minimum_approvals FROM library_merge_policies WHERE library_id=?", library).Scan(&minimum); err != nil {
 		return result, err
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT issuer,subject FROM merge_reviews WHERE prepared_digest=? AND verdict='approve'", digest)
+	rows, err := s.db.QueryContext(ctx, "SELECT r.issuer,r.subject FROM merge_reviews r WHERE r.prepared_digest=? AND r.verdict='approve' AND NOT EXISTS(SELECT 1 FROM merge_reviews newer WHERE newer.prepared_digest=r.prepared_digest AND newer.issuer=r.issuer AND newer.subject=r.subject AND newer.rowid>r.rowid)", digest)
 	if err != nil {
 		return result, err
 	}

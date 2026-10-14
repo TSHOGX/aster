@@ -74,7 +74,7 @@ func (s *Store) Integration(ctx context.Context, a Actor, library, digest string
 			}
 		}
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT id,issuer,subject,verdict,rationale,created_at FROM merge_reviews WHERE prepared_digest=? ORDER BY created_at,id", digest)
+	rows, err := s.db.QueryContext(ctx, "SELECT id,issuer,subject,verdict,rationale,created_at FROM merge_reviews WHERE prepared_digest=? ORDER BY rowid", digest)
 	if err != nil {
 		return view, err
 	}

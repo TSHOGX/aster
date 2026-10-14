@@ -241,3 +241,25 @@ func TestIntegrationComparisonUsesFrozenResult(t *testing.T) {
 		t.Fatal("review read mutable draft", file, err)
 	}
 }
+
+func TestReviewHistoryRetainedAndLatestVerdictGatesMerge(t *testing.T) {
+	s, l, b, _ := reviewFixture(t)
+	ctx := context.Background()
+	input := approvedIntegration(t, s, l, b)
+	if _, err := s.Review(ctx, testActor, l.ID, ReviewInput{"withdraw", input.PreparedDigest, "changes_requested", "Needs correction"}); err != nil {
+		t.Fatal(err)
+	}
+	view, err := s.Integration(ctx, testActor, l.ID, input.PreparedDigest)
+	if err != nil || len(view.Reviews) != 2 || view.Reviews[0].Verdict != "approve" || view.Reviews[1].Verdict != "changes_requested" {
+		t.Fatal("history overwritten", view, err)
+	}
+	if _, err := s.Merge(ctx, testActor, l.ID, input); err != ErrAuthority {
+		t.Fatal("superseded approval counted", err)
+	}
+	if _, err := s.Review(ctx, testActor, l.ID, ReviewInput{"approve-again", input.PreparedDigest, "approve", "Rechecked"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Merge(ctx, testActor, l.ID, input); err != nil {
+		t.Fatal(err)
+	}
+}

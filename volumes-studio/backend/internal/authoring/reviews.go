@@ -56,7 +56,7 @@ func (s *Store) Review(ctx context.Context, a Actor, library string, input Revie
 		return result, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO merge_reviews VALUES(?,?,?,?,?,?,?) ON CONFLICT(prepared_digest,issuer,subject) DO UPDATE SET id=excluded.id,verdict=excluded.verdict,rationale=excluded.rationale,created_at=excluded.created_at`, result.ID, digest, a.Issuer, a.Subject, input.Verdict, input.Rationale, s.now().Unix()); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO merge_reviews VALUES(?,?,?,?,?,?,?)`, result.ID, digest, a.Issuer, a.Subject, input.Verdict, input.Rationale, s.now().Unix()); err != nil {
 		return result, err
 	}
 	if err = s.record(ctx, tx, a, input.RequestID, body, "merge.review", library, prepared.PolicyRevision, result); err != nil {

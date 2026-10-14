@@ -117,8 +117,7 @@ CREATE TABLE prepared_merges(
 CREATE TABLE merge_reviews(
  id TEXT PRIMARY KEY,prepared_digest TEXT NOT NULL REFERENCES prepared_merges(digest),
  issuer TEXT NOT NULL,subject TEXT NOT NULL,verdict TEXT NOT NULL CHECK(verdict IN('approve','changes_requested','reject')),
- rationale TEXT NOT NULL,created_at INTEGER NOT NULL,
- UNIQUE(prepared_digest,issuer,subject)
+ rationale TEXT NOT NULL,created_at INTEGER NOT NULL
 );
 CREATE TABLE library_merge_policies(
  library_id TEXT PRIMARY KEY REFERENCES libraries(id),revision INTEGER NOT NULL,
