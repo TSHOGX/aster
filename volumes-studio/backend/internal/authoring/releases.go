@@ -42,6 +42,13 @@ func (s *Store) Release(ctx context.Context, a Actor, library string, input Rele
 	if l.Archived {
 		return result, ErrConflict
 	}
+	var existing int
+	if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM versions WHERE library_id=? AND label=?", library, input.Label).Scan(&existing); err != nil {
+		return result, err
+	}
+	if existing > 0 {
+		return result, ErrConflict
+	}
 	var accepted int
 	if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM merge_operations WHERE library_id=? AND new_head=? AND state='settled'", library, input.AcceptedCommit).Scan(&accepted); err != nil {
 		return result, err
@@ -91,13 +98,6 @@ func (s *Store) Release(ctx context.Context, a Actor, library string, input Rele
 		return result, err
 	}
 	defer tx.Rollback()
-	var existing int
-	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM versions WHERE library_id=? AND label=?", library, input.Label).Scan(&existing); err != nil {
-		return result, err
-	}
-	if existing > 0 {
-		return result, ErrConflict
-	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO versions(id,library_id,label,note,source_revision,descriptor,descriptor_digest,state,issuer,subject,created_at,accepted_commit) VALUES(?,?,?,?,0,?,?,'pending',?,?,?,?)`, id, library, input.Label, input.Note, raw, digest, a.Issuer, a.Subject, s.now().Unix(), input.AcceptedCommit); err != nil {
 		return result, err
 	}

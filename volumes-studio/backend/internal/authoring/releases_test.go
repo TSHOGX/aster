@@ -105,3 +105,30 @@ func TestReleaseRetentionCountsBranchDrafts(t *testing.T) {
 		t.Fatal("second branch not counted", retention, err)
 	}
 }
+
+func TestReleaseLabelConflictDoesNotCreateReceipt(t *testing.T) {
+	s, l, b, _ := reviewFixture(t)
+	ctx := context.Background()
+	accepted, err := s.Merge(ctx, testActor, l.ID, approvedIntegration(t, s, l, b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := ReleaseInput{"first-label", accepted.AcceptedCommit, "unique", ""}
+	first, err := s.Release(ctx, testActor, l.ID, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.RequestID = "second-label"
+	if _, err = s.Release(ctx, testActor, l.ID, input); err != ErrConflict {
+		t.Fatal("duplicate label accepted", err)
+	}
+	var count int
+	if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM receipts WHERE request_id='second-label'").Scan(&count); err != nil || count != 0 {
+		t.Fatal("failed admission recorded success", err)
+	}
+	input.RequestID = "first-label"
+	replay, err := s.Release(ctx, testActor, l.ID, input)
+	if err != nil || replay.ID != first.ID {
+		t.Fatal("label check broke receipt replay", err)
+	}
+}
