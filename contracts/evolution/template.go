@@ -46,3 +46,38 @@ func (t Template) Validate() error {
 	}
 	return t.Evaluation.Validate()
 }
+
+// SupportsWorkflow requires an explicitly selected immutable revision and exact
+// port schema identities. A matching goal/title never implies compatibility.
+func (t Template) SupportsWorkflow(ref Revision, w Workflow, outputProfile string) error {
+	if err := t.Validate(); err != nil {
+		return err
+	}
+	if err := ref.Validate(); err != nil {
+		return err
+	}
+	raw, err := w.Canonical()
+	if err != nil {
+		return err
+	}
+	if w.ID != ref.ID || Digest(raw) != ref.Digest {
+		return fmt.Errorf("workflow revision identity mismatch")
+	}
+	permitted := false
+	for _, allowed := range t.Workflows {
+		if allowed == ref {
+			permitted = true
+			break
+		}
+	}
+	if !permitted {
+		return fmt.Errorf("workflow revision not selected by template")
+	}
+	if !equalPorts(t.Inputs, w.Inputs) || !equalPorts(t.Outputs, w.Outputs) {
+		return fmt.Errorf("template workflow port schemas differ")
+	}
+	if outputProfile != t.Profile {
+		return fmt.Errorf("output profile incompatible with template")
+	}
+	return nil
+}
