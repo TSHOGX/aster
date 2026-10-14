@@ -81,3 +81,27 @@ func TestReleaseWorkerRechecksScopedPublishGrant(t *testing.T) {
 		t.Fatal(current, err)
 	}
 }
+
+func TestReleaseRetentionCountsBranchDrafts(t *testing.T) {
+	s, l, b, _ := reviewFixture(t)
+	ctx := context.Background()
+	accepted, err := s.Merge(ctx, testActor, l.ID, approvedIntegration(t, s, l, b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.Release(ctx, testActor, l.ID, ReleaseInput{"release-retention", accepted.AcceptedCommit, "retained", ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retention, err := s.Retention(ctx, v.ID)
+	if err != nil || retention.DraftReferences != 1 {
+		t.Fatal("branch reference missing", retention, err)
+	}
+	if _, err = s.CreateBranch(ctx, testActor, l.ID, CreateBranchInput{"second-retainer", "Another", accepted.AcceptedCommit}); err != nil {
+		t.Fatal(err)
+	}
+	retention, err = s.Retention(ctx, v.ID)
+	if err != nil || retention.DraftReferences != 2 {
+		t.Fatal("second branch not counted", retention, err)
+	}
+}

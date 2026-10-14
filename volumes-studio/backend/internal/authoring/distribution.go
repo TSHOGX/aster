@@ -321,7 +321,7 @@ func (s *Store) retention(ctx context.Context, id string) (Retention, error) {
 	}
 	// Reader totals may include both durable and in-process pins for one read;
 	// they are conservative blockers, not a billing or user-count metric.
-	err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM draft_entries d WHERE EXISTS(SELECT 1 FROM version_entries v WHERE v.version_id=? AND v.digest=d.digest)`, id).Scan(&r.DraftReferences)
+	err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM branch_entries d WHERE EXISTS(SELECT 1 FROM version_entries v WHERE v.version_id=? AND v.digest=d.digest)`, id).Scan(&r.DraftReferences)
 	return r, err
 }
 func (s *Store) Retire(ctx context.Context, a Actor, id, request string) (Version, error) {
