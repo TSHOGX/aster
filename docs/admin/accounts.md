@@ -164,3 +164,10 @@ Readers with `config.read` can inspect retained policy provenance through
 `GET /api/admin/groups/{group}/optimization/sources/{source}/revisions/{revision}`.
 A historical policy is evidence only: it cannot restore revoked source authority
 or grant access to the underlying content.
+
+List the group's current source declarations with
+`GET /api/admin/groups/{group}/optimization/sources?limit=50`. Continue with
+`after=next_after` when `has_more` is true. Limits range from 1 to 100, and each
+page requires current `config.read`. This list contains explicit policy declarations,
+not a grant to inspect source content; activation still checks current issuer access
+and policy revision. Policies in another group are never merged into this list.
