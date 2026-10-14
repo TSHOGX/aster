@@ -27,6 +27,9 @@ func TestEvolutionParticipantUsesSavedActorAndCurrentGrant(t *testing.T) {
 	if _, err = s.EvolutionParticipantActor(ctx, scope, "adopt"); err != ErrForbidden {
 		t.Fatal("failed operation adopted", err)
 	}
+	if _, err = s.EvolutionParticipantActor(ctx, scope, "lookup"); err != nil {
+		t.Fatal("failed operation lookup denied", err)
+	}
 	subject, err := s.EvolutionParticipantActor(ctx, scope, "cancel")
 	must(t, err)
 	if subject != admin.ID {

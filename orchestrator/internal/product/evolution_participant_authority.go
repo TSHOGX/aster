@@ -13,13 +13,22 @@ func (s *Store) EvolutionParticipantActor(ctx context.Context, scope ProjectionS
 		return "", ErrInvalid
 	}
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		if action == "cancel" {
+		if action == "cancel" || action == "lookup" {
 			var count int
 			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_group_configs WHERE group_id=? AND operation_id=? AND desired_revision=? AND desired_digest=? AND state='failed'", scope.GroupID, scope.OperationID, scope.Revision, scope.Digest).Scan(&count); err != nil {
 				return err
 			}
 			if count != 1 {
-				return ErrForbidden
+				if action == "cancel" {
+					return ErrForbidden
+				}
+				allowed, err := authorizeEvolutionProjection(ctx, tx, scope)
+				if err != nil {
+					return err
+				}
+				if !allowed {
+					return ErrForbidden
+				}
 			}
 		} else {
 			allowed, err := authorizeEvolutionProjection(ctx, tx, scope)

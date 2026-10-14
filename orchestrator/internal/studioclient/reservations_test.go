@@ -102,3 +102,38 @@ func TestStudioReceiptSubstitutionRejected(t *testing.T) {
 		})
 	}
 }
+
+func TestCancellationLostReplyRequiresReleasedReceipt(t *testing.T) {
+	config := evolution.Configuration{GroupID: "group", Revision: 1, Budget: evolution.Budget{MaxTokens: 1, MaxAttempts: 1, TimeoutSeconds: 1, MaxArtifactBytes: 1}}
+	raw, _ := json.Marshal(config)
+	p := Projection{"operation", evolution.Digest(raw), config}
+	for _, state := range []string{"released", "reserved", "adopted"} {
+		t.Run(state, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/cancel") {
+					conn, _, err := w.(http.Hijacker).Hijack()
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					conn.Close()
+					return
+				}
+				json.NewEncoder(w).Encode(evolution.ActivationReceipt{Participant: "studio", OperationID: p.OperationID, ConfigurationDigest: p.Digest, Generation: 1, State: state})
+			}))
+			defer server.Close()
+			client, err := New(server.URL, strings.Repeat("s", 32))
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipt, err := client.Cancel(context.Background(), p)
+			if state == "released" {
+				if err != nil || receipt.State != "released" {
+					t.Fatal(receipt, err)
+				}
+			} else if err == nil {
+				t.Fatal("unconfirmed cancellation accepted", state)
+			}
+		})
+	}
+}

@@ -152,8 +152,13 @@ func (c *Client) Adopt(ctx context.Context, p Projection) (evolution.ActivationR
 func (c *Client) Cancel(ctx context.Context, p Projection) (evolution.ActivationReceipt, error) {
 	receipt, err := c.request(ctx, "cancel", p)
 	if err != nil {
-		return receipt, err
+		original := err
+		receipt, err = c.Lookup(ctx, p)
+		if err != nil {
+			return evolution.ActivationReceipt{}, errors.Join(original, err)
+		}
 	}
+
 	if receipt.State != "released" {
 		return evolution.ActivationReceipt{}, fmt.Errorf("reservation not released")
 	}
