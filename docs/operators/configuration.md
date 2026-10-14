@@ -239,3 +239,27 @@ and the exact callback `${identity.issuer}/evaluation-space/auth/callback`.
 Studio's callback remains `${identity.issuer}/volumes-studio/auth/callback`.
 The two services cannot exchange callback paths. Each registration references its
 own identity credential environment variable; participant credentials are separate.
+
+### Provision Evaluation Space catalog revisions
+
+Stop Evaluation Space before offline catalog publication. Build the provisioning
+command from `evaluation-space/backend` with
+`go build -o evaluation-catalog ./cmd/evaluation-catalog`, then run
+`./evaluation-catalog --state-directory /absolute/evaluation-state < publication.json`.
+The command refuses access while the service owns that database. Restart the service
+after publication.
+
+A publication contains `kind` (`workflow`, `service`, `template`, or `profile`),
+`ref` (`id`, positive `revision`, `digest`), and the typed definition in `body`.
+Publish nested workflows before their parents and workflows before templates.
+Revisions start at one and increase sequentially; an identical publication can be
+retried. Existing revisions cannot be replaced or deleted.
+
+Workflow digests hash the shared contract's canonical workflow JSON. Service,
+template, and profile digests use `evolution.DefinitionDigest`, which clears only
+the definition's own `ref.digest` when hashing. Their envelope reference must match
+the body reference. Definitions contain credential references, never secret values.
+Projection adoption rejects missing or incompatible catalog revisions, including
+unsupported workflow capabilities and incompatible output profiles. A validation
+error leaves the central operation pending; publishing the missing compatible
+revision allows reconciliation to retry.

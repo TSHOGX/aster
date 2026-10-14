@@ -1,0 +1,82 @@
+// Command evaluation-catalog provisions immutable definitions while the service
+// is stopped. Store ownership locking prevents concurrent offline writers.
+package main
+
+import (
+	"aster/contracts/evolution"
+	"aster/evaluation-space/internal/projections"
+	"bytes"
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+)
+
+type publication struct {
+	Kind string             `json:"kind"`
+	Ref  evolution.Revision `json:"ref"`
+	Body json.RawMessage    `json:"body"`
+}
+
+func publish(ctx context.Context, directory string, input io.Reader, output io.Writer) error {
+	if !filepath.IsAbs(directory) || directory == "/" {
+		return fmt.Errorf("absolute application state directory required")
+	}
+	document, err := evolution.Decode[publication](input)
+	if err != nil {
+		return err
+	}
+	if document.Ref.Validate() != nil {
+		return fmt.Errorf("valid immutable reference required")
+	}
+	store, err := projections.Open(ctx, filepath.Join(directory, "projections.db"))
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	switch document.Kind {
+	case "workflow":
+		workflow, err := evolution.DecodeWorkflow(bytes.NewReader(document.Body))
+		if err != nil {
+			return err
+		}
+		canonical, err := workflow.Canonical()
+		if err != nil {
+			return err
+		}
+		if err = store.PublishWorkflow(ctx, document.Ref, canonical); err != nil {
+			return err
+		}
+	case "service", "template", "profile":
+		var ref struct {
+			Ref evolution.Revision `json:"ref"`
+		}
+		if err = json.Unmarshal(document.Body, &ref); err != nil {
+			return err
+		}
+		if ref.Ref != document.Ref {
+			return fmt.Errorf("envelope and definition references differ")
+		}
+		if err = store.PublishDefinition(ctx, document.Kind, document.Body); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported catalog kind")
+	}
+	return json.NewEncoder(output).Encode(document.Ref)
+}
+func main() {
+	directory := flag.String("state-directory", "", "absolute private Evaluation Space state directory")
+	flag.Parse()
+	if flag.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "publication JSON is read from stdin")
+		os.Exit(1)
+	}
+	if err := publish(context.Background(), *directory, os.Stdin, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}

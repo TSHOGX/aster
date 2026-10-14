@@ -22,6 +22,7 @@ import (
 
 var ErrConflict = errors.New("projection_conflict")
 var ErrNotFound = errors.New("projection_not_found")
+var ErrCatalog = errors.New("configuration_catalog_invalid")
 
 type Store struct {
 	db        *sql.DB
@@ -148,6 +149,9 @@ func (s *Store) Adopt(ctx context.Context, p Projection) error {
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
+	}
+	if err = validateConfigurationCatalog(ctx, tx, p.Configuration); err != nil {
+		return fmt.Errorf("%w: %v", ErrCatalog, err)
 	}
 	var existing int
 	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM projections WHERE operation_id=?", p.OperationID).Scan(&existing); err != nil {

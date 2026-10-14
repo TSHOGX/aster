@@ -4,7 +4,9 @@ package producthttp
 
 import (
 	"aster/contracts/evolution"
+	"bytes"
 	"context"
+	"encoding/json"
 	"harness-platform/orchestrator/internal/evaluationclient"
 	"harness-platform/orchestrator/internal/identityconfig"
 	"harness-platform/orchestrator/internal/product"
@@ -36,6 +38,7 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 		}
 		return binary
 	}
+	catalogBinary := build("evaluation-space/backend", "./cmd/evaluation-catalog", "evaluation-catalog")
 	studioBinary := build("volumes-studio/backend", "./cmd/studio", "studio")
 	evaluationBinary := build("evaluation-space/backend", "./cmd/evaluation-space", "evaluation-space")
 	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "central.db"))
@@ -103,7 +106,46 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 		t.Fatal("participant listener did not start")
 	}
 	start(studioBinary, studioAddress, "--listen", address(), "--participant-listen", studioAddress, "--state-directory", t.TempDir(), "--public-origin", "https://central", "--identity-endpoint", central.URL, "--publisher-id", "publisher")
-	start(evaluationBinary, evaluationAddress, "--listen", evaluationAddress, "--state-directory", t.TempDir(), "--identity-endpoint", central.URL)
+	evaluationDirectory := t.TempDir()
+	workflowRaw, err := os.ReadFile(filepath.Join(root, "contracts/evolution/testdata/skills.valid.json"))
+	must(t, err)
+	workflow, err := evolution.DecodeWorkflow(bytes.NewReader(workflowRaw))
+	must(t, err)
+	workflowRaw, err = workflow.Canonical()
+	must(t, err)
+	workflowRef := evolution.Revision{ID: workflow.ID, Revision: 1, Digest: evolution.Digest(workflowRaw)}
+	provision := func(kind string, ref evolution.Revision, body []byte) {
+		raw, err := json.Marshal(map[string]any{"kind": kind, "ref": ref, "body": json.RawMessage(body)})
+		must(t, err)
+		cmd := exec.CommandContext(ctx, catalogBinary, "--state-directory", evaluationDirectory)
+		cmd.Stdin = bytes.NewReader(raw)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("catalog provision: %v\n%s", err, output)
+		}
+	}
+	provision("workflow", workflowRef, workflowRaw)
+	off := evolution.EvaluationPolicy{Mode: "disabled", ReferenceStrategy: "none"}
+	template := evolution.Template{Ref: evolution.Revision{ID: "template", Revision: 1}, Goal: "Extract skills", ParametersSchema: json.RawMessage(`{"type":"object"}`), Inputs: workflow.Inputs, Outputs: workflow.Outputs, Profile: "shared-assets-v1", Workflows: []evolution.Revision{workflowRef}, SuggestedPrefix: "skills/derived", Evaluation: off}
+	template.Ref.Digest, err = evolution.DefinitionDigest(template)
+	must(t, err)
+	raw, err := json.Marshal(template)
+	must(t, err)
+	provision("template", template.Ref, raw)
+	kinds := []string{}
+	seen := map[string]bool{}
+	for _, node := range workflow.Nodes {
+		if !seen[node.Kind] {
+			kinds = append(kinds, node.Kind)
+			seen[node.Kind] = true
+		}
+	}
+	service := evolution.Service{Ref: evolution.Revision{ID: "service", Revision: 1}, Kind: "evolution", ConnectionID: "connection", RunnerDigest: evolution.Digest([]byte("runner")), Enabled: true, Capabilities: evolution.Capabilities{ProtocolVersion: 1, WorkflowVersions: []int{1}, NodeKinds: kinds}}
+	service.Ref.Digest, err = evolution.DefinitionDigest(service)
+	must(t, err)
+	raw, err = json.Marshal(service)
+	must(t, err)
+	provision("service", service.Ref, raw)
+	start(evaluationBinary, evaluationAddress, "--listen", evaluationAddress, "--state-directory", evaluationDirectory, "--identity-endpoint", central.URL)
 	configuration := evolution.Configuration{GroupID: product.StandardUsersGroup, Revision: 1, Budget: evolution.Budget{MaxTokens: 1, MaxAttempts: 1, TimeoutSeconds: 1, MaxArtifactBytes: 1}}
 	_, err = store.CreateProject(ctx, admin.ID, "source-project", "Source")
 	must(t, err)
@@ -112,9 +154,8 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 	must(t, err)
 	_, err = store.ApplyStudioGrant(ctx, token, product.StudioGrantCommand{RequestID: "configure", Kind: "account", SubjectID: admin.ID, LibraryID: "aster-shared-assets", Action: "volume.configure", Effect: "allow"})
 	must(t, err)
-	ref := evolution.Revision{ID: "fixture", Revision: 1, Digest: evolution.Digest([]byte("fixture"))}
 	configuration.Sources = []evolution.SourceBinding{source}
-	configuration.Bindings = []evolution.Binding{{ID: "skills", Template: ref, Workflow: ref, Service: ref, Parameters: []byte(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: "skills/derived", Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: evolution.EvaluationPolicy{Mode: "disabled", ReferenceStrategy: "none"}, Budget: configuration.Budget, Trigger: "manual"}}
+	configuration.Bindings = []evolution.Binding{{ID: "skills", Template: template.Ref, Workflow: workflowRef, Service: service.Ref, Parameters: []byte(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: "skills/derived", Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: evolution.EvaluationPolicy{Mode: "disabled", ReferenceStrategy: "none"}, Budget: configuration.Budget, Trigger: "manual"}}
 	pending, err := store.ActivateEvolutionConfig(ctx, token, configuration.GroupID, product.EvolutionActivationInput{RequestID: "activate", Configuration: configuration})
 	must(t, err)
 	evaluation, err := evaluationclient.New("http://"+evaluationAddress, secret)

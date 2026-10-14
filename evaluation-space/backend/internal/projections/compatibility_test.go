@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -59,9 +60,21 @@ func TestConfigurationResolvesExactCompatibleCatalog(t *testing.T) {
 	if err = s.ValidateConfiguration(ctx, config); err != nil {
 		t.Fatal("compatible disabled evaluation", err)
 	}
+	configRaw, _ := json.Marshal(config)
+	if err = s.Adopt(ctx, Projection{OperationID: "valid", Digest: evolution.Digest(configRaw), Configuration: config}); err != nil {
+		t.Fatal("compatible projection rejected", err)
+	}
+	config.Revision = 2
 	config.Bindings[0].Workflow.Revision = 2
 	if err = s.ValidateConfiguration(ctx, config); err == nil {
 		t.Fatal("missing workflow accepted")
+	}
+	configRaw, _ = json.Marshal(config)
+	if err = s.Adopt(ctx, Projection{OperationID: "missing", Digest: evolution.Digest(configRaw), Configuration: config}); !errors.Is(err, ErrCatalog) {
+		t.Fatal("missing workflow projection accepted", err)
+	}
+	if _, err = s.Read(ctx, config.GroupID, config.Revision); !errors.Is(err, ErrNotFound) {
+		t.Fatal("invalid projection persisted", err)
 	}
 	config.Bindings[0].Workflow = workflowRef
 	config.Bindings[0].Output.Profile = "shared-assets-v1"

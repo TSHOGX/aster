@@ -73,7 +73,9 @@ func (a ProjectionAPI) adopt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err = a.Store.Adopt(r.Context(), value); err != nil {
-		if errors.Is(err, projections.ErrConflict) {
+		if errors.Is(err, projections.ErrCatalog) {
+			write(w, 422, map[string]string{"error": "configuration_catalog_invalid"})
+		} else if errors.Is(err, projections.ErrConflict) {
 			write(w, 409, map[string]string{"error": "projection_conflict"})
 		} else {
 			write(w, 503, map[string]string{"error": "projection_store_unavailable"})
