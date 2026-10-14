@@ -164,3 +164,24 @@ func TestCatalogSemanticKindsValidate(t *testing.T) {
 		t.Fatal("invalid service accepted", err)
 	}
 }
+
+func TestCatalogValidServiceAndProfilePublication(t *testing.T) {
+	s, admin := accountStore(t)
+	ctx := context.Background()
+	token := adminTestToken(t, s, admin)
+	ref := evolution.Revision{ID: "definition", Revision: 1, Digest: evolution.Digest([]byte("definition"))}
+	service := evolution.Service{Ref: ref, Kind: "evolution", ConnectionID: "native", RunnerDigest: evolution.Digest([]byte("runner")), Capabilities: evolution.Capabilities{ProtocolVersion: 1}, Enabled: true}
+	profile := evolution.EvaluationProfile{Ref: ref, Dataset: evolution.ArtifactRef{ID: "dataset", GroupID: "group", SchemaDigest: evolution.Digest([]byte("schema")), Digest: evolution.Digest([]byte("data")), MediaType: "application/json", GrantID: "grant", PolicyRevision: 1}, Scorer: ref, Runtime: ref, Model: ref, Thresholds: []evolution.MetricThreshold{{Name: "accuracy", Unit: "ratio", Operator: "gte", Value: 0.9, MinimumSamples: 1}}}
+	for kind, value := range map[string]any{"service": service, "profile": profile} {
+		body, err := json.Marshal(value)
+		must(t, err)
+		_, err = s.PublishCatalogRevision(ctx, token, CatalogRevision{Kind: kind, ID: "definition", Revision: 1, Digest: evolution.Digest(body), Body: body, Enabled: true})
+		must(t, err)
+	}
+	profile.Thresholds = nil
+	body, err := json.Marshal(profile)
+	must(t, err)
+	if err := validateCatalogBody("profile", body); err == nil {
+		t.Fatal("missing thresholds accepted")
+	}
+}

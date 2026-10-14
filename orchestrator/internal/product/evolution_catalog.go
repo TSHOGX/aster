@@ -154,25 +154,23 @@ func (s *Store) UnbindCatalogRevision(ctx context.Context, token, group, binding
 func validateCatalogBody(kind string, body []byte) error {
 	switch kind {
 	case "service":
-		var value evolution.Service
-		if _, err := evolution.Decode[evolution.Service](bytes.NewReader(body)); err != nil {
+		value, err := evolution.Decode[evolution.Service](bytes.NewReader(body))
+		if err != nil {
 			return err
 		}
 		return value.Validate()
 	case "template":
-		return nil
+		value, err := evolution.Decode[evolution.Template](bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		return value.Validate()
 	case "profile":
-		var value evolution.EvaluationProfile
-		if _, err := evolution.Decode[evolution.EvaluationProfile](bytes.NewReader(body)); err != nil {
+		value, err := evolution.Decode[evolution.EvaluationProfile](bytes.NewReader(body))
+		if err != nil {
 			return err
 		}
-		if err := value.Ref.Validate(); err != nil {
-			return err
-		}
-		if err := value.Dataset.Validate(); err != nil {
-			return err
-		}
-		return nil
+		return value.Validate()
 	}
 	return nil
 }
