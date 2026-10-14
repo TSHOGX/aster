@@ -184,3 +184,14 @@ CREATE TABLE evolution_reservation_candidates (
  PRIMARY KEY(library_id,prefix),
  FOREIGN KEY(library_id,prefix) REFERENCES evolution_prefix_reservations(library_id,prefix)
 );
+
+CREATE TRIGGER immutable_evolution_reservation_identity
+BEFORE UPDATE OF operation_id,group_id,revision,digest,body ON evolution_reservation_operations
+BEGIN SELECT RAISE(ABORT,'immutable reservation operation identity'); END;
+CREATE TRIGGER retained_evolution_reservation_operation
+BEFORE DELETE ON evolution_reservation_operations
+BEGIN SELECT RAISE(ABORT,'retain reservation operation provenance'); END;
+CREATE TRIGGER terminal_evolution_reservation_operation
+BEFORE UPDATE OF state ON evolution_reservation_operations
+WHEN OLD.state<>NEW.state AND OLD.state<>'reserved'
+BEGIN SELECT RAISE(ABORT,'terminal reservation operation'); END;

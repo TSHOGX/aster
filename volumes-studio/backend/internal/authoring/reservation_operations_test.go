@@ -47,6 +47,16 @@ func TestEvolutionConfigurationReservationAtomicAndLookupable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, statement := range []string{
+		"UPDATE evolution_reservation_operations SET body='{}' WHERE operation_id='operation'",
+		"UPDATE evolution_reservation_operations SET digest='changed' WHERE operation_id='operation'",
+		"UPDATE evolution_reservation_operations SET group_id='other' WHERE operation_id='operation'",
+		"DELETE FROM evolution_reservation_operations WHERE operation_id='operation'",
+	} {
+		if _, err = s.db.ExecContext(ctx, statement); err == nil {
+			t.Fatal("reservation provenance mutation accepted", statement)
+		}
+	}
 	replay, err := s.ReserveEvolutionConfiguration(ctx, testActor, input)
 	if err != nil || replay != receipt {
 		t.Fatal("replay mismatch", err)
@@ -73,6 +83,9 @@ func TestEvolutionConfigurationReservationAtomicAndLookupable(t *testing.T) {
 	replay, err = s.AdoptEvolutionConfiguration(ctx, testActor, input.OperationID, input.Digest)
 	if err != nil || replay != adopted {
 		t.Fatal("adoption replay", err)
+	}
+	if _, err = s.db.ExecContext(ctx, "UPDATE evolution_reservation_operations SET state='reserved' WHERE operation_id=?", input.OperationID); err == nil {
+		t.Fatal("terminal operation rewound")
 	}
 	if _, err = s.CancelEvolutionReservation(ctx, testActor, input.OperationID, input.Digest); err != ErrConflict {
 		t.Fatal("adopted ownership released", err)
