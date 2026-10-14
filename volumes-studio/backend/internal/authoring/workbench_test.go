@@ -79,7 +79,7 @@ func TestWorkbenchTreeEntryAndPinnedContent(t *testing.T) {
 		t.Fatal("stale content", err)
 	}
 }
-func TestWorkbenchDiffPinsBaseWithoutRevisionChange(t *testing.T) {
+func TestPublicationDoesNotChangeDraftComparisonBase(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	l := library(t, s)
@@ -99,13 +99,13 @@ func TestWorkbenchDiffPinsBaseWithoutRevisionChange(t *testing.T) {
 	if _, err = s.ValidateNext(ctx, allow); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = workbenchDiffFixture(s, ctx, l.ID, q); err != ErrConflict {
-		t.Fatal("base changed", err)
-	}
-	q.BaseVersion = v.ID
 	p, err = workbenchDiffFixture(s, ctx, l.ID, q)
-	if err != nil || p.Total != 0 {
-		t.Fatal(p, err)
+	if err != nil || p.Total != 1 {
+		t.Fatal("publication changed saved draft comparison", p, err)
+	}
+	version, err := s.Version(ctx, v.ID)
+	if err != nil || version.State != "published" {
+		t.Fatal(version, err)
 	}
 	summary, err := s.Summary(ctx, l.ID)
 	if err != nil || summary.DraftChangeCount != 0 || summary.LatestPublishedVersion == nil || summary.LatestPublishedVersion.PublishedAt == nil {

@@ -148,10 +148,6 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 	if n != 1 {
 		return true, ErrConflict
 	}
-	// Publishing establishes the comparison base, but never changes later edits.
-	if _, err = tx.ExecContext(ctx, "UPDATE libraries SET base_version=? WHERE id=?", v.ID, v.LibraryID); err != nil {
-		return true, err
-	}
 	if _, err = tx.ExecContext(ctx, "INSERT INTO audit(issuer,subject,action,library_id,request_id,revision,created_at) VALUES(?,?,'version.published',?,'',?,?)", v.Publisher.Issuer, v.Publisher.Subject, v.LibraryID, v.SourceRevision, s.now().Unix()); err != nil {
 		return true, err
 	}

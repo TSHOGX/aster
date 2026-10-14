@@ -89,7 +89,7 @@ func TestRevisionReceiptsFreezeRestoreAndRestart(t *testing.T) {
 		t.Fatal(entry)
 	}
 	diff, _, err := diffFixture(s, ctx, l.ID, "", 4)
-	if err != nil || len(diff) != 1 || diff[0].Kind != "changed" {
+	if err != nil || len(diff) != 1 || diff[0].Kind != "added" {
 		t.Fatal(diff, err)
 	}
 	mutate(t, s, l.ID, fixtureMutation{RequestID: "restore", ExpectedRevision: 4, Action: "restore", VersionID: v.ID})
