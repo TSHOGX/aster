@@ -1866,34 +1866,6 @@ CREATE TABLE evolution_activation_receipts (
  PRIMARY KEY(operation_id,participant)
 );
 
-CREATE TABLE evolution_catalog_revisions (
- kind TEXT NOT NULL CHECK(kind IN('service','template','workflow','profile')),
- id TEXT NOT NULL,
- revision INTEGER NOT NULL CHECK(revision>0),
- digest TEXT NOT NULL,
- body TEXT NOT NULL CHECK(json_valid(body)),
- enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),
- retired INTEGER NOT NULL CHECK(retired IN(0,1)),
- created_at TEXT NOT NULL,
- PRIMARY KEY(kind,id,revision),
- UNIQUE(kind,id,digest)
-);
-CREATE TABLE evolution_catalog_bindings (
- group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
- binding_id TEXT NOT NULL,
- kind TEXT NOT NULL,
- catalog_id TEXT NOT NULL,
- revision INTEGER NOT NULL,
- PRIMARY KEY(group_id,binding_id,kind),
- FOREIGN KEY(kind,catalog_id,revision) REFERENCES evolution_catalog_revisions(kind,id,revision)
-);
-CREATE TRIGGER immutable_evolution_catalog_content
-BEFORE UPDATE OF kind,id,revision,digest,body,created_at ON evolution_catalog_revisions
-BEGIN SELECT RAISE(ABORT,'immutable evolution catalog revision'); END;
-CREATE TRIGGER retained_evolution_catalog_revision
-BEFORE DELETE ON evolution_catalog_revisions
-BEGIN SELECT RAISE(ABORT,'retire evolution catalog revisions instead of deleting'); END;
-
 CREATE TABLE evolution_configuration_revisions (
  actor_id TEXT NOT NULL REFERENCES accounts(id),
  group_id TEXT NOT NULL REFERENCES account_groups(id),
