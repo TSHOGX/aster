@@ -65,6 +65,24 @@ func TestCatalogReadAuthorityAndRetainedIntegrity(t *testing.T) {
 	if string(read.Body) != string(body) {
 		t.Fatal("catalog bytes changed")
 	}
+	if err := s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE evolution_catalog_revisions SET body='{}' WHERE id='lesson'`)
+		return err
+	}); err == nil {
+		t.Fatal("database permitted content rewrite")
+	}
+	if err := s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `DELETE FROM evolution_catalog_revisions WHERE id='lesson'`)
+		return err
+	}); err == nil {
+		t.Fatal("database permitted history deletion")
+	}
+	// Deliberately bypass the storage guard only in this corruption fixture to
+	// verify read-time integrity remains an independent defense.
+	must(t, s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "DROP TRIGGER immutable_evolution_catalog_content")
+		return err
+	}))
 	must(t, s.write(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE evolution_catalog_revisions SET body='{"goal":"tampered"}' WHERE id='lesson'`)
 		return err

@@ -1887,3 +1887,9 @@ CREATE TABLE evolution_catalog_bindings (
  PRIMARY KEY(group_id,binding_id,kind),
  FOREIGN KEY(kind,catalog_id,revision) REFERENCES evolution_catalog_revisions(kind,id,revision)
 );
+CREATE TRIGGER immutable_evolution_catalog_content
+BEFORE UPDATE OF kind,id,revision,digest,body,created_at ON evolution_catalog_revisions
+BEGIN SELECT RAISE(ABORT,'immutable evolution catalog revision'); END;
+CREATE TRIGGER retained_evolution_catalog_revision
+BEFORE DELETE ON evolution_catalog_revisions
+BEGIN SELECT RAISE(ABORT,'retire evolution catalog revisions instead of deleting'); END;
