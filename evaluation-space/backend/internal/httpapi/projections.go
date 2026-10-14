@@ -56,8 +56,7 @@ func (a ProjectionAPI) adopt(w http.ResponseWriter, r *http.Request) {
 		write(w, 400, map[string]string{"error": "invalid_projection"})
 		return
 	}
-	if a.Authority == nil || a.Authority.AuthorizeProjection(r, ProjectionScope{GroupID: value.Configuration.GroupID, OperationID: value.OperationID, Revision: value.Configuration.Revision, Digest: value.Digest}) != nil {
-		write(w, 403, map[string]string{"error": "projection_authority_required"})
+	if !a.authorize(w, r, ProjectionScope{GroupID: value.Configuration.GroupID, OperationID: value.OperationID, Revision: value.Configuration.Revision, Digest: value.Digest}) {
 		return
 	}
 	if err = value.Configuration.Validate(); err != nil {
@@ -97,8 +96,7 @@ func (a ProjectionAPI) lookup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := ProjectionScope{GroupID: r.PathValue("group"), Revision: revision, OperationID: r.URL.Query().Get("operation_id"), Digest: r.URL.Query().Get("digest")}
-	if a.Authority == nil || a.Authority.AuthorizeProjection(r, scope) != nil {
-		write(w, 403, map[string]string{"error": "projection_authority_required"})
+	if !a.authorize(w, r, scope) {
 		return
 	}
 	if a.Store == nil {
@@ -119,4 +117,22 @@ func (a ProjectionAPI) lookup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, map[string]string{"operation_id": projection.OperationID, "configuration_digest": projection.Digest, "revision": raw, "state": "adopted"})
+}
+
+var ErrAuthorityDenied = errors.New("projection_authority_denied")
+
+func (a ProjectionAPI) authorize(w http.ResponseWriter, r *http.Request, scope ProjectionScope) bool {
+	if a.Authority == nil {
+		write(w, 503, map[string]string{"error": "authority_unavailable"})
+		return false
+	}
+	if err := a.Authority.AuthorizeProjection(r, scope); err != nil {
+		if errors.Is(err, ErrAuthorityDenied) {
+			write(w, 403, map[string]string{"error": "projection_authority_required"})
+		} else {
+			write(w, 503, map[string]string{"error": "authority_unavailable"})
+		}
+		return false
+	}
+	return true
 }

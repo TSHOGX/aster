@@ -18,7 +18,7 @@ type scopeAuthority struct{ digest string }
 
 func (a scopeAuthority) AuthorizeProjection(r *http.Request, scope ProjectionScope) error {
 	if r.Header.Get("Authorization") != "Bearer fixture" || scope.GroupID != "alpha" || scope.OperationID != "activation" || scope.Revision != 1 || scope.Digest != a.digest {
-		return fmt.Errorf("denied")
+		return ErrAuthorityDenied
 	}
 	return nil
 }
@@ -96,5 +96,22 @@ func TestProjectionLookupReconcilesOnlyAuthorizedIdentity(t *testing.T) {
 	}
 	if code := lookup(""); code != 403 {
 		t.Fatal("retained projection leaked", code)
+	}
+}
+
+type unavailableAuthority struct{}
+
+func (unavailableAuthority) AuthorizeProjection(*http.Request, ProjectionScope) error {
+	return fmt.Errorf("transport unavailable")
+}
+func TestProjectionAuthorityOutageIsRetryable(t *testing.T) {
+	for _, authority := range []ServiceAuthorizer{nil, unavailableAuthority{}} {
+		handler := ProjectionAPI{Authority: authority}.Handler()
+		request := httptest.NewRequest("GET", "/evaluation-space/api/v1/groups/alpha/projections/1?operation_id=activation&digest=claimed", nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != 503 {
+			t.Fatal("outage mislabeled denial", response.Code)
+		}
 	}
 }
