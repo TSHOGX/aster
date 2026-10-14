@@ -15,7 +15,7 @@ import (
 	"sync"
 	"syscall"
 
-	"volume-studio/backend/internal/manifest"
+	"aster/contracts/volumemanifest"
 )
 
 const MaxTextBytes = 1 << 20

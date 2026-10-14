@@ -11,7 +11,7 @@ func testEnvironment(ctx context.Context, q queryer) (DefaultEnvironment, []Buil
 	var environment DefaultEnvironment
 	var raw string
 	var revision int64
-	if err := missing(q.QueryRowContext(ctx, `SELECT document,revision FROM environment_templates WHERE id IN ('fixture-environment','environment-default') ORDER BY id LIMIT 1`).Scan(&raw, &revision)); err != nil {
+	if err := missing(q.QueryRowContext(ctx, `SELECT document,revision FROM environment_templates WHERE id IN ('fixture-environment','standard-agent') ORDER BY id LIMIT 1`).Scan(&raw, &revision)); err != nil {
 		return environment, nil, err
 	}
 	var err error
@@ -44,7 +44,7 @@ func testEnvironment(ctx context.Context, q queryer) (DefaultEnvironment, []Buil
 func saveFixtureEnvironment(t *testing.T, s *Store, token string, environment DefaultEnvironment) ResourceTemplate {
 	t.Helper()
 	var id string
-	must(t, s.reader.QueryRow(`SELECT id FROM environment_templates WHERE id IN ('fixture-environment','environment-default') ORDER BY id LIMIT 1`).Scan(&id))
+	must(t, s.reader.QueryRow(`SELECT id FROM environment_templates WHERE id IN ('fixture-environment','standard-agent') ORDER BY id LIMIT 1`).Scan(&id))
 	before, err := readTemplate(ctx, s.reader, "environment", id)
 	must(t, err)
 	return saveTemplateReviewed(t, s, token, "environment", id, TemplateEdit{RequestID: fmt.Sprintf("environment-%s-%d", id, before.Revision), ExpectedRevision: before.Revision, Name: before.Name, Description: before.Description, Enabled: before.Enabled, Environment: &environment})

@@ -13,7 +13,7 @@ import (
 
 const emptyDigest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
-func fixtureDir() string { return "../../../contracts/v1/fixtures" }
+func fixtureDir() string { return "../../volumes-studio/contracts/v1/fixtures" }
 
 func TestCanonicalVectors(t *testing.T) {
 	var index []struct {

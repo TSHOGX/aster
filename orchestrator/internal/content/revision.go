@@ -85,6 +85,10 @@ type Revision struct {
 // mean exactly the bytes that were reviewed, and the guest launcher owns the one
 // context symlink it needs inside its own overlay.
 func Read(root string) (Revision, error) {
+	return ReadProfile(root, ReviewedProfile)
+}
+
+func ReadProfile(root, profile string) (Revision, error) {
 	var result Revision
 	absolute, err := filepath.Abs(root)
 	if err != nil {
@@ -158,9 +162,15 @@ func Read(root string) (Revision, error) {
 		return result, fmt.Errorf("authored content root is empty")
 	}
 	result.Reader = directoryReader{root: absolute}
-	result.Profile = ReviewedProfile
+	result.Profile = profile
 	result.Entries = entries
 	result.Digest = Digest(entries)
+	if _, err := ValidateEntries(result.Entries, profile); err != nil {
+		return Revision{}, err
+	}
+	if err := result.ValidateContent(); err != nil {
+		return Revision{}, err
+	}
 	return result, nil
 }
 

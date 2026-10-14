@@ -19,7 +19,7 @@ import (
 	"sync"
 	"syscall"
 
-	"harness-platform/orchestrator/internal/volumeimport/manifest"
+	"aster/contracts/volumemanifest"
 )
 
 const MaxChunkBytes int64 = 8 << 20

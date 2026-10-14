@@ -15,6 +15,7 @@ export type PublicationLabels = Record<
   { library_name: string; version_label: string; version_note: string }
 >;
 export type EnvironmentRelease = {
+ kind?: string;
   labels?: PublicationLabels;
   id: string;
   sequence: number;
@@ -49,6 +50,7 @@ type Page = {
   release_next_cursor?: number;
 };
 type Review = {
+ projects?: EnvironmentProject[];
   can_publish?: boolean;
   release?: EnvironmentRelease;
   counts?: Record<string, number>;
@@ -128,6 +130,9 @@ export function EnvironmentUpdates({
 }) {
   const tr = useT();
   const [note, setNote] = useState(""),
+    [kind,setKind] = useState("publication_replace"),
+    [cohort,setCohort] = useState<string[]>([]),
+    [rollback,setRollback] = useState<EnvironmentRelease|null>(null),
     [cursor, setCursor] = useState(""),
     [filter, setFilter] = useState(""),
     [selected, setSelected] = useState<string[]>([]),
@@ -151,14 +156,14 @@ export function EnvironmentUpdates({
     ? history.data?.next_cursor
     : page?.release_next_cursor;
   const load = async (required = false) => {
-    setSelected([]);
+    setSelected([]);setCohort([]);setRollback(null);
     setReleaseBefore(0);
     await refresh(required);
   };
   useEffect(() => {
-    onDirty(mutation.blocked || note !== "");
+    onDirty(mutation.blocked || note !== "" || cohort.length>0);
     return () => onDirty(false);
-  }, [mutation.blocked, note, onDirty]);
+  }, [mutation.blocked, note, cohort.length, onDirty]);
   const review = (
     action: string,
     release?: EnvironmentRelease,
@@ -168,12 +173,13 @@ export function EnvironmentUpdates({
       path,
       {
         action,
+        kind: release?.kind || kind,
         expected_revision:
-          release?.revision ??
+          (action==="rollback" ? revision : release?.revision) ??
           (projects?.length === 1 ? projects[0].revision : revision),
         release_id: release?.id,
         note,
-        project_ids: projects?.map((p) => p.project_id),
+        project_ids: projects?.map((p) => p.project_id) || ((release?.kind || kind)==="system_content_replace" ? cohort : undefined),
       },
       "POST",
     );
@@ -219,13 +225,17 @@ export function EnvironmentUpdates({
           {tab === "updates" ? (
             <>
               <section className="panel">
-                <h3>{tr("Publish saved data versions")}</h3>
+                <h3>{rollback ? `Review rollback to update ${rollback.sequence}` : "Review saved content versions"}</h3>
+                {rollback && <button disabled={mutation.blocked} onClick={()=>{setRollback(null);setCohort([]);}}>Cancel rollback selection</button>}
+                <label>Update content<Select aria-label="Update content" value={kind} disabled={mutation.blocked} onChange={e=>{setKind(e.target.value);setCohort([]);setRollback(null);}}><option value="publication_replace">Ordinary data</option><option value="system_content_replace">Shared assets</option></Select></label>
+                {kind==="system_content_replace" && <SystemRolloutCandidates key={rollback?.id || "new"} release={rollback?.id} path={path} selected={cohort} onSelect={setCohort} blocked={mutation.blocked} />}
+
                 {!hasPublications && (
                   <p>
                      {tr("Add an immutable data publication in Configuration before publishing an update.")} </p>
                 )}
                 <p>
-                   {tr("Configuration revision")} {formatQuantity(revision)}  {tr("is used for new projects. Publishing separately updates compatible existing projects. Only read-only data publications are included.")} </p>
+                   {tr("Configuration revision")} {formatQuantity(revision)}  {"is used for new Projects. A reviewed rollout updates only the chosen content at the next start or resume."} </p>
                 <label>
                    {tr("Release note")} <textarea
                     value={note}
@@ -237,8 +247,8 @@ export function EnvironmentUpdates({
                 </label>
                 <button
                   className="primary"
-                  disabled={mutation.blocked || !hasPublications}
-                  onClick={() => review("publish")}
+                  disabled={mutation.blocked || !hasPublications || kind==="system_content_replace" && !cohort.length}
+                  onClick={() => review(rollback ? "rollback" : "publish",rollback || undefined)}
                 >
                    {tr("Preview update")} </button>
               </section>
@@ -282,14 +292,14 @@ export function EnvironmentUpdates({
                       onClick={() => review("retry", release)}
                     >
                        {tr("Retry deferred projects")} </button>
-                    {["superseded", "retired"].includes(release.state) && (
+                    {(["superseded", "retired"].includes(release.state) || release.kind==="system_content_replace") && (
                       <>
                         <button
                           disabled={
                             mutation.blocked || release.state === "retired"
                           }
                           onClick={() =>
-                            void mutation.preview(
+                            release.kind==="system_content_replace" ? (setKind("system_content_replace"),setRollback(release),setCohort([]),window.scrollTo({top:0,behavior:"smooth"})) : void mutation.preview(
                               path,
                               {
                                 action: "rollback",
@@ -528,7 +538,8 @@ export function EnvironmentUpdates({
               labels={proposed.release.labels}
             />
           )}
-          {proposed?.release && (
+          {proposed?.projects && <section aria-label="Selected project impact">{proposed.projects.map(p=><article key={p.project_id}><h4>{p.title} · {tr(environmentUpdateStates[p.state] || p.state)}</h4><p>{p.reason}</p><MountVersions mounts={p.current} labels={p.labels}/><p>Target</p><MountVersions mounts={p.target} labels={p.labels}/></article>)}</section>}
+ {proposed?.release && !proposed.projects && (
             <details>
               <summary>
                  {tr("Review affected projects and version differences")} </summary>
@@ -548,16 +559,16 @@ export function EnvironmentUpdates({
           <div className="form-actions">
             <button
               className="primary"
-              disabled={mutation.busy || proposed?.can_publish === false}
+              disabled={mutation.busy || !!mutation.pending || proposed?.can_publish === false}
               onClick={() => void mutation.save(saved)}
             >
                {tr("Confirm")} </button>
-            <button disabled={mutation.busy} onClick={mutation.cancel}>
+            <button disabled={mutation.busy || !!mutation.pending} onClick={mutation.cancel}>
                {tr("Cancel")} </button>
           </div>
         </section>
       )}
-      {mutation.pending && !mutation.review && (
+      {mutation.pending && !mutation.busy && (
         <button
           disabled={mutation.busy}
           onClick={() => void mutation.save(saved)}
@@ -676,4 +687,22 @@ function ReleaseMembers({ path, release }: { path: string; release: string }) {
       )}
     </details>
   );
+}
+
+function SystemRolloutCandidates({path,release,selected,onSelect,blocked}:{path:string;release?:string;selected:string[];onSelect:(ids:string[])=>void;blocked:boolean}) {
+ const [cursor,setCursor]=useState("");
+ const {data,error,refresh}=useEnvironmentQuery<Page>(`${path}/preview?kind=system_content_replace&release_id=${encodeURIComponent(release || "")}&limit=30&cursor=${encodeURIComponent(cursor)}`,!blocked);
+ return <section aria-label="Shared-assets rollout targets">
+  <p>Select up to 100 eligible Projects. Review their current and target versions before confirming. Unselected Projects retain their current version.</p>
+  {error && <p role="alert">{error}<button type="button" onClick={()=>void refresh()}>Retry</button></p>}
+  {!data && !error && <p role="status">Loading eligible Projects…</p>}
+  {data?.projects.map(p=><article key={p.project_id}>
+   <label className="check-label"><input type="checkbox" checked={selected.includes(p.project_id)} disabled={blocked||p.state!=="pending"||selected.length>=100&&!selected.includes(p.project_id)} onChange={e=>onSelect(e.target.checked?[...selected,p.project_id]:selected.filter(id=>id!==p.project_id))}/>{p.title} · {environmentUpdateStates[p.state] || p.state}</label>
+   {p.reason && <p>{p.reason}</p>}<MountVersions mounts={p.current} labels={p.labels}/><p>Target</p><MountVersions mounts={p.target} labels={p.labels}/>
+  </article>)}
+  {data?.projects.length===0 && <p>No eligible Projects on this page.</p>}
+  <p>{selected.length} Projects selected</p>
+  {cursor && <button type="button" disabled={blocked} onClick={()=>setCursor("")}>First page</button>}
+  {data?.next_cursor && <button type="button" disabled={blocked} onClick={()=>setCursor(data.next_cursor!)}>Next page</button>}
+ </section>;
 }

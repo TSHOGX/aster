@@ -325,7 +325,7 @@ func (s *Store) DeleteResourceTemplate(ctx context.Context, token, kind, id stri
 			return nil, e
 		}
 		if before.Builtin {
-			return nil, ErrForbidden
+			return nil, Admission("builtin_immutable", ErrForbidden)
 		}
 		if before.Revision != input.ExpectedRevision {
 			return nil, ErrConflict
@@ -351,7 +351,7 @@ func (s *Store) seedResourceTemplates(ctx context.Context, tx *sql.Tx, seed Boot
 	if err != nil {
 		return err
 	}
-	web, err := NewNetworkPolicy(Reachability{Direct: []DirectRule{{CIDR: netip.MustParsePrefix("0.0.0.0/0"), Port: 80, Protocol: "tcp"}, {CIDR: netip.MustParsePrefix("0.0.0.0/0"), Port: 443, Protocol: "tcp"}}, Resolvers: seed.Network.Resolvers})
+	web, err := NewNetworkPolicy(Reachability{Direct: []DirectRule{{CIDR: netip.MustParsePrefix("0.0.0.0/0"), Port: 80, Protocol: "tcp"}, {CIDR: netip.MustParsePrefix("0.0.0.0/0"), Port: 443, Protocol: "tcp"}}, Resolvers: seed.PublicDNS})
 	if err != nil {
 		return err
 	}
@@ -375,12 +375,21 @@ func (s *Store) seedResourceTemplates(ctx context.Context, tx *sql.Tx, seed Boot
 	if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO environment_templates(id,name,description,document,created_at,updated_at) VALUES('environment-default','Standard environment','Initial project environment',?,?,?)`, string(raw), s.timestamp(), s.timestamp()); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO environment_templates(id,name,description,document,created_at,updated_at) VALUES('standard-agent','Minimal Agent','Agent runner, Node, Git and basic shell tools',?,?,?)`, string(raw), s.timestamp(), s.timestamp()); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO policy_resource_bindings(policy_id,resource_kind,resource_id) VALUES(?,'network_template','network-restricted'),(?,'environment_template','environment-default')`, standardUsersPolicy, standardUsersPolicy); err != nil {
+	if seed.WorkEnvironment != nil {
+		work, e := json.Marshal(seed.WorkEnvironment)
+		if e != nil {
+			return e
+		}
+		if _, e = tx.ExecContext(ctx, `INSERT INTO environment_templates(id,name,description,document,created_at,updated_at) VALUES('work-environment','Work Environment','Python, data and document tools',?,?,?)`, string(work), s.timestamp(), s.timestamp()); e != nil {
+			return e
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO policy_resource_bindings(policy_id,resource_kind,resource_id) VALUES(?,'network_template','network-restricted'),(?,'environment_template','standard-agent')`, standardUsersPolicy, standardUsersPolicy); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO group_configuration_defaults(group_id,network_template_id,environment_template_id) VALUES(?,'network-restricted','environment-default')`, StandardUsersGroup)
+	_, err = tx.ExecContext(ctx, `INSERT INTO group_configuration_defaults(group_id,network_template_id,environment_template_id) VALUES(?,'network-restricted','standard-agent')`, StandardUsersGroup)
 	return err
 }

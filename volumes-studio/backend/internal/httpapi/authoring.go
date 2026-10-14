@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"aster/contracts/volumemanifest"
 	"volume-studio/backend/internal/authoring"
 	"volume-studio/backend/internal/identity"
-	"volume-studio/backend/internal/manifest"
 )
 
 type actorKey struct{}
@@ -28,12 +28,14 @@ func NewAuthoringAPI(store *authoring.Store) *AuthoringAPI {
 	a := &AuthoringAPI{Store: store, mux: http.NewServeMux(), mutations: make(chan struct{}, 4)}
 	m := a.mux
 	m.HandleFunc("GET "+apiPrefix+"capabilities", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"profile": manifest.Profile, "max_file_bytes": strconv.FormatInt(manifest.MaxFileBytes, 10), "max_tree_bytes": strconv.FormatInt(manifest.MaxTreeBytes, 10), "max_entries": manifest.MaxEntries, "max_chunk_bytes": strconv.Itoa(authoring.MaxChunkBytes), "max_text_bytes": strconv.Itoa(authoring.MaxTextBytes), "page_size": 200})
+		writeJSON(w, 200, map[string]any{"profiles": []string{manifest.Profile, manifest.SharedAssetsProfile}, "max_file_bytes": strconv.FormatInt(manifest.MaxFileBytes, 10), "max_tree_bytes": strconv.FormatInt(manifest.MaxTreeBytes, 10), "max_entries": manifest.MaxEntries, "max_chunk_bytes": strconv.Itoa(authoring.MaxChunkBytes), "max_text_bytes": strconv.Itoa(authoring.MaxTextBytes), "page_size": 200})
 	})
 	m.HandleFunc("GET "+apiPrefix+"libraries", a.libraries)
 	m.HandleFunc("POST "+apiPrefix+"libraries", a.create)
 	m.HandleFunc("GET "+apiPrefix+"libraries/{library}", a.library)
 	m.HandleFunc("PATCH "+apiPrefix+"libraries/{library}", a.metadata)
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/draft/validation", a.validation)
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}/validation", a.validation)
 	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/draft/tree", a.tree)
 	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/draft/search", a.search)
 	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/draft/entry", a.entry)
@@ -88,6 +90,11 @@ func decodeBody(w http.ResponseWriter, r *http.Request, out any) bool {
 	return true
 }
 func authoringError(w http.ResponseWriter, err error) {
+	var finding manifest.Finding
+	if errors.As(err, &finding) {
+		writeJSON(w, 422, map[string]any{"error": "profile_validation_failed", "message": finding.Error(), "findings": []manifest.Finding{finding}})
+		return
+	}
 	switch {
 	case errors.Is(err, authoring.ErrInvalid):
 		writeError(w, 422, "invalid_input")
@@ -407,4 +414,9 @@ func (a *AuthoringAPI) events(w http.ResponseWriter, r *http.Request) {
 		next = events[len(events)-1].Sequence
 	}
 	respond(w, 200, map[string]any{"events": events, "next": next, "resnapshot": len(events) == 200}, err)
+}
+
+func (a *AuthoringAPI) validation(w http.ResponseWriter, r *http.Request) {
+	result, err := a.Store.Validation(r.Context(), r.PathValue("library"), r.PathValue("version"))
+	respond(w, 200, result, err)
 }

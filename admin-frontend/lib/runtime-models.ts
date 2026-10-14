@@ -21,6 +21,7 @@ export type Mount = {
 };
 export type EnvironmentBody = { sandbox_release: Artifact; mounts: Mount[] };
 export type RuntimeOption = {
+ content_profile?: string; agents_status?: string; name?: string; purpose?: string;
  library_name?: string; version_label?: string; version_note?: string;
   kind: "sandbox" | "volume";
   reference: Artifact;
@@ -63,7 +64,7 @@ export function environmentForRelease(
     {
       key: "runtime",
       role: "runtime",
-      destination: "/state",
+      destination: "/runtime",
       storage: "owned",
       access: "read_write",
       source: { kind: "empty" },
@@ -82,13 +83,14 @@ export function environmentForRelease(
               old?.source.artifact_id === s.reference.id &&
               old.source.version === s.reference.version &&
               old.source.digest === s.reference.digest &&
+              !["retired", "other_store", "incompatible", "unavailable"].includes(s.availability) &&
               s.enabled &&
-              s.reference.id === p.artifact_id &&
+              (p.role === "shared_assets" ? s.content_profile === "shared-assets-v1" : s.reference.id === p.artifact_id) &&
               s.roles?.includes(p.role),
           ) ||
           sources.find(
             (s) =>
-              s.reference.id === p.artifact_id &&
+              (p.role === "shared_assets" ? s.content_profile === "shared-assets-v1" : s.reference.id === p.artifact_id) &&
               s.roles?.includes(p.role) &&
               s.enabled &&
               ![
@@ -107,7 +109,7 @@ export function environmentForRelease(
           capacity: {},
           source: {
             kind: "builtin" as const,
-            artifact_id: p.artifact_id,
+            artifact_id: selected?.reference.id || p.artifact_id,
             version: selected?.reference.version,
             digest: selected?.reference.digest,
           },

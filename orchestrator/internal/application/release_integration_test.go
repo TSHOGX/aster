@@ -172,7 +172,7 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	gid, err := strconv.Atoi(os.Getenv("PROJECT_TEST_VIA_GID"))
 	require(t, err)
 	require(t, os.Chmod(root, 0755))
-	for _, name := range []string{"state", "content", "content/pi", "assets"} {
+	for _, name := range []string{"state", "content", "content/pi", "shared-assets", "shared-assets/skills"} {
 		require(t, os.MkdirAll(filepath.Join(root, name), 0755))
 		require(t, os.Chown(filepath.Join(root, name), uid, gid))
 	}
@@ -205,10 +205,10 @@ func newReleasedApp(t *testing.T) *releaseApp {
 		settings = string(raw)
 	}
 	require(t, os.WriteFile(filepath.Join(root, "content/pi/settings.json"), []byte(settings), 0644))
-	require(t, os.WriteFile(filepath.Join(root, "assets/AGENTS.md"), []byte("Reviewed release qualification context."), 0644))
+	require(t, os.WriteFile(filepath.Join(root, "shared-assets/AGENTS.md"), []byte("Reviewed release qualification context."), 0644))
 	if os.Getenv("PROJECT_RELEASE_CHECK_CONTEXT") == "1" {
-		require(t, os.MkdirAll(filepath.Join(root, "assets/skills/qualification"), 0755))
-		require(t, os.WriteFile(filepath.Join(root, "assets/skills/qualification/SKILL.md"), []byte("---\nname: qualification\ndescription: Reviewed qualification skill\n---\nUse only the declared Project workspace.\n"), 0644))
+		require(t, os.MkdirAll(filepath.Join(root, "shared-assets/skills/qualification"), 0755))
+		require(t, os.WriteFile(filepath.Join(root, "shared-assets/skills/qualification/SKILL.md"), []byte("---\nname: qualification\ndescription: Reviewed qualification skill\n---\nUse only the declared Project workspace.\n"), 0644))
 	}
 
 	mode := os.Getenv("PROJECT_RELEASE_MODEL_MODE")
@@ -233,7 +233,7 @@ func newReleasedApp(t *testing.T) *releaseApp {
 		"version": 1, "listen": "127.0.0.1:18192", "frontend": "http://192.0.2.1:18193", "admin_frontend": "http://192.0.2.1:18194", "state_directory": "state",
 		"engine":   engine,
 		"template": map[string]any{"version": "v1", "id": "agent-runtime", "manifest": "manifest.json", "digest": digest},
-		"content":  map[string]any{"agent_config": "content", "shared_assets": "assets"},
+		"content":  map[string]any{"agent_config": "content", "shared_assets": "shared-assets"},
 		"project":  map[string]any{"cpu_millis": 2000, "memory_bytes": 2 << 30, "disk_bytes": 256 << 20, "workspace_bytes": 128 << 20, "runtime_bytes": 128 << 20, "reachability": map[string]any{"services": []any{map[string]any{"audience": "model", "destination": "10.80.0.1", "port": 443, "gateway": "192.0.2.1:18891"}}, "hosts": map[string]string{"model.internal": "model"}}},
 		"gateways": []any{map[string]any{"audience": "model", "listen": "192.0.2.1:18891", "upstream": "http://192.0.2.1:18890", "api_key_env": "PROJECT_RELEASE_SECRET", "max_requests": 8, "schedule_tools": os.Getenv("PROJECT_RELEASE_SCHEDULE_TOOLS") == "1"}}, "agent_audience": "model",
 		"limits": map[string]any{"max_mounts_per_project": 8, "idle_after": "10s", "idle_agent_after": "5s", "interval": "100ms"},
@@ -281,14 +281,16 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	require(t, os.WriteFile(a.config, raw, 0644))
 	require(t, os.Remove(filepath.Join(root, "manifest.json")))
 	require(t, os.RemoveAll(filepath.Join(root, "content")))
-	require(t, os.RemoveAll(filepath.Join(root, "assets")))
+	require(t, os.RemoveAll(filepath.Join(root, "shared-assets")))
 	a.startGateway()
 	a.request("POST", "/api/auth/login", map[string]string{"username": "researcher", "password": "isolated-browser-fixture"}, 200)
 	return a
 }
 
-func TestReleasedExecutableOnKhora(t *testing.T) {
-	t.Setenv("PROJECT_RELEASE_CHECK_CONTEXT", "1")
+func TestReleasedExecutableOnKhora(t *testing.T) { qualifyReleasedContext(t, "1") }
+func TestReleasedBaseContext(t *testing.T)       { qualifyReleasedContext(t, "base") }
+func qualifyReleasedContext(t *testing.T, mode string) {
+	t.Setenv("PROJECT_RELEASE_CHECK_CONTEXT", mode)
 	a := newReleasedApp(t)
 	socket := filepath.Join(a.root, "state/control.sock")
 	status := a.cli("diagnostics", "--socket", socket)
@@ -505,4 +507,21 @@ func (a *releaseApp) saveResourceTemplate(kind string, before, document map[stri
 	delete(body, "preview")
 	body["expected_dependencies"] = preview["expected_dependencies"]
 	return a.request("PATCH", path, body, 200)
+}
+
+func (a *releaseApp) copyFixtureNetwork() map[string]any {
+	a.t.Helper()
+	original := a.resourceTemplate("network", "network-restricted")
+	body := map[string]any{"request_id": "copy-fixture-network", "preview": true, "expected_revision": 0, "name": "Fixture network", "description": "Editable test policy", "enabled": true, "network": original["network"]}
+	path := "/api/admin/resource-templates/network"
+	preview := a.request("POST", path, body, 200)
+	delete(body, "preview")
+	body["expected_dependencies"] = preview["expected_dependencies"]
+	copied := a.request("POST", path, body, 200)
+	resources := []any{map[string]any{"kind": "network_template", "id": copied["id"], "access": "read_only"}}
+	policy := a.request("POST", "/api/admin/policies", map[string]any{"request_id": "grant-fixture-network", "name": "Fixture network access", "resources": resources}, 200)["policy"].(map[string]any)
+	group := a.request("GET", "/api/admin/groups/standard-users", nil, 200)
+	ids := append(group["policy_ids"].([]any), policy["id"])
+	a.request("PUT", "/api/admin/groups/standard-users/policies", map[string]any{"request_id": "bind-fixture-network", "expected_revision": group["revision"], "policy_ids": ids}, 200)
+	return copied
 }

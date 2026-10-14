@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"harness-platform/orchestrator/internal/volumeimport/manifest"
+	"aster/contracts/volumemanifest"
 )
 
 func hash(b []byte) string { h := sha256.Sum256(b); return "sha256:" + hex.EncodeToString(h[:]) }

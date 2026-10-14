@@ -122,7 +122,7 @@ def build(target, offline=False, source_ref="HEAD"):
         scratch = Path(temp)
         archive = scratch / 'source.tar'
         with archive.open('wb') as output:
-            subprocess.run(['git', 'archive', '--format=tar', commit, 'volumes-studio', 'web'], cwd=ROOT, stdout=output, check=True)
+            subprocess.run(['git', 'archive', '--format=tar', commit, 'volumes-studio', 'web', 'contracts'], cwd=ROOT, stdout=output, check=True)
         with tarfile.open(archive) as source:
             source.extractall(scratch / 'source', filter='data')
         app = scratch / 'source/volumes-studio'

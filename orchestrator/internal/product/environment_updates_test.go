@@ -1,6 +1,7 @@
 package product
 
 import (
+	"aster/contracts/volumemanifest"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -9,7 +10,6 @@ import (
 	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/testfixture"
-	"harness-platform/orchestrator/internal/volumeimport/manifest"
 	"testing"
 	"time"
 )
@@ -19,9 +19,9 @@ func publicationFixture(t *testing.T, s *Store, version string) ArtifactReferenc
 	entries := []content.Entry{{Path: version, Directory: true}}
 	ref := ArtifactReference{ID: "dataset", Version: version, Digest: content.Digest(entries)}
 	raw, _ := json.Marshal(entries)
-	_, err := s.db.Exec(`INSERT INTO content_publications(store_id,purpose,revision_digest,capacity,entries,staging_volume_id,derived_volume_id,published_volume_id,stage,created_at,updated_at) VALUES('engine','assets',?,1048576,?,?,?,?, 'published',?,?)`, ref.Digest, string(raw), "stage-"+version, "data-"+version, "data-"+version, s.timestamp(), s.timestamp())
+	_, err := s.db.Exec(`INSERT INTO content_publications(store_id,purpose,revision_digest,capacity,entries,staging_volume_id,derived_volume_id,published_volume_id,stage,created_at,updated_at) VALUES('engine','builtin',?,1048576,?,?,?,?, 'published',?,?)`, ref.Digest, string(raw), "stage-"+version, "data-"+version, "data-"+version, s.timestamp(), s.timestamp())
 	must(t, err)
-	must(t, s.RegisterBuiltinVolume(ctx, BuiltinVolume{Reference: ref, StoreID: "engine", PublicationPurpose: "assets", MinimumBytes: 1048576, Roles: []string{"data"}, Entries: entries}))
+	must(t, s.RegisterBuiltinVolume(ctx, BuiltinVolume{Reference: ref, StoreID: "engine", PublicationPurpose: "builtin", MinimumBytes: 1048576, Roles: []string{"data"}, Entries: entries}))
 	return ref
 }
 func selectPublicationFixture(t *testing.T, s *Store, ref ArtifactReference, projects bool) string {

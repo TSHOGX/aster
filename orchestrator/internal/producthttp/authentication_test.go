@@ -248,7 +248,7 @@ func identitySeed(t *testing.T) product.BootstrapSeed {
 	manifest, digest := testfixture.RuntimeManifest()
 	network, err := product.NewNetworkPolicy(product.Reachability{})
 	must(t, err)
-	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: 1000, Memory: 1 << 30, Overlay: 256 << 20, Workspace: 1 << 30, Runtime: 1 << 29, MaxMounts: 8, ProjectSlots: 4, AgentSlots: 32, TerminalSlots: 32}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: "test", Version: "v1", Digest: digest}, StoreID: "engine", TemplateID: "agent-runtime", Manifest: manifest}, nil, network)
+	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: 1000, Memory: 1 << 30, Overlay: 256 << 20, Workspace: 1 << 30, Runtime: 1 << 29, MaxMounts: 8, ProjectSlots: 4, AgentSlots: 32, TerminalSlots: 32}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: "test", Version: "v1", Digest: digest}, StoreID: "engine", TemplateID: "agent-runtime", Manifest: manifest}, nil, network.Resolvers)
 	must(t, err)
 	return seed
 }

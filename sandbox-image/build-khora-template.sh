@@ -4,6 +4,9 @@ set -euo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
 destination=$(realpath -m -- "${1:?usage: build-khora-template.sh NEW_DIRECTORY [OS_PI_BASE]}")
 base=${2:-}
+SANDBOX_FAMILY=${SANDBOX_FAMILY:-minimal}
+SANDBOX_RELEASE_VERSION=${SANDBOX_RELEASE_VERSION:-v1}
+export SANDBOX_FAMILY
 [[ $EUID == 0 && $destination != / && ! -e $destination && ! -e $destination.manifest.json ]] || { echo 'choose a new template directory in a disposable privileged builder' >&2; exit 2; }
 [[ -z $(git -C "$repo" ls-files --others --ignored --exclude-standard sandbox-image/files) ]] || { echo 'ignored guest overlay files present; use a clean source checkout' >&2; exit 2; }
 module=$(go -C "$repo/orchestrator" list -m -f '{{.Dir}}' github.com/TSHOGX/khora)
@@ -12,6 +15,7 @@ version=$(go -C "$repo/orchestrator" list -m -f '{{.Version}}' github.com/TSHOGX
 if [[ -n $base ]]; then
  base=$(realpath -- "$base")
  [[ -d $base && ! -e $base/etc/project-runtime/manifest.json && ! -e $base/etc/harness-image && ! -e $base/usr/local/bin/harness-khora-launcher ]] || { echo 'base must be an OS/Pi filesystem, not an application template' >&2; exit 2; }
+ [[ $(cat "$base/etc/aster-sandbox-family") == "$SANDBOX_FAMILY" ]] || { echo "base family does not match requested release" >&2; exit 2; }
  cp -a --reflink=auto "$base" "$destination"
 else
  ROOTFS_DIR="$destination" "$repo/sandbox-image/build-rootfs.sh"
@@ -23,6 +27,6 @@ for binary in agent-runner workspace-files runtime-cleanup runtime-verify; do
  CGO_ENABLED=0 go -C "$repo/orchestrator" build -trimpath -buildvcs=false -o "$destination/usr/local/bin/$binary" "./cmd/$binary"
  chmod 0755 "$destination/usr/local/bin/$binary"
 done
-CGO_ENABLED=0 go -C "$repo/orchestrator" run ./cmd/runtime-release --patch-native --root "$destination" --output "$destination.manifest.json"
+CGO_ENABLED=0 go -C "$repo/orchestrator" run ./cmd/runtime-release --family "$SANDBOX_FAMILY" --release-version "$SANDBOX_RELEASE_VERSION" --patch-native --root "$destination" --output "$destination.manifest.json"
 chmod -R a-w "$destination/etc/project-runtime" "$destination/usr/local/share/project-runtime"
 printf 'Template: %s\nManifest: %s\n' "$destination" "$destination.manifest.json"

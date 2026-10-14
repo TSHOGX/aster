@@ -37,7 +37,7 @@ func TestEnvironmentHTTPAdminAuthorityAndExactArtifactInputs(t *testing.T) {
 		t.Fatal(status, options)
 	}
 	collection := "/api/admin/resource-templates/environment"
-	path := collection + "/environment-default"
+	path := collection + "/standard-agent"
 	status, current := perform("GET", collection, token, "https://app", nil)
 	if status != 200 {
 		t.Fatal(status, current)
@@ -89,7 +89,7 @@ func TestEnvironmentHTTPAdminAuthorityAndExactArtifactInputs(t *testing.T) {
 		if status != want {
 			t.Fatal(status)
 		}
-		for _, endpoint := range []string{"/api/admin/environments/environment-default/updates", "/api/admin/environments/environment-default/updates/preview", "/api/admin/environments/environment-default/updates/history", "/api/admin/projects/unknown/environment"} {
+		for _, endpoint := range []string{"/api/admin/environments/standard-agent/updates", "/api/admin/environments/standard-agent/updates/preview", "/api/admin/environments/standard-agent/updates/history", "/api/admin/projects/unknown/environment"} {
 			code, _ := perform("GET", endpoint, credential, "https://app", nil)
 			if code != want {
 				t.Fatal(endpoint, code, want)
@@ -110,7 +110,7 @@ func TestEnvironmentHTTPAdminAuthorityAndExactArtifactInputs(t *testing.T) {
 	if status != 200 || result["project_id"] != "private-project" {
 		t.Fatal(status, result)
 	}
-	status, _ = perform("POST", "/api/admin/environments/environment-default/updates", token, "https://foreign", map[string]any{"action": "publish", "request_id": "forged", "expected_revision": 2})
+	status, _ = perform("POST", "/api/admin/environments/standard-agent/updates", token, "https://foreign", map[string]any{"action": "publish", "request_id": "forged", "expected_revision": 2})
 	if status != 403 {
 		t.Fatal("cross-origin publication accepted", status)
 	}

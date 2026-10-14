@@ -30,6 +30,7 @@ type EnvironmentUpdate struct {
 	Mounts                []EnvironmentMount            `json:"mounts"`
 }
 type EnvironmentUpdateEdit struct {
+	Kind                 string   `json:"kind,omitempty"`
 	RequestID            string   `json:"request_id"`
 	Preview              bool     `json:"preview,omitempty"`
 	ExpectedDependencies string   `json:"expected_dependencies,omitempty"`
@@ -154,7 +155,7 @@ func updateStatus(ctx context.Context, q queryer, project string) (ProjectEnviro
 	out.ProjectID = project
 	out.Title = c.Title
 	out.EnvironmentID = c.EnvironmentTemplateID
-	out.Current = publicationMounts(c.Environment)
+	out.Current = append(publicationMounts(c.Environment), sharedAssetsMounts(c.Environment)...)
 	out.Target = []EnvironmentMount{}
 	out.Policy = "follow"
 	out.State = "current"
@@ -298,7 +299,11 @@ func (s *Store) ChangeEnvironmentUpdate(ctx context.Context, token, environment 
 			if !tmpl.Enabled {
 				return nil, ErrForbidden
 			}
-			strategy, err := updateStrategy(publicationReplaceKind)
+			kind := input.Kind
+			if kind == "" {
+				kind = publicationReplaceKind
+			}
+			strategy, err := updateStrategy(kind)
 			if err != nil {
 				return nil, err
 			}
@@ -322,6 +327,9 @@ func (s *Store) ChangeEnvironmentUpdate(ctx context.Context, token, environment 
 				mounts = old.Mounts
 				configurationRevision = old.ConfigurationRevision
 			}
+			if strategy.Kind == systemContentReplaceKind && len(input.ProjectIDs) == 0 {
+				return nil, Admission("review_project_selection_required", ErrInvalid)
+			}
 			if len(mounts) == 0 {
 				return nil, Admission("update_no_changes", ErrInvalid)
 			}
@@ -335,9 +343,12 @@ func (s *Store) ChangeEnvironmentUpdate(ctx context.Context, token, environment 
 				return nil, err
 			}
 			release := EnvironmentUpdate{ID: uuid.NewString(), EnvironmentID: environment, Sequence: sequence, Revision: 1, ConfigurationRevision: configurationRevision, Kind: strategy.Kind, State: "active", Note: input.Note, ActorID: actor.ID, CreatedAt: s.timestamp(), Mounts: mounts}
-			if _, err = tx.ExecContext(ctx, `UPDATE environment_updates SET state='superseded',revision=revision+1 WHERE environment_id=? AND state IN ('active','stopped')`, environment); err != nil {
-				return nil, err
+			if strategy.Kind == publicationReplaceKind {
+				if _, err = tx.ExecContext(ctx, `UPDATE environment_updates SET state='superseded',revision=revision+1 WHERE environment_id=? AND kind=? AND state IN ('active','stopped')`, environment, publicationReplaceKind); err != nil {
+					return nil, err
+				}
 			}
+
 			raw, _ := json.Marshal(mounts)
 			if _, err = tx.ExecContext(ctx, `INSERT INTO environment_updates(id,environment_id,sequence,configuration_revision,kind,state,note,actor_id,created_at,mounts) VALUES(?,?,?,?,?,?,?,?,?,?)`, release.ID, environment, sequence, configurationRevision, release.Kind, release.State, release.Note, actor.ID, release.CreatedAt, string(raw)); err != nil {
 				return nil, err
@@ -359,18 +370,38 @@ func (s *Store) ChangeEnvironmentUpdate(ctx context.Context, token, environment 
 			if err != nil {
 				return nil, err
 			}
+			selected := map[string]bool{}
+			for _, id := range input.ProjectIDs {
+				if !validID(id) || selected[id] {
+					return nil, ErrInvalid
+				}
+				selected[id] = true
+			}
+			var reviewedProjects []ProjectEnvironmentStatus
+			matched := 0
 			counts := map[string]int{}
 			var applicable int
 			for _, c := range candidates {
-				status, e := assessEnvironmentProject(ctx, tx, c.id, c.owner, mounts)
+				if len(selected) > 0 && !selected[c.id] {
+					continue
+				}
+				matched++
+
+				status, e := assessEnvironmentProjectKind(ctx, tx, c.id, c.owner, mounts, strategy.Kind)
 				if e != nil {
 					return nil, e
+				}
+				if strategy.Kind == systemContentReplaceKind {
+					reviewedProjects = append(reviewedProjects, status)
 				}
 				state, reason := status.State, status.Reason
 				if _, err = tx.ExecContext(ctx, `INSERT INTO environment_update_members(release_id,project_id,initial_state,reason) VALUES(?,?,?,?)`, release.ID, c.id, state, reason); err != nil {
 					return nil, err
 				}
 				counts[state]++
+				if strategy.Kind == systemContentReplaceKind && state != "pending" || reason == pendingContentRolloutReason {
+					continue
+				}
 				if state == "pending" {
 					applicable++
 				}
@@ -379,6 +410,9 @@ func (s *Store) ChangeEnvironmentUpdate(ctx context.Context, token, environment 
 					return nil, err
 				}
 			}
+			if matched != len(selected) && len(selected) > 0 {
+				return nil, ErrInvalid
+			}
 			if applicable == 0 && !input.Preview {
 				return nil, Admission("update_no_eligible_projects", ErrConflict)
 			}
@@ -386,7 +420,7 @@ func (s *Store) ChangeEnvironmentUpdate(ctx context.Context, token, environment 
 			if err != nil {
 				return nil, err
 			}
-			return map[string]any{"can_publish": applicable > 0, "release": release, "counts": counts, "new_projects_only": "Sandbox, system mounts, owned directories, network, capacities and mount structure are not applied to existing projects."}, nil
+			return map[string]any{"can_publish": applicable > 0, "release": release, "counts": counts, "projects": reviewedProjects, "new_projects_only": "Only the reviewed content references change. Sandbox releases, agent configuration, owned directories, network, capacities and mount structure are retained."}, nil
 		case "stop", "continue", "retire", "retry":
 			release, e := readEnvironmentUpdate(ctx, tx, input.ReleaseID)
 			if e != nil {
@@ -476,7 +510,7 @@ func (s *Store) ChangeEnvironmentUpdate(ctx context.Context, token, environment 
 					if e = tx.QueryRowContext(ctx, `SELECT owner_id FROM projects WHERE id=?`, id).Scan(&owner); e != nil {
 						return nil, e
 					}
-					checked, e := assessEnvironmentProject(ctx, tx, id, owner, target.Mounts)
+					checked, e := assessEnvironmentProjectKind(ctx, tx, id, owner, target.Mounts, target.Kind)
 					if e != nil {
 						return nil, e
 					}
@@ -599,9 +633,9 @@ func (s *Store) planEnvironmentUpdate(ctx context.Context, tx *sql.Tx, project s
 		}
 	}
 	id := uuid.NewString()
-	before, _ := json.Marshal(publicationMounts(c.Environment))
+	before, _ := json.Marshal(strategy.Targets(c.Environment))
 	after, _ := json.Marshal(release.Mounts)
-	_, err = tx.ExecContext(ctx, `INSERT INTO environment_update_executions(id,project_id,release_id,kind,state,before_mounts,after_mounts,created_at,updated_at) VALUES(?,?,?,'publication_replace','pending',?,?,?,?)`, id, project, release.ID, string(before), string(after), s.timestamp(), s.timestamp())
+	_, err = tx.ExecContext(ctx, `INSERT INTO environment_update_executions(id,project_id,release_id,kind,state,before_mounts,after_mounts,created_at,updated_at) VALUES(?,?,?,?,'pending',?,?,?,?)`, id, project, release.ID, strategy.Kind, string(before), string(after), s.timestamp(), s.timestamp())
 	if err != nil {
 		return "", nil, err
 	}

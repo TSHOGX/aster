@@ -51,7 +51,7 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	frozen := &VolumeSource{ContentProfile: "reviewed-v1", Reference: ArtifactReference{ID: "examples", Version: "v1", Digest: content.Digest(entries)}, VolumeID: source.VolumeID, MinimumBytes: 8 << 20}
 	store := testStore(t)
 	must(t, store.write(runctx, func(tx *sql.Tx) error {
-		return testfixture.RecordRuntimePublications(runctx, tx, []content.Publication{{StoreID: identity.StoreID, Purpose: "assets", RevisionDigest: frozen.Reference.Digest, Capacity: 8 << 20, Entries: entries, StagingVolumeID: staging.VolumeID, DerivedVolumeID: source.VolumeID, PublishedVolumeID: source.VolumeID}})
+		return testfixture.RecordRuntimePublications(runctx, tx, []content.Publication{{StoreID: identity.StoreID, Purpose: "builtin", RevisionDigest: frozen.Reference.Digest, Capacity: 8 << 20, Entries: entries, StagingVolumeID: staging.VolumeID, DerivedVolumeID: source.VolumeID, PublishedVolumeID: source.VolumeID}})
 	}))
 	scope := Scope{Actor: "owner", ProjectID: "slot-project"}
 	_, err = store.CreateProject(runctx, scope.Actor, scope.ProjectID, "Slot qualification")

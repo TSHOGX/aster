@@ -11,8 +11,9 @@ groups supply defaults; account settings can select among authorized choices.
 1. Ensure the operator has registered an enabled, compatible sandbox release and
    any required content. Imported Studio versions must be locally ready.
 2. Provision shared directories and wait for **ready** before using them in a template.
-3. Create the network and environment templates. Select exact source versions,
-   destinations and access modes, then preview and save.
+3. Select an authorized Restricted or Public network built-in and create or edit
+   environment templates. Select exact source versions, destinations and access
+   modes, then preview and save. Copy a built-in before customizing it.
 4. Grant the templates through policies. Each policy grants at most one network
    and one environment template; grant shared-directory access separately.
 5. Bind policies to a group and select defaults granted by that group's own policies.
@@ -31,13 +32,17 @@ the account to group inheritance. Only enabled and authorized templates are elig
 | Shared directory | A separately provisioned mutable directory available to authorized users; effective access also respects the environment's limit |
 
 Workspace and runtime storage have required roles. The selected release fixes
-required system-publication locations and protected paths. Optional data mounts
+required system-publication locations and protected paths. **Minimal Agent** offers
+the runner, Node, Git and shell tools; **Work Environment** adds Python, data and
+document tooling. Agent configuration is platform-managed. The **Shared assets**
+picker selects an exact validated version, with availability and digest details.
+Optional data mounts
 must not conflict with them. Template validity does not reserve capacity or raise
 an account's quota.
 
 Saving a template changes the defaults for **new Projects**. Existing Projects
 retain their saved environment and owned data. To update compatible immutable data
-for existing Projects, use [environment updates](environment-updates.md). This
+or shared assets for existing Projects, use [environment updates](environment-updates.md). This
 cannot replace their runtime image, resize storage or reset owned copies.
 
 ## Configure network access
@@ -46,8 +51,12 @@ Direct rules allow IPv4 CIDR, port and protocol (`tcp` or `udp`) combinations.
 They are not domain-name or HTTP filters. DNS resolvers authorize UDP port 53;
 TCP fallback needs an explicit TCP/53 rule. DNS alone does not grant HTTPS access.
 
-For general public web access, declare TCP ports 80 and 443 for `0.0.0.0/0`, plus
-DNS resolvers. This wildcard covers public IPv4 ranges; it excludes private,
+The Restricted built-in has no direct or DNS rules and is the standard-user
+default. The Public built-in permits TCP ports 80 and 443 for `0.0.0.0/0` plus
+deployment-provided DNS resolvers. Public is enabled but is not granted to standard
+users automatically; grant it explicitly through a policy. Both built-ins reject
+edits and deletion. **Copy and customize** creates an ordinary editable template.
+The wildcard covers public IPv4 ranges; it excludes private,
 loopback, link-local, shared, multicast and reserved ranges. It does not grant
 IPv6 or other ports. More specific rules and engine restrictions still apply.
 The operator must also provide functioning forwarding/NAT and upstream access.

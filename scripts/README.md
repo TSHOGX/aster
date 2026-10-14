@@ -2,8 +2,8 @@
 
 Use the operator guides for commands that prepare and inspect deployment artifacts. `candidate.py build` exports committed source; `verify` checks its inventory and `inspect` reports deployment identity. These commands do not activate services.
 
-`rebuild.py` assembles application, Studio, the pinned Khora engine and a fresh guest
-runtime from one committed revision in an isolated checkout. `deploy.py` validates
+`rebuild.py` assembles application, Studio, the pinned Khora engine and fresh Minimal/Work guest
+runtimes from one committed revision in an isolated checkout. `deploy.py` validates
 that complete build against a prepared local host and supervisor plan. Activation
 requires its explicit `--fresh` option, which erases application, Studio and engine
 state and creates new administrator credentials.
@@ -37,9 +37,12 @@ must already exist. The script reads `/etc/aster/owner.env`, `gateway.env` and
 Provide one `aster-NAME.service` template for each of `web`, `gateway`,
 `application`, `studio`, `frontend`, `admin-frontend`, `studio-frontend`,
 `studio-tls`, `engine-tls` and `engine`. Supported replacements are
-`@APPLICATION@`, `@STUDIO@`, `@ENGINE@`, `@RUNTIME@` and `@CONFIG@`.
+`@APPLICATION@`, `@STUDIO@`, `@ENGINE@`, `@RUNTIME@`, `@WORK_RUNTIME@` and `@CONFIG@`.
 Templates must select the prepared namespace, state paths and the built runtime
-as the engine template named by the application configuration. Keep both the
+as the two engine templates named by `template` and `work_template` in the
+application configuration. `--os-base` and `--work-os-base` must match their family
+markers. The build also prepares `content/agent-config` and
+`content/shared-assets`; review the model settings and content paths before use. Keep both the
 build directory and unit templates outside all reset directories.
 
 Run validation without `--fresh` first. It checks artifact inventories, the engine

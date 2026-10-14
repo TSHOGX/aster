@@ -66,7 +66,7 @@ func TestEnvironmentPublicationUpdatesOnKhora(t *testing.T) {
 		must(t, backend.WriteVolume(runctx, staged.VolumeReference, "knowledge.txt", bytes))
 		frozen, e := backend.SnapshotVolume(runctx, staged.VolumeReference, "update-frozen-"+version, 8<<20)
 		must(t, e)
-		p := content.Publication{StoreID: identity.StoreID, Purpose: "assets", RevisionDigest: content.Digest(entries), Capacity: 8 << 20, Entries: entries, StagingVolumeID: staged.VolumeID, DerivedVolumeID: frozen.VolumeID, PublishedVolumeID: frozen.VolumeID}
+		p := content.Publication{StoreID: identity.StoreID, Purpose: "builtin", RevisionDigest: content.Digest(entries), Capacity: 8 << 20, Entries: entries, StagingVolumeID: staged.VolumeID, DerivedVolumeID: frozen.VolumeID, PublishedVolumeID: frozen.VolumeID}
 		publications = append(publications, p)
 		references = append(references, ArtifactReference{ID: "knowledge", Version: version, Digest: p.RevisionDigest})
 	}
@@ -122,7 +122,7 @@ func TestEnvironmentPublicationUpdatesOnKhora(t *testing.T) {
 	before, err := store.Resources(runctx, scope)
 	must(t, err)
 	command("before-update", `set -eu; test "$(cat /data/knowledge.txt)" = knowledge-v1; printf retained > retained`)
-	must(t, store.RegisterBuiltinVolume(runctx, BuiltinVolume{Reference: references[1], StoreID: identity.StoreID, PublicationPurpose: "assets", MinimumBytes: 8 << 20, Roles: []string{"data"}, Entries: publications[1].Entries}))
+	must(t, store.RegisterBuiltinVolume(runctx, BuiltinVolume{Reference: references[1], StoreID: identity.StoreID, PublicationPurpose: "builtin", MinimumBytes: 8 << 20, Roles: []string{"data"}, Entries: publications[1].Entries}))
 	secondScope := Scope{Actor: "alice", ProjectID: "unallocated-publication-update"}
 	_, err = store.CreateProject(runctx, secondScope.Actor, secondScope.ProjectID, "Another user's project")
 	must(t, err)

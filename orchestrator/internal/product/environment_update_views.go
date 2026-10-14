@@ -111,7 +111,7 @@ func (s *Store) EnvironmentReleaseHistory(ctx context.Context, token, environmen
 
 // Preview pages are read-only and contain no engine IDs or side effects. The
 // mutation preview's dependency fingerprint is checked again when publishing.
-func (s *Store) PreviewEnvironmentProjects(ctx context.Context, token, environment, releaseID, cursor, filter string, limit int) (EnvironmentUpdatePage, error) {
+func (s *Store) PreviewEnvironmentProjects(ctx context.Context, token, environment, releaseID, cursor, filter string, limit int, kinds ...string) (EnvironmentUpdatePage, error) {
 	out := EnvironmentUpdatePage{Releases: []EnvironmentUpdate{}, Projects: []ProjectEnvironmentStatus{}, Counts: map[string]int{}}
 	if limit < 1 || limit > 100 {
 		limit = 30
@@ -128,7 +128,15 @@ func (s *Store) PreviewEnvironmentProjects(ctx context.Context, token, environme
 	if err != nil {
 		return out, err
 	}
-	target := publicationMounts(*tmpl.Environment)
+	kind := publicationReplaceKind
+	if len(kinds) > 0 && kinds[0] != "" {
+		kind = kinds[0]
+	}
+	strategy, err := updateStrategy(kind)
+	if err != nil {
+		return out, err
+	}
+	target := strategy.Targets(*tmpl.Environment)
 	if releaseID != "" {
 		v, e := readEnvironmentUpdate(ctx, tx, releaseID)
 		if e != nil {
@@ -138,6 +146,7 @@ func (s *Store) PreviewEnvironmentProjects(ctx context.Context, token, environme
 			return out, ErrConflict
 		}
 		target = v.Mounts
+		kind = v.Kind
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT c.project_id,p.owner_id FROM project_configuration c JOIN projects p ON p.id=c.project_id WHERE c.environment_template_id=? AND p.state NOT IN ('deleted','deleting') ORDER BY c.project_id`, environment)
 	if err != nil {
@@ -157,7 +166,7 @@ func (s *Store) PreviewEnvironmentProjects(ctx context.Context, token, environme
 		return out, err
 	}
 	for _, c := range candidates {
-		st, e := assessEnvironmentProject(ctx, tx, c.id, c.owner, target)
+		st, e := assessEnvironmentProjectKind(ctx, tx, c.id, c.owner, target, kind)
 		if e != nil {
 			return out, e
 		}
@@ -174,6 +183,9 @@ func (s *Store) PreviewEnvironmentProjects(ctx context.Context, token, environme
 	return out, nil
 }
 func assessEnvironmentProject(ctx context.Context, q queryer, project, owner string, target []EnvironmentMount) (ProjectEnvironmentStatus, error) {
+	return assessEnvironmentProjectKind(ctx, q, project, owner, target, publicationReplaceKind)
+}
+func assessEnvironmentProjectKind(ctx context.Context, q queryer, project, owner string, target []EnvironmentMount, kind string) (ProjectEnvironmentStatus, error) {
 	st, err := updateStatus(ctx, q, project)
 	if err != nil {
 		return st, err
@@ -187,9 +199,15 @@ func assessEnvironmentProject(ctx context.Context, q queryer, project, owner str
 	if err != nil {
 		return st, err
 	}
+	oldState := st.State
 	st.State = "pending"
 	st.Reason = ""
-	different, err := publicationCompatible(ctx, q, config.Environment, target)
+	strategy, e := updateStrategy(kind)
+	if e != nil {
+		return st, e
+	}
+	st.Current = strategy.Targets(config.Environment)
+	different, err := strategy.Compatible(ctx, q, config.Environment, target)
 	if err != nil {
 		st.State = "incompatible"
 		st.Reason = err.Error()
@@ -199,6 +217,32 @@ func assessEnvironmentProject(ctx context.Context, q queryer, project, owner str
 	if _, err = authorizeProjectConfiguration(ctx, q, owner, project); err != nil {
 		st.State = "unauthorized"
 		st.Reason = "Project no longer has access to this environment."
+	}
+	if kind == systemContentReplaceKind && st.State == "pending" {
+		store, e := runtimeStore(ctx, q)
+		if e != nil {
+			return st, e
+		}
+		for _, m := range target {
+			if _, e = strategy.Resolve(ctx, q, m, store); e != nil {
+				st.State = "incompatible"
+				st.Reason = e.Error()
+			}
+		}
+		if e = selectedSystemProject(ctx, q, project); e != nil {
+			st.State = "unknown"
+			st.Reason = e.Error()
+		}
+	}
+	if st.TargetID != "" && oldState != "current" {
+		previous, e := readEnvironmentUpdate(ctx, q, st.TargetID)
+		if e != nil {
+			return st, e
+		}
+		if previous.Kind != kind {
+			st.State = "incompatible"
+			st.Reason = pendingContentRolloutReason
+		}
 	}
 	if st.Policy == "fixed" {
 		st.State = "fixed"

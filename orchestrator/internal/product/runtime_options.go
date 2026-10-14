@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/runtimerelease"
 	"harness-platform/orchestrator/internal/sandbox"
 )
@@ -18,6 +19,10 @@ type RuntimeInspector interface {
 	InspectVolume(context.Context, sandbox.VolumeReference) (sandbox.Volume, error)
 }
 type RuntimeOption struct {
+	Name                          string                               `json:"name,omitempty"`
+	Purpose                       string                               `json:"purpose,omitempty"`
+	ContentProfile                string                               `json:"content_profile,omitempty"`
+	AgentsStatus                  string                               `json:"agents_status,omitempty"`
 	LibraryName                   string                               `json:"library_name,omitempty"`
 	VersionLabel                  string                               `json:"version_label,omitempty"`
 	VersionNote                   string                               `json:"version_note,omitempty"`
@@ -86,7 +91,7 @@ func (s *Store) AdminRuntimeOptions(ctx context.Context, token, kind, cursor str
 	out.MaxMounts = limits[ResourceMounts]
 	statement := `SELECT id,version,digest,store_id,template_id,manifest,enabled,revision,retired_at FROM registered_sandboxes WHERE id>? OR (id=? AND version>?) ORDER BY id,version LIMIT ?`
 	if kind == "volume" {
-		statement = `SELECT v.id,v.version,v.digest,v.store_id,v.roles,v.minimum_bytes,v.clean_runtime,v.enabled,coalesce(p.published_volume_id,''),coalesce(p.capacity,0),v.revision,v.retired_at,coalesce(l.library_name,''),coalesce(l.version_label,''),coalesce(l.version_note,'') FROM builtin_volumes v LEFT JOIN volume_imports i ON i.artifact_id=v.id AND i.artifact_version=v.version LEFT JOIN volume_import_labels l ON l.import_id=i.id LEFT JOIN content_publications p ON p.store_id=v.store_id AND p.purpose=v.publication_purpose AND p.revision_digest=v.digest AND p.stage='published' WHERE v.id>? OR (v.id=? AND v.version>?) ORDER BY v.id,v.version LIMIT ?`
+		statement = `SELECT v.id,v.version,v.digest,v.store_id,v.roles,v.minimum_bytes,v.clean_runtime,v.enabled,coalesce(p.published_volume_id,''),coalesce(p.capacity,0),v.revision,v.retired_at,coalesce(l.library_name,''),coalesce(l.version_label,''),coalesce(l.version_note,''),v.publication_purpose FROM builtin_volumes v LEFT JOIN volume_imports i ON i.artifact_id=v.id AND i.artifact_version=v.version LEFT JOIN volume_import_labels l ON l.import_id=i.id LEFT JOIN content_publications p ON p.store_id=v.store_id AND p.purpose=v.publication_purpose AND p.revision_digest=v.digest AND p.stage='published' WHERE v.id>? OR (v.id=? AND v.version>?) ORDER BY v.id,v.version LIMIT ?`
 	}
 	rows, err := tx.QueryContext(ctx, statement, after.ID, after.ID, after.Version, limit+1)
 	if err != nil {
@@ -104,15 +109,22 @@ func (s *Store) AdminRuntimeOptions(ctx context.Context, token, kind, cursor str
 			if compatibilityErr != nil {
 				option.Availability = "incompatible"
 			}
+			option.Name = manifest.Name
+			option.Purpose = manifest.Purpose
 			option.RequiredPublications = manifest.Mounts.RequiredPublications
 			option.ProtectedRoots = manifest.Mounts.ProtectedRoots
 			option.BlockedPathCount = len(manifest.Mounts.BlockedPaths)
 		} else {
 			var raw string
 			var minimum int64
-			err = rows.Scan(&option.Reference.ID, &option.Reference.Version, &option.Reference.Digest, &option.storeID, &raw, &minimum, &option.CleanRuntime, &option.Enabled, &option.volumeID, &option.capacity, &option.Revision, &option.RetiredAt, &option.LibraryName, &option.VersionLabel, &option.VersionNote)
+			var purpose string
+			err = rows.Scan(&option.Reference.ID, &option.Reference.Version, &option.Reference.Digest, &option.storeID, &raw, &minimum, &option.CleanRuntime, &option.Enabled, &option.volumeID, &option.capacity, &option.Revision, &option.RetiredAt, &option.LibraryName, &option.VersionLabel, &option.VersionNote, &purpose)
 			if err != nil {
 				break
+			}
+			option.ContentProfile = content.ProfileForPurpose(purpose)
+			if purpose == "shared_assets" {
+				option.AgentsStatus = "Validated UTF-8 AGENTS.md"
 			}
 			if err = json.Unmarshal([]byte(raw), &option.Roles); err != nil {
 				break

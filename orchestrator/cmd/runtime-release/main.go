@@ -13,6 +13,8 @@ func main() {
 	root := flag.String("root", "", "newly assembled template root")
 	output := flag.String("output", "", "exported manifest path")
 	patchNative := flag.Bool("patch-native", false, "install the pinned native settlement extension in a fresh build root")
+	family := flag.String("family", "minimal", "sandbox family: minimal or work")
+	version := flag.String("release-version", "v1", "immutable sandbox release version")
 	flag.Parse()
 	if *root == "" || *output == "" || flag.NArg() != 0 {
 		fmt.Fprintln(os.Stderr, "--root and --output required")
@@ -28,7 +30,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	manifest, err := runtimerelease.Generate(*root)
+	manifest, err := runtimerelease.GenerateFamily(*root, *family, *version)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

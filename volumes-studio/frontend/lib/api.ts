@@ -2,9 +2,11 @@ import { intlLocale } from "../../../web/i18n/locale";
 export const base = "/volumes-studio";
 export type Session = { issuer: string; subject: string; csrf: string };
 export type Library = {
+  builtin?: boolean;
   id: string;
   name: string;
   description: string;
+  profile: "authored-v1" | "shared-assets-v1";
   metadata_revision: number;
   draft_revision: number;
   base_version: string;
@@ -20,6 +22,7 @@ export type Entry = {
   digest: string;
 };
 export type Version = {
+  profile: Library["profile"];
   publisher_id: string;
   id: string;
   library_id: string;
@@ -49,8 +52,9 @@ export class APIError extends Error {
   constructor(
     public status: number,
     public code: string,
+    message?: string,
   ) {
-    super(code.replaceAll("_", " "));
+    super(message || code.replaceAll("_", " "));
   }
 }
 export async function api<T>(
@@ -75,9 +79,9 @@ export async function api<T>(
   }
   if (!response.ok) {
     const error = (await response.json().catch(() => ({}))) as {
-      error?: string;
+      error?: string; message?: string;
     };
-    throw new APIError(response.status, error.error ?? "request_failed");
+    throw new APIError(response.status, error.error ?? "request_failed", error.message);
   }
   return response.status === 204
     ? (undefined as T)

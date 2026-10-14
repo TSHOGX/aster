@@ -246,8 +246,8 @@ func TestReleaseFenceDoesNotDispatchPreviouslyQueuedPrompt(t *testing.T) {
 
 func TestReleaseFenceAllowsExistingPublicationButRejectsNewRevision(t *testing.T) {
 	s, _, _ := fixture(t)
-	entries := []content.Entry{{Path: "assets", Directory: true}}
-	input := content.Publication{StoreID: "engine", Purpose: "assets", RevisionDigest: content.Digest(entries), Capacity: 1024, Entries: entries}
+	entries := []content.Entry{{Path: "builtin", Directory: true}}
+	input := content.Publication{StoreID: "engine", Purpose: "builtin", RevisionDigest: content.Digest(entries), Capacity: 1024, Entries: entries}
 	_, err := s.ClaimContentPublication(ctx, input)
 	must(t, err)
 	_, err = s.BeginReleaseDrain(ctx, "publish", time.Minute)

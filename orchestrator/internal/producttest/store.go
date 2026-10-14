@@ -130,7 +130,7 @@ func OpenWithRuntime(ctx context.Context, path string, profile product.Profile, 
 		p := item.Publication
 		records = append(records, p)
 		sources[p.RevisionDigest] = p.Entries
-		profile.Volumes = append(profile.Volumes, product.VolumePlan{Key: item.Required.Role, Role: item.Required.Role, Destination: item.Required.Destination, Storage: "shared_readonly", Access: "read_only", CapacityBytes: p.Capacity, Source: &product.VolumeSource{ContentProfile: "reviewed-v1", Reference: product.ArtifactReference{ID: item.Required.ArtifactID, Version: p.RevisionDigest, Digest: p.RevisionDigest}, VolumeID: p.PublishedVolumeID, MinimumBytes: p.Capacity}})
+		profile.Volumes = append(profile.Volumes, product.VolumePlan{Key: item.Required.Role, Role: item.Required.Role, Destination: item.Required.Destination, Storage: "shared_readonly", Access: "read_only", CapacityBytes: p.Capacity, Source: &product.VolumeSource{ContentProfile: content.ProfileForPurpose(p.Purpose), Reference: product.ArtifactReference{ID: item.Required.ArtifactID, Version: p.RevisionDigest, Digest: p.RevisionDigest}, VolumeID: p.PublishedVolumeID, MinimumBytes: p.Capacity}})
 	}
 	if err = prepare(ctx, path, &profile, sources, records); err != nil {
 		return fail(err)

@@ -284,14 +284,14 @@ func fixture(t *testing.T) (Publisher, *fakeEngine, *memoryRepository, Revision)
 func TestPublishVerifiesPublishedBytesAndIsIdempotent(t *testing.T) {
 	publisher, engine, repository, revision := fixture(t)
 	ctx := context.Background()
-	volume, err := publisher.Publish(ctx, "assets", revision, 8<<20)
+	volume, err := publisher.Publish(ctx, "builtin", revision, 8<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if volume == "" {
 		t.Fatal("published volume identity missing")
 	}
-	row := repository.rows[engine.store+"|assets|"+revision.Digest]
+	row := repository.rows[engine.store+"|builtin|"+revision.Digest]
 	if row.Stage != "published" || row.PublishedVolumeID != volume || row.StagingVolumeID == volume {
 		t.Fatalf("publication record: %+v", row)
 	}
@@ -300,7 +300,7 @@ func TestPublishVerifiesPublishedBytesAndIsIdempotent(t *testing.T) {
 	}
 	// A second publish of the same authored bytes must not touch the engine again.
 	before := engine.next
-	again, err := publisher.Publish(ctx, "assets", revision, 8<<20)
+	again, err := publisher.Publish(ctx, "builtin", revision, 8<<20)
 	if err != nil || again != volume {
 		t.Fatalf("republish: %s %v", again, err)
 	}
@@ -316,13 +316,13 @@ func TestPublishResumesAfterCrashAtEveryBoundary(t *testing.T) {
 			publisher, engine, repository, revision := fixture(t)
 			ctx := context.Background()
 			repository.fail[boundary] = errors.New("interrupted before durable commit")
-			if _, err := publisher.Publish(ctx, "assets", revision, 8<<20); err == nil {
+			if _, err := publisher.Publish(ctx, "builtin", revision, 8<<20); err == nil {
 				t.Fatal("interrupted publication reported success")
 			}
-			if row := repository.rows[engine.store+"|assets|"+revision.Digest]; row.Stage == "published" {
+			if row := repository.rows[engine.store+"|builtin|"+revision.Digest]; row.Stage == "published" {
 				t.Fatal("interrupted publication committed a pointer")
 			}
-			volume, err := publisher.Publish(ctx, "assets", revision, 8<<20)
+			volume, err := publisher.Publish(ctx, "builtin", revision, 8<<20)
 			if err != nil {
 				t.Fatalf("resume: %v", err)
 			}
@@ -345,14 +345,14 @@ func TestPublishResumesAfterLostEngineReplies(t *testing.T) {
 			ctx := context.Background()
 			// Fail the keyed call once; the retry must replay onto the same object.
 			if call == "create" {
-				engine.failCall["create:content-staging:assets:"+revision.Digest+":g0"] = errors.New("lost reply")
+				engine.failCall["create:content-staging:builtin:"+revision.Digest+":g0"] = errors.New("lost reply")
 			} else {
-				engine.failCall["snapshot:content-publish:assets:"+revision.Digest+":g0"] = errors.New("lost reply")
+				engine.failCall["snapshot:content-publish:builtin:"+revision.Digest+":g0"] = errors.New("lost reply")
 			}
-			if _, err := publisher.Publish(ctx, "assets", revision, 8<<20); err == nil {
+			if _, err := publisher.Publish(ctx, "builtin", revision, 8<<20); err == nil {
 				t.Fatalf("%s failure reported success", call)
 			}
-			volume, err := publisher.Publish(ctx, "assets", revision, 8<<20)
+			volume, err := publisher.Publish(ctx, "builtin", revision, 8<<20)
 			if err != nil {
 				t.Fatalf("retry: %v", err)
 			}
@@ -373,11 +373,11 @@ func TestPublishRefusesContradictoryContent(t *testing.T) {
 	// Verification must refuse before any pointer is committed, and record a
 	// terminal, diagnosable failure rather than retrying the contradiction.
 	engine.corrupt["AGENTS.md"] = []byte("not the reviewed bytes\n")
-	_, err := publisher.Publish(ctx, "assets", revision, 8<<20)
+	_, err := publisher.Publish(ctx, "builtin", revision, 8<<20)
 	if !errors.Is(err, ErrContentRefused) {
 		t.Fatalf("contradictory content was not refused as terminal: %v", err)
 	}
-	row := repository.rows[engine.store+"|assets|"+revision.Digest]
+	row := repository.rows[engine.store+"|builtin|"+revision.Digest]
 	if row.Stage != "failed" || row.Error == "" {
 		t.Fatalf("terminal refusal was not recorded: %+v", row)
 	}
@@ -385,7 +385,7 @@ func TestPublishRefusesContradictoryContent(t *testing.T) {
 		t.Fatal("failed publication committed a published volume")
 	}
 	// A failed revision resolves to nothing a launch could mount.
-	if volume, found, err := repository.FindPublishedContent(ctx, engine.store, "assets", revision.Digest); err != nil || found || volume != "" {
+	if volume, found, err := repository.FindPublishedContent(ctx, engine.store, "builtin", revision.Digest); err != nil || found || volume != "" {
 		t.Fatalf("failed revision resolved to a volume: %s %v %v", volume, found, err)
 	}
 }
@@ -396,13 +396,13 @@ func TestPublishKeepsDurableWriteFailuresResumable(t *testing.T) {
 	publisher, engine, repository, revision := fixture(t)
 	ctx := context.Background()
 	repository.fail["staging"] = errors.New("durable write did not land")
-	if _, err := publisher.Publish(ctx, "assets", revision, 8<<20); err == nil {
+	if _, err := publisher.Publish(ctx, "builtin", revision, 8<<20); err == nil {
 		t.Fatal("interrupted publication reported success")
 	}
-	if row := repository.rows[engine.store+"|assets|"+revision.Digest]; row.Stage == "failed" {
+	if row := repository.rows[engine.store+"|builtin|"+revision.Digest]; row.Stage == "failed" {
 		t.Fatalf("a durable write failure was recorded as a content refusal: %+v", row)
 	}
-	if _, err := publisher.Publish(ctx, "assets", revision, 8<<20); err != nil {
+	if _, err := publisher.Publish(ctx, "builtin", revision, 8<<20); err != nil {
 		t.Fatalf("resume after a durable write failure: %v", err)
 	}
 }
@@ -417,11 +417,11 @@ func TestPublishQuarantinesUncertainWritesWithoutRetryOrSnapshot(t *testing.T) {
 			} else {
 				repository.fail["populated"] = errors.New("durable finish reply lost")
 			}
-			if _, err := publisher.Publish(ctx, "assets", revision, 8<<20); err == nil {
+			if _, err := publisher.Publish(ctx, "builtin", revision, 8<<20); err == nil {
 				t.Fatal("unknown outcome reported success")
 			}
 			writes := engine.calls["write:AGENTS.md"]
-			if _, err := publisher.Publish(ctx, "assets", revision, 8<<20); !errors.Is(err, ErrPublicationQuarantined) {
+			if _, err := publisher.Publish(ctx, "builtin", revision, 8<<20); !errors.Is(err, ErrPublicationQuarantined) {
 				t.Fatal("unknown write replayed", err)
 			}
 			if engine.calls["write:AGENTS.md"] != writes || engine.next != 1 {
@@ -437,20 +437,20 @@ func TestPublishRejectsIncoherentRequests(t *testing.T) {
 	if _, err := publisher.Publish(ctx, "knowledge", revision, 8<<20); err == nil {
 		t.Fatal("unsupported purpose accepted")
 	}
-	if _, err := publisher.Publish(ctx, "assets", revision, 1); err == nil {
+	if _, err := publisher.Publish(ctx, "builtin", revision, 1); err == nil {
 		t.Fatal("capacity below content size accepted")
 	}
 	tampered := revision
 	tampered.Digest = "sha256:" + strings.Repeat("0", 64)
-	if _, err := publisher.Publish(ctx, "assets", tampered, 8<<20); err == nil {
+	if _, err := publisher.Publish(ctx, "builtin", tampered, 8<<20); err == nil {
 		t.Fatal("digest disagreeing with entries accepted")
 	}
 	empty := revision
 	empty.Entries = nil
-	if _, err := publisher.Publish(ctx, "assets", empty, 8<<20); err == nil {
+	if _, err := publisher.Publish(ctx, "builtin", empty, 8<<20); err == nil {
 		t.Fatal("revision without entries accepted")
 	}
-	if _, err := (Publisher{}).Publish(ctx, "assets", revision, 8<<20); err == nil {
+	if _, err := (Publisher{}).Publish(ctx, "builtin", revision, 8<<20); err == nil {
 		t.Fatal("publisher without ports accepted")
 	}
 }
@@ -501,7 +501,7 @@ func TestPublishRefusesSourceChangedAfterRevision(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("rewritten-after\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err = (Publisher{Repository: repository, Backend: engine}).Publish(context.Background(), "assets", revision, 8<<20)
+	_, err = (Publisher{Repository: repository, Backend: engine}).Publish(context.Background(), "builtin", revision, 8<<20)
 	if !errors.Is(err, ErrContentRefused) {
 		t.Fatalf("source drift should be refused: %v", err)
 	}
@@ -531,7 +531,7 @@ func TestAuthoredProfileStreamsBeyondReviewedLimits(t *testing.T) {
 	if err = VerifyVolume(context.Background(), engine, ref, revision.Digest, ReviewedProfile); !errors.Is(err, ErrContentRefused) {
 		t.Fatal("reviewed profile widened", err)
 	}
-	if _, err = publisher.Publish(context.Background(), "assets", revision, capacity); err == nil {
+	if _, err = publisher.Publish(context.Background(), "builtin", revision, capacity); err == nil {
 		t.Fatal("authored source granted system role")
 	}
 }
@@ -572,15 +572,15 @@ func TestPublisherRechecksPrincipalBeforeSnapshot(t *testing.T) {
 		}
 		return nil
 	}
-	if _, err := publisher.Publish(context.Background(), "assets", revision, 8<<20); !errors.Is(err, denied) {
+	if _, err := publisher.Publish(context.Background(), "builtin", revision, 8<<20); !errors.Is(err, denied) {
 		t.Fatal(err)
 	}
-	row := repository.rows[engine.store+"|assets|"+revision.Digest]
+	row := repository.rows[engine.store+"|builtin|"+revision.Digest]
 	if row.Stage != "populated" || engine.next != 1 {
 		t.Fatal("disabled principal sealed content", row.Stage, engine.next)
 	}
 	publisher.Authorize = nil
-	if _, err := publisher.Publish(context.Background(), "assets", revision, 8<<20); err != nil {
+	if _, err := publisher.Publish(context.Background(), "builtin", revision, 8<<20); err != nil {
 		t.Fatal(err)
 	}
 	if engine.calls["write:AGENTS.md"] != 1 {

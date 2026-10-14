@@ -197,7 +197,7 @@ func ResolveEnvironmentStructure(environment DefaultEnvironment, contract runtim
 					allowed = true
 				}
 			}
-			if !allowed || mount.Role == "runtime" && !artifact.CleanRuntime {
+			if !allowed || mount.Role == "runtime" && !artifact.CleanRuntime || mount.Role == "shared_assets" && artifact.PublicationPurpose != "shared_assets" || mount.Role == "agent_config" && artifact.PublicationPurpose != "config" {
 				return result, environmentError(field + ".source")
 			}
 		default:
@@ -246,7 +246,7 @@ func ResolveEnvironmentStructure(environment DefaultEnvironment, contract runtim
 			return result, environmentError(field + ".capacity")
 		}
 		if required, ok := contract.Publication(mount.Role); ok {
-			if mount.Storage != "shared_readonly" || mount.Access != "read_only" || mount.Source.Kind != "builtin" || mount.Source.ArtifactID != required.ArtifactID {
+			if mount.Storage != "shared_readonly" || mount.Access != "read_only" || mount.Source.Kind != "builtin" || mount.Role != "shared_assets" && mount.Source.ArtifactID != required.ArtifactID {
 				return result, environmentError(field + ".source")
 			}
 		}

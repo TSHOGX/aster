@@ -29,6 +29,7 @@ case "${1:-all}" in
     python3 -m unittest discover -s scripts/tests -p 'test_*.py'
     ;;
   backend)
+    go -C contracts test -mod=readonly ./...
     # Native RPC tests need Node; do not silently skip them on a Go-only runner.
     command -v node >/dev/null
     command -v python3 >/dev/null

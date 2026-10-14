@@ -139,7 +139,7 @@ func TestVolumeRetirementChecksOwnedSeedAndSharedReferences(t *testing.T) {
 			if retired.RetiredAt == "" {
 				t.Fatal(retired)
 			}
-			artifact := BuiltinVolume{Reference: reference, StoreID: profile.StoreID, PublicationPurpose: "assets", MinimumBytes: 1 << 20, Roles: []string{"data"}, Entries: entries}
+			artifact := BuiltinVolume{Reference: reference, StoreID: profile.StoreID, PublicationPurpose: "builtin", MinimumBytes: 1 << 20, Roles: []string{"data"}, Entries: entries}
 			wantError(t, s.RegisterBuiltinVolume(ctx, artifact), ErrConflict)
 			_, err = registeredBuiltin(ctx, s.reader, reference, false)
 			wantError(t, err, ErrArtifactUnavailable)

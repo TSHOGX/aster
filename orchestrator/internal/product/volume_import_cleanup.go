@@ -67,14 +67,14 @@ func (s *Store) PublicationCleanup(ctx context.Context, i VolumeImport) (content
 	}
 	defer tx.Rollback()
 	var count int
-	err = tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM builtin_volumes WHERE store_id=? AND publication_purpose='authored' AND digest=? AND retired_at='')+(SELECT count(*) FROM volume_imports WHERE store_id=? AND tree_digest=? AND id<>? AND state NOT IN ('retiring','retired','canceled'))`, i.StoreID, i.TreeDigest, i.StoreID, i.TreeDigest, i.ID).Scan(&count)
+	err = tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM builtin_volumes WHERE store_id=? AND publication_purpose=? AND digest=? AND retired_at='')+(SELECT count(*) FROM volume_imports WHERE store_id=? AND content_profile=? AND tree_digest=? AND id<>? AND state NOT IN ('retiring','retired','canceled'))`, i.StoreID, i.PublicationPurpose(), i.TreeDigest, i.StoreID, i.Profile, i.TreeDigest, i.ID).Scan(&count)
 	if err != nil {
 		return content.Publication{}, false, err
 	}
 	if count != 0 {
 		return content.Publication{}, false, nil
 	}
-	p, err := publicationWith(ctx, tx, i.StoreID, "authored", i.TreeDigest)
+	p, err := publicationWith(ctx, tx, i.StoreID, i.PublicationPurpose(), i.TreeDigest)
 	if errors.Is(err, sql.ErrNoRows) {
 		return content.Publication{}, false, nil
 	}
@@ -116,15 +116,15 @@ type ContentAttempt struct {
 	State       string
 }
 
-func (s *Store) QuarantinedAttempts(ctx context.Context, store, digest string) ([]ContentAttempt, error) {
-	rows, err := s.reader.QueryContext(ctx, "SELECT generation,capacity,staging_volume_id,derived_volume_id,state FROM content_publication_attempts WHERE store_id=? AND purpose='authored' AND revision_digest=? AND state!='absent' ORDER BY generation", store, digest)
+func (s *Store) QuarantinedAttempts(ctx context.Context, store, purpose, digest string) ([]ContentAttempt, error) {
+	rows, err := s.reader.QueryContext(ctx, "SELECT generation,capacity,staging_volume_id,derived_volume_id,state FROM content_publication_attempts WHERE store_id=? AND purpose=? AND revision_digest=? AND state!='absent' ORDER BY generation", store, purpose, digest)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []ContentAttempt{}
 	for rows.Next() {
-		a := ContentAttempt{Publication: content.Publication{StoreID: store, Purpose: "authored", RevisionDigest: digest}}
+		a := ContentAttempt{Publication: content.Publication{StoreID: store, Purpose: purpose, RevisionDigest: digest}}
 		if err = rows.Scan(&a.Publication.Generation, &a.Publication.Capacity, &a.Publication.StagingVolumeID, &a.Publication.DerivedVolumeID, &a.State); err != nil {
 			return nil, err
 		}

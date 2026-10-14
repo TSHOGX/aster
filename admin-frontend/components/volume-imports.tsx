@@ -10,7 +10,7 @@ import { Select } from '@web/select';
 
 type Source = { id: string; publisher_id: string };
 type Library = { id: string; name: string; description: string };
-type Release = { id: string; library_id: string; label: string; note: string; descriptor_digest: string; publisher: { issuer: string; subject: string } };
+type Release = { id: string; library_id: string; label: string; note: string; descriptor_digest: string; profile: 'authored-v1' | 'shared-assets-v1'; publisher: { issuer: string; subject: string } };
 type Imported = { id: string; source_id: string; publisher_id: string; library_id: string; version_id: string; manifest_digest: string; state: string; error?: string; capacity_bytes: string; transfer_reserved_bytes: string; actor_id: string; publisher_actor: string; artifact: { id: string; version: string; digest: string } };
 type Pending = { path: string; body: Record<string, string> };
 export function VolumeImports({ onDirty }: { onDirty: (value: boolean) => void }) {
@@ -61,7 +61,7 @@ export function VolumeImports({ onDirty }: { onDirty: (value: boolean) => void }
     finally { inFlight.current = false; setBusy(false); }
   }
   function selectRelease(release: Release) {
-    const request = { path: '/api/admin/volume-imports', body: { request_id: crypto.randomUUID(), source_id: source, version_id: release.id, expected_manifest_digest: release.descriptor_digest, consumer_profile: 'authored-v1' } };
+    const request = { path: '/api/admin/volume-imports', body: { request_id: crypto.randomUUID(), source_id: source, version_id: release.id, expected_manifest_digest: release.descriptor_digest, consumer_profile: release.profile } };
     void submit(request);
   }
   function action(imported: Imported, action: string) {
@@ -80,7 +80,7 @@ export function VolumeImports({ onDirty }: { onDirty: (value: boolean) => void }
     {libraryNext && <button onClick={() => void api<{ libraries: Library[]; next: string }>(`/api/admin/volume-sources/${source}/libraries?after=${libraryNext}`).then(p => { setLibraries(old => [...old, ...p.libraries]); setLibraryNext(p.next); }).catch(e => setCatalogError(String(e)))}>{tr("More libraries")}</button>}
     {releases.length > 0 && <div className="table-scroll"><table><thead><tr><th>{tr("Release")}</th><th>{tr("Publisher")}</th><th>{tr("Availability")}</th><th>{tr("Action")}</th></tr></thead><tbody>{releases.map(release => {
       const imported = matching(release);
-      return <tr key={release.id}><td>{release.label}<small>{release.note}</small><details><summary>{tr("Exact descriptor")}</summary><code>{release.descriptor_digest}</code></details></td><td>{release.publisher.subject}</td><td>{imported?.state === 'ready' ? tr("Ready in this deployment") : tr(imported?.state) || tr("Available to import")}</td><td>{imported?.state === 'ready' ? <Link className="button" href="/resources/environment">{tr("Select in Environment")}</Link> : <button className="primary" disabled={busy || !!pending || !!imported} onClick={() => selectRelease(release)}>{tr("Import release")}</button>}</td></tr>;
+      return <tr key={release.id}><td>{release.label}<small>{release.note}</small><small>{release.profile === 'shared-assets-v1' ? tr("Shared assets") : tr("Ordinary data")}</small><details><summary>{tr("Exact descriptor")}</summary><code>{release.descriptor_digest}</code></details></td><td>{release.publisher.subject}</td><td>{imported?.state === 'ready' ? tr("Ready in this deployment") : tr(imported?.state) || tr("Available to import")}</td><td>{imported?.state === 'ready' ? <Link className="button" href="/resources/environment">{tr("Select in Environment")}</Link> : <button className="primary" disabled={busy || !!pending || !!imported} onClick={() => selectRelease(release)}>{tr("Import release")}</button>}</td></tr>;
     })}</tbody></table></div>}
     {releaseNext && <button onClick={() => void api<{ releases: Release[]; next: string }>(`/api/admin/volume-sources/${source}/releases?library_id=${library}&after=${releaseNext}`).then(p => { setReleases(old => [...old, ...p.releases]); setReleaseNext(p.next); }).catch(e => setCatalogError(String(e)))}>{tr("More releases")}</button>}
     <h3>{tr("Local imports")}</h3><p className="hint">{tr("Ready content is retained locally. Changes or outages in Studio do not update existing projects.")}</p>

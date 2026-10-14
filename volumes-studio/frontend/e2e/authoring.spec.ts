@@ -361,6 +361,7 @@ test("file menus, changes, dark theme and responsive workspace", async ({
   await expect(
     page.getByRole("button", { name: "Save file", exact: true }),
   ).toBeDisabled();
+  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
   await page
     .getByRole("button", { name: "Actions for before.md", exact: true })
     .click();
@@ -434,6 +435,7 @@ test("unavailable recovery storage leaves editing and saved-file closing usable"
   await expect(
     page.getByRole("button", { name: "Save file", exact: true }),
   ).toBeDisabled();
+  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
   await page
     .getByRole("button", { name: "Close fallback.md", exact: true })
     .click();
@@ -744,4 +746,44 @@ test("language changes keep Studio unsaved content, selection, and confirmation 
   await page.evaluate(id => window.dispatchEvent(new StorageEvent("storage", { key: `account-appearance:${id}` })), account.id);
   await expect(page.getByRole("link", { name: "Libraries", exact: true })).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("shared assets show actionable validation and publish immutable system context",async({page})=>{
+ await signIn(page);
+ await page.getByRole("button",{name:"New library",exact:true}).click();
+ await page.getByLabel("Name",{exact:true}).fill(`Shared context ${Date.now()}`);
+ await page.getByRole("dialog").getByRole("radio",{name:"Shared assets",exact:true}).check();
+ await page.getByRole("button",{name:"Create draft",exact:true}).click();
+ await expect(page.getByText("Add the required root UTF-8 text file.",{exact:false})).toBeVisible();
+ await page.getByRole("button",{name:"Review & publish",exact:true}).click();
+ await expect(page.getByRole("alert").filter({hasText:"AGENTS.md"})).toBeVisible();
+ await createFile(page,"AGENTS.md");
+ await editorText(page,"AGENTS.md","# Aster context\nUse the available runtime tools.");
+ await page.getByRole("button",{name:"Save file",exact:true}).click();
+ await page.getByRole("button",{name:"Review & publish",exact:true}).click();
+ await expect(page.getByText("Content profile: Shared assets · Immutable version",{exact:true})).toBeVisible();
+ await page.getByLabel("Version label").fill("v1");
+ await page.getByRole("button",{name:"Publish version",exact:true}).click();
+ await expect(page.getByText("published",{exact:true})).toBeVisible();
+ await page.getByRole("button",{name:"Inspect files",exact:true}).click();
+ await page.getByRole("button",{name:"Open AGENTS.md",exact:true}).click();
+ await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable","false");
+ await expect(page.locator(".cm-content")).toContainText("Use the available runtime tools.");
+});
+
+
+test("rename waits for an in-flight save without an unsaved confirmation",async({page})=>{
+ await signIn(page);await createLibrary(page,`Queued rename ${Date.now()}`);await createFile(page,"before.md");
+ await editorText(page,"before.md","Saved before rename");
+ let started!:()=>void,release!:()=>void;
+ const saving=new Promise<void>(resolve=>{started=resolve;});const gate=new Promise<void>(resolve=>{release=resolve;});
+ await page.route("**/draft/mutations",async route=>{
+  if(route.request().postDataJSON().action==="text") {const response=await route.fetch();started();await gate;await route.fulfill({response});} else await route.continue();
+ });
+ await page.getByRole("button",{name:"Save file",exact:true}).click();await saving;
+ await page.getByRole("button",{name:"Actions for before.md",exact:true}).click();await page.getByRole("menuitem",{name:"Rename",exact:true}).click();
+ await page.getByLabel("New file name").fill("after.md");await page.getByLabel("New file name").press("Enter");
+ await expect(page.getByRole("dialog",{name:"Unsaved files",exact:true})).toHaveCount(0);release();
+ await expect(page.getByRole("button",{name:"Open after.md",exact:true})).toBeVisible();
+ await expect(page.getByRole("tab",{name:"after.md"})).toBeVisible();
 });

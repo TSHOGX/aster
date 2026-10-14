@@ -189,7 +189,7 @@ func validateRetainedProfile(ctx context.Context, q queryer, profile Profile) er
 			return Admission("runtime_incompatible", ErrConflict)
 		}
 		if required, ok := release.Manifest.Mounts.Publication(mount.Role); ok {
-			if mount.Storage != "shared_readonly" || mount.Access != "read_only" || mount.Source == nil || mount.Source.Reference.ID != required.ArtifactID {
+			if mount.Storage != "shared_readonly" || mount.Access != "read_only" || mount.Source == nil || mount.Role != "shared_assets" && mount.Source.Reference.ID != required.ArtifactID || mount.Role == "shared_assets" && mount.Source.ContentProfile != content.SharedAssetsProfile {
 				return Admission("runtime_incompatible", ErrConflict)
 			}
 		}

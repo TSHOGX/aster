@@ -127,6 +127,10 @@ func (a *Application) volumeImportHandler() http.Handler {
 			importError(w, err)
 			return
 		}
+		if descriptor.Profile != input.ConsumerProfile {
+			importError(w, product.ErrInvalid)
+			return
+		}
 		publisherActor := ""
 		labels := product.VolumeImportLabels{LibraryName: descriptor.LibraryID}
 		cursor := ""
@@ -138,6 +142,10 @@ func (a *Application) volumeImportHandler() http.Handler {
 			}
 			for _, release := range releases {
 				if release.ID == descriptor.VersionID {
+					if release.Profile != descriptor.Profile || release.DescriptorDigest != input.ExpectedManifestDigest {
+						importError(w, product.ErrConflict)
+						return
+					}
 					publisherActor = release.Publisher.Issuer + "/" + release.Publisher.Subject
 					labels.VersionLabel = release.Label
 					labels.VersionNote = release.Note
@@ -373,7 +381,7 @@ func (a *Application) performVolumeImport(ctx context.Context, i product.VolumeI
 	if err != nil {
 		return err
 	}
-	volume, err := (content.Publisher{Repository: a.Store, Backend: a.Backend, Authorize: func(ctx context.Context) error { _, err := a.Store.IdentityPrincipal(ctx, i.ActorID); return err }}).Publish(ctx, "authored", revision, i.Capacity)
+	volume, err := (content.Publisher{Repository: a.Store, Backend: a.Backend, Authorize: func(ctx context.Context) error { _, err := a.Store.IdentityPrincipal(ctx, i.ActorID); return err }}).Publish(ctx, i.PublicationPurpose(), revision, i.Capacity)
 	if err != nil {
 		if errors.Is(err, product.ErrUnauthorized) || errors.Is(err, product.ErrForbidden) {
 			return a.Store.AdvanceVolumeImport(ctx, i.ID, i.State, "paused", "principal_authority_required")
@@ -435,7 +443,7 @@ func (a *Application) cleanupVolumeImport(ctx context.Context, i product.VolumeI
 				return err
 			}
 		}
-		attempts, err := a.Store.QuarantinedAttempts(ctx, i.StoreID, i.TreeDigest)
+		attempts, err := a.Store.QuarantinedAttempts(ctx, i.StoreID, i.PublicationPurpose(), i.TreeDigest)
 		if err != nil {
 			return err
 		}

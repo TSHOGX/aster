@@ -8,9 +8,9 @@ import (
 	"errors"
 	"fmt"
 
+	"aster/contracts/volumemanifest"
 	"github.com/google/uuid"
 	"harness-platform/orchestrator/internal/content"
-	"harness-platform/orchestrator/internal/volumeimport/manifest"
 )
 
 type VolumeImportInput struct {
@@ -62,11 +62,11 @@ type VolumeImportLabels struct {
 }
 
 func (s *Store) AdmitVolumeImport(ctx context.Context, token string, input VolumeImportInput, raw []byte, store, publisherActor string, localBudget, engineBudget int64, labels ...VolumeImportLabels) (VolumeImport, error) {
-	if !validID(input.SourceID) || !validID(input.VersionID) || input.ConsumerProfile != manifest.Profile || localBudget <= 0 || engineBudget <= 0 || store == "" {
+	if !validID(input.SourceID) || !validID(input.VersionID) || (input.ConsumerProfile != manifest.Profile && input.ConsumerProfile != manifest.SharedAssetsProfile) || localBudget <= 0 || engineBudget <= 0 || store == "" {
 		return VolumeImport{}, ErrInvalid
 	}
 	d, err := manifest.Decode(bytes.NewReader(raw))
-	if err != nil {
+	if err != nil || d.Profile != input.ConsumerProfile {
 		return VolumeImport{}, ErrInvalid
 	}
 	digest, err := d.Digest()
@@ -74,7 +74,11 @@ func (s *Store) AdmitVolumeImport(ctx context.Context, token string, input Volum
 		return VolumeImport{}, ErrConflict
 	}
 	entries := ImportEntries(d)
-	capacity, err := content.MaterializationCapacity(entries)
+	profile := content.AuthoredProfile
+	if input.ConsumerProfile == manifest.SharedAssetsProfile {
+		profile = content.SharedAssetsProfile
+	}
+	capacity, err := content.MaterializationCapacityForProfile(entries, profile)
 	if err != nil {
 		return VolumeImport{}, ErrInvalid
 	}
@@ -159,10 +163,14 @@ func (s *Store) AdmitVolumeImport(ctx context.Context, token string, input Volum
 		// admission is open. An already-admitted transfer can then settle during
 		// drain without trying to admit a new publication after the release fence.
 		encodedEntries, _ := json.Marshal(entries)
-		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO content_publications(store_id,purpose,revision_digest,capacity,entries,stage,created_at,updated_at,generation) VALUES(?,'authored',?,?,?,'preparing',?,?,(SELECT coalesce(max(generation),-1)+1 FROM content_publication_attempts WHERE store_id=? AND purpose='authored' AND revision_digest=?))`, store, d.TreeDigest, capacity, string(encodedEntries), s.timestamp(), s.timestamp(), store, d.TreeDigest); err != nil {
+		purpose := "authored"
+		if input.ConsumerProfile == manifest.SharedAssetsProfile {
+			purpose = "shared_assets"
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO content_publications(store_id,purpose,revision_digest,capacity,entries,stage,created_at,updated_at,generation) VALUES(?,?,?,?,?,'preparing',?,?,(SELECT coalesce(max(generation),-1)+1 FROM content_publication_attempts WHERE store_id=? AND purpose=? AND revision_digest=?))`, store, purpose, d.TreeDigest, capacity, string(encodedEntries), s.timestamp(), s.timestamp(), store, purpose, d.TreeDigest); err != nil {
 			return err
 		}
-		publication, err := publicationWith(ctx, tx, store, "authored", d.TreeDigest)
+		publication, err := publicationWith(ctx, tx, store, purpose, d.TreeDigest)
 		if err != nil {
 			return err
 		}
@@ -305,18 +313,27 @@ func (i VolumeImport) Revision(reader content.Reader) (content.Revision, error) 
 		return content.Revision{}, err
 	}
 	digest, _ := d.Digest()
-	if digest != i.ManifestDigest || d.TreeDigest != i.TreeDigest || d.PublisherID != i.PublisherID || d.VersionID != i.VersionID {
+	if digest != i.ManifestDigest || d.TreeDigest != i.TreeDigest || d.PublisherID != i.PublisherID || d.VersionID != i.VersionID || d.LibraryID != i.LibraryID || d.Profile != i.Profile {
 		return content.Revision{}, fmt.Errorf("retained import identity mismatch")
 	}
 	n, _ := manifest.ParseSize(d.TotalBytes)
-	return content.Revision{Reader: reader, Profile: content.AuthoredProfile, Digest: d.TreeDigest, Entries: ImportEntries(d), TotalBytes: n}, nil
+	profile := content.AuthoredProfile
+	if d.Profile == manifest.SharedAssetsProfile {
+		profile = content.SharedAssetsProfile
+	}
+	return content.Revision{Reader: reader, Profile: profile, Digest: d.TreeDigest, Entries: ImportEntries(d), TotalBytes: n}, nil
 }
 func (i VolumeImport) Builtin() (BuiltinVolume, error) {
 	revision, err := i.Revision(nil)
 	if err != nil {
 		return BuiltinVolume{}, err
 	}
-	return BuiltinVolume{Reference: i.Artifact, StoreID: i.StoreID, PublicationPurpose: "authored", MinimumBytes: i.Capacity, SourceCapacityBytes: i.Capacity, Roles: []string{"data", "workspace"}, Entries: revision.Entries}, nil
+	purpose := "authored"
+	roles := []string{"data", "workspace"}
+	if i.Profile == manifest.SharedAssetsProfile {
+		purpose, roles = "shared_assets", []string{"shared_assets"}
+	}
+	return BuiltinVolume{Reference: i.Artifact, StoreID: i.StoreID, PublicationPurpose: purpose, MinimumBytes: i.Capacity, SourceCapacityBytes: i.Capacity, Roles: roles, Entries: revision.Entries}, nil
 }
 
 func (s *Store) FinalizeVolumeImport(ctx context.Context, id string) error {
@@ -345,7 +362,7 @@ func (s *Store) FinalizeVolumeImport(ctx context.Context, id string) error {
 		if err = ValidateBuiltinVolume(artifact); err != nil {
 			return err
 		}
-		p, err := publicationWith(ctx, tx, i.StoreID, "authored", i.TreeDigest)
+		p, err := publicationWith(ctx, tx, i.StoreID, i.PublicationPurpose(), i.TreeDigest)
 		if err != nil {
 			return err
 		}
@@ -359,7 +376,7 @@ func (s *Store) FinalizeVolumeImport(ctx context.Context, id string) error {
 		if !exists {
 			roles, _ := json.Marshal(artifact.Roles)
 			entries, _ := json.Marshal(artifact.Entries)
-			if _, err = tx.ExecContext(ctx, `INSERT INTO builtin_volumes(id,version,digest,store_id,publication_purpose,minimum_bytes,roles,clean_runtime,entries,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, artifact.Reference.ID, artifact.Reference.Version, artifact.Reference.Digest, artifact.StoreID, "authored", artifact.MinimumBytes, string(roles), false, string(entries), s.timestamp()); err != nil {
+			if _, err = tx.ExecContext(ctx, `INSERT INTO builtin_volumes(id,version,digest,store_id,publication_purpose,minimum_bytes,roles,clean_runtime,entries,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, artifact.Reference.ID, artifact.Reference.Version, artifact.Reference.Digest, artifact.StoreID, artifact.PublicationPurpose, artifact.MinimumBytes, string(roles), false, string(entries), s.timestamp()); err != nil {
 				return err
 			}
 		}
@@ -398,7 +415,7 @@ func (s *Store) RetryImportedPublication(ctx context.Context, i VolumeImport, bu
 	if i.State != "failed" && i.State != "paused" {
 		return ErrConflict
 	}
-	p, err := publicationWith(ctx, s.reader, i.StoreID, "authored", i.TreeDigest)
+	p, err := publicationWith(ctx, s.reader, i.StoreID, i.PublicationPurpose(), i.TreeDigest)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -415,5 +432,12 @@ func (s *Store) RetryImportedPublication(ctx context.Context, i VolumeImport, bu
 	if usage.Total.Used > budget-usage.Total.Reserved-i.Capacity*2 {
 		return ErrCapacity
 	}
-	return s.RetryContentPublication(ctx, i.StoreID, "authored", i.TreeDigest)
+	return s.RetryContentPublication(ctx, i.StoreID, i.PublicationPurpose(), i.TreeDigest)
+}
+
+func (i VolumeImport) PublicationPurpose() string {
+	if i.Profile == content.SharedAssetsProfile {
+		return "shared_assets"
+	}
+	return "authored"
 }

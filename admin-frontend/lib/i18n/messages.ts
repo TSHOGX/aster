@@ -1,4 +1,7 @@
 export const ZH: Record<string, string> = {
+  "Shared assets": "共享资源",
+  "Ordinary data": "普通数据",
+  "Copy and customize": "复制并自定义",
   " (capped)": "（已限制）",
   " (disabled)": "（已禁用）",
   " (request restored)": "（请求已恢复）",

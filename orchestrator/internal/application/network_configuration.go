@@ -12,7 +12,9 @@ type NetworkReport struct {
 func fixedConfiguration(cfg Config) Config {
 	// Mutable direct/DNS policy is persisted in the product database. Operator
 	// service routes remain part of executable deployment compatibility.
+	cfg.PublicDNS = nil
 	cfg.Template = Template{}
+	cfg.WorkTemplate = nil
 	cfg.Content = Content{}
 	cfg.Project.CPUMillis = 0
 	cfg.Project.MemoryBytes = 0

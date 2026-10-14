@@ -16,7 +16,7 @@ import (
 	"strconv"
 	"time"
 
-	"harness-platform/orchestrator/internal/volumeimport/manifest"
+	"aster/contracts/volumemanifest"
 )
 
 type Source struct {
@@ -143,6 +143,7 @@ type CatalogLibrary struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Profile     string `json:"profile"`
 }
 type CatalogRelease struct {
 	ID               string `json:"id"`
@@ -152,6 +153,7 @@ type CatalogRelease struct {
 	Note             string `json:"note"`
 	DescriptorDigest string `json:"descriptor_digest"`
 	State            string `json:"state"`
+	Profile          string `json:"profile"`
 	Publisher        struct {
 		Issuer  string `json:"issuer"`
 		Subject string `json:"subject"`
@@ -171,7 +173,7 @@ func (c *Connector) Libraries(ctx context.Context, after string) ([]CatalogLibra
 	}
 	result := []CatalogLibrary{}
 	for _, library := range response.Libraries {
-		if !manifest.ValidID(library.ID) || len(library.Name) > 200 || len(library.Description) > 4000 {
+		if !manifest.ValidID(library.ID) || len(library.Name) > 200 || len(library.Description) > 4000 || library.Profile != manifest.Profile && library.Profile != manifest.SharedAssetsProfile {
 			return nil, "", ErrIdentityConflict
 		}
 		if c.source.Allows(library.ID) {
@@ -195,7 +197,7 @@ func (c *Connector) Releases(ctx context.Context, library, after string) ([]Cata
 		return nil, "", ErrIdentityConflict
 	}
 	for _, v := range response.Versions {
-		if v.LibraryID != library || v.PublisherID != c.source.PublisherID || !manifest.ValidID(v.ID) || !manifest.ValidDigest(v.DescriptorDigest) || len(v.Label) > 128 || v.State != "published" {
+		if v.LibraryID != library || v.PublisherID != c.source.PublisherID || !manifest.ValidID(v.ID) || !manifest.ValidDigest(v.DescriptorDigest) || len(v.Label) > 128 || v.State != "published" || v.Profile != manifest.Profile && v.Profile != manifest.SharedAssetsProfile {
 			return nil, "", ErrIdentityConflict
 		}
 	}

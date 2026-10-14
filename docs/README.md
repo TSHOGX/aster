@@ -21,7 +21,7 @@ hold more than one role. Feature availability depends on your assigned permissio
 1. [Accounts, groups and permissions](admin/accounts.md).
 2. [Resources, environments and networks](admin/resources.md).
 3. [Inspect and control projects](admin/projects.md).
-4. [Publish environment data updates](admin/environment-updates.md).
+4. [Roll out environment content updates](admin/environment-updates.md).
 5. [Author and import files with Volume Studio](admin/volume-studio.md).
 
 ## Deployment and operations

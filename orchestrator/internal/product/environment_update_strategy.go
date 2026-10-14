@@ -23,6 +23,8 @@ const publicationReplaceKind = "publication_replace"
 
 func updateStrategy(kind string) (environmentUpdateStrategy, error) {
 	switch kind {
+	case systemContentReplaceKind:
+		return environmentUpdateStrategy{Kind: systemContentReplaceKind, Effect: "paused_binding", Boundary: "activation", Rollback: true, Targets: sharedAssetsMounts, Compatible: systemContentCompatible, Resolve: systemContentPlan, Apply: replacePublications}, nil
 	case publicationReplaceKind:
 		return environmentUpdateStrategy{
 			Kind: publicationReplaceKind, Effect: "paused_binding", Boundary: "activation", Rollback: true,

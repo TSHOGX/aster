@@ -1,4 +1,7 @@
 export const ZH: Record<string, string> = {
+  "Shared assets": "共享资源",
+  "Ordinary data": "普通数据",
+  "Copy and customize": "复制并自定义",
   "Directory {change}": "目录{change}",
   "{change} · {before} → {after} bytes. Download to inspect this file.": "{change} · {before} → {after} 字节。请下载后查看此文件。",
   " BOM": " BOM",

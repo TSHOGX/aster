@@ -14,12 +14,18 @@ the source-pinned Go/Node/native inputs, debootstrap/chroot tooling, module acce
 and reviewed package mirrors:
 
 ```sh
-sudo sandbox-image/build-khora-template.sh /srv/build/agent-runtime
+sudo env SANDBOX_FAMILY=minimal SANDBOX_RELEASE_VERSION=v1 \
+  sandbox-image/build-khora-template.sh /srv/build/sandbox-minimal-v1
+sudo env SANDBOX_FAMILY=work SANDBOX_RELEASE_VERSION=v1 \
+  sandbox-image/build-khora-template.sh /srv/build/sandbox-work-v1
 ```
 
 The destination and adjacent `.manifest.json` must not exist. An optional second
 argument can name a pure OS/Pi base; an existing application template is not a
-valid base. Never patch installed guest binaries in place or include credentials,
+valid base. The base must have the matching `/etc/aster-sandbox-family` marker.
+Minimal includes the runner, Pi, Node, Git and shell tools. Work adds the pinned
+Python/data/document packages. Each generated `system.md` contains only the release
+name and version; organization instructions belong in shared assets. Never patch installed guest binaries in place or include credentials,
 user history or nonempty workspace/runtime state in a new image.
 
 Review [builder configuration](../../sandbox-image/build.env.example) and
@@ -47,7 +53,18 @@ exact versions even after the default changes.
 ## Publish reviewed system content
 
 Prepare private reviewed copies of the [Agent configuration](../../config/agent-config.example/README.md)
-and shared assets, then publish them using their explicit configuration:
+and shared assets, then publish them using their explicit configuration. The base
+shared-assets source has root `AGENTS.md` and an empty `skills/` directory; create
+that directory when copying a source archive, which cannot preserve empty
+directories. The complete builder prepares it under `content/shared-assets`.
+Keep `pi/APPEND_SYSTEM.md` empty unless adding reviewed platform instructions.
+Ordinary Studio editing never exposes agent configuration.
+
+```sh
+mkdir -p /srv/reviewed/shared-assets/skills
+```
+
+Publish the configured source:
 
 ```sh
 orchestrator publish --socket /var/lib/agent-workbench/control.sock \

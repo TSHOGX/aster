@@ -20,7 +20,9 @@ configuration under `private/` or outside the repository.
 | `application_socket`, `control_socket` | Distinct private Unix sockets; default below state directory |
 | `engine` | Explicit endpoint and persistent store ID; HTTPS requires CA and client certificate/key |
 | `template` | Bootstrap-only ID/version, trusted runtime manifest and exact digest; optional for serving |
-| `project` | One-time bootstrap CPU/memory/storage/direct/DNS declarations; operator-owned service routes and hosts |
+| `work_template` | Work sandbox ID/version, manifest and digest; include it when bootstrapping the two built-in environments |
+| `public_dns_resolvers` | Bootstrap-only resolver IPs for Public; independent of Project service routes |
+| `project` | One-time bootstrap CPU/memory/storage declarations; operator-owned service routes and hosts |
 | `content` | Explicit system-publication source paths and capacity; optional for serving |
 | `limits` | Global/per-Project capacities, bootstrap qualified `max_mounts_per_project`, idle deadlines and worker interval |
 | `http_metrics` | Enable optional HTTP metrics collection |
@@ -36,6 +38,13 @@ The example is a bootstrap starting point, not a working production configuratio
 Set the exact engine store ID and trusted runtime manifest digest. Template,
 initial resource and content declarations seed a new database; later serving uses
 the registered environment and Project settings. Startup does not overwrite them.
+Bootstrap seeds **Restricted** with no direct/DNS access as the standard-user
+default. **Public** permits public IPv4 TCP/80 and TCP/443 using
+`public_dns_resolvers`, and requires a separate policy grant. Project
+`reachability.direct` and `reachability.resolvers` do not seed network templates;
+configure custom templates in Resource Center. Service routes and host mappings
+remain deployment responsibilities.
+
 Use [Resource Center](../admin/resources.md) for template and account changes.
 
 `max_mounts_per_project` must be qualified for your installation. Valid declarations

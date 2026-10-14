@@ -324,6 +324,7 @@ export function LibraryDetails({
   const studio = useStudio();
   const [name, setName] = useState(library?.name || ""),
     [description, setDescription] = useState(library?.description || ""),
+    [profile, setProfile] = useState<Library["profile"]>(library?.profile || "authored-v1"),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   return (
@@ -343,6 +344,7 @@ export function LibraryDetails({
                 request_id: requestID(),
                 name,
                 description,
+                ...(!library ? { profile } : {}),
                 ...(library
                   ? {
                       expected_revision: library.metadata_revision,
@@ -370,6 +372,15 @@ export function LibraryDetails({
             onChange={(e) => setName(e.target.value)}
           />
         </label>
+        {!library && <div>
+          <fieldset><legend>Content profile</legend>
+            <label><input type="radio" name="content-profile" value="authored-v1" checked={profile==="authored-v1"} onChange={()=>setProfile("authored-v1")} />Ordinary data</label>
+            <label><input type="radio" name="content-profile" value="shared-assets-v1" checked={profile==="shared-assets-v1"} onChange={()=>setProfile("shared-assets-v1")} />Shared assets</label>
+          </fieldset>
+          <p className="muted">Shared assets become read-only Agent system context. The profile is fixed after creation.</p>
+        </div>}
+        {library && <p>Content profile: {library.profile === "shared-assets-v1" ? "Shared assets" : "Ordinary data"} · Fixed</p>}
+
         <label>
            {tr("Description")} <textarea
             maxLength={4000}

@@ -29,7 +29,7 @@ func TestUserProjectConfigurationsRetainsSnapshotsAndFiltersOwnership(t *testing
 			`UPDATE projects SET state='deleted' WHERE id='deleted'`,
 			`UPDATE projects SET updated_at='2026-01-01T00:00:00Z' WHERE id='older'`,
 			`UPDATE projects SET state='paused',execution_suspended=1 WHERE id='newer'`,
-			`UPDATE network_templates SET name='Renamed network',policy='{}' WHERE id='network-default'`,
+			`UPDATE network_templates SET name='Renamed network',policy='{}' WHERE id='network-restricted'`,
 		} {
 			if _, err := tx.ExecContext(ctx, stmt); err != nil {
 				return err

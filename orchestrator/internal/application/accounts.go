@@ -63,9 +63,24 @@ func accountSeed(cfg Config) (product.BootstrapSeed, error) {
 		volumes = append(volumes, product.BuiltinVolume{Reference: product.ArtifactReference{ID: role, Version: publication.revision.Digest, Digest: publication.revision.Digest}, StoreID: cfg.Engine.StoreID, PublicationPurpose: publication.purpose, MinimumBytes: cfg.Content.VolumeBytes, SourceCapacityBytes: cfg.Content.VolumeBytes, Roles: []string{role}, Entries: publication.revision.Entries})
 	}
 	p := cfg.Project
-	network, err := product.NewNetworkPolicy(p.Reachability)
+	network, err := product.NewNetworkPolicy(product.Reachability{Resolvers: cfg.PublicDNS})
 	if err != nil {
 		return product.BootstrapSeed{}, err
 	}
-	return product.NewBootstrapSeed(product.ResourceSeed{CPU: p.CPUMillis, Memory: p.MemoryBytes, Overlay: p.DiskBytes, Workspace: p.WorkspaceBytes, Runtime: p.RuntimeBytes, MaxMounts: int64(cfg.Limits.MaxMountsPerProject), ProjectSlots: int64(cfg.Limits.Projects), AgentSlots: int64(cfg.Limits.Agents), TerminalSlots: int64(cfg.Limits.Terminals)}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: cfg.Template.ID, Version: cfg.Template.Version, Digest: cfg.Template.Digest}, StoreID: cfg.Engine.StoreID, TemplateID: cfg.Template.ID, Manifest: manifest}, volumes, network)
+	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: p.CPUMillis, Memory: p.MemoryBytes, Overlay: p.DiskBytes, Workspace: p.WorkspaceBytes, Runtime: p.RuntimeBytes, MaxMounts: int64(cfg.Limits.MaxMountsPerProject), ProjectSlots: int64(cfg.Limits.Projects), AgentSlots: int64(cfg.Limits.Agents), TerminalSlots: int64(cfg.Limits.Terminals)}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: cfg.Template.ID, Version: cfg.Template.Version, Digest: cfg.Template.Digest}, StoreID: cfg.Engine.StoreID, TemplateID: cfg.Template.ID, Manifest: manifest}, volumes, network.Resolvers)
+	if err != nil || cfg.WorkTemplate == nil {
+		return seed, err
+	}
+	work := cfg.WorkTemplate
+	file, err = os.Open(work.Manifest)
+	if err != nil {
+		return product.BootstrapSeed{}, err
+	}
+	workManifest, err := runtimerelease.Load(file, work.Digest)
+	err = errors.Join(err, file.Close())
+	if err != nil {
+		return product.BootstrapSeed{}, err
+	}
+	return seed.WithWorkRelease(product.RegisteredSandbox{Reference: product.ArtifactReference{ID: work.ID, Version: work.Version, Digest: work.Digest}, StoreID: cfg.Engine.StoreID, TemplateID: work.ID, Manifest: workManifest})
+
 }

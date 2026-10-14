@@ -8,7 +8,7 @@
     "store_id": "REPLACE_WITH_ENGINE_STORE_ID"
   },
   "template": {
-    "id": "agent-runtime",
+    "id": "sandbox-minimal-v1",
     "manifest": "../releases/agent-runtime.manifest.json",
     "digest": "REPLACE_WITH_RUNTIME_RELEASE_DIGEST",
     "version": "v1"
@@ -21,6 +21,10 @@
     "runtime_bytes": 536870912,
     "reachability": {}
   },
+  "public_dns_resolvers": [
+    "1.1.1.1",
+    "8.8.8.8"
+  ],
   "content": {
     "agent_config": "agent-config.example",
     "shared_assets": "shared-assets",
@@ -43,5 +47,11 @@
     "operator_directed": true,
     "operator_broadcast": true
   },
-  "admin_frontend": "http://127.0.0.1:3001"
+  "admin_frontend": "http://127.0.0.1:3001",
+  "work_template": {
+    "id": "sandbox-work-v1",
+    "manifest": "../sandbox-image/runtime-work.manifest.json",
+    "digest": "REPLACE_WITH_RUNTIME_RELEASE_DIGEST",
+    "version": "v1"
+  }
 }

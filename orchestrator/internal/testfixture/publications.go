@@ -29,7 +29,7 @@ func RuntimePublications(ctx context.Context, backend content.Backend, required 
 	}
 	out := []RuntimePublication{}
 	for _, role := range required {
-		purpose := "assets"
+		purpose := "shared_assets"
 		entries := []content.Entry{}
 		files := map[string][]byte{"AGENTS.md": []byte("Use only the declared Project workspace.\n")}
 		if role.Role == "agent_config" {
@@ -65,7 +65,7 @@ func RuntimePublications(ctx context.Context, backend content.Backend, required 
 		if err != nil {
 			return nil, err
 		}
-		if err = content.VerifyVolume(ctx, backend, derived.VolumeReference, digest, content.ReviewedProfile); err != nil {
+		if err = content.VerifyVolume(ctx, backend, derived.VolumeReference, digest, content.ProfileForPurpose(purpose)); err != nil {
 			return nil, err
 		}
 		out = append(out, RuntimePublication{Required: role, Publication: content.Publication{StoreID: identity.StoreID, Purpose: purpose, RevisionDigest: digest, Capacity: 1 << 20, Entries: entries, StagingVolumeID: staged.VolumeID, DerivedVolumeID: derived.VolumeID, PublishedVolumeID: derived.VolumeID, Stage: "published"}})

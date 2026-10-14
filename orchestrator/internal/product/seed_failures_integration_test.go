@@ -82,7 +82,7 @@ func TestProjectSeedFailuresOnKhora(t *testing.T) {
 	reference := ArtifactReference{ID: "workspace-seed", Version: "v1", Digest: content.Digest(entries)}
 	s := testStore(t)
 	must(t, s.write(runctx, func(tx *sql.Tx) error {
-		return testfixture.RecordRuntimePublications(runctx, tx, []content.Publication{{StoreID: identity.StoreID, Purpose: "assets", RevisionDigest: reference.Digest, Capacity: 8 << 20, Entries: entries, StagingVolumeID: staging.VolumeID, DerivedVolumeID: source.VolumeID, PublishedVolumeID: source.VolumeID}})
+		return testfixture.RecordRuntimePublications(runctx, tx, []content.Publication{{StoreID: identity.StoreID, Purpose: "builtin", RevisionDigest: reference.Digest, Capacity: 8 << 20, Entries: entries, StagingVolumeID: staging.VolumeID, DerivedVolumeID: source.VolumeID, PublishedVolumeID: source.VolumeID}})
 	}))
 	scope := Scope{Actor: "owner", ProjectID: "seed-faults"}
 	_, err = s.CreateProject(runctx, scope.Actor, scope.ProjectID, "Actual seed fault qualification")

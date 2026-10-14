@@ -3,7 +3,7 @@ set -euo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
 usage() {
  cat <<'HELP'
-Usage: dev/verify-khora.sh --template DIR --manifest FILE --output NEW_DIR [--engine FILE] [--candidate DIR] [--secondary-template DIR --secondary-manifest FILE] [--suite release|slots|paths|publication|suspension|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all]
+Usage: dev/verify-khora.sh --template DIR --manifest FILE --output NEW_DIR [--engine FILE] [--candidate DIR] [--secondary-template DIR --secondary-manifest FILE] [--suite release|slots|paths|publication|imports|suspension|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all]
 Builds test executables, then uses sudo -n for a disposable namespace/btrfs substrate.
 Default suite: release. Browser/combined/all require both frontend production builds and Chromium.
 Combined is opt-in and adds two real browser tabs, network profiles and gated handoff.
@@ -24,7 +24,7 @@ while (($#)); do
  esac
 done
 [[ -d $template && -f $manifest && -n $output ]] || { usage >&2;exit 2; }
-case "$suite" in release|slots|paths|publication|suspension|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all) ;; *) usage >&2;exit 2;; esac
+case "$suite" in release|slots|paths|publication|imports|suspension|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all) ;; *) usage >&2;exit 2;; esac
 if [[ $suite == paths ]]; then
  [[ -d $secondary_template && -f $secondary_manifest ]] || { echo 'paths requires a second immutable runtime and manifest' >&2;exit 2; }
  secondary_template=$(realpath "$secondary_template")
@@ -69,6 +69,9 @@ for binary in orchestrator agent-runner workspace-files runtime-cleanup runtime-
 done
 CGO_ENABLED=0 go -C "$repo/orchestrator" build -trimpath -ldflags="-X main.version=handoff-fixture-candidate -X main.commit=$build_revision" -o "$output/orchestrator-candidate" ./cmd/orchestrator
 packages=(application)
+if [[ $suite == imports ]]; then
+ CGO_ENABLED=0 go -C "$repo/volumes-studio/backend" build -trimpath -o "$output/studio" ./cmd/studio
+fi
 case "$suite" in
  paths) packages=(application product);;
  slots) packages=(product);;
@@ -139,10 +142,10 @@ run() {
  listed=$("$output/$package.test" -test.list "$selection")
  [[ $listed == *Test* ]] || { echo "no tests selected for $name" >&2; return 2; }
  mkdir -p "$output/$name"
- sudo -n env PROJECT_TEST_ENGINE="$engine" PROJECT_TEST_TEMPLATE="$(realpath "$template")" PROJECT_TEST_SECONDARY_TEMPLATE="$secondary_template" PROJECT_TEST_SECONDARY_MANIFEST="$secondary_manifest" PROJECT_TEST_MANIFEST="$(realpath "$manifest")" PROJECT_TEST_OUTPUT="$output/$name" PROJECT_TEST_BIN_DIR="$output" PROJECT_TEST_REPO="$repo" PROJECT_TEST_CANDIDATE="$candidate" PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-}" PROJECT_PROVIDER_SOCKET="${PROJECT_PROVIDER_SOCKET:-}" PROJECT_PROVIDER_REPORT="${PROJECT_PROVIDER_REPORT:-}" PROJECT_PROVIDER_MODEL="${PROJECT_PROVIDER_MODEL:-}" \
+ sudo -n env STUDIO_TEST_BINARY="$output/studio" PROJECT_TEST_ENGINE="$engine" PROJECT_TEST_TEMPLATE="$(realpath "$template")" PROJECT_TEST_SECONDARY_TEMPLATE="$secondary_template" PROJECT_TEST_SECONDARY_MANIFEST="$secondary_manifest" PROJECT_TEST_MANIFEST="$(realpath "$manifest")" PROJECT_TEST_OUTPUT="$output/$name" PROJECT_TEST_BIN_DIR="$output" PROJECT_TEST_REPO="$repo" PROJECT_TEST_CANDIDATE="$candidate" PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-}" PROJECT_PROVIDER_SOCKET="${PROJECT_PROVIDER_SOCKET:-}" PROJECT_PROVIDER_REPORT="${PROJECT_PROVIDER_REPORT:-}" PROJECT_PROVIDER_MODEL="${PROJECT_PROVIDER_MODEL:-}" \
  "$repo/dev/project-substrate.sh" "$output/$package.test" -test.v -test.run "$selection" -test.timeout "$timeout" 2>&1 | tee "$output/$name.log"
 }
-if [[ $suite == release || $suite == all ]]; then run application '^(TestReleasedNativeSchedules|TestReleasedExecutableOnKhora|TestReleasedActivationTarget|TestReleasedGatewaySurvivesOwnerOutage|TestReleasedOwnerHandoff|TestReleasedNativeRetrySettlement|TestReleasedNativeCompactionSettlement|TestReleasedQueuedSteerConsumption|TestReleasedQueuedSteerStopRemovesUnconsumedInput)$' release 5m;fi
+if [[ $suite == release || $suite == all ]]; then run application '^(TestReleasedNativeSchedules|TestReleasedExecutableOnKhora|TestReleasedBaseContext|TestReleasedActivationTarget|TestReleasedGatewaySurvivesOwnerOutage|TestReleasedOwnerHandoff|TestReleasedNativeRetrySettlement|TestReleasedNativeCompactionSettlement|TestReleasedQueuedSteerConsumption|TestReleasedQueuedSteerStopRemovesUnconsumedInput)$' release 5m;fi
 if [[ $suite == paths ]]; then
  run application '^TestReleasedRuntimePathsAndVersions$' paths 4m
  run product '^(TestGoAgentRunnersOnKhora|TestProjectFilesOnKhora|TestProjectTerminalsOnKhora|TestProjectVolumeSlotsOnKhora)$' role-paths 8m
@@ -165,3 +168,5 @@ if [[ $suite == faults || $suite == all ]]; then
 fi
 
 if [[ $suite == publication || $suite == all ]]; then run application '^TestReleasedBuiltinVolumePublication$' publication 4m;fi
+
+if [[ $suite == imports ]]; then run application "^(TestStudioImportOnRealKhora|TestSharedAssetsImportOnRealKhora)$" imports 10m;fi

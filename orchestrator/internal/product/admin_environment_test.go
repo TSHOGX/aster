@@ -8,7 +8,7 @@ import (
 func TestEnvironmentTemplateRevisionsDependenciesAndAudit(t *testing.T) {
 	s, admin := accountStore(t)
 	token := adminTestToken(t, s, admin)
-	before, err := readTemplate(ctx, s.reader, "environment", "environment-default")
+	before, err := readTemplate(ctx, s.reader, "environment", "standard-agent")
 	must(t, err)
 	env := *before.Environment
 	env.Mounts[0].Destination = "/workspaces/project"

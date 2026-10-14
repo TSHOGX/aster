@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"volume-studio/backend/internal/manifest"
+	"aster/contracts/volumemanifest"
 )
 
 const MaxChunkBytes = 8 << 20

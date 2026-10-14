@@ -106,8 +106,12 @@ func upstream() {
 			http.Error(w, "unreadable request", 400)
 			return
 		}
-		if os.Getenv("PROJECT_UPSTREAM_REQUIRE_CONTEXT") == "1" {
-			for _, marker := range []string{"Project working context", "Reviewed release qualification context.", "Reviewed qualification skill"} {
+		if mode := os.Getenv("PROJECT_UPSTREAM_REQUIRE_CONTEXT"); mode != "" {
+			markers := []string{"This sandbox is", "Reviewed release qualification context."}
+			if mode == "1" {
+				markers = append(markers, "Reviewed qualification skill")
+			}
+			for _, marker := range markers {
 				if !bytes.Contains(requestBody, []byte(marker)) {
 					http.Error(w, "reviewed native context missing", 422)
 					return

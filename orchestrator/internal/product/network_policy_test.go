@@ -362,7 +362,7 @@ func selectFixtureNetwork(t *testing.T, s *Store, p NetworkPolicy) (NetworkPolic
 				return err
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE network_templates SET policy=?,revision=revision+1 WHERE id IN ('fixture-network','network-default')`, string(raw)); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE network_templates SET policy=?,revision=revision+1 WHERE id IN ('fixture-network','network-restricted')`, string(raw)); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE project_configuration SET network=?,revision=revision+1`, string(raw))
@@ -373,7 +373,7 @@ func selectFixtureNetwork(t *testing.T, s *Store, p NetworkPolicy) (NetworkPolic
 
 func fixtureNetwork(ctx context.Context, q queryer) (NetworkPolicy, error) {
 	var raw string
-	err := q.QueryRowContext(ctx, `SELECT policy FROM network_templates WHERE id IN ('fixture-network','network-default') ORDER BY id LIMIT 1`).Scan(&raw)
+	err := q.QueryRowContext(ctx, `SELECT policy FROM network_templates WHERE id IN ('fixture-network','network-restricted') ORDER BY id LIMIT 1`).Scan(&raw)
 	if err != nil {
 		return NetworkPolicy{}, err
 	}

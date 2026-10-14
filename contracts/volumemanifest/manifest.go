@@ -18,14 +18,15 @@ import (
 )
 
 const (
-	Format                 = "volume-manifest-v1"
-	Profile                = "authored-v1"
-	MaxManifestBytes       = 16 << 20
-	MaxFileBytes     int64 = 256 << 20
-	MaxTreeBytes     int64 = 1 << 30
-	MaxEntries             = 10000
-	MaxPathBytes           = 512
-	MaxDepth               = 16
+	Format                    = "volume-manifest-v1"
+	Profile                   = "authored-v1"
+	SharedAssetsProfile       = "shared-assets-v1"
+	MaxManifestBytes          = 16 << 20
+	MaxFileBytes        int64 = 256 << 20
+	MaxTreeBytes        int64 = 1 << 30
+	MaxEntries                = 10000
+	MaxPathBytes              = 512
+	MaxDepth                  = 16
 )
 
 // Field order is part of the canonical wire encoding. Every field is required;
@@ -51,14 +52,24 @@ type Descriptor struct {
 }
 
 // New sorts a copy of the entries, computes aggregates, and validates the tree.
-// Publisher capabilities describe portable data, never executable/system roles.
+// The default profile describes portable ordinary data.
 func New(publisher, library, version string, entries []Entry) (Descriptor, error) {
+	return NewProfile(publisher, library, version, Profile, entries)
+}
+
+func NewProfile(publisher, library, version, profile string, entries []Entry) (Descriptor, error) {
+	if len(entries) == 0 && profile == SharedAssetsProfile {
+		return Descriptor{}, Finding{Path: "AGENTS.md", Severity: "error", Message: "Add the required root UTF-8 text file."}
+	}
 	if len(entries) == 0 || len(entries) > MaxEntries {
 		return Descriptor{}, fmt.Errorf("invalid entry count")
 	}
 	d := Descriptor{Capabilities: []string{"data", "workspace"}, Entries: append([]Entry(nil), entries...),
-		EntryCount: len(entries), Format: Format, LibraryID: library, Profile: Profile,
+		EntryCount: len(entries), Format: Format, LibraryID: library, Profile: profile,
 		PublisherID: publisher, VersionID: version}
+	if profile == SharedAssetsProfile {
+		d.Capabilities = []string{"shared_assets", "workspace"}
+	}
 	sort.Slice(d.Entries, func(i, j int) bool { return d.Entries[i].Path < d.Entries[j].Path })
 	var total int64
 	for _, e := range d.Entries {
@@ -126,19 +137,14 @@ func ValidPath(value string, directory bool) error {
 }
 
 func (d Descriptor) Validate() error {
-	if d.Format != Format || d.Profile != Profile {
+	if d.Format != Format || !SupportedProfile(d.Profile) {
 		return fmt.Errorf("unsupported manifest format or content profile")
 	}
 	if !ValidID(d.PublisherID) || !ValidID(d.LibraryID) || !ValidID(d.VersionID) {
 		return fmt.Errorf("invalid immutable identity")
 	}
-	if len(d.Capabilities) == 0 || len(d.Capabilities) > 2 {
-		return fmt.Errorf("unsupported capabilities")
-	}
-	for i, c := range d.Capabilities {
-		if c != "data" && c != "workspace" || i > 0 && d.Capabilities[i-1] >= c {
-			return fmt.Errorf("unsupported or unordered capabilities")
-		}
+	if len(d.Capabilities) != 2 || d.Capabilities[1] != "workspace" || d.Profile == Profile && d.Capabilities[0] != "data" || d.Profile == SharedAssetsProfile && d.Capabilities[0] != "shared_assets" {
+		return fmt.Errorf("capabilities do not match content profile")
 	}
 	if len(d.Entries) == 0 || len(d.Entries) > MaxEntries || d.EntryCount != len(d.Entries) {
 		return fmt.Errorf("invalid entry count")
@@ -180,6 +186,13 @@ func (d Descriptor) Validate() error {
 	}
 	if !ValidDigest(d.TreeDigest) || d.TreeDigest != TreeDigest(d.Entries) {
 		return fmt.Errorf("incorrect tree digest")
+	}
+	if d.Profile == SharedAssetsProfile {
+		for _, finding := range SharedAssetsFindings(d.Entries) {
+			if finding.Severity == "error" {
+				return finding
+			}
+		}
 	}
 	return nil
 }

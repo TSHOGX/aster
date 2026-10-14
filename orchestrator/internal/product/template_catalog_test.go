@@ -126,7 +126,7 @@ func TestUserPreferenceChangesOnlyFutureProjectsAndRevocationFences(t *testing.T
 	wantError(t, err, ErrForbidden)
 	settings, err = s.ConfigurationSettings(ctx, token)
 	must(t, err)
-	if settings.SelectedNetwork.ID != "network-default" {
+	if settings.SelectedNetwork.ID != "network-restricted" {
 		t.Fatal("invalid preference did not fall back")
 	}
 }
@@ -145,7 +145,7 @@ func TestDefaultsConflictNeedsAdministratorNotUserPreference(t *testing.T) {
 		if _, e := tx.ExecContext(ctx, `INSERT INTO account_memberships VALUES(?,'second')`, admin.ID); e != nil {
 			return e
 		}
-		_, e := tx.ExecContext(ctx, `INSERT INTO group_configuration_defaults VALUES('second',?,'environment-default')`, other.ID)
+		_, e := tx.ExecContext(ctx, `INSERT INTO group_configuration_defaults VALUES('second',?,'standard-agent')`, other.ID)
 		return e
 	}))
 	settings, err := s.ConfigurationSettings(ctx, token)
@@ -200,7 +200,7 @@ func TestSharedVolumeProvisioningAndReadOnlyAuthorization(t *testing.T) {
 	if ready.State != "ready" || len(backend.volumes) != 1 {
 		t.Fatal(ready)
 	}
-	env, err := readTemplate(ctx, s.reader, "environment", "environment-default")
+	env, err := readTemplate(ctx, s.reader, "environment", "standard-agent")
 	must(t, err)
 	env.Environment.Mounts = append(env.Environment.Mounts, EnvironmentMount{Key: "team", Role: "data", Destination: "/team", Storage: "shared", Access: "read_write", Source: MountSource{Kind: "shared", SharedVolumeID: ready.ID}})
 	edited := saveTemplateReviewed(t, s, token, "environment", env.ID, TemplateEdit{RequestID: "shared-env", ExpectedRevision: env.Revision, Name: env.Name, Enabled: true, Environment: env.Environment})
@@ -263,7 +263,7 @@ func TestCreatePolicyWithResourceGrantsIsAtomic(t *testing.T) {
 	s, admin := accountStore(t)
 	token := adminTestToken(t, s, admin)
 	name := "New resource policy"
-	refs := []PolicyResourceBinding{{Kind: "network_template", ID: "network-default", Access: "read_only"}, {Kind: "environment_template", ID: "environment-default", Access: "read_only"}}
+	refs := []PolicyResourceBinding{{Kind: "network_template", ID: "network-restricted", Access: "read_only"}, {Kind: "environment_template", ID: "standard-agent", Access: "read_only"}}
 	input := PolicyChange{RequestID: "create-with-resources", Name: &name, Resources: &refs}
 	result, err := s.SavePolicy(ctx, token, "", input)
 	must(t, err)
@@ -278,7 +278,8 @@ func TestCreatePolicyWithResourceGrantsIsAtomic(t *testing.T) {
 		t.Fatal(replay)
 	}
 	name = "Invalid resource policy"
-	refs = []PolicyResourceBinding{{Kind: "network_template", ID: "network-selected", Access: "read_only"}}
+	disabled := saveTemplateReviewed(t, s, token, "network", "", TemplateEdit{RequestID: "disabled-template", Name: "Disabled template", Network: &NetworkPolicy{}, Enabled: false})
+	refs = []PolicyResourceBinding{{Kind: "network_template", ID: disabled.ID, Access: "read_only"}}
 	_, err = s.SavePolicy(ctx, token, "", PolicyChange{RequestID: "disabled-resource-create", Name: &name, Resources: &refs})
 	wantError(t, err, ErrInvalid)
 	var count int
@@ -305,12 +306,12 @@ func TestPolicyRejectsMultipleTemplatesPerKind(t *testing.T) {
 	token := adminTestToken(t, s, admin)
 	for _, kind := range []string{"network_template", "environment_template"} {
 		name := "Invalid " + kind
-		refs := []PolicyResourceBinding{{Kind: kind, ID: "network-default", Access: "read_only"}, {Kind: kind, ID: "network-restricted", Access: "read_only"}}
+		refs := []PolicyResourceBinding{{Kind: kind, ID: "network-public", Access: "read_only"}, {Kind: kind, ID: "network-restricted", Access: "read_only"}}
 		if kind == "environment_template" {
-			env, err := readTemplate(ctx, s.reader, "environment", "environment-default")
+			env, err := readTemplate(ctx, s.reader, "environment", "standard-agent")
 			must(t, err)
 			copy := saveTemplateReviewed(t, s, token, "environment", "", TemplateEdit{RequestID: "second-env", Name: "Second", Enabled: true, Environment: env.Environment})
-			refs[0].ID = "environment-default"
+			refs[0].ID = "standard-agent"
 			refs[1].ID = copy.ID
 		}
 		_, err := s.SavePolicy(ctx, token, "", PolicyChange{RequestID: "invalid-" + kind, Name: &name, Resources: &refs})
@@ -321,7 +322,7 @@ func TestPolicyRejectsMultipleTemplatesPerKind(t *testing.T) {
 func TestConfigurationDefaultsExposeSavedOverridesAndRejectDisabledGroupDefault(t *testing.T) {
 	s, admin := accountStore(t)
 	token := adminTestToken(t, s, admin)
-	input := ConfigurationEdit{Preview: true, RequestID: "set-admin-defaults", NetworkTemplateID: "network-default", EnvironmentTemplateID: "environment-default"}
+	input := ConfigurationEdit{Preview: true, RequestID: "set-admin-defaults", NetworkTemplateID: "network-restricted", EnvironmentTemplateID: "standard-agent"}
 	raw, err := s.SaveConfigurationDefaults(ctx, token, "user", admin.ID, input)
 	must(t, err)
 	var impact ConfigurationImpact
@@ -337,17 +338,17 @@ func TestConfigurationDefaultsExposeSavedOverridesAndRejectDisabledGroupDefault(
 	}
 	// Revocation must not turn an explicit override into apparent inheritance.
 	must(t, s.write(ctx, func(tx *sql.Tx) error {
-		_, err := tx.Exec(`UPDATE network_templates SET enabled=0 WHERE id='network-default'`)
+		_, err := tx.Exec(`UPDATE network_templates SET enabled=0 WHERE id='network-restricted'`)
 		return err
 	}))
 	settings, err = s.AdminConfigurationSettings(ctx, token, admin.ID)
 	must(t, err)
-	if settings.AdministratorDefaults.NetworkTemplateID != "network-default" || !settings.NeedsAdminResolution {
+	if settings.AdministratorDefaults.NetworkTemplateID != "network-restricted" || !settings.NeedsAdminResolution {
 		t.Fatal("unavailable override was hidden", settings)
 	}
 	group, err := s.Group(ctx, token, StandardUsersGroup)
 	must(t, err)
-	_, err = s.SaveConfigurationDefaults(ctx, token, "group", group.ID, ConfigurationEdit{Preview: true, RequestID: "disabled-group-default", ExpectedRevision: group.Revision, NetworkTemplateID: "network-default"})
+	_, err = s.SaveConfigurationDefaults(ctx, token, "group", group.ID, ConfigurationEdit{Preview: true, RequestID: "disabled-group-default", ExpectedRevision: group.Revision, NetworkTemplateID: "network-restricted"})
 	wantError(t, err, ErrInvalid)
 }
 

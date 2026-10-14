@@ -83,7 +83,7 @@ func TestProductionFrontendBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: 1000, Memory: 1 << 30, Overlay: 256 << 20, Workspace: 1 << 30, Runtime: 1 << 29, MaxMounts: 8, ProjectSlots: 4, AgentSlots: 8, TerminalSlots: 8}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: "web-test", Version: "v1", Digest: digest}, StoreID: "web-engine", TemplateID: "web-test", Manifest: manifest}, nil, network)
+	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: 1000, Memory: 1 << 30, Overlay: 256 << 20, Workspace: 1 << 30, Runtime: 1 << 29, MaxMounts: 8, ProjectSlots: 4, AgentSlots: 8, TerminalSlots: 8}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: "web-test", Version: "v1", Digest: digest}, StoreID: "web-engine", TemplateID: "web-test", Manifest: manifest}, nil, network.Resolvers)
 	if err != nil {
 		t.Fatal(err)
 	}
