@@ -163,6 +163,10 @@ test("real network templates preserve lost-reply identity and account defaults",
  });
  await page.getByRole("button",{name:"Confirm and save",exact:true}).click();await page.getByRole("button",{name:"Check original request",exact:true}).click();await expect(page.getByRole("button",{name:"Create template",exact:true})).toBeVisible();expect(requests).toHaveLength(2);expect(requests[0]).toEqual(requests[1]);
  const templates=(await(await page.request.get("/api/admin/resource-templates/network")).json()).templates;const customized=templates.find((t:{name:string})=>t.name==="Restricted copy");expect(customized.builtin).toBe(false);expect(customized.network.resolvers).toEqual(["192.0.2.53"]);
+ const policyResponse=await page.request.post("/api/admin/policies",{data:{request_id:crypto.randomUUID(),name:"Customized network access",resources:[{kind:"network_template",id:customized.id,access:"read_only"}]}});
+ expect(policyResponse.ok()).toBe(true);const {policy}=await policyResponse.json();
+ const group=await(await page.request.get("/api/admin/groups/standard-users")).json();
+ const binding=await page.request.put("/api/admin/groups/standard-users/policies",{data:{request_id:crypto.randomUUID(),expected_revision:group.revision,policy_ids:[...group.policy_ids,policy.id]}});expect(binding.ok()).toBe(true);
  const identity=await(await page.request.get("/api/auth/session")).json();await page.goto(`/admin/users/${identity.id}/configuration`);await chooseValue(page.getByRole("combobox",{name:"Network default",exact:true}), customized.id);await page.getByRole("button",{name:"Review administrator defaults",exact:true}).click();await page.getByRole("button",{name:"Confirm and save",exact:true}).click();await expect(page.getByRole("button",{name:"Review administrator defaults",exact:true})).toBeDisabled();await page.reload();await expect(page.getByRole("combobox",{name:"Network default",exact:true})).toHaveAttribute("data-value", customized.id);
  await page.screenshot({path:info.outputPath("configuration-defaults-mobile.png")});
 });
@@ -254,7 +258,7 @@ test("real resource editors preserve exact quantities and show retained usage to
 
 test("real environment templates validate mount paths and preserve reviewed saves", async ({page},info)=>{
  await page.setViewportSize({width:390,height:900});await page.goto("/admin/resources/environment");await page.getByLabel("Username",{exact:true}).fill("administrator");await page.getByLabel("Password",{exact:true}).fill("web-test-permanent-password");await page.getByRole("button",{name:"Sign in",exact:true}).click();
- await page.locator("article").filter({has:page.getByRole("heading",{name:"Standard environment",exact:true})}).getByRole("button",{name:"Edit",exact:true}).click();
+ await page.locator("article").filter({has:page.getByRole("heading",{name:"Minimal Agent",exact:true})}).getByRole("button",{name:"Edit",exact:true}).click();
  await page.getByLabel("Mount path",{exact:true}).first().fill("/etc/blocked");await page.getByRole("button",{name:"Validate and review",exact:true}).click();await expect(page.locator("main").getByRole("alert")).toBeVisible();
  await page.getByLabel("Mount path",{exact:true}).first().fill("/workspaces/browser");await page.getByRole("button",{name:"Validate and review",exact:true}).click();await page.getByRole("button",{name:"Confirm and save",exact:true}).click();await expect(page.getByRole("region",{name:"Environment updates",exact:true})).toBeVisible();await expect(page.getByText("No updates published.",{exact:false})).toBeVisible();
  const templates=(await(await page.request.get("/api/admin/resource-templates/environment")).json()).templates;expect(templates.find((t:{id:string})=>t.id==="standard-agent").environment.mounts[0].destination).toBe("/workspaces/browser");
