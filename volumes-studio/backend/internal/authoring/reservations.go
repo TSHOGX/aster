@@ -1,4 +1,4 @@
-package product
+package authoring
 
 import (
 	manifest "aster/contracts/volumemanifest"
@@ -21,11 +21,11 @@ type PrefixReservation struct {
 func prefixOverlap(a, b string) bool {
 	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
-func (s *Store) ReserveEvolutionPrefix(ctx context.Context, token string, r PrefixReservation, expectedOperation string) (PrefixReservation, error) {
-	if !validID(r.LibraryID) || !validID(r.GroupID) || !validID(r.BindingID) || !validID(r.OperationID) || manifest.ValidPath(r.Prefix, true) != nil || r.Generation < 1 || expectedOperation != r.OperationID {
+func (s *Store) ReserveEvolutionPrefix(ctx context.Context, actor Actor, r PrefixReservation, expectedOperation string) (PrefixReservation, error) {
+	if !manifest.ValidID(r.LibraryID) || !manifest.ValidID(r.GroupID) || !manifest.ValidID(r.BindingID) || !manifest.ValidID(r.OperationID) || manifest.ValidPath(r.Prefix, true) != nil || r.Generation < 1 || expectedOperation != r.OperationID {
 		return r, ErrInvalid
 	}
-	return s.writeResult(ctx, token, func(tx *sql.Tx, actor Account) (PrefixReservation, error) {
+	return s.reservationResult(ctx, actor, r.LibraryID, func(tx *sql.Tx, actor Actor) (PrefixReservation, error) {
 		var prior PrefixReservation
 		err := tx.QueryRowContext(ctx, "SELECT library_id,prefix,owner_group_id,binding_id,generation,state,operation_id FROM evolution_prefix_reservations WHERE library_id=? AND prefix=?", r.LibraryID, r.Prefix).Scan(&prior.LibraryID, &prior.Prefix, &prior.GroupID, &prior.BindingID, &prior.Generation, &prior.State, &prior.OperationID)
 		if err == nil {
@@ -57,20 +57,17 @@ func (s *Store) ReserveEvolutionPrefix(ctx context.Context, token string, r Pref
 		if err != nil {
 			return r, err
 		}
-		if _, err = tx.ExecContext(ctx, "INSERT INTO evolution_prefix_reservations VALUES(?,?,?,?,?,'pending',?,?)", r.LibraryID, r.Prefix, r.GroupID, r.BindingID, r.Generation, r.OperationID, s.timestamp()); err != nil {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO evolution_prefix_reservations VALUES(?,?,?,?,?,'pending',?,?)", r.LibraryID, r.Prefix, r.GroupID, r.BindingID, r.Generation, r.OperationID, s.now().Unix()); err != nil {
 			return r, err
 		}
 		r.State = "pending"
-		return r, s.auditEvent(ctx, tx, actor.ID, "evolution.prefix.reserve", "volume", r.LibraryID, "", r.Generation, r)
+		return r, s.reservationAudit(ctx, tx, actor, "evolution.prefix.reserve", r.LibraryID, r.OperationID, r.Generation)
 	})
 }
-func (s *Store) ActivateEvolutionPrefix(ctx context.Context, token, operation, library, prefix string, expectedGeneration int64) (PrefixReservation, error) {
+func (s *Store) ActivateEvolutionPrefix(ctx context.Context, actor Actor, operation, library, prefix string, expectedGeneration int64) (PrefixReservation, error) {
 	var r PrefixReservation
-	err := s.write(ctx, func(tx *sql.Tx) error {
-		actor, err := s.adminSession(ctx, tx, token)
-		if err != nil {
-			return err
-		}
+	err := s.reservationWrite(ctx, actor, library, func(tx *sql.Tx) error {
+		var err error
 		err = tx.QueryRowContext(ctx, "SELECT library_id,prefix,owner_group_id,binding_id,generation,state,operation_id FROM evolution_prefix_reservations WHERE operation_id=? AND library_id=? AND prefix=?", operation, library, prefix).Scan(&r.LibraryID, &r.Prefix, &r.GroupID, &r.BindingID, &r.Generation, &r.State, &r.OperationID)
 		if err != nil {
 			return err
@@ -85,16 +82,13 @@ func (s *Store) ActivateEvolutionPrefix(ctx context.Context, token, operation, l
 			return err
 		}
 		r.State = "active"
-		return s.auditEvent(ctx, tx, actor.ID, "evolution.prefix.activate", "volume", library, operation, r.Generation, r)
+		return s.reservationAudit(ctx, tx, actor, "evolution.prefix.activate", library, operation, r.Generation)
 	})
 	return r, err
 }
-func (s *Store) ReleaseEvolutionPrefix(ctx context.Context, token, operation, library, prefix string) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
-		actor, err := s.adminSession(ctx, tx, token)
-		if err != nil {
-			return err
-		}
+func (s *Store) ReleaseEvolutionPrefix(ctx context.Context, actor Actor, operation, library, prefix string) error {
+	return s.reservationWrite(ctx, actor, library, func(tx *sql.Tx) error {
+		var err error
 		var state string
 		err = tx.QueryRowContext(ctx, "SELECT state FROM evolution_prefix_reservations WHERE operation_id=? AND library_id=? AND prefix=?", operation, library, prefix).Scan(&state)
 		if err != nil {
@@ -106,18 +100,35 @@ func (s *Store) ReleaseEvolutionPrefix(ctx context.Context, token, operation, li
 		if _, err = tx.ExecContext(ctx, "UPDATE evolution_prefix_reservations SET state='released' WHERE operation_id=? AND library_id=? AND prefix=?", operation, library, prefix); err != nil {
 			return err
 		}
-		return s.auditEvent(ctx, tx, actor.ID, "evolution.prefix.release", "volume", library, operation, 0, map[string]string{"prefix": prefix})
+		return s.reservationAudit(ctx, tx, actor, "evolution.prefix.release", library, operation, 0)
 	})
 }
-func (s *Store) writeResult(ctx context.Context, token string, fn func(*sql.Tx, Account) (PrefixReservation, error)) (PrefixReservation, error) {
-	var result PrefixReservation
-	err := s.write(ctx, func(tx *sql.Tx) error {
-		actor, err := s.adminSession(ctx, tx, token)
-		if err != nil {
-			return err
-		}
-		result, err = fn(tx, actor)
+
+func (s *Store) reservationWrite(ctx context.Context, actor Actor, library string, fn func(*sql.Tx) error) error {
+	if err := s.authorizeLibrary(ctx, actor, library, "volume.configure"); err != nil {
 		return err
-	})
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.poisoned {
+		return ErrBusy
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func (s *Store) reservationResult(ctx context.Context, actor Actor, library string, fn func(*sql.Tx, Actor) (PrefixReservation, error)) (PrefixReservation, error) {
+	var result PrefixReservation
+	err := s.reservationWrite(ctx, actor, library, func(tx *sql.Tx) error { var err error; result, err = fn(tx, actor); return err })
 	return result, err
+}
+func (s *Store) reservationAudit(ctx context.Context, tx *sql.Tx, actor Actor, action, library, operation string, generation int64) error {
+	_, err := tx.ExecContext(ctx, "INSERT INTO audit(issuer,subject,action,library_id,request_id,revision,created_at) VALUES(?,?,?,?,?,?,?)", actor.Issuer, actor.Subject, action, library, operation, generation, s.now().Unix())
+	return err
 }

@@ -146,3 +146,17 @@ CREATE TABLE conflict_resolutions(
  choice TEXT NOT NULL CHECK(choice IN('main','branch','delete','text')),
  text TEXT NOT NULL,PRIMARY KEY(workspace_id,path)
 );
+
+CREATE TABLE evolution_prefix_reservations (
+ library_id TEXT NOT NULL REFERENCES libraries(id),
+ prefix TEXT NOT NULL,
+ owner_group_id TEXT NOT NULL,
+ binding_id TEXT NOT NULL,
+ generation INTEGER NOT NULL CHECK(generation>0),
+ state TEXT NOT NULL CHECK(state IN('pending','active','released')),
+ operation_id TEXT NOT NULL,
+ created_at INTEGER NOT NULL,
+ PRIMARY KEY(library_id,prefix),
+ UNIQUE(operation_id,binding_id)
+);
+CREATE INDEX evolution_prefix_owner ON evolution_prefix_reservations(owner_group_id,state);

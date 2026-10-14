@@ -1845,20 +1845,6 @@ CREATE TABLE studio_group_grants (
  PRIMARY KEY(group_id,library_id,action)
 );
 
-CREATE TABLE evolution_prefix_reservations (
- library_id TEXT NOT NULL,
- prefix TEXT NOT NULL,
- owner_group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
- binding_id TEXT NOT NULL,
- generation INTEGER NOT NULL CHECK(generation>0),
- state TEXT NOT NULL CHECK(state IN('pending','active','released')),
- operation_id TEXT NOT NULL,
- created_at TEXT NOT NULL,
- PRIMARY KEY(library_id,prefix),
- UNIQUE(operation_id,binding_id)
-);
-CREATE INDEX evolution_prefix_owner ON evolution_prefix_reservations(owner_group_id,state);
-
 CREATE TABLE evolution_group_configs (
  group_id TEXT PRIMARY KEY REFERENCES account_groups(id) ON DELETE CASCADE,
  desired_revision INTEGER NOT NULL CHECK(desired_revision>0),
