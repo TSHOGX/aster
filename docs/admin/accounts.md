@@ -106,3 +106,11 @@ the operation pending for retry.
 POST `request_id` and `expected_revision` to the `/disable` endpoint to disable
 automatic admission immediately, including while activation is pending. This
 requires manage access and retains the pending operation and active revision.
+
+Inspect the current activation at
+`GET /api/admin/groups/{group}/optimization/operations/{operation}` using its
+`operation_id`. This requires `config.read` and returns the exact configuration
+revision/digest plus recorded participant states and bounded failure codes. Missing
+participant entries mean no receipt has been recorded. `catalog_rejected` indicates
+Evaluation Space rejected the configuration's catalog validation. Operation lookup
+is scoped to the group and its current operation.

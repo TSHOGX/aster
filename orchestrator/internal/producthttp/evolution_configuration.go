@@ -90,3 +90,12 @@ func (a *Authentication) disableEvolution(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, 200, value)
 }
+
+func (a *Authentication) evolutionOperation(w http.ResponseWriter, r *http.Request) {
+	value, err := a.Store.EvolutionOperation(r.Context(), requestToken(r), r.PathValue("group"), r.PathValue("operation"))
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, 200, value)
+}
