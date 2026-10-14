@@ -1,11 +1,11 @@
 package product
 
 import (
+	"aster/contracts/evolution"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
-	"strings"
 )
 
 type CatalogRevision struct {
@@ -33,15 +33,18 @@ func (s *Store) CatalogRevision(ctx context.Context, kind, id string, revision i
 		return c, err
 	}
 	c.Body = json.RawMessage(body)
+	if c.Digest != evolution.Digest(c.Body) {
+		return c, ErrInvalid
+	}
 	c.Enabled = enabled == 1
 	c.Retired = retired == 1
 	return c, nil
 }
 func (s *Store) PublishCatalogRevision(ctx context.Context, token string, c CatalogRevision) (CatalogRevision, error) {
-	if !validCatalogKind(c.Kind) || !validID(c.ID) || c.Revision < 1 || len(c.Body) == 0 || !validDigestLike(c.Digest) {
+	if !validCatalogKind(c.Kind) || !validID(c.ID) || c.Revision < 1 || len(c.Body) == 0 || c.Digest != evolution.Digest(c.Body) {
 		return c, ErrInvalid
 	}
-	if !json.Valid(c.Body) {
+	if _, err := evolution.Decode[map[string]json.RawMessage](bytes.NewReader(c.Body)); err != nil {
 		return c, ErrInvalid
 	}
 	err := s.write(ctx, func(tx *sql.Tx) error {
@@ -80,6 +83,9 @@ func (s *Store) BindCatalogRevision(ctx context.Context, token, group, binding, 
 			return err
 		}
 		c.Body = json.RawMessage(body)
+		if c.Digest != evolution.Digest(c.Body) {
+			return ErrInvalid
+		}
 		c.Enabled = enabled == 1
 		c.Retired = retired == 1
 		if !c.Enabled || c.Retired {
@@ -107,6 +113,3 @@ func (s *Store) UnbindCatalogRevision(ctx context.Context, token, group, binding
 		return s.auditEvent(ctx, tx, actor.ID, "evolution.catalog.unbind", "group", group, "", 0, map[string]string{"binding": binding, "kind": kind})
 	})
 }
-
-var _ = fmt.Sprintf
-var _ = strings.TrimSpace
