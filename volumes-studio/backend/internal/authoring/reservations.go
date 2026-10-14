@@ -97,6 +97,9 @@ func (s *Store) ReleaseEvolutionPrefix(ctx context.Context, actor Actor, operati
 		if state == "released" {
 			return nil
 		}
+		if state != "pending" {
+			return ErrConflict
+		}
 		if _, err = tx.ExecContext(ctx, "UPDATE evolution_prefix_reservations SET state='released' WHERE operation_id=? AND library_id=? AND prefix=?", operation, library, prefix); err != nil {
 			return err
 		}

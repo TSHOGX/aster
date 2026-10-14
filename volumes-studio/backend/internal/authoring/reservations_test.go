@@ -32,7 +32,7 @@ func TestEvolutionPrefixReservationsRejectNestedAndAllowDisjoint(t *testing.T) {
 	if _, err := s.ActivateEvolutionPrefix(ctx, token, "op-three", l.ID, "lessons", 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReleaseEvolutionPrefix(ctx, token, "op-one", l.ID, "skills"); err != nil {
+	if err := s.ReleaseEvolutionPrefix(ctx, token, "op-one", l.ID, "skills"); err != ErrConflict {
 		t.Fatal(err)
 	}
 	_ = second
@@ -67,5 +67,36 @@ func TestEvolutionReservationCannotBeStolenOrRewound(t *testing.T) {
 	r.Prefix = "../escape"
 	if _, err := s.ReserveEvolutionPrefix(ctx, token, r, r.OperationID); err != ErrInvalid {
 		t.Fatal("unclean prefix accepted", err)
+	}
+}
+
+func TestReservationCompensationOnlyOwnsPendingOperation(t *testing.T) {
+	s, _ := testStore(t)
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	ctx := context.Background()
+	r := PrefixReservation{l.ID, "skills", "group", "binding", 1, "", "owned"}
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseEvolutionPrefix(ctx, testActor, "other", l.ID, r.Prefix); err == nil {
+		t.Fatal("foreign compensation accepted")
+	}
+	if _, err := s.ActivateEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix); err != ErrConflict {
+		t.Fatal("active ownership released by compensation", err)
+	}
+	r.Prefix = "lessons"
+	r.BindingID = "lessons"
+	r.OperationID = "pending"
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.ReleaseEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix); err != nil {
+			t.Fatal("pending compensation failed", err)
+		}
 	}
 }
