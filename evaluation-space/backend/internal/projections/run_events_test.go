@@ -4,6 +4,7 @@ import (
 	"aster/contracts/evolution"
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -24,6 +25,25 @@ func TestRunEventsFenceReplayAndPagination(t *testing.T) {
 		t.Fatal(err)
 	}
 	event := evolution.Event{ID: "event-one", RunID: "run", ProducerID: "worker", Fence: lease.Fence, Timestamp: time.Now().UTC(), Kind: "node-started"}
+	artifact := evolution.ArtifactRef{ID: "artifact", GroupID: "group", SchemaDigest: evolution.Digest([]byte("schema")), Digest: evolution.Digest([]byte("output")), Size: 6, MediaType: "application/json", GrantID: "grant", PolicyRevision: 1}
+	event.Artifacts = []evolution.ArtifactRef{artifact}
+	if _, err = s.AppendRunEvent(ctx, lease, event); err == nil {
+		t.Fatal("event advertised unsealed artifact")
+	}
+	if err = s.SealArtifact(ctx, artifact, strings.NewReader("output")); err != nil {
+		t.Fatal(err)
+	}
+	substituted := event
+	substituted.Artifacts = append([]evolution.ArtifactRef(nil), event.Artifacts...)
+	substituted.Artifacts[0].GrantID = "other"
+	if _, err = s.AppendRunEvent(ctx, lease, substituted); err == nil {
+		t.Fatal("artifact grant substituted")
+	}
+	duplicated := event
+	duplicated.Artifacts = append(duplicated.Artifacts, artifact)
+	if _, err = s.AppendRunEvent(ctx, lease, duplicated); err == nil {
+		t.Fatal("duplicate event artifact accepted")
+	}
 	first, err := s.AppendRunEvent(ctx, lease, event)
 	if err != nil || first.Sequence != 1 {
 		t.Fatal(first, err)

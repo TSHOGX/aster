@@ -38,12 +38,17 @@ func (s *Store) AppendRunEvent(ctx context.Context, lease RunLease, event evolut
 	if state != "running" || worker != lease.WorkerID || fence != lease.Fence || expires <= time.Now().UnixNano() {
 		return event, ErrConflict
 	}
+	artifacts := map[string]bool{}
 	for _, artifact := range event.Artifacts {
 		if err = artifact.Validate(); err != nil {
 			return event, err
 		}
-		if artifact.GroupID != group {
-			return event, fmt.Errorf("event artifact group mismatch")
+		if artifact.GroupID != group || artifacts[artifact.ID] {
+			return event, fmt.Errorf("event artifact group mismatch or duplicate identity")
+		}
+		artifacts[artifact.ID] = true
+		if err = requireSealedArtifact(ctx, tx, artifact); err != nil {
+			return event, err
 		}
 	}
 	var stored []byte
