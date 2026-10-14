@@ -1,9 +1,10 @@
 package product
 
 import (
+	manifest "aster/contracts/volumemanifest"
 	"context"
 	"database/sql"
-	"fmt"
+	"errors"
 	"strings"
 )
 
@@ -21,31 +22,42 @@ func prefixOverlap(a, b string) bool {
 	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
 func (s *Store) ReserveEvolutionPrefix(ctx context.Context, token string, r PrefixReservation, expectedOperation string) (PrefixReservation, error) {
-	if !validID(r.LibraryID) || !validID(r.GroupID) || !validID(r.BindingID) || !validID(r.OperationID) || r.Prefix == "" || r.Generation < 1 || expectedOperation != r.OperationID {
+	if !validID(r.LibraryID) || !validID(r.GroupID) || !validID(r.BindingID) || !validID(r.OperationID) || manifest.ValidPath(r.Prefix, true) != nil || r.Generation < 1 || expectedOperation != r.OperationID {
 		return r, ErrInvalid
 	}
 	return s.writeResult(ctx, token, func(tx *sql.Tx, actor Account) (PrefixReservation, error) {
-		var owner string
-		rows, err := tx.QueryContext(ctx, "SELECT prefix,owner_group_id,state FROM evolution_prefix_reservations WHERE library_id=? AND state IN ('pending','active')", r.LibraryID)
+		var prior PrefixReservation
+		err := tx.QueryRowContext(ctx, "SELECT library_id,prefix,owner_group_id,binding_id,generation,state,operation_id FROM evolution_prefix_reservations WHERE library_id=? AND prefix=?", r.LibraryID, r.Prefix).Scan(&prior.LibraryID, &prior.Prefix, &prior.GroupID, &prior.BindingID, &prior.Generation, &prior.State, &prior.OperationID)
+		if err == nil {
+			if prior.GroupID == r.GroupID && prior.BindingID == r.BindingID && prior.Generation == r.Generation && prior.OperationID == r.OperationID {
+				return prior, nil
+			}
+			return r, ErrConflict
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return r, err
+		}
+		rows, err := tx.QueryContext(ctx, "SELECT prefix,owner_group_id FROM evolution_prefix_reservations WHERE library_id=? AND state IN ('pending','active')", r.LibraryID)
 		if err != nil {
 			return r, err
 		}
-		defer rows.Close()
 		for rows.Next() {
-			var prefix, group, state string
-			if err = rows.Scan(&prefix, &group, &state); err != nil {
+			var prefix, group string
+			if err = rows.Scan(&prefix, &group); err != nil {
+				rows.Close()
 				return r, err
 			}
-			if prefixOverlap(prefix, r.Prefix) && !(group == r.GroupID && prefix == r.Prefix) {
+			if group != r.GroupID || prefixOverlap(prefix, r.Prefix) {
+				rows.Close()
 				return r, ErrConflict
 			}
-			owner = group
 		}
-		if err = rows.Err(); err != nil {
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
 			return r, err
 		}
-		_ = owner
-		if _, err = tx.ExecContext(ctx, `INSERT INTO evolution_prefix_reservations VALUES(?,?,?,?,?,'pending',?,?) ON CONFLICT(library_id,prefix) DO UPDATE SET generation=excluded.generation,state='pending',operation_id=excluded.operation_id,created_at=excluded.created_at`, r.LibraryID, r.Prefix, r.GroupID, r.BindingID, r.Generation, r.OperationID, s.timestamp()); err != nil {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO evolution_prefix_reservations VALUES(?,?,?,?,?,'pending',?,?)", r.LibraryID, r.Prefix, r.GroupID, r.BindingID, r.Generation, r.OperationID, s.timestamp()); err != nil {
 			return r, err
 		}
 		r.State = "pending"
@@ -62,6 +74,9 @@ func (s *Store) ActivateEvolutionPrefix(ctx context.Context, token, operation, l
 		err = tx.QueryRowContext(ctx, "SELECT library_id,prefix,owner_group_id,binding_id,generation,state,operation_id FROM evolution_prefix_reservations WHERE operation_id=? AND library_id=? AND prefix=?", operation, library, prefix).Scan(&r.LibraryID, &r.Prefix, &r.GroupID, &r.BindingID, &r.Generation, &r.State, &r.OperationID)
 		if err != nil {
 			return err
+		}
+		if r.Generation == expectedGeneration && r.State == "active" {
+			return nil
 		}
 		if r.Generation != expectedGeneration || r.State != "pending" {
 			return ErrConflict
@@ -106,5 +121,3 @@ func (s *Store) writeResult(ctx context.Context, token string, fn func(*sql.Tx, 
 	})
 	return result, err
 }
-
-var _ = fmt.Sprintf

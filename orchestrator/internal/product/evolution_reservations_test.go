@@ -31,3 +31,27 @@ func TestEvolutionPrefixReservationsRejectNestedAndAllowDisjoint(t *testing.T) {
 	}
 	_ = second
 }
+
+func TestEvolutionReservationCannotBeStolenOrRewound(t *testing.T) {
+	s, admin := accountStore(t)
+	ctx := context.Background()
+	token := adminTestToken(t, s, admin)
+	r := PrefixReservation{"library", "skills", StandardUsersGroup, "binding", 1, "", "reserve"}
+	_, err := s.ReserveEvolutionPrefix(ctx, token, r, r.OperationID)
+	must(t, err)
+	active, err := s.ActivateEvolutionPrefix(ctx, token, r.OperationID, r.LibraryID, r.Prefix, 1)
+	must(t, err)
+	again, err := s.ReserveEvolutionPrefix(ctx, token, r, r.OperationID)
+	must(t, err)
+	if again.State != active.State {
+		t.Fatal("retry rewound reservation")
+	}
+	r.BindingID = "other"
+	if _, err := s.ReserveEvolutionPrefix(ctx, token, r, r.OperationID); err != ErrConflict {
+		t.Fatal("binding stole prefix", err)
+	}
+	r.Prefix = "../escape"
+	if _, err := s.ReserveEvolutionPrefix(ctx, token, r, r.OperationID); err != ErrInvalid {
+		t.Fatal("unclean prefix accepted", err)
+	}
+}
