@@ -78,3 +78,66 @@ func TestBackupRefusesOverwriteAndIncompleteRestore(t *testing.T) {
 		t.Fatal("existing incomplete directory overwritten")
 	}
 }
+
+func TestBackupRestoresReviewedHistoryAndIndependentDraft(t *testing.T) {
+	s, l, b, _ := reviewFixture(t)
+	ctx := context.Background()
+	input := approvedIntegration(t, s, l, b)
+	accepted, err := s.Merge(ctx, testActor, l.ID, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := s.Release(ctx, testActor, l.ID, ReleaseInput{"backup-release", accepted.AcceptedCommit, "reviewed", ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ValidateNext(ctx, allow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SaveBranchText(ctx, testActor, l.ID, b.ID, SaveBranchTextInput{"draft-after-release", 2, b.Head, "note", "uncommitted draft"}); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "reviewed-backup")
+	if err = s.Backup(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := Open(ctx, Config{Directory: target, PublisherID: s.config.PublisherID, QuotaBytes: s.config.QuotaBytes, Authority: s.config.Authority})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	main, err := restored.MainCommit(ctx, testActor, l.ID)
+	if err != nil || main.CommitID != accepted.AcceptedCommit {
+		t.Fatal("accepted head lost", main, err)
+	}
+	version, err := restored.Version(ctx, release.ID)
+	if err != nil || version.AcceptedCommit != accepted.AcceptedCommit || version.State != "published" {
+		t.Fatal("release lineage lost", version, err)
+	}
+	view, err := restored.Integration(ctx, testActor, l.ID, input.PreparedDigest)
+	if err != nil || view.Acceptance != "accepted" || len(view.Reviews) != 1 {
+		t.Fatal("review history lost", view, err)
+	}
+	draft, _, err := restored.BranchContent(ctx, testActor, l.ID, b.ID, "note", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(draft)
+	draft.Close()
+	if err != nil || string(raw) != "uncommitted draft" {
+		t.Fatal("draft lost", err)
+	}
+	published, _, err := restored.Content(ctx, l.ID, "note", release.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = io.ReadAll(published)
+	published.Close()
+	if err != nil || string(raw) != "candidate" {
+		t.Fatal("draft replaced release", err)
+	}
+	replay, err := restored.Merge(ctx, testActor, l.ID, input)
+	if err != nil || replay != accepted {
+		t.Fatal("acceptance receipt lost", err)
+	}
+}
