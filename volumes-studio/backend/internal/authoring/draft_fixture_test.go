@@ -496,3 +496,17 @@ func (s *Store) baseEntries(ctx context.Context, version string) ([]manifest.Ent
 	d, err := manifest.Decode(bytes.NewReader(raw))
 	return d.Entries, err
 }
+
+// Historical fixture storage is excluded from production schema initialization.
+func init() {
+	schema += `
+CREATE TABLE draft_entries(
+ library_id TEXT NOT NULL REFERENCES libraries(id),path TEXT NOT NULL,
+ kind TEXT NOT NULL CHECK(kind IN('file','directory')),
+ size INTEGER NOT NULL CHECK(size>=0),digest TEXT REFERENCES blobs(digest),
+ PRIMARY KEY(library_id,path),
+ CHECK((kind='directory' AND size=0 AND digest IS NULL) OR (kind='file' AND digest IS NOT NULL))
+);
+CREATE INDEX draft_blob_refs ON draft_entries(digest);
+`
+}

@@ -14,14 +14,6 @@ CREATE TABLE libraries(
  issuer TEXT NOT NULL,subject TEXT NOT NULL,
  archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN(0,1)),created_at INTEGER NOT NULL
 );
-CREATE TABLE draft_entries(
- library_id TEXT NOT NULL REFERENCES libraries(id),path TEXT NOT NULL,
- kind TEXT NOT NULL CHECK(kind IN('file','directory')),
- size INTEGER NOT NULL CHECK(size>=0),digest TEXT REFERENCES blobs(digest),
- PRIMARY KEY(library_id,path),
- CHECK((kind='directory' AND size=0 AND digest IS NULL) OR (kind='file' AND digest IS NOT NULL))
-);
-CREATE INDEX draft_blob_refs ON draft_entries(digest);
 CREATE TABLE versions(
  accepted_commit TEXT NOT NULL DEFAULT '',
  id TEXT PRIMARY KEY,library_id TEXT NOT NULL REFERENCES libraries(id),
