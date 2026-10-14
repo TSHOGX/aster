@@ -34,6 +34,8 @@ func main() {
 	quota := flag.Int64("quota-bytes", 8<<30, "Studio blob and upload reservation budget")
 	distributionConfig := flag.String("distribution-config", "", "private JSON service client registrations")
 	distributionListen := flag.String("distribution-listen", "127.0.0.1:8084", "private distribution listener")
+	participantListen := flag.String("participant-listen", "", "optional private loopback evolution participant listener")
+	participantSecretEnv := flag.String("participant-secret-env", "STUDIO_CENTRAL_SECRET", "environment containing the central participant credential")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*listen)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
@@ -65,6 +67,18 @@ func main() {
 	}
 	server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 64 << 10}
 	servers := []*http.Server{server}
+	if *participantListen != "" {
+		host, _, err := net.SplitHostPort(*participantListen)
+		if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+			log.Fatal("participant requires a private loopback listener")
+		}
+		authority, err := httpapi.NewCentralEvolutionAuthority(client, os.Getenv(*participantSecretEnv))
+		if err != nil {
+			log.Fatal(err)
+		}
+		participant := httpapi.EvolutionParticipantAPI{Store: store, Authority: authority}
+		servers = append(servers, &http.Server{Addr: *participantListen, Handler: participant.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10})
+	}
 	if *distributionConfig != "" {
 		host, _, err := net.SplitHostPort(*distributionListen)
 		if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {

@@ -215,3 +215,17 @@ restart, verifies exact operation receipts, and retries uncertain transport outc
 by looking up participant state. It does not settle activation without Studio's
 receipt. Omitting this configuration disables automatic Evaluation Space dispatch;
 it does not erase pending operations. Studio coordination remains a separate step.
+
+Studio can expose its evolution participant API on a separate private loopback
+listener using `--participant-listen 127.0.0.1:8085`. Set
+`STUDIO_CENTRAL_SECRET` to a service credential of at least 32 characters, or select
+a different environment variable with `--participant-secret-env`. This credential
+is separate from Studio's registered identity-client credential. The listener is
+disabled when `--participant-listen` is omitted and is never mounted on the browser
+gateway.
+
+Each participant request authenticates central service credentials, resolves the
+saved operation actor through the private central identity endpoint, and rechecks
+library configure authority. Central identity outages prevent new participant
+effects. The listener supports reservation lookup, reserve, adopt, and cancellation;
+central activation does not yet dispatch Studio participant requests automatically.
