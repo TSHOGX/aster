@@ -372,7 +372,7 @@ func workbenchDiffFixture(s *Store, ctx context.Context, id string, q Query) (Pa
 		after[e.Path] = e
 	}
 	out := []WorkbenchChange{}
-	for _, c := range changesBetween(current, base) {
+	for _, c := range compareEntries(base, current) {
 		item := WorkbenchChange{Change: c}
 		if e, ok := before[c.Path]; ok {
 			item.Before = &e
@@ -483,4 +483,16 @@ func workbenchTreeFixture(s *Store, ctx context.Context, id, version string, q Q
 		mode = "search"
 	}
 	return pageOf(out, q, id+"/"+version+"/"+mode, 200)
+}
+
+func (s *Store) baseEntries(ctx context.Context, version string) ([]manifest.Entry, error) {
+	if version == "" {
+		return nil, nil
+	}
+	var raw []byte
+	if err := s.db.QueryRowContext(ctx, "SELECT descriptor FROM versions WHERE id=?", version).Scan(&raw); err != nil {
+		return nil, err
+	}
+	d, err := manifest.Decode(bytes.NewReader(raw))
+	return d.Entries, err
 }

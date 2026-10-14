@@ -1,7 +1,6 @@
 package authoring
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -86,37 +85,6 @@ func pageOf[T any](items []T, q Query, scope string, defaultLimit int) (Page[T],
 		p.Next = base64.RawURLEncoding.EncodeToString(data)
 	}
 	return p, nil
-}
-func changesBetween(current, base []manifest.Entry) []Change {
-	old := make(map[string]manifest.Entry, len(base))
-	for _, e := range base {
-		old[e.Path] = e
-	}
-	out := []Change{}
-	for _, e := range current {
-		if b, ok := old[e.Path]; !ok {
-			out = append(out, Change{e.Path, "added"})
-		} else if b != e {
-			out = append(out, Change{e.Path, "changed"})
-		}
-		delete(old, e.Path)
-	}
-	for p := range old {
-		out = append(out, Change{p, "removed"})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	return out
-}
-func (s *Store) baseEntries(ctx context.Context, version string) ([]manifest.Entry, error) {
-	if version == "" {
-		return nil, nil
-	}
-	var raw []byte
-	if err := s.db.QueryRowContext(ctx, "SELECT descriptor FROM versions WHERE id=?", version).Scan(&raw); err != nil {
-		return nil, err
-	}
-	d, err := manifest.Decode(bytes.NewReader(raw))
-	return d.Entries, err
 }
 func (s *Store) summaries(ctx context.Context, library string) ([]LibrarySummary, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+libraryColumns+`,max(created_at,coalesce((SELECT max(a.created_at) FROM audit a WHERE a.library_id=libraries.id),0)) FROM libraries WHERE (?='' OR id=?)`, library, library)
