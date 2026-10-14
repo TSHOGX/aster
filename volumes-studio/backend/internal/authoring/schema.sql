@@ -165,3 +165,12 @@ BEGIN SELECT RAISE(ABORT,'retain review provenance'); END;
 CREATE TRIGGER immutable_prepared_sources
 BEFORE UPDATE ON prepared_sources
 BEGIN SELECT RAISE(ABORT,'immutable prepared source identity'); END;
+
+CREATE TABLE evolution_reservation_operations (
+ operation_id TEXT PRIMARY KEY,
+ group_id TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),
+ digest TEXT NOT NULL,
+ body TEXT NOT NULL CHECK(json_valid(body)),
+ state TEXT NOT NULL CHECK(state IN ('reserved','adopted','released'))
+);

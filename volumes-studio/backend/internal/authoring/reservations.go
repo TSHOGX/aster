@@ -26,58 +26,61 @@ func (s *Store) ReserveEvolutionPrefix(ctx context.Context, actor Actor, r Prefi
 		return r, ErrInvalid
 	}
 	return s.reservationResult(ctx, actor, r.LibraryID, func(tx *sql.Tx, actor Actor) (PrefixReservation, error) {
-		if err := writableReservationLibrary(ctx, tx, r.LibraryID); err != nil {
-			return r, err
-		}
-		var owner string
-		if err := tx.QueryRowContext(ctx, "SELECT evolution_owner_group FROM libraries WHERE id=?", r.LibraryID).Scan(&owner); err != nil {
-			return r, err
-		}
-		if owner != "" && owner != r.GroupID {
-			return r, ErrConflict
-		}
-		if owner == "" {
-			if _, err := tx.ExecContext(ctx, "UPDATE libraries SET evolution_owner_group=? WHERE id=?", r.GroupID, r.LibraryID); err != nil {
-				return r, err
-			}
-		}
-		var prior PrefixReservation
-		err := tx.QueryRowContext(ctx, "SELECT library_id,prefix,owner_group_id,binding_id,generation,state,operation_id FROM evolution_prefix_reservations WHERE library_id=? AND prefix=?", r.LibraryID, r.Prefix).Scan(&prior.LibraryID, &prior.Prefix, &prior.GroupID, &prior.BindingID, &prior.Generation, &prior.State, &prior.OperationID)
-		if err == nil {
-			if prior.GroupID == r.GroupID && prior.BindingID == r.BindingID && prior.Generation == r.Generation && prior.OperationID == r.OperationID {
-				return prior, nil
-			}
-			return r, ErrConflict
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return r, err
-		}
-		rows, err := tx.QueryContext(ctx, "SELECT prefix,owner_group_id FROM evolution_prefix_reservations WHERE library_id=? AND state IN ('pending','active')", r.LibraryID)
-		if err != nil {
-			return r, err
-		}
-		for rows.Next() {
-			var prefix, group string
-			if err = rows.Scan(&prefix, &group); err != nil {
-				rows.Close()
-				return r, err
-			}
-			if group != r.GroupID || prefixOverlap(prefix, r.Prefix) {
-				rows.Close()
-				return r, ErrConflict
-			}
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return r, err
-		}
-		if _, err = tx.ExecContext(ctx, "INSERT INTO evolution_prefix_reservations VALUES(?,?,?,?,?,'pending',?,?)", r.LibraryID, r.Prefix, r.GroupID, r.BindingID, r.Generation, r.OperationID, s.now().Unix()); err != nil {
-			return r, err
-		}
-		r.State = "pending"
-		return r, s.reservationAudit(ctx, tx, actor, "evolution.prefix.reserve", r.LibraryID, r.OperationID, r.Generation)
+		return s.reserveEvolutionPrefix(ctx, tx, actor, r)
 	})
+}
+func (s *Store) reserveEvolutionPrefix(ctx context.Context, tx *sql.Tx, actor Actor, r PrefixReservation) (PrefixReservation, error) {
+	if err := writableReservationLibrary(ctx, tx, r.LibraryID); err != nil {
+		return r, err
+	}
+	var owner string
+	if err := tx.QueryRowContext(ctx, "SELECT evolution_owner_group FROM libraries WHERE id=?", r.LibraryID).Scan(&owner); err != nil {
+		return r, err
+	}
+	if owner != "" && owner != r.GroupID {
+		return r, ErrConflict
+	}
+	if owner == "" {
+		if _, err := tx.ExecContext(ctx, "UPDATE libraries SET evolution_owner_group=? WHERE id=?", r.GroupID, r.LibraryID); err != nil {
+			return r, err
+		}
+	}
+	var prior PrefixReservation
+	err := tx.QueryRowContext(ctx, "SELECT library_id,prefix,owner_group_id,binding_id,generation,state,operation_id FROM evolution_prefix_reservations WHERE library_id=? AND prefix=?", r.LibraryID, r.Prefix).Scan(&prior.LibraryID, &prior.Prefix, &prior.GroupID, &prior.BindingID, &prior.Generation, &prior.State, &prior.OperationID)
+	if err == nil {
+		if prior.GroupID == r.GroupID && prior.BindingID == r.BindingID && prior.Generation == r.Generation && prior.OperationID == r.OperationID {
+			return prior, nil
+		}
+		return r, ErrConflict
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return r, err
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT prefix,owner_group_id FROM evolution_prefix_reservations WHERE library_id=? AND state IN ('pending','active')", r.LibraryID)
+	if err != nil {
+		return r, err
+	}
+	for rows.Next() {
+		var prefix, group string
+		if err = rows.Scan(&prefix, &group); err != nil {
+			rows.Close()
+			return r, err
+		}
+		if group != r.GroupID || prefixOverlap(prefix, r.Prefix) {
+			rows.Close()
+			return r, ErrConflict
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return r, err
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO evolution_prefix_reservations VALUES(?,?,?,?,?,'pending',?,?)", r.LibraryID, r.Prefix, r.GroupID, r.BindingID, r.Generation, r.OperationID, s.now().Unix()); err != nil {
+		return r, err
+	}
+	r.State = "pending"
+	return r, s.reservationAudit(ctx, tx, actor, "evolution.prefix.reserve", r.LibraryID, r.OperationID, r.Generation)
 }
 func (s *Store) ActivateEvolutionPrefix(ctx context.Context, actor Actor, operation, library, prefix string, expectedGeneration int64) (PrefixReservation, error) {
 	var r PrefixReservation
