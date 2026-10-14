@@ -179,3 +179,9 @@ and returns the configuration, its digest, and its operation ID. The saved conte
 is immutable: immediate disable changes current admission state without rewriting
 that revision's original `auto_enabled` value. Consult configuration status for the
 current automatic-admission setting.
+
+A `reservation_rejected` participant failure means Studio rejected the output
+reservation or its adoption, for example because another binding owns an overlapping
+prefix or the library is archived. Inspect the selected output and current ownership
+before retrying. A different output requires corrected configuration and, where
+applicable, the explicit transfer workflow; retry does not change the saved payload.

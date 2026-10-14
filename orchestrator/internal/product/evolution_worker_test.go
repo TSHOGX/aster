@@ -249,3 +249,39 @@ func TestEvolutionDiscardRecoveryAfterCentralRestart(t *testing.T) {
 		t.Fatal("lost cleanup completion", current)
 	}
 }
+
+func TestEvolutionStudioConflictStopsBeforeEvaluation(t *testing.T) {
+	s, admin := accountStore(t)
+	token := adminTestToken(t, s, admin)
+	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
+	must(t, err)
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if strings.HasPrefix(r.URL.Path, "/evaluation-space/") {
+			t.Error("evaluation dispatched after reservation rejection")
+		}
+		if strings.HasSuffix(r.URL.Path, "/lookup") {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer server.Close()
+	studio, err := studioclient.New(server.URL, strings.Repeat("x", 32))
+	must(t, err)
+	evaluation, err := evaluationclient.New(server.URL, strings.Repeat("x", 32))
+	must(t, err)
+	worker := &EvolutionWorker{Store: s, Studio: studio, Evaluation: evaluation}
+	must(t, worker.Step(ctx))
+	status, err := s.EvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID)
+	must(t, err)
+	if status.State != "failed" || len(status.Participants) != 1 || status.Participants[0].Error != "reservation_rejected" {
+		t.Fatal(status)
+	}
+	worker = &EvolutionWorker{Store: s, Studio: studio, Evaluation: evaluation}
+	must(t, worker.Step(ctx))
+	if calls != 2 {
+		t.Fatal("conflict retried or obscured by lookup", calls)
+	}
+}

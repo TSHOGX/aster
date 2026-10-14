@@ -58,6 +58,9 @@ func (w *EvolutionWorker) Step(ctx context.Context) error {
 	if w.Studio != nil {
 		studioProjection = studioclient.Projection{OperationID: projection.OperationID, Digest: projection.Digest, Configuration: projection.Configuration}
 		if _, err = w.Studio.Reserve(ctx, studioProjection); err != nil {
+			if errors.Is(err, studioclient.ErrRejected) {
+				return w.rejectStudio(ctx, operation, projection.Digest)
+			}
 			return err
 		}
 	}
@@ -77,6 +80,9 @@ func (w *EvolutionWorker) Step(ctx context.Context) error {
 		return nil
 	}
 	receipt, err = w.Studio.Adopt(ctx, studioProjection)
+	if errors.Is(err, studioclient.ErrRejected) {
+		return w.rejectStudio(ctx, operation, projection.Digest)
+	}
 	if err != nil {
 		return err
 	}
@@ -132,5 +138,11 @@ func (w *EvolutionWorker) discard(ctx context.Context) (bool, error) {
 			return ErrConflict
 		}
 		return w.Store.auditEvent(ctx, tx, "service:evolution", "evolution.activation.discarded", "group", projection.Configuration.GroupID, operation, projection.Configuration.Revision, nil)
+	})
+}
+
+func (w *EvolutionWorker) rejectStudio(ctx context.Context, operation, digest string) error {
+	return w.Store.write(ctx, func(tx *sql.Tx) error {
+		return w.Store.failEvolutionParticipant(ctx, tx, "service:evolution", operation, "studio", digest, "reservation_rejected")
 	})
 }

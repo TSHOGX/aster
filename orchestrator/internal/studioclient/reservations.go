@@ -16,6 +16,8 @@ import (
 )
 
 // ErrNotFound means an authorized lookup confirmed no stored projection.
+var ErrRejected = errors.New("Studio reservation rejected")
+
 var ErrNotFound = errors.New("Studio reservation not found")
 
 type Client struct {
@@ -62,6 +64,9 @@ func (c *Client) call(ctx context.Context, method, path string, body []byte, p P
 	defer response.Body.Close()
 	if path == "/volumes-studio/internal/v1/evolution/lookup" && response.StatusCode == http.StatusNotFound {
 		return receipt, ErrNotFound
+	}
+	if response.StatusCode == http.StatusConflict || response.StatusCode == http.StatusUnprocessableEntity {
+		return receipt, ErrRejected
 	}
 	if response.StatusCode != 200 {
 		return receipt, fmt.Errorf("participant status %d", response.StatusCode)
@@ -114,6 +119,9 @@ func (c *Client) Reserve(ctx context.Context, p Projection) (evolution.Activatio
 	receipt, err := c.Lookup(ctx, p)
 	if errors.Is(err, ErrNotFound) {
 		receipt, err = c.request(ctx, "reserve", p)
+		if errors.Is(err, ErrRejected) {
+			return evolution.ActivationReceipt{}, err
+		}
 		if err != nil {
 			receipt, err = c.Lookup(ctx, p)
 		}
@@ -138,6 +146,9 @@ func (c *Client) Adopt(ctx context.Context, p Projection) (evolution.ActivationR
 		return evolution.ActivationReceipt{}, fmt.Errorf("reservation is not pending")
 	}
 	receipt, err = c.request(ctx, "adopt", p)
+	if errors.Is(err, ErrRejected) {
+		return evolution.ActivationReceipt{}, err
+	}
 	if err != nil {
 		receipt, err = c.Lookup(ctx, p)
 	}
