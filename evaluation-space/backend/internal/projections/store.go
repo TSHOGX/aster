@@ -3,6 +3,7 @@
 package projections
 
 import (
+	manifest "aster/contracts/volumemanifest"
 	"bytes"
 	"context"
 	"database/sql"
@@ -10,7 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
+	"syscall"
 
 	"aster/contracts/evolution"
 	_ "modernc.org/sqlite"
@@ -34,6 +37,29 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("absolute projection database path required")
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		file.Close()
+		return nil, fmt.Errorf("projection database must be regular")
+	}
+	if err = file.Chmod(0600); err != nil {
+		file.Close()
+		return nil, err
+	}
+	if err = file.Close(); err != nil {
+		return nil, err
+	}
 	uri := url.URL{Scheme: "file", Path: path}
 	q := url.Values{"_pragma": {"journal_mode(WAL)", "synchronous(FULL)", "busy_timeout(5000)"}}
 	uri.RawQuery = q.Encode()
@@ -46,6 +72,16 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	directory, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	err = errors.Join(directory.Sync(), directory.Close())
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &Store{db: db}, nil
 }
 func (s *Store) Close() error { return s.db.Close() }
@@ -53,7 +89,7 @@ func (s *Store) Close() error { return s.db.Close() }
 // Adopt is an internal participant command. Its caller must authenticate central
 // service authority and validate catalog/resource grants before invoking it.
 func (s *Store) Adopt(ctx context.Context, p Projection) error {
-	if p.OperationID == "" || len(p.OperationID) > 128 {
+	if !manifest.ValidID(p.OperationID) {
 		return fmt.Errorf("operation identity required")
 	}
 	if err := p.Configuration.Validate(); err != nil {
