@@ -218,3 +218,53 @@ func TestMergeRequiresDistinctCurrentReviewers(t *testing.T) {
 		t.Fatal("two distinct approvals rejected", err)
 	}
 }
+
+func TestConcurrentMergeRequestsAcceptExactlyOnce(t *testing.T) {
+	s, l, b, _ := reviewFixture(t)
+	ctx := context.Background()
+	input := approvedIntegration(t, s, l, b)
+	start := make(chan struct{})
+	type outcome struct {
+		result MergeResult
+		err    error
+	}
+	results := make(chan outcome, 2)
+	for _, request := range []string{"concurrent-one", "concurrent-two"} {
+		go func(request string) {
+			<-start
+			copy := input
+			copy.RequestID = request
+			result, err := s.Merge(ctx, testActor, l.ID, copy)
+			results <- outcome{result, err}
+		}(request)
+	}
+	close(start)
+	successes, conflicts := 0, 0
+	var accepted MergeResult
+	for i := 0; i < 2; i++ {
+		result := <-results
+		if result.err == nil {
+			successes++
+			accepted = result.result
+		} else if errors.Is(result.err, ErrConflict) {
+			conflicts++
+		} else {
+			t.Fatal(result.err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatal("multiple acceptance", successes, conflicts)
+	}
+	repo, err := s.historyRepository(ctx, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := repo.Head(ctx, "refs/heads/main")
+	if err != nil || head != accepted.AcceptedCommit {
+		t.Fatal("wrong accepted head", err)
+	}
+	var count int
+	if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM merge_operations WHERE prepared_digest=?", input.PreparedDigest).Scan(&count); err != nil || count != 1 {
+		t.Fatal("duplicate merge operation", count, err)
+	}
+}
