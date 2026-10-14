@@ -1948,3 +1948,12 @@ CREATE TRIGGER immutable_evolution_operation_event BEFORE UPDATE ON evolution_op
 BEGIN SELECT RAISE(ABORT,'immutable activation event'); END;
 CREATE TRIGGER retained_evolution_operation_event BEFORE DELETE ON evolution_operation_events
 BEGIN SELECT RAISE(ABORT,'retain activation event'); END;
+
+CREATE TRIGGER immutable_evolution_configuration BEFORE UPDATE ON evolution_configuration_revisions
+BEGIN SELECT RAISE(ABORT,'immutable evolution configuration'); END;
+CREATE TRIGGER retained_evolution_configuration BEFORE DELETE ON evolution_configuration_revisions
+BEGIN SELECT RAISE(ABORT,'retain evolution configuration provenance'); END;
+CREATE TRIGGER immutable_evolution_draft_revision BEFORE UPDATE ON evolution_configuration_drafts
+BEGIN SELECT RAISE(ABORT,'immutable evolution draft revision'); END;
+CREATE TRIGGER retained_evolution_draft_revision BEFORE DELETE ON evolution_configuration_drafts
+BEGIN SELECT RAISE(ABORT,'retain evolution draft replay provenance'); END;
