@@ -214,7 +214,7 @@ projections from the central database. It survives browser logout and applicatio
 restart, verifies exact operation receipts, and retries uncertain transport outcomes
 by looking up participant state. It does not settle activation without Studio's
 receipt. Omitting this configuration disables automatic Evaluation Space dispatch;
-it does not erase pending operations. Studio coordination remains a separate step.
+it does not erase pending operations.
 
 Studio can expose its evolution participant API on a separate private loopback
 listener using `--participant-listen 127.0.0.1:8085`. Set
@@ -228,4 +228,8 @@ Each participant request authenticates central service credentials, resolves the
 saved operation actor through the private central identity endpoint, and rechecks
 library configure authority. Central identity outages prevent new participant
 effects. The listener supports reservation lookup, reserve, adopt, and cancellation;
-central activation does not yet dispatch Studio participant requests automatically.
+configure central dispatch with `studio_participant.endpoint` and
+`studio_participant.credential_env`. The credential must match Studio’s central
+participant secret. This requires `evaluation_space` configuration as well. The
+worker reserves Studio outputs before Evaluation Space adoption, then adopts Studio
+reservations and settles only after both exact receipts are recorded.

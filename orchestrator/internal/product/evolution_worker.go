@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"harness-platform/orchestrator/internal/evaluationclient"
+	"harness-platform/orchestrator/internal/studioclient"
 )
 
 // EvolutionWorker resumes durable pending projections without browser sessions.
@@ -13,6 +14,7 @@ import (
 type EvolutionWorker struct {
 	Store      *Store
 	Evaluation *evaluationclient.Client
+	Studio     *studioclient.Client
 	cursor     string
 }
 
@@ -21,8 +23,8 @@ func (w *EvolutionWorker) Step(ctx context.Context) error {
 		return nil
 	}
 	var group, operation string
-	query := `SELECT c.group_id,c.operation_id FROM evolution_group_configs c WHERE c.state='activating' AND c.group_id>? AND NOT EXISTS(SELECT 1 FROM evolution_activation_receipts r WHERE r.operation_id=c.operation_id AND r.participant='evaluation-space' AND r.state='accepted' AND r.config_digest=c.desired_digest) ORDER BY c.group_id LIMIT 1`
-	err := w.Store.reader.QueryRowContext(ctx, query, w.cursor).Scan(&group, &operation)
+	query := `SELECT c.group_id,c.operation_id FROM evolution_group_configs c WHERE c.state='activating' AND c.group_id>? AND (? OR NOT EXISTS(SELECT 1 FROM evolution_activation_receipts r WHERE r.operation_id=c.operation_id AND r.participant='evaluation-space' AND r.state='accepted' AND r.config_digest=c.desired_digest)) ORDER BY c.group_id LIMIT 1`
+	err := w.Store.reader.QueryRowContext(ctx, query, w.cursor, w.Studio != nil).Scan(&group, &operation)
 	if errors.Is(err, sql.ErrNoRows) {
 		w.cursor = ""
 		return nil
@@ -42,9 +44,32 @@ func (w *EvolutionWorker) Step(ctx context.Context) error {
 	if !allowed {
 		return ErrForbidden
 	}
+	var studioProjection studioclient.Projection
+	if w.Studio != nil {
+		studioProjection = studioclient.Projection{OperationID: projection.OperationID, Digest: projection.Digest, Configuration: projection.Configuration}
+		if _, err = w.Studio.Reserve(ctx, studioProjection); err != nil {
+			return err
+		}
+	}
 	receipt, err := w.Evaluation.Reconcile(ctx, projection)
 	if err != nil {
 		return err
 	}
-	return w.Store.write(ctx, func(tx *sql.Tx) error { return w.Store.acceptEvolutionReceipt(ctx, tx, "service:evolution", receipt) })
+	if err = w.Store.write(ctx, func(tx *sql.Tx) error { return w.Store.acceptEvolutionReceipt(ctx, tx, "service:evolution", receipt) }); err != nil {
+		return err
+	}
+	if w.Studio == nil {
+		return nil
+	}
+	receipt, err = w.Studio.Adopt(ctx, studioProjection)
+	if err != nil {
+		return err
+	}
+	return w.Store.write(ctx, func(tx *sql.Tx) error {
+		if err := w.Store.acceptEvolutionReceipt(ctx, tx, "service:evolution", receipt); err != nil {
+			return err
+		}
+		_, err := w.Store.settleEvolutionActivation(ctx, tx, "service:evolution", operation)
+		return err
+	})
 }

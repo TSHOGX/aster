@@ -19,6 +19,7 @@ import (
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/producthttp"
 	"harness-platform/orchestrator/internal/sandbox/khora"
+	"harness-platform/orchestrator/internal/studioclient"
 )
 
 type Application struct {
@@ -132,6 +133,16 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 			return app, err
 		}
 		app.Workers.Evolution = &product.EvolutionWorker{Store: store, Evaluation: client}
+	}
+	if cfg.StudioParticipant != nil {
+		if app.Workers.Evolution == nil {
+			return app, errors.New("Studio participant requires Evaluation Space configuration")
+		}
+		client, err := studioclient.New(cfg.StudioParticipant.Endpoint, os.Getenv(cfg.StudioParticipant.CredentialEnv))
+		if err != nil {
+			return app, err
+		}
+		app.Workers.Evolution.Studio = client
 	}
 	transportConfig := producthttp.Config{TrustForwardedHost: true, Identity: cfg.Identity}
 	if cfg.HTTPMetrics {

@@ -4,6 +4,7 @@ import (
 	"aster/contracts/evolution"
 	"encoding/json"
 	"harness-platform/orchestrator/internal/evaluationclient"
+	"harness-platform/orchestrator/internal/studioclient"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,5 +41,56 @@ func TestEvolutionWorkerNeedsNoInteractiveSession(t *testing.T) {
 	must(t, err)
 	if config.ActiveRevision != 0 {
 		t.Fatal("worker bypassed Studio receipt")
+	}
+}
+
+func TestEvolutionWorkerCoordinatesBothParticipants(t *testing.T) {
+	s, admin := accountStore(t)
+	token := adminTestToken(t, s, admin)
+	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
+	must(t, err)
+	state := ""
+	evaluated := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		participant := "studio"
+		if strings.HasPrefix(r.URL.Path, "/evaluation-space/") {
+			if state != "reserved" {
+				t.Error("evaluation preceded reservation")
+			}
+			evaluated = true
+			participant = "evaluation-space"
+		} else {
+			switch strings.TrimPrefix(r.URL.Path, "/volumes-studio/internal/v1/evolution/") {
+			case "lookup":
+				if state == "" {
+					http.NotFound(w, r)
+					return
+				}
+			case "reserve":
+				state = "reserved"
+			case "adopt":
+				if !evaluated {
+					t.Error("adopted before evaluation")
+				}
+				state = "adopted"
+			}
+		}
+		receiptState := state
+		if participant == "evaluation-space" {
+			receiptState = "adopted"
+		}
+		json.NewEncoder(w).Encode(evolution.ActivationReceipt{Participant: participant, OperationID: pending.OperationID, ConfigurationDigest: pending.DesiredDigest, Generation: 1, State: receiptState})
+	}))
+	defer server.Close()
+	evaluation, err := evaluationclient.New(server.URL, strings.Repeat("x", 32))
+	must(t, err)
+	studio, err := studioclient.New(server.URL, strings.Repeat("x", 32))
+	must(t, err)
+	worker := &EvolutionWorker{Store: s, Evaluation: evaluation, Studio: studio}
+	must(t, worker.Step(ctx))
+	active, err := s.EvolutionConfig(ctx, token, StandardUsersGroup)
+	must(t, err)
+	if active.State != "active" || active.ActiveRevision != 1 || state != "adopted" {
+		t.Fatal(active, state)
 	}
 }

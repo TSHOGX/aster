@@ -93,6 +93,7 @@ type EvaluationSpaceConfig struct {
 }
 
 type Config struct {
+	StudioParticipant *EvaluationSpaceConfig  `json:"studio_participant,omitempty"`
 	EvaluationSpace   *EvaluationSpaceConfig  `json:"evaluation_space,omitempty"`
 	PublicDNS         []netip.Addr            `json:"public_dns_resolvers"`
 	VolumeImports     *VolumeImportConfig     `json:"volume_imports,omitempty"`

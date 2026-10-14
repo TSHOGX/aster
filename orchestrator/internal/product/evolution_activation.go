@@ -165,37 +165,43 @@ func (s *Store) SettleEvolutionActivation(ctx context.Context, token, operation 
 		if err != nil {
 			return err
 		}
-		if err = tx.QueryRowContext(ctx, "SELECT group_id,desired_revision,active_revision,desired_digest,active_digest,auto_enabled,state,operation_id FROM evolution_group_configs WHERE operation_id=?", operation).Scan(&result.GroupID, &result.DesiredRevision, &result.ActiveRevision, &result.DesiredDigest, &result.ActiveDigest, &result.AutoEnabled, &result.State, &result.OperationID); err != nil {
-			return err
-		}
-		if result.State == "active" {
-			return nil
-		}
-		if result.State != "activating" {
-			return ErrConflict
-		}
-		allowed, err := authorizeEvolutionProjection(ctx, tx, ProjectionScope{GroupID: result.GroupID, OperationID: operation, Revision: result.DesiredRevision, Digest: result.DesiredDigest})
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			return ErrForbidden
-		}
-		var count int
-		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_activation_receipts WHERE operation_id=? AND config_digest=? AND state='accepted' AND participant IN ('studio','evaluation-space')", operation, result.DesiredDigest).Scan(&count); err != nil {
-			return err
-		}
-		if count != 2 {
-			return ErrBusy
-		}
-		result.ActiveRevision = result.DesiredRevision
-		result.ActiveDigest = result.DesiredDigest
-		result.State = "active"
-		if _, err = tx.ExecContext(ctx, "UPDATE evolution_group_configs SET active_revision=?,active_digest=?,state='active' WHERE operation_id=?", result.ActiveRevision, result.ActiveDigest, operation); err != nil {
-			return err
-		}
-		return s.auditEvent(ctx, tx, actor.ID, "evolution.config.activate", "group", result.GroupID, operation, result.ActiveRevision, result)
+		result, err = s.settleEvolutionActivation(ctx, tx, actor.ID, operation)
+		return err
 	})
 	return result, err
+}
+func (s *Store) settleEvolutionActivation(ctx context.Context, tx *sql.Tx, actor, operation string) (EvolutionGroupConfig, error) {
+	var result EvolutionGroupConfig
+	var err error
+	if err = tx.QueryRowContext(ctx, "SELECT group_id,desired_revision,active_revision,desired_digest,active_digest,auto_enabled,state,operation_id FROM evolution_group_configs WHERE operation_id=?", operation).Scan(&result.GroupID, &result.DesiredRevision, &result.ActiveRevision, &result.DesiredDigest, &result.ActiveDigest, &result.AutoEnabled, &result.State, &result.OperationID); err != nil {
+		return result, err
+	}
+	if result.State == "active" {
+		return result, nil
+	}
+	if result.State != "activating" {
+		return result, ErrConflict
+	}
+	allowed, err := authorizeEvolutionProjection(ctx, tx, ProjectionScope{GroupID: result.GroupID, OperationID: operation, Revision: result.DesiredRevision, Digest: result.DesiredDigest})
+	if err != nil {
+		return result, err
+	}
+	if !allowed {
+		return result, ErrForbidden
+	}
+	var count int
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_activation_receipts WHERE operation_id=? AND config_digest=? AND state='accepted' AND participant IN ('studio','evaluation-space')", operation, result.DesiredDigest).Scan(&count); err != nil {
+		return result, err
+	}
+	if count != 2 {
+		return result, ErrBusy
+	}
+	result.ActiveRevision = result.DesiredRevision
+	result.ActiveDigest = result.DesiredDigest
+	result.State = "active"
+	if _, err = tx.ExecContext(ctx, "UPDATE evolution_group_configs SET active_revision=?,active_digest=?,state='active' WHERE operation_id=?", result.ActiveRevision, result.ActiveDigest, operation); err != nil {
+		return result, err
+	}
+	return result, s.auditEvent(ctx, tx, actor, "evolution.config.activate", "group", result.GroupID, operation, result.ActiveRevision, result)
 }
 func randomOperationID() string { return "evo-" + uuid.NewString() }
