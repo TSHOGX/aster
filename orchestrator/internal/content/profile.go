@@ -9,6 +9,7 @@ import (
 
 const ReviewedProfile = "reviewed-v1"
 const AuthoredProfile = "authored-v1"
+const SharedAssetsProfile = "shared-assets-v1"
 
 type Limits struct {
 	Entries              int
@@ -17,6 +18,8 @@ type Limits struct {
 
 func ProfileLimits(profile string) (Limits, error) {
 	switch profile {
+	case SharedAssetsProfile:
+		return Limits{MaxEntries, MaxFileBytes, MaxTotalBytes}, nil
 	case ReviewedProfile:
 		return Limits{MaxEntries, MaxFileBytes, MaxTotalBytes}, nil
 	case AuthoredProfile:
@@ -41,6 +44,20 @@ func ValidateEntries(entries []Entry, profile string) (int64, error) {
 	}
 	if len(entries) == 0 || len(entries) > limits.Entries {
 		return 0, fmt.Errorf("content entry count outside profile")
+	}
+	if profile == SharedAssetsProfile {
+		hasAgents := false
+		for _, e := range entries {
+			if e.Path == "AGENTS.md" && !e.Directory {
+				hasAgents = true
+			}
+			if strings.HasPrefix(e.Path, "skills/") && !e.Directory && path.Base(e.Path) != "SKILL.md" {
+				return 0, fmt.Errorf("shared-assets skill files must be SKILL.md")
+			}
+		}
+		if !hasAgents {
+			return 0, fmt.Errorf("shared-assets profile requires root AGENTS.md")
+		}
 	}
 	sorted := append([]Entry(nil), entries...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Path < sorted[j].Path })

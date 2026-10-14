@@ -360,10 +360,8 @@ func (s *Store) seedResourceTemplates(ctx context.Context, tx *sql.Tx, seed Boot
 		policy                NetworkPolicy
 		builtin, enabled      bool
 	}{
-		{"network-default", "Standard network", "Initial administrator network configuration", seed.Network, false, true},
-		{"network-restricted", "Restricted outbound access", "No additional direct connections or DNS", restricted, true, true},
-		{"network-selected", "Selected destinations", "Duplicate and configure the permitted destination addresses", restricted, true, false},
-		{"network-web", "Public web access", "Public IPv4 HTTP and HTTPS; uses the configured DNS resolvers", web, true, len(web.Resolvers) > 0},
+		{"network-restricted", "Restricted", "No direct connections or DNS", restricted, true, true},
+		{"network-public", "Public", "Public HTTP and HTTPS access", web, true, true},
 	} {
 		raw, e := json.Marshal(n.policy)
 		if e != nil {
@@ -380,9 +378,9 @@ func (s *Store) seedResourceTemplates(ctx context.Context, tx *sql.Tx, seed Boot
 	if _, err = tx.ExecContext(ctx, `INSERT INTO environment_templates(id,name,description,document,created_at,updated_at) VALUES('environment-default','Standard environment','Initial project environment',?,?,?)`, string(raw), s.timestamp(), s.timestamp()); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO policy_resource_bindings(policy_id,resource_kind,resource_id) VALUES(?,'network_template','network-default'),(?,'environment_template','environment-default')`, standardUsersPolicy, standardUsersPolicy); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO policy_resource_bindings(policy_id,resource_kind,resource_id) VALUES(?,'network_template','network-restricted'),(?,'environment_template','environment-default')`, standardUsersPolicy, standardUsersPolicy); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO group_configuration_defaults(group_id,network_template_id,environment_template_id) VALUES(?,'network-default','environment-default')`, StandardUsersGroup)
+	_, err = tx.ExecContext(ctx, `INSERT INTO group_configuration_defaults(group_id,network_template_id,environment_template_id) VALUES(?,'network-restricted','environment-default')`, StandardUsersGroup)
 	return err
 }

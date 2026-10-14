@@ -18,14 +18,15 @@ import (
 )
 
 const (
-	Format                 = "volume-manifest-v1"
-	Profile                = "authored-v1"
-	MaxManifestBytes       = 16 << 20
-	MaxFileBytes     int64 = 256 << 20
-	MaxTreeBytes     int64 = 1 << 30
-	MaxEntries             = 10000
-	MaxPathBytes           = 512
-	MaxDepth               = 16
+	Format                    = "volume-manifest-v1"
+	Profile                   = "authored-v1"
+	SharedAssetsProfile       = "shared-assets-v1"
+	MaxManifestBytes          = 16 << 20
+	MaxFileBytes        int64 = 256 << 20
+	MaxTreeBytes        int64 = 1 << 30
+	MaxEntries                = 10000
+	MaxPathBytes              = 512
+	MaxDepth                  = 16
 )
 
 // Field order is part of the canonical wire encoding. Every field is required;
@@ -126,11 +127,14 @@ func ValidPath(value string, directory bool) error {
 }
 
 func (d Descriptor) Validate() error {
-	if d.Format != Format || d.Profile != Profile {
+	if d.Format != Format || d.Profile != Profile && d.Profile != SharedAssetsProfile {
 		return fmt.Errorf("unsupported manifest format or content profile")
 	}
 	if !ValidID(d.PublisherID) || !ValidID(d.LibraryID) || !ValidID(d.VersionID) {
 		return fmt.Errorf("invalid immutable identity")
+	}
+	if d.Profile == SharedAssetsProfile {
+		return validateSharedAssets(d)
 	}
 	if len(d.Capabilities) == 0 || len(d.Capabilities) > 2 {
 		return fmt.Errorf("unsupported capabilities")
@@ -180,6 +184,64 @@ func (d Descriptor) Validate() error {
 	}
 	if !ValidDigest(d.TreeDigest) || d.TreeDigest != TreeDigest(d.Entries) {
 		return fmt.Errorf("incorrect tree digest")
+	}
+	return nil
+}
+
+func validateSharedAssets(d Descriptor) error {
+	if len(d.Capabilities) != 2 || d.Capabilities[0] != "shared_assets" || d.Capabilities[1] != "workspace" {
+		return fmt.Errorf("shared-assets profile requires shared_assets and workspace capabilities")
+	}
+	hasAgents := false
+	for _, e := range d.Entries {
+		if e.Path == "AGENTS.md" && e.Kind == "file" {
+			hasAgents = true
+		}
+		if strings.HasPrefix(e.Path, "skills/") && e.Kind == "file" && path.Base(e.Path) != "SKILL.md" {
+			return fmt.Errorf("shared-assets skill files must be SKILL.md")
+		}
+	}
+	if !hasAgents {
+		return fmt.Errorf("shared-assets profile requires root AGENTS.md")
+	}
+	return validateEntries(d)
+}
+
+func validateEntries(d Descriptor) error {
+	parents := make(map[string]bool, len(d.Entries))
+	var total int64
+	for i, e := range d.Entries {
+		if i > 0 && d.Entries[i-1].Path >= e.Path {
+			return fmt.Errorf("duplicate or unordered paths")
+		}
+		if err := ValidPath(e.Path, e.Kind == "directory"); err != nil {
+			return fmt.Errorf("entry %d: %w", i, err)
+		}
+		if parent := path.Dir(e.Path); parent != "." && !parents[parent] {
+			return fmt.Errorf("entry %d has no explicit directory parent", i)
+		}
+		n, err := ParseSize(e.Size)
+		if err != nil || n > MaxFileBytes || total > MaxTreeBytes-n {
+			return fmt.Errorf("entry %d exceeds size limit", i)
+		}
+		switch e.Kind {
+		case "directory":
+			if e.Digest != "" || n != 0 {
+				return fmt.Errorf("directory carries file content")
+			}
+			parents[e.Path] = true
+		case "file":
+			if !ValidDigest(e.Digest) {
+				return fmt.Errorf("invalid file digest")
+			}
+		default:
+			return fmt.Errorf("unsupported entry kind")
+		}
+		total += n
+	}
+	n, err := ParseSize(d.TotalBytes)
+	if err != nil || n != total || !ValidDigest(d.TreeDigest) || d.TreeDigest != TreeDigest(d.Entries) {
+		return fmt.Errorf("incorrect tree metadata")
 	}
 	return nil
 }
