@@ -39,3 +39,26 @@ func TestActivationConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestBindingCannotSelectAliasedResourceTwice(t *testing.T) {
+	config := configFixture()
+	alias := config.Sources[0]
+	alias.ID = "alias"
+	config.Sources = append(config.Sources, alias)
+	config.Bindings[0].SourceIDs = append(config.Bindings[0].SourceIDs, alias.ID)
+	if err := config.Validate(); err == nil {
+		t.Fatal("same resource selected twice through aliases")
+	}
+	// Distinct policies may still be selected independently by different bindings.
+	config.Bindings[0].SourceIDs = []string{"corpus"}
+	config.Bindings[1].SourceIDs = []string{"alias"}
+	if err := config.Validate(); err != nil {
+		t.Fatal("independent binding selection rejected", err)
+	}
+	// Resource IDs are namespaced by source kind.
+	config.Sources[1].Kind = "project"
+	config.Bindings[0].SourceIDs = []string{"corpus", "alias"}
+	if err := config.Validate(); err != nil {
+		t.Fatal("different resource kinds conflated", err)
+	}
+}

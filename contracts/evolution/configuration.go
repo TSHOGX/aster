@@ -119,12 +119,18 @@ func (c Configuration) Validate() error {
 			return fmt.Errorf("binding requires explicit sources")
 		}
 		seen := map[string]bool{}
+		resources := map[[2]string]bool{}
 		for _, id := range b.SourceIDs {
 			s, ok := sources[id]
 			if !ok || seen[id] {
 				return fmt.Errorf("missing or duplicate source")
 			}
 			seen[id] = true
+			resource := [2]string{s.Kind, s.ResourceID}
+			if resources[resource] {
+				return fmt.Errorf("binding selects the same source resource more than once")
+			}
+			resources[resource] = true
 			if !s.DerivativePublication {
 				return fmt.Errorf("source does not authorize derivative publication")
 			}
