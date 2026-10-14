@@ -77,7 +77,7 @@ func unfinishedUploads(ctx context.Context, q interface {
 }
 func (s *Store) StartUpload(ctx context.Context, a Actor, library string, input UploadInput) (Upload, error) {
 	size, err := manifest.ParseSize(input.Size)
-	if err != nil || !manifest.ValidID(input.BranchID) || size > manifest.MaxFileBytes || !manifest.ValidDigest(input.Digest) || manifest.ValidPath(input.Path, false) != nil || input.ExpectedRevision < 1 {
+	if err != nil || !manifest.ValidID(input.BranchID) || size > manifest.MaxFileBytes || !manifest.ValidDigest(input.Digest) || manifest.ValidAuthoringPath(input.Path, false) != nil || input.ExpectedRevision < 1 {
 		return Upload{}, ErrInvalid
 	}
 	if err := s.authorizeLibrary(ctx, a, library, "volume.author"); err != nil {

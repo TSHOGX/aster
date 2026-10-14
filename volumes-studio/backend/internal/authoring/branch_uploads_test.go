@@ -2,6 +2,8 @@ package authoring
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -125,5 +127,34 @@ func TestUploadReadsRespectActorAndBranch(t *testing.T) {
 	authority.allowed = false
 	if _, err := s.ActorUpload(ctx, testActor, l.ID, u.ID); err != ErrAuthority {
 		t.Fatal("revoked read allowed", err)
+	}
+}
+
+func TestReservedUploadPathHasNoStorageEffects(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	main, err := s.MainCommit(ctx, testActor, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateBranch(ctx, testActor, l.ID, CreateBranchInput{"reserved-branch", "Work", main.CommitID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{".git", ".GiT/config"} {
+		_, err = s.StartUpload(ctx, testActor, l.ID, UploadInput{RequestID: randomID(), BranchID: b.ID, ExpectedRevision: 1, Path: path, Size: "0", Digest: digestBytes(nil)})
+		if err != ErrInvalid {
+			t.Fatal("reserved path admitted", path, err)
+		}
+	}
+	var count int
+	if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM uploads").Scan(&count); err != nil || count != 0 {
+		t.Fatal("invalid upload persisted", count, err)
+	}
+	files, err := os.ReadDir(filepath.Join(s.config.Directory, "uploads"))
+	if err != nil || len(files) != 0 {
+		t.Fatal("invalid upload allocated storage", err)
 	}
 }
