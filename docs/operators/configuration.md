@@ -291,3 +291,10 @@ Supported kinds match publication. Continue using returned `next_id` and
 all retained immutable references, including disabled service definitions, and do
 not imply current admission eligibility. Connection and credential details are not
 included in this listing.
+
+Before changing service state, inspect its current admission revision with
+`./evaluation-catalog --state-directory /absolute/evaluation-state --action inspect-service`
+and `{"service_id":"SERVICE_ID"}` on stdin. The result contains `service_id`,
+`revision`, and `enabled`. Use that revision as `expected_revision` for the mutation;
+it is independent of immutable catalog definition revisions. Inspection follows
+the same stopped-service ownership requirement as other offline catalog commands.

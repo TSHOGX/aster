@@ -60,3 +60,22 @@ func (s *Store) SetServiceState(ctx context.Context, input ServiceStateInput) (i
 	}
 	return result, tx.Commit()
 }
+
+type ServiceState struct {
+	ServiceID string `json:"service_id"`
+	Revision  int64  `json:"revision"`
+	Enabled   bool   `json:"enabled"`
+}
+
+// ServiceState returns mutable admission state, not an immutable definition.
+func (s *Store) ServiceState(ctx context.Context, id string) (ServiceState, error) {
+	result := ServiceState{ServiceID: id}
+	if !manifest.ValidID(id) {
+		return result, fmt.Errorf("invalid service identity")
+	}
+	err := s.db.QueryRowContext(ctx, "SELECT revision,enabled FROM service_states WHERE service_id=?", id).Scan(&result.Revision, &result.Enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return result, ErrNotFound
+	}
+	return result, err
+}

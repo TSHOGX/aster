@@ -70,7 +70,7 @@ func publish(ctx context.Context, directory string, input io.Reader, output io.W
 }
 func main() {
 	directory := flag.String("state-directory", "", "absolute private Evaluation Space state directory")
-	action := flag.String("action", "publish", "publish, list or service-state")
+	action := flag.String("action", "publish", "publish, list, inspect-service or service-state")
 	flag.Parse()
 	if flag.NArg() != 0 {
 		fmt.Fprintln(os.Stderr, "publication JSON is read from stdin")
@@ -82,6 +82,8 @@ func main() {
 		err = publish(context.Background(), *directory, os.Stdin, os.Stdout)
 	case "list":
 		err = catalogList(context.Background(), *directory, os.Stdin, os.Stdout)
+	case "inspect-service":
+		err = inspectService(context.Background(), *directory, os.Stdin, os.Stdout)
 	case "service-state":
 		err = serviceState(context.Background(), *directory, os.Stdin, os.Stdout)
 	default:
@@ -131,4 +133,26 @@ func catalogList(ctx context.Context, directory string, input io.Reader, output 
 		return err
 	}
 	return json.NewEncoder(output).Encode(page)
+}
+
+func inspectService(ctx context.Context, directory string, input io.Reader, output io.Writer) error {
+	if !filepath.IsAbs(directory) || directory == "/" {
+		return fmt.Errorf("absolute application state directory required")
+	}
+	request, err := evolution.Decode[struct {
+		ServiceID string `json:"service_id"`
+	}](input)
+	if err != nil {
+		return err
+	}
+	store, err := projections.Open(ctx, filepath.Join(directory, "projections.db"))
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	state, err := store.ServiceState(ctx, request.ServiceID)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(output).Encode(state)
 }
