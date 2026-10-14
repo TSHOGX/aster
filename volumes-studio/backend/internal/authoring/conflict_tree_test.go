@@ -47,3 +47,17 @@ func TestConflictTreePreservesBinaryAndDirectories(t *testing.T) {
 		t.Fatal("branch bytes unexpectedly rewritten")
 	}
 }
+
+func TestResolvedContentDropsSupersededAutomaticBytes(t *testing.T) {
+	tree := history.Snapshot{Profile: manifest.Profile, Entries: []manifest.Entry{{Path: "selected", Kind: "file", Size: "4", Digest: digestBytes([]byte("side"))}, {Path: "kept", Kind: "file", Size: "4", Digest: digestBytes([]byte("auto"))}, {Path: "manual", Kind: "file", Size: "4", Digest: digestBytes([]byte("text"))}}}
+	result := resolvedContent(tree, map[string][]byte{"selected": []byte("merged"), "kept": []byte("auto"), "removed": []byte("old")}, map[string][]byte{"manual": []byte("text")})
+	if _, ok := result["selected"]; ok {
+		t.Fatal("subtree selection retained stale automatic bytes")
+	}
+	if _, ok := result["removed"]; ok {
+		t.Fatal("deleted path retained")
+	}
+	if string(result["kept"]) != "auto" || string(result["manual"]) != "text" {
+		t.Fatal("valid resolved bytes lost")
+	}
+}

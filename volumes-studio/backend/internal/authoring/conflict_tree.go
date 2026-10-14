@@ -106,3 +106,23 @@ func resolveConflictTree(merged, main, source history.Snapshot, conflicts []hist
 	}
 	return result, content, nil
 }
+
+// Keep automatic merge bytes only when they still match the explicitly resolved
+// tree. A subtree choice can replace a previously auto-merged descendant.
+func resolvedContent(tree history.Snapshot, automatic, manual map[string][]byte) map[string][]byte {
+	entries := map[string]manifest.Entry{}
+	for _, entry := range tree.Entries {
+		entries[entry.Path] = entry
+	}
+	result := map[string][]byte{}
+	for path, data := range automatic {
+		entry, exists := entries[path]
+		if exists && entry.Kind == "file" && entry.Digest == digestBytes(data) && entry.Size == strconv.Itoa(len(data)) {
+			result[path] = data
+		}
+	}
+	for path, data := range manual {
+		result[path] = data
+	}
+	return result
+}

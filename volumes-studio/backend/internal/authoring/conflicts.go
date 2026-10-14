@@ -209,9 +209,7 @@ func (s *Store) CompleteConflict(ctx context.Context, a Actor, library, id strin
 	if err != nil {
 		return result, err
 	}
-	for path, data := range text {
-		content[path] = data
-	}
+	content = resolvedContent(resolved, content, text)
 	branch, err := s.branch(ctx, library, workspace.BranchID)
 	if err != nil {
 		return result, err
