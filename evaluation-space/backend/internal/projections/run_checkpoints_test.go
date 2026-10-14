@@ -4,6 +4,7 @@ import (
 	"aster/contracts/evolution"
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,6 +26,13 @@ func TestCheckpointSurvivesRestartAndRejectsStaleWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkpoint := RunCheckpoint{ID: "checkpoint", RunID: "run", Fence: lease.Fence, Artifact: evolution.ArtifactRef{ID: "artifact", GroupID: "group", SchemaDigest: evolution.Digest([]byte("schema")), Digest: evolution.Digest([]byte("checkpoint")), MediaType: "application/json", GrantID: "grant", PolicyRevision: 1}}
+	checkpoint.Artifact.Size = int64(len("checkpoint"))
+	if err = s.SaveRunCheckpoint(ctx, lease, checkpoint); err == nil {
+		t.Fatal("unsealed checkpoint accepted")
+	}
+	if err = s.SealArtifact(ctx, checkpoint.Artifact, strings.NewReader("checkpoint")); err != nil {
+		t.Fatal(err)
+	}
 	if err = s.SaveRunCheckpoint(ctx, lease, checkpoint); err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +41,7 @@ func TestCheckpointSurvivesRestartAndRejectsStaleWorker(t *testing.T) {
 	}
 	changed := checkpoint
 	changed.Artifact.Digest = evolution.Digest([]byte("changed"))
-	if err = s.SaveRunCheckpoint(ctx, lease, changed); err != ErrConflict {
+	if err = s.SaveRunCheckpoint(ctx, lease, changed); err == nil {
 		t.Fatal("checkpoint overwritten", err)
 	}
 	changed.ID = "foreign"

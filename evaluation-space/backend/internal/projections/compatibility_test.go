@@ -90,6 +90,10 @@ func TestConfigurationResolvesExactCompatibleCatalog(t *testing.T) {
 		t.Fatal("compatible projection rejected", err)
 	}
 	pins := evolution.RunPins{ConfigurationRevision: 1, ConfigurationDigest: evolution.Digest(configRaw), SourcePolicyRevision: 1, Template: template.Ref, Workflow: workflowRef, Service: service.Ref, Model: service.Ref, Inputs: []evolution.ArtifactRef{{ID: "snapshot", GroupID: "group", SchemaDigest: evolution.Digest([]byte("schema")), Digest: evolution.Digest([]byte("snapshot")), MediaType: "application/json", GrantID: "grant", PolicyRevision: 1}}, Base: evolution.ContentRef{LibraryID: "library", CommitID: strings.Repeat("a", 64), Profile: "authored-v1", TreeDigest: evolution.Digest([]byte("tree"))}, Output: config.Bindings[0].Output, Evaluation: off}
+	pins.Inputs[0].Size = int64(len("snapshot"))
+	if err = s.SealArtifact(ctx, pins.Inputs[0], strings.NewReader("snapshot")); err != nil {
+		t.Fatal(err)
+	}
 	admission := RunAdmission{ID: "run", GroupID: "group", BindingID: "binding", OccurrenceID: "manual-one", Pins: pins}
 	run, err := s.AdmitRun(ctx, admission)
 	if err != nil {

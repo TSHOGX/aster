@@ -45,6 +45,9 @@ func (s *Store) SaveRunCheckpoint(ctx context.Context, lease RunLease, value Run
 	if value.Artifact.GroupID != group {
 		return fmt.Errorf("checkpoint artifact group mismatch")
 	}
+	if err = requireSealedArtifact(ctx, tx, value.Artifact); err != nil {
+		return err
+	}
 	var prior []byte
 	err = tx.QueryRowContext(ctx, "SELECT body FROM run_checkpoints WHERE run_id=? AND id=?", value.RunID, value.ID).Scan(&prior)
 	if err == nil {

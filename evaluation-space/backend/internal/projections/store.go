@@ -59,7 +59,10 @@ CREATE TRIGGER immutable_run_event BEFORE UPDATE ON run_events BEGIN SELECT RAIS
 CREATE TRIGGER retained_run_event BEFORE DELETE ON run_events BEGIN SELECT RAISE(ABORT,'retain run event'); END;
 CREATE TABLE run_checkpoints(run_id TEXT NOT NULL REFERENCES runs(id),id TEXT NOT NULL,sequence INTEGER NOT NULL CHECK(sequence>0),body BLOB NOT NULL,PRIMARY KEY(run_id,id),UNIQUE(run_id,sequence));
 CREATE TRIGGER immutable_run_checkpoint BEFORE UPDATE ON run_checkpoints BEGIN SELECT RAISE(ABORT,'immutable run checkpoint'); END;
-CREATE TRIGGER retained_run_checkpoint BEFORE DELETE ON run_checkpoints BEGIN SELECT RAISE(ABORT,'retain run checkpoint'); END;`
+CREATE TRIGGER retained_run_checkpoint BEFORE DELETE ON run_checkpoints BEGIN SELECT RAISE(ABORT,'retain run checkpoint'); END;
+CREATE TABLE artifacts(group_id TEXT NOT NULL,id TEXT NOT NULL,metadata BLOB NOT NULL,body BLOB NOT NULL,PRIMARY KEY(group_id,id));
+CREATE TRIGGER immutable_artifact BEFORE UPDATE ON artifacts BEGIN SELECT RAISE(ABORT,'immutable sealed artifact'); END;
+CREATE TRIGGER retained_artifact BEFORE DELETE ON artifacts BEGIN SELECT RAISE(ABORT,'retain artifact provenance'); END;`
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	if !filepath.IsAbs(path) {

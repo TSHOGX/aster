@@ -75,6 +75,11 @@ func (s *Store) AdmitRun(ctx context.Context, input RunAdmission) (evolution.Run
 	if err = validateConfigurationCatalog(ctx, tx, config); err != nil {
 		return result, fmt.Errorf("%w: %v", ErrCatalog, err)
 	}
+	for _, artifact := range input.Pins.Inputs {
+		if err = requireSealedArtifact(ctx, tx, artifact); err != nil {
+			return result, err
+		}
+	}
 	var active int
 	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE group_id=? AND binding_id=? AND state IN ('queued','running','paused')", input.GroupID, input.BindingID).Scan(&active); err != nil {
 		return result, err
