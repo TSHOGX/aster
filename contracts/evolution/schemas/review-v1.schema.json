@@ -1,0 +1,59 @@
+{
+  "$defs": {
+    "Principal": {
+      "additionalProperties": false,
+      "properties": {
+        "issuer": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "issuer",
+        "subject",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "Review": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "prepared_digest": {
+          "type": "string"
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "reviewer": {
+          "$ref": "#/$defs/Principal"
+        },
+        "verdict": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "prepared_digest",
+        "reviewer",
+        "verdict",
+        "rationale",
+        "created_at"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/Review",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,296 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "grant_id": {
+          "type": "string"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "policy_revision": {
+          "type": "integer"
+        },
+        "schema_digest": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "group_id",
+        "schema_digest",
+        "digest",
+        "size",
+        "media_type",
+        "grant_id",
+        "policy_revision"
+      ],
+      "type": "object"
+    },
+    "Budget": {
+      "additionalProperties": false,
+      "properties": {
+        "max_artifact_bytes": {
+          "type": "integer"
+        },
+        "max_attempts": {
+          "type": "integer"
+        },
+        "max_cost_micros": {
+          "type": "integer"
+        },
+        "max_tokens": {
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_cost_micros",
+        "max_tokens",
+        "max_attempts",
+        "timeout_seconds",
+        "max_artifact_bytes"
+      ],
+      "type": "object"
+    },
+    "ContentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "commit_id": {
+          "type": "string"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "tree_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "library_id",
+        "commit_id",
+        "profile",
+        "tree_digest"
+      ],
+      "type": "object"
+    },
+    "EvaluationPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/Revision"
+        },
+        "reference_release": {
+          "$ref": "#/$defs/ReleaseRef"
+        },
+        "reference_strategy": {
+          "type": "string"
+        },
+        "service": {
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "required": [
+        "mode",
+        "reference_strategy"
+      ],
+      "type": "object"
+    },
+    "JobSubmission": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        },
+        "deadline": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "fence": {
+          "type": "integer"
+        },
+        "grant_id": {
+          "type": "string"
+        },
+        "pins": {
+          "$ref": "#/$defs/RunPins"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "run_id",
+        "fence",
+        "grant_id",
+        "pins",
+        "budget",
+        "deadline"
+      ],
+      "type": "object"
+    },
+    "OutputBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "library_id": {
+          "type": "string"
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "reservation_generation": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "library_id",
+        "prefix",
+        "profile",
+        "reservation_generation"
+      ],
+      "type": "object"
+    },
+    "ReleaseRef": {
+      "additionalProperties": false,
+      "properties": {
+        "descriptor_digest": {
+          "type": "string"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "publisher_id": {
+          "type": "string"
+        },
+        "version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "publisher_id",
+        "library_id",
+        "version_id",
+        "descriptor_digest"
+      ],
+      "type": "object"
+    },
+    "Revision": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "type": "object"
+    },
+    "RunPins": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "$ref": "#/$defs/ContentRef"
+        },
+        "configuration_digest": {
+          "type": "string"
+        },
+        "configuration_revision": {
+          "type": "integer"
+        },
+        "evaluation": {
+          "$ref": "#/$defs/EvaluationPolicy"
+        },
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "model": {
+          "$ref": "#/$defs/Revision"
+        },
+        "output": {
+          "$ref": "#/$defs/OutputBinding"
+        },
+        "service": {
+          "$ref": "#/$defs/Revision"
+        },
+        "source_policy_revision": {
+          "type": "integer"
+        },
+        "template": {
+          "$ref": "#/$defs/Revision"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/Revision"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "workflow": {
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "required": [
+        "configuration_revision",
+        "configuration_digest",
+        "source_policy_revision",
+        "template",
+        "workflow",
+        "service",
+        "model",
+        "tools",
+        "inputs",
+        "base",
+        "output",
+        "evaluation"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/JobSubmission",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

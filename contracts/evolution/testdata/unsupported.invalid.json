@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "id": "corrections",
+  "parameters_schema": {
+    "type": "object"
+  },
+  "inputs": {
+    "corpus": "sha256:3a72f07297ac25e9b49b196620faaa449c23a766d94ab185c07c2e4e27ca57f7"
+  },
+  "outputs": {
+    "patch": "sha256:fcfe5081d91449812405675a8ce8d0d20958524d5068679f54d86b0dc46d7cad"
+  },
+  "limits": {
+    "max_parallel_nodes": 4,
+    "max_total_attempts": 20,
+    "timeout_seconds": 900
+  },
+  "capabilities": [],
+  "nodes": [
+    {
+      "id": "extract",
+      "kind": "shell",
+      "input_ports": {
+        "corpus": "sha256:3a72f07297ac25e9b49b196620faaa449c23a766d94ab185c07c2e4e27ca57f7"
+      },
+      "output_ports": {
+        "items": "sha256:3a72f07297ac25e9b49b196620faaa449c23a766d94ab185c07c2e4e27ca57f7"
+      },
+      "prompt": {
+        "text": "Extract {{corpus}}",
+        "variables": [
+          "corpus"
+        ],
+        "digest": "sha256:d2f3b8b26bbb1a9fbf2a9ceba9cb566e1cbd142154af630e411e68c22cad1f7b"
+      },
+      "model_ref": {
+        "id": "native",
+        "revision": 1,
+        "digest": "sha256:d0f25cc40fe46416cf32b2e565dd9a5fbd979845a57297a3c78e0fc833048ba5"
+      },
+      "max_attempts": 2,
+      "timeout_seconds": 120
+    },
+    {
+      "id": "build",
+      "kind": "transform",
+      "input_ports": {
+        "items": "sha256:3a72f07297ac25e9b49b196620faaa449c23a766d94ab185c07c2e4e27ca57f7"
+      },
+      "output_ports": {
+        "patch": "sha256:fcfe5081d91449812405675a8ce8d0d20958524d5068679f54d86b0dc46d7cad"
+      },
+      "implementation_ref": {
+        "id": "native",
+        "revision": 1,
+        "digest": "sha256:d0f25cc40fe46416cf32b2e565dd9a5fbd979845a57297a3c78e0fc833048ba5"
+      },
+      "max_attempts": 1,
+      "timeout_seconds": 120
+    }
+  ],
+  "edges": [
+    {
+      "from": "$input.corpus",
+      "to": "extract.corpus"
+    },
+    {
+      "from": "extract.items",
+      "to": "build.items"
+    },
+    {
+      "from": "build.patch",
+      "to": "$output.patch"
+    }
+  ]
+}

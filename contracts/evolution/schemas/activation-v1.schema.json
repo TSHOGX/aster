@@ -1,0 +1,76 @@
+{
+  "$defs": {
+    "Activation": {
+      "additionalProperties": false,
+      "properties": {
+        "active_revision": {
+          "type": "integer"
+        },
+        "configuration_digest": {
+          "type": "string"
+        },
+        "desired_revision": {
+          "type": "integer"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "receipts": {
+          "items": {
+            "$ref": "#/$defs/ActivationReceipt"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation_id",
+        "group_id",
+        "desired_revision",
+        "active_revision",
+        "configuration_digest",
+        "state",
+        "receipts"
+      ],
+      "type": "object"
+    },
+    "ActivationReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "configuration_digest": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "integer"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "participant": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "participant",
+        "operation_id",
+        "configuration_digest",
+        "generation",
+        "state"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/Activation",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

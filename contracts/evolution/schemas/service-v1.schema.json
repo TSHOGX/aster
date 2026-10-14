@@ -1,0 +1,130 @@
+{
+  "$defs": {
+    "Capabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_signatures": {
+          "type": "boolean"
+        },
+        "deterministic_transforms": {
+          "type": "boolean"
+        },
+        "editable_graph": {
+          "type": "boolean"
+        },
+        "effective_prompt": {
+          "type": "boolean"
+        },
+        "fixture_dry_run": {
+          "type": "boolean"
+        },
+        "node_kinds": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "node_trace": {
+          "type": "boolean"
+        },
+        "pause_resume": {
+          "type": "boolean"
+        },
+        "protocol_version": {
+          "type": "integer"
+        },
+        "versioned_models": {
+          "type": "boolean"
+        },
+        "workflow_versions": {
+          "items": {
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "protocol_version",
+        "workflow_versions",
+        "node_kinds",
+        "editable_graph",
+        "node_trace",
+        "effective_prompt",
+        "pause_resume",
+        "fixture_dry_run",
+        "deterministic_transforms",
+        "artifact_signatures",
+        "versioned_models"
+      ],
+      "type": "object"
+    },
+    "Revision": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "type": "object"
+    },
+    "Service": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/Capabilities"
+        },
+        "connection_id": {
+          "type": "string"
+        },
+        "credential_generation": {
+          "type": "integer"
+        },
+        "credential_ref": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "ref": {
+          "$ref": "#/$defs/Revision"
+        },
+        "runner_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "kind",
+        "connection_id",
+        "runner_digest",
+        "credential_ref",
+        "credential_generation",
+        "capabilities",
+        "enabled"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/Service",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

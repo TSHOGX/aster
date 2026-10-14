@@ -1,0 +1,65 @@
+{
+  "$defs": {
+    "Branch": {
+      "additionalProperties": false,
+      "properties": {
+        "draft_revision": {
+          "type": "integer"
+        },
+        "head": {
+          "$ref": "#/$defs/ContentRef"
+        },
+        "id": {
+          "type": "string"
+        },
+        "initial_base": {
+          "$ref": "#/$defs/ContentRef"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "library_id",
+        "name",
+        "head",
+        "initial_base",
+        "draft_revision"
+      ],
+      "type": "object"
+    },
+    "ContentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "commit_id": {
+          "type": "string"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "tree_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "library_id",
+        "commit_id",
+        "profile",
+        "tree_digest"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/Branch",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}
