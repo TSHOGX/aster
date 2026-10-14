@@ -1,4 +1,7 @@
 export const ZH: Record<string, string> = {
+ "Create branch from version":"从版本创建分支",
+ "Create a working branch from version {label}? Current drafts remain unchanged.":"从版本 {label} 创建工作分支？当前草稿保持不变。",
+ "This version has no accepted commit available for branching.":"此版本没有可用于创建分支的已接受提交。",
 "Resolve merge conflicts":"解决合并冲突",
 "Inputs changed. Prepare a new integration before resolving.":"输入已变更。请先重新准备集成。",
 "Resolution saved":"解决方案已保存",

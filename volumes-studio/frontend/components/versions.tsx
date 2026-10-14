@@ -4,6 +4,7 @@ import { intlLocale } from "../../../web/i18n/locale";
 import { message, useT } from "../lib/i18n";
 
 import { useEffect, useRef, useState } from "react";
+import type { Branch } from "../lib/branches";
 import { api, Library, requestID, Version } from "../lib/api";
 import { Page, query, relativeTime } from "../lib/workbench";
 import { Menu, Modal, Picker } from "./ui";
@@ -180,12 +181,11 @@ export function Versions({
   }, [root, params]);
   async function action(v: Version, action: string) {
     try {
-      const titles: Record<string, string> = { restore: "Restore version", archive: "Archive version", retire: "Retire version", retry: "Retry version", cancel: "Cancel version" };
+      const titles: Record<string, string> = { branch: "Create branch from version", archive: "Archive version", retire: "Retire version", retry: "Retry version", cancel: "Cancel version" };
       const prompts: Record<string, string> = { archive: "Archive version {label}?", retry: "Retry version {label}?", cancel: "Cancel version {label}?" };
       let prompt = message(prompts[action] || titles[action], { label: v.label });
-      if (action === "restore") {
-        if (!(await studio.settle(library.id))) return;
-        prompt = message("Restore version {label}? This replaces the saved draft. Existing imported copies are unaffected.", { label: v.label });
+      if (action === "branch") {
+        prompt = message("Create a working branch from version {label}? Current drafts remain unchanged.", { label: v.label });
       }
       if (action === "retire") {
         const retention = await api<Record<string, unknown>>(`${root}/versions/${v.id}/retention`);
@@ -199,13 +199,16 @@ export function Versions({
         )) !== "Continue"
       )
         return;
-      if (action === "restore") {
-        await studio.mutate(library.id, {
-          action: "restore",
-          version_id: v.id,
+      if (action === "branch") {
+        if (!v.accepted_commit) throw new Error("This version has no accepted commit available for branching.");
+        const request = requestID();
+        const branch = await studio.write<Branch>(`${root}/branches`, {
+          request_id: request,
+          name: `${v.label.slice(0, 80)}-${request.slice(0, 8)}`,
+          base_commit: v.accepted_commit,
         });
-        for (const b of [...studio.model.buffers])
-          if (b.library === library.id && !b.version) await studio.close(b);
+        studio.selectBranch(branch);
+        const url = new URL(location.href); url.searchParams.set("branch", branch.id); url.searchParams.delete("version"); history.replaceState(null, "", url);
         onInspect("");
       } else if (action === "archive" || action === "retire")
         await studio.write(`${root}/versions/${v.id}/lifecycle`, {
@@ -226,7 +229,7 @@ export function Versions({
   const actions = (v: Version) => [
     { label: message("Version details"), action: () => setSelected(v) },
     ...(["published", "archived"].includes(v.state)
-      ? [{ label: message("Restore to draft"), action: () => void action(v, "restore") }]
+      ? [{ label: message("Create branch from version"), action: () => void action(v, "branch") }]
       : []),
     ...(v.state === "published"
       ? [
