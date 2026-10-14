@@ -216,14 +216,26 @@ func TestDurableOrphansAndMissingReferencedBlobRecovery(t *testing.T) {
 	s, c := testStore(t)
 	l := library(t, s)
 	ctx := context.Background()
-	mutate(t, s, l.ID, fixtureMutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "one", Text: "source"})
+	s.config.Authority = &branchAuthority{true}
+	c.Authority = s.config.Authority
+	main, err := s.MainCommit(ctx, testActor, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch, err := s.CreateBranch(ctx, testActor, l.ID, CreateBranchInput{"orphan-branch", "Work", main.CommitID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SaveBranchText(ctx, testActor, l.ID, branch.ID, SaveBranchTextInput{"save", 1, main.CommitID, "one", "source"}); err != nil {
+		t.Fatal(err)
+	}
 	s.Close()
 	orphan := []byte("orphan")
 	digest := digestBytes(orphan)
 	if err := os.WriteFile(filepath.Join(c.Directory, "blobs", digest[7:]), orphan, 0600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Open(ctx, c)
+	s, err = Open(ctx, c)
 	if err != nil {
 		t.Fatal(err)
 	}

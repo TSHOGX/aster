@@ -74,14 +74,29 @@ func TestExportPinsMembershipArchiveAndRetirement(t *testing.T) {
 	if _, err = s.Retire(ctx, testActor, v.ID, "retire"); err != nil {
 		t.Fatal(err)
 	}
-	// Draft references independently retain the bytes even after source retirement.
+	// Branch drafts independently retain bytes after release retirement.
+	s.config.Authority = &branchAuthority{true}
+	main, err := s.MainCommit(ctx, testActor, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch, err := s.CreateBranch(ctx, testActor, l.ID, CreateBranchInput{"retaining-branch", "Retainer", main.CommitID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SaveBranchText(ctx, testActor, l.ID, branch.ID, SaveBranchTextInput{"retain", 1, main.CommitID, "file", "portable bytes"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.ExecContext(ctx, "DELETE FROM draft_entries WHERE library_id=?", l.ID); err != nil {
+		t.Fatal(err)
+	}
 	if n, err := s.Collect(ctx); err != nil || n != 0 {
-		t.Fatal("draft bytes collected", n, err)
+		t.Fatal("branch bytes collected", n, err)
 	}
-	if changes, _, err := diffFixture(s, ctx, l.ID, "", 2); err != nil || len(changes) != 0 {
-		t.Fatal("retirement erased base diff", changes, err)
+	if _, err = s.MutateBranchStructure(ctx, testActor, l.ID, branch.ID, BranchStructureInput{"remove", 2, main.CommitID, "remove", "file", "", false}); err != nil {
+		t.Fatal(err)
 	}
-	mutate(t, s, l.ID, fixtureMutation{RequestID: "remove", ExpectedRevision: 2, Action: "remove", Path: "file"})
+
 	if n, err := s.Collect(ctx); err != nil || n != 1 {
 		t.Fatal("unreferenced source not collected", n, err)
 	}

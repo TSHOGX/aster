@@ -195,7 +195,7 @@ func (s *Store) Collect(ctx context.Context) (int, error) {
 	if s.poisoned {
 		return 0, ErrBusy
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT digest FROM blobs b WHERE state='live' AND NOT EXISTS(SELECT 1 FROM draft_entries d WHERE d.digest=b.digest) AND NOT EXISTS(SELECT 1 FROM branch_entries be WHERE be.digest=b.digest) AND NOT EXISTS(SELECT 1 FROM version_entries v WHERE v.digest=b.digest) AND NOT EXISTS(SELECT 1 FROM reader_pins p WHERE p.digest=b.digest) ORDER BY digest LIMIT 200`)
+	rows, err := s.db.QueryContext(ctx, `SELECT digest FROM blobs b WHERE state='live' AND NOT EXISTS(SELECT 1 FROM branch_entries be WHERE be.digest=b.digest) AND NOT EXISTS(SELECT 1 FROM version_entries v WHERE v.digest=b.digest) AND NOT EXISTS(SELECT 1 FROM reader_pins p WHERE p.digest=b.digest) ORDER BY digest LIMIT 200`)
 	if err != nil {
 		return 0, err
 	}
