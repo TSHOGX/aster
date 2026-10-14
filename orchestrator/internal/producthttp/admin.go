@@ -76,6 +76,8 @@ func (a *Authentication) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/draft", a.evolutionDraft)
 	mux.HandleFunc("PUT /api/admin/groups/{group}/optimization/draft", a.evolutionDraft)
 	mux.HandleFunc("PUT /api/admin/groups/{group}/optimization/grants", a.evolutionGroupGrant)
+	mux.HandleFunc("PUT /api/admin/groups/{group}/optimization/sources/{source}", a.setEvolutionSource)
+	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/sources/{source}/revisions/{revision}", a.evolutionSourceRevision)
 	mux.HandleFunc("POST /api/admin/studio-grants", a.editStudioGrant)
 	mux.HandleFunc("GET /api/admin/projects", a.adminProjects)
 	mux.HandleFunc("GET /api/admin/projects/{id}", a.adminProject)

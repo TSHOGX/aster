@@ -143,3 +143,24 @@ Events have operation-local sequence numbers and timestamps. Continue with
 requires current `config.read` authority. Retrying an already acknowledged mutation
 does not append another state-transition event. Participant details remain available
 on the operation status endpoint.
+
+## Declare configuration sources
+
+Use `PUT /api/admin/groups/{group}/optimization/sources/{source}` with
+`request_id`, `expected_revision`, and a typed `source` policy. The source ID must
+match the path, and `source.policy_revision` must be the next revision. Policies
+identify the source kind/resource, permitted audience groups, derivative publication
+permission, exclusions, and an empty capture frontier. Configuration authors must
+select the exact current policy; editing these fields inside a configuration does
+not create source authority.
+
+The declaring account must own an existing Project or conversation source. Volume
+sources require explicit Studio read and configure grants. Global administrator
+status alone does not bypass these resource checks. The original issuer controls
+subsequent policy revisions. These requests require a normal login and same-origin
+mutation checks.
+
+Readers with `config.read` can inspect retained policy provenance through
+`GET /api/admin/groups/{group}/optimization/sources/{source}/revisions/{revision}`.
+A historical policy is evidence only: it cannot restore revoked source authority
+or grant access to the underlying content.
