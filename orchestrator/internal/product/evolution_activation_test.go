@@ -33,3 +33,26 @@ func TestEvolutionActivationDesiredActiveReceipts(t *testing.T) {
 		t.Fatal("stale desired revision accepted", err)
 	}
 }
+
+func TestEvolutionActivationAuthorizationReplayAndParticipantIdentity(t *testing.T) {
+	s, admin := accountStore(t)
+	ctx := context.Background()
+	token := adminTestToken(t, s, admin)
+	input := EvolutionActivationInput{"save-once", 0, "digest", false}
+	first, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, input)
+	must(t, err)
+	again, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, input)
+	must(t, err)
+	if first != again {
+		t.Fatal("retry changed operation", first, again)
+	}
+	if _, err = s.EvolutionConfig(ctx, "", StandardUsersGroup); err == nil {
+		t.Fatal("unauthenticated config read")
+	}
+	if err = s.AcceptEvolutionParticipant(ctx, token, first.OperationID, "invented", "digest"); err != ErrInvalid {
+		t.Fatal("unknown participant accepted", err)
+	}
+	if _, err = s.SettleEvolutionActivation(ctx, token, first.OperationID); err != ErrBusy {
+		t.Fatal("missing required receipts settled", err)
+	}
+}

@@ -3,6 +3,7 @@ package product
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"github.com/google/uuid"
 )
@@ -35,7 +36,12 @@ func (s *Store) EvolutionConfig(ctx context.Context, token, group string) (Evolu
 		return EvolutionGroupConfig{}, ErrInvalid
 	}
 	var c EvolutionGroupConfig
-	err := s.reader.QueryRowContext(ctx, "SELECT group_id,desired_revision,active_revision,desired_digest,active_digest,auto_enabled,state,operation_id FROM evolution_group_configs WHERE group_id=?", group).Scan(&c.GroupID, &c.DesiredRevision, &c.ActiveRevision, &c.DesiredDigest, &c.ActiveDigest, &c.AutoEnabled, &c.State, &c.OperationID)
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		if _, err := s.adminSession(ctx, tx, token); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, "SELECT group_id,desired_revision,active_revision,desired_digest,active_digest,auto_enabled,state,operation_id FROM evolution_group_configs WHERE group_id=?", group).Scan(&c.GroupID, &c.DesiredRevision, &c.ActiveRevision, &c.DesiredDigest, &c.ActiveDigest, &c.AutoEnabled, &c.State, &c.OperationID)
+	})
 	return c, err
 }
 func (s *Store) SaveEvolutionConfig(ctx context.Context, token, group string, input EvolutionActivationInput) (EvolutionGroupConfig, error) {
@@ -43,10 +49,21 @@ func (s *Store) SaveEvolutionConfig(ctx context.Context, token, group string, in
 	if !validID(group) || input.ExpectedRevision < 0 || !validDigestLike(input.Digest) {
 		return result, ErrInvalid
 	}
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	request, err := mutationRequest(input.RequestID, "evolution.config.save", group, input)
+	if err != nil {
+		return result, err
+	}
+	err = s.write(ctx, func(tx *sql.Tx) error {
 		actor, err := s.adminSession(ctx, tx, token)
 		if err != nil {
 			return err
+		}
+		raw, replayed, err := readAdminReceipt(ctx, tx, actor.ID, request)
+		if err != nil {
+			return err
+		}
+		if replayed {
+			return json.Unmarshal(raw, &result)
 		}
 		var current EvolutionGroupConfig
 		scanErr := tx.QueryRowContext(ctx, "SELECT group_id,desired_revision,active_revision,desired_digest,active_digest,auto_enabled,state,operation_id FROM evolution_group_configs WHERE group_id=?", group).Scan(&current.GroupID, &current.DesiredRevision, &current.ActiveRevision, &current.DesiredDigest, &current.ActiveDigest, &current.AutoEnabled, &current.State, &current.OperationID)
@@ -63,11 +80,21 @@ func (s *Store) SaveEvolutionConfig(ctx context.Context, token, group string, in
 		if _, err = tx.ExecContext(ctx, `INSERT INTO evolution_group_configs VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET desired_revision=excluded.desired_revision,desired_digest=excluded.desired_digest,auto_enabled=excluded.auto_enabled,state='activating',operation_id=excluded.operation_id,updated_at=excluded.updated_at`, group, result.DesiredRevision, result.ActiveRevision, result.DesiredDigest, result.ActiveDigest, result.AutoEnabled, result.State, result.OperationID, s.timestamp()); err != nil {
 			return err
 		}
+		raw, err = json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		if err = s.writeAdminReceipt(ctx, tx, actor.ID, request, raw); err != nil {
+			return err
+		}
 		return s.auditEvent(ctx, tx, actor.ID, "evolution.config.save", "group", group, "", result.DesiredRevision, result)
 	})
 	return result, err
 }
 func (s *Store) AcceptEvolutionParticipant(ctx context.Context, token, operation, participant, digest string) error {
+	if participant != "studio" && participant != "evaluation-space" {
+		return ErrInvalid
+	}
 	return s.write(ctx, func(tx *sql.Tx) error {
 		actor, err := s.adminSession(ctx, tx, token)
 		if err != nil {
@@ -94,10 +121,10 @@ func (s *Store) SettleEvolutionActivation(ctx context.Context, token, operation 
 			return err
 		}
 		var count int
-		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_activation_receipts WHERE operation_id=? AND config_digest=? AND state='accepted'", operation, result.DesiredDigest).Scan(&count); err != nil {
+		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_activation_receipts WHERE operation_id=? AND config_digest=? AND state='accepted' AND participant IN ('studio','evaluation-space')", operation, result.DesiredDigest).Scan(&count); err != nil {
 			return err
 		}
-		if count < 2 {
+		if count != 2 {
 			return ErrBusy
 		}
 		result.ActiveRevision = result.DesiredRevision
