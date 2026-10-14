@@ -135,3 +135,11 @@ cleanup. `discarded` confirms cleanup; the prior active revision remains unchang
 Already adopted Studio ownership is never released by this compensation path and
 keeps discard unresolved. Missing service configuration or revoked authority can
 also delay cleanup. Inspect operation state before submitting replacement work.
+
+Read an operation's retained state transitions at
+`GET /api/admin/groups/{group}/optimization/operations/{operation}/events?after=0&limit=50`.
+Events have operation-local sequence numbers and timestamps. Continue with
+`after=next_after` when `has_more` is true; limits range from 1 to 100. Every page
+requires current `config.read` authority. Retrying an already acknowledged mutation
+does not append another state-transition event. Participant details remain available
+on the operation status endpoint.

@@ -4,6 +4,7 @@ import (
 	"aster/contracts/evolution"
 	"harness-platform/orchestrator/internal/product"
 	"net/http"
+	"strconv"
 )
 
 func (a *Authentication) evolutionDraft(w http.ResponseWriter, r *http.Request) {
@@ -124,4 +125,30 @@ func (a *Authentication) discardEvolutionOperation(w http.ResponseWriter, r *htt
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (a *Authentication) evolutionOperationEvents(w http.ResponseWriter, r *http.Request) {
+	after := int64(0)
+	limit := 50
+	var err error
+	if raw := r.URL.Query().Get("after"); raw != "" {
+		after, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			writeError(w, 400, "invalid cursor")
+			return
+		}
+	}
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		limit, err = strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, 400, "invalid limit")
+			return
+		}
+	}
+	value, err := a.Store.EvolutionOperationEvents(r.Context(), requestToken(r), r.PathValue("group"), r.PathValue("operation"), after, limit)
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, 200, value)
 }

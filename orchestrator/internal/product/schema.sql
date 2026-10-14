@@ -1925,3 +1925,26 @@ CREATE TRIGGER retained_evolution_operation BEFORE DELETE ON evolution_operation
 BEGIN SELECT RAISE(ABORT,'retain evolution operation provenance'); END;
 CREATE TRIGGER immutable_evolution_operation_identity BEFORE UPDATE OF operation_id,group_id,revision,digest ON evolution_operation_states
 BEGIN SELECT RAISE(ABORT,'immutable evolution operation identity'); END;
+
+CREATE TABLE evolution_operation_events (
+ operation_id TEXT NOT NULL REFERENCES evolution_operation_states(operation_id),
+ sequence INTEGER NOT NULL CHECK(sequence>0),
+ state TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(operation_id,sequence)
+);
+CREATE TRIGGER evolution_operation_initial_event AFTER INSERT ON evolution_operation_states
+BEGIN
+ INSERT INTO evolution_operation_events VALUES(NEW.operation_id,1,NEW.state,strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+END;
+CREATE TRIGGER evolution_operation_transition_event AFTER UPDATE OF state ON evolution_operation_states
+WHEN OLD.state<>NEW.state
+BEGIN
+ INSERT INTO evolution_operation_events
+ SELECT NEW.operation_id,coalesce(max(sequence),0)+1,NEW.state,strftime('%Y-%m-%dT%H:%M:%fZ','now')
+ FROM evolution_operation_events WHERE operation_id=NEW.operation_id;
+END;
+CREATE TRIGGER immutable_evolution_operation_event BEFORE UPDATE ON evolution_operation_events
+BEGIN SELECT RAISE(ABORT,'immutable activation event'); END;
+CREATE TRIGGER retained_evolution_operation_event BEFORE DELETE ON evolution_operation_events
+BEGIN SELECT RAISE(ABORT,'retain activation event'); END;
