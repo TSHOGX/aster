@@ -66,6 +66,13 @@ func (s *Store) Review(ctx context.Context, a Actor, library string, input Revie
 }
 
 func (s *Store) checkPrepared(ctx context.Context, library, digest string, prepared evolution.PreparedIdentity, conflicts int) error {
+	l, err := s.Library(ctx, library)
+	if err != nil {
+		return err
+	}
+	if l.Archived {
+		return ErrConflict
+	}
 	if conflicts > 0 {
 		return ErrConflict
 	}

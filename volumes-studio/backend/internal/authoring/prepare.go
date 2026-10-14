@@ -44,6 +44,13 @@ func (s *Store) PrepareMerge(ctx context.Context, a Actor, library string, input
 	if replay, err := readReceipt(ctx, s.db.DB, a, input.RequestID, body, &result); err != nil || replay {
 		return result, err
 	}
+	l, err := s.Library(ctx, library)
+	if err != nil {
+		return result, err
+	}
+	if l.Archived {
+		return result, ErrConflict
+	}
 	b, err := s.branch(ctx, library, input.BranchID)
 	if err != nil {
 		return result, err
