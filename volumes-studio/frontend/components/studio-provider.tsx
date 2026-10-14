@@ -411,6 +411,9 @@ function useStudioController(session: Session | null) {
       notify();
     });
   const close = async (b: BufferFile) => {
+    // A disabled Save button also means an in-flight save. Settle it before
+    // deciding whether closing needs an unsaved-content confirmation.
+    await queue.current.run(b.library, async () => {});
     if (b.text !== b.saved || !!b.pending) {
       const answer = await ask(
         "Unsaved changes",
@@ -437,6 +440,7 @@ function useStudioController(session: Session | null) {
     notify();
   };
   const settle = async (library: string, path = "") => {
+    await queue.current.run(library, async () => {});
     const dirty = model.current.buffers.filter(
       (b) =>
         b.library === library &&
