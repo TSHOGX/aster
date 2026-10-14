@@ -42,12 +42,16 @@ func (s *Store) AdmitRun(ctx context.Context, input RunAdmission) (evolution.Run
 	}
 	defer tx.Rollback()
 	var oldRequest, body []byte
-	err = tx.QueryRowContext(ctx, "SELECT request,body FROM runs WHERE id=? OR (group_id=? AND binding_id=? AND configuration_revision=? AND occurrence_id=?)", input.ID, input.GroupID, input.BindingID, input.Pins.ConfigurationRevision, input.OccurrenceID).Scan(&oldRequest, &body)
+	var state string
+	var fence int64
+	err = tx.QueryRowContext(ctx, "SELECT request,body,state,fence FROM runs WHERE id=? OR (group_id=? AND binding_id=? AND configuration_revision=? AND occurrence_id=?)", input.ID, input.GroupID, input.BindingID, input.Pins.ConfigurationRevision, input.OccurrenceID).Scan(&oldRequest, &body, &state, &fence)
 	if err == nil {
 		if !bytes.Equal(oldRequest, request) {
 			return result, ErrConflict
 		}
 		result, err = evolution.Decode[evolution.Run](bytes.NewReader(body))
+		result.State = state
+		result.Fence = fence
 		return result, err
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -84,7 +88,7 @@ func (s *Store) AdmitRun(ctx context.Context, input RunAdmission) (evolution.Run
 			budget = binding.Budget
 		}
 	}
-	result = evolution.Run{ID: input.ID, GroupID: input.GroupID, BindingID: input.BindingID, Pins: input.Pins, State: "queued", Handoff: "pending", EvaluationState: input.Pins.Evaluation.Mode, ResultBranch: "run-" + input.ID, Fence: 1, Budget: budget, CreatedAt: time.Now().UTC()}
+	result = evolution.Run{ID: input.ID, GroupID: input.GroupID, BindingID: input.BindingID, Pins: input.Pins, State: "queued", Handoff: "pending", EvaluationState: input.Pins.Evaluation.Mode, ResultBranch: "run-" + input.ID, Fence: 0, Budget: budget, CreatedAt: time.Now().UTC()}
 	body, err = json.Marshal(result)
 	if err != nil {
 		return result, err
