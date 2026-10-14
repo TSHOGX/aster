@@ -64,7 +64,7 @@ func TestWorkbenchTreeEntryAndPinnedContent(t *testing.T) {
 	if err != nil || found.Total != 1 {
 		t.Fatal(found, err)
 	}
-	e, err := s.Entry(ctx, l.ID, "文档/a_%.md")
+	e, err := entryFixture(s, ctx, l.ID, "文档/a_%.md")
 	if err != nil || e.Entry == nil || e.Revision != l.DraftRevision {
 		t.Fatal(e, err)
 	}
@@ -88,7 +88,7 @@ func TestWorkbenchDiffPinsBaseWithoutRevisionChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := Query{Revision: result.Revision}
-	p, err := s.WorkbenchDiff(ctx, l.ID, q)
+	p, err := workbenchDiffFixture(s, ctx, l.ID, q)
 	if err != nil || p.Total != 1 {
 		t.Fatal(p, err)
 	}
@@ -99,11 +99,11 @@ func TestWorkbenchDiffPinsBaseWithoutRevisionChange(t *testing.T) {
 	if _, err = s.ValidateNext(ctx, allow); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.WorkbenchDiff(ctx, l.ID, q); err != ErrConflict {
+	if _, err = workbenchDiffFixture(s, ctx, l.ID, q); err != ErrConflict {
 		t.Fatal("base changed", err)
 	}
 	q.BaseVersion = v.ID
-	p, err = s.WorkbenchDiff(ctx, l.ID, q)
+	p, err = workbenchDiffFixture(s, ctx, l.ID, q)
 	if err != nil || p.Total != 0 {
 		t.Fatal(p, err)
 	}

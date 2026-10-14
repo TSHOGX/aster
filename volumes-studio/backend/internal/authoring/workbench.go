@@ -3,7 +3,6 @@ package authoring
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"sort"
@@ -44,10 +43,6 @@ type VersionSummary struct {
 	Version
 	CreatedAt   int64  `json:"created_at"`
 	PublishedAt *int64 `json:"published_at"`
-}
-type EntrySnapshot struct {
-	Entry    *manifest.Entry `json:"entry"`
-	Revision int64           `json:"revision"`
 }
 type workbenchCursor struct {
 	Scope    string `json:"scope"`
@@ -382,74 +377,4 @@ func (s *Store) WorkbenchTree(ctx context.Context, id, version string, q Query, 
 		mode = "search"
 	}
 	return pageOf(out, q, id+"/"+version+"/"+mode, 200)
-}
-func (s *Store) Entry(ctx context.Context, id, name string) (EntrySnapshot, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if manifest.ValidPath(name, false) != nil {
-		return EntrySnapshot{}, ErrInvalid
-	}
-	l, err := s.Library(ctx, id)
-	if err != nil {
-		return EntrySnapshot{}, err
-	}
-	result := EntrySnapshot{Revision: l.DraftRevision}
-	var e manifest.Entry
-	var size int64
-	err = s.db.QueryRowContext(ctx, "SELECT path,kind,size,coalesce(digest,'') FROM draft_entries WHERE library_id=? AND path=?", id, name).Scan(&e.Path, &e.Kind, &size, &e.Digest)
-	if err == sql.ErrNoRows {
-		return result, nil
-	}
-	if err != nil {
-		return result, err
-	}
-	e.Size = strconv.FormatInt(size, 10)
-	result.Entry = &e
-	return result, nil
-}
-
-type WorkbenchChange struct {
-	Change
-	Before *manifest.Entry `json:"before,omitempty"`
-	After  *manifest.Entry `json:"after,omitempty"`
-}
-
-func (s *Store) WorkbenchDiff(ctx context.Context, id string, q Query) (Page[WorkbenchChange], error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	l, err := s.Library(ctx, id)
-	if err != nil {
-		return Page[WorkbenchChange]{}, err
-	}
-	if q.Revision != l.DraftRevision || q.BaseVersion != l.BaseVersion {
-		return Page[WorkbenchChange]{}, ErrConflict
-	}
-	current, err := entries(ctx, s.db, "draft_entries", "library_id", id)
-	if err != nil {
-		return Page[WorkbenchChange]{}, err
-	}
-	base, err := s.baseEntries(ctx, l.BaseVersion)
-	if err != nil {
-		return Page[WorkbenchChange]{}, err
-	}
-	before := map[string]manifest.Entry{}
-	after := map[string]manifest.Entry{}
-	for _, e := range base {
-		before[e.Path] = e
-	}
-	for _, e := range current {
-		after[e.Path] = e
-	}
-	out := []WorkbenchChange{}
-	for _, c := range changesBetween(current, base) {
-		item := WorkbenchChange{Change: c}
-		if e, ok := before[c.Path]; ok {
-			item.Before = &e
-		}
-		if e, ok := after[c.Path]; ok {
-			item.After = &e
-		}
-		out = append(out, item)
-	}
-	return pageOf(out, q, id+"/diff", 200)
 }
