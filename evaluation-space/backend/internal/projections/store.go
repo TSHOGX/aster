@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 
 	"aster/contracts/evolution"
@@ -22,7 +23,12 @@ import (
 var ErrConflict = errors.New("projection_conflict")
 var ErrNotFound = errors.New("projection_not_found")
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db        *sql.DB
+	lock      *os.File
+	closeOnce sync.Once
+	closeErr  error
+}
 type Projection struct {
 	OperationID   string                  `json:"operation_id"`
 	Digest        string                  `json:"digest"`
@@ -40,6 +46,20 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		lock.Close()
+		return nil, fmt.Errorf("projection store already owned: %w", err)
+	}
+	opened := false
+	defer func() {
+		if !opened {
+			lock.Close()
+		}
+	}()
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
 	if err != nil {
 		return nil, err
@@ -82,9 +102,13 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db}, nil
+	opened = true
+	return &Store{db: db, lock: lock}, nil
 }
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	s.closeOnce.Do(func() { s.closeErr = errors.Join(s.db.Close(), s.lock.Close()) })
+	return s.closeErr
+}
 
 // Adopt is an internal participant command. Its caller must authenticate central
 // service authority and validate catalog/resource grants before invoking it.

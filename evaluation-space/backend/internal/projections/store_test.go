@@ -70,3 +70,28 @@ func TestProjectionDatabasePrivateAndRejectsSymlink(t *testing.T) {
 		t.Fatal("symlink database accepted")
 	}
 }
+
+func TestProjectionStoreExclusiveLifetimeOwnership(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "space.db")
+	first, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	if second, err := Open(ctx, path); err == nil {
+		second.Close()
+		t.Fatal("concurrent store owner admitted")
+	}
+	if err = first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal("ownership not released", err)
+	}
+	defer second.Close()
+	if err = first.Close(); err != nil {
+		t.Fatal("close not idempotent", err)
+	}
+}
