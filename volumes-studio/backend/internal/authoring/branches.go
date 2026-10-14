@@ -70,7 +70,7 @@ func (s *Store) branch(ctx context.Context, library, id string) (Branch, error) 
 // CreateBranch copies an exact immutable snapshot into isolated saved draft state.
 // Main is never represented as a mutable draft branch.
 func (s *Store) CreateBranch(ctx context.Context, a Actor, library string, input CreateBranchInput) (Branch, error) {
-	if !manifest.ValidID(library) || !evolution.ObjectID(input.BaseCommit) || !validText(input.Name, 128) || strings.TrimSpace(input.Name) == "" || input.Name == "main" {
+	if !manifest.ValidID(library) || !evolution.ObjectID(input.BaseCommit) || !validText(input.Name, 128) || strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Name) != input.Name || input.Name == "main" {
 		return Branch{}, ErrInvalid
 	}
 	if err := s.authorizeLibrary(ctx, a, library, "volume.author"); err != nil {
@@ -91,6 +91,13 @@ func (s *Store) CreateBranch(ctx context.Context, a Actor, library string, input
 		return b, err
 	}
 	if l.Archived {
+		return b, ErrConflict
+	}
+	var duplicate int
+	if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM branches WHERE library_id=? AND name=?", library, input.Name).Scan(&duplicate); err != nil {
+		return b, err
+	}
+	if duplicate != 0 {
 		return b, ErrConflict
 	}
 	r, err := s.historyRepository(ctx, library)

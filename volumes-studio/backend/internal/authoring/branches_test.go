@@ -2,6 +2,7 @@ package authoring
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"testing"
 
@@ -400,5 +401,35 @@ func TestBranchSearchRevision(t *testing.T) {
 	}
 	if _, err = s.SearchBranch(ctx, testActor, l.ID, b.ID, "notes", "", 1); err != ErrConflict {
 		t.Fatal("stale search accepted", err)
+	}
+}
+
+func TestBranchNamesRejectAmbiguityBeforeGitEffects(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	main, err := s.MainCommit(ctx, testActor, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, name := range []string{" main", "main ", " Work", "Work ", "\tWork"} {
+		if _, err = s.CreateBranch(ctx, testActor, l.ID, CreateBranchInput{RequestID: fmt.Sprintf("bad-name-%d", i), Name: name, BaseCommit: main.CommitID}); err != ErrInvalid {
+			t.Fatal("ambiguous branch name accepted", name, err)
+		}
+	}
+	input := CreateBranchInput{"create-name", "Work", main.CommitID}
+	first, err := s.CreateBranch(ctx, testActor, l.ID, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.RequestID = "duplicate-name"
+	if _, err = s.CreateBranch(ctx, testActor, l.ID, input); err != ErrConflict {
+		t.Fatal("duplicate name lacks conflict response", err)
+	}
+	input.RequestID = "create-name"
+	again, err := s.CreateBranch(ctx, testActor, l.ID, input)
+	if err != nil || again.ID != first.ID {
+		t.Fatal("duplicate check broke replay", err)
 	}
 }
