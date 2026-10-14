@@ -29,6 +29,18 @@ func (s *Store) ReserveEvolutionPrefix(ctx context.Context, actor Actor, r Prefi
 		if err := writableReservationLibrary(ctx, tx, r.LibraryID); err != nil {
 			return r, err
 		}
+		var owner string
+		if err := tx.QueryRowContext(ctx, "SELECT evolution_owner_group FROM libraries WHERE id=?", r.LibraryID).Scan(&owner); err != nil {
+			return r, err
+		}
+		if owner != "" && owner != r.GroupID {
+			return r, ErrConflict
+		}
+		if owner == "" {
+			if _, err := tx.ExecContext(ctx, "UPDATE libraries SET evolution_owner_group=? WHERE id=?", r.GroupID, r.LibraryID); err != nil {
+				return r, err
+			}
+		}
 		var prior PrefixReservation
 		err := tx.QueryRowContext(ctx, "SELECT library_id,prefix,owner_group_id,binding_id,generation,state,operation_id FROM evolution_prefix_reservations WHERE library_id=? AND prefix=?", r.LibraryID, r.Prefix).Scan(&prior.LibraryID, &prior.Prefix, &prior.GroupID, &prior.BindingID, &prior.Generation, &prior.State, &prior.OperationID)
 		if err == nil {

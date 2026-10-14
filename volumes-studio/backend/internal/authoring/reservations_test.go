@@ -168,3 +168,29 @@ func TestArchivedLibraryBlocksReservationEffectsButAllowsCompensation(t *testing
 		t.Fatal("cleanup blocked", err)
 	}
 }
+
+func TestCompensationDoesNotTransferLibraryOwner(t *testing.T) {
+	s, _ := testStore(t)
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	ctx := context.Background()
+	r := PrefixReservation{LibraryID: l.ID, Prefix: "skills", GroupID: "alpha", BindingID: "skills", Generation: 1, OperationID: "alpha-op"}
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix); err != nil {
+		t.Fatal(err)
+	}
+	r.GroupID = "beta"
+	r.Prefix = "lessons"
+	r.BindingID = "lessons"
+	r.OperationID = "beta-op"
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != ErrConflict {
+		t.Fatal("compensation silently transferred owner", err)
+	}
+	r.GroupID = "alpha"
+	r.OperationID = "alpha-lessons"
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != nil {
+		t.Fatal("original owner cannot reserve disjoint output", err)
+	}
+}

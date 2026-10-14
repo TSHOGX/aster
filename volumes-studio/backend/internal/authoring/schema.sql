@@ -4,6 +4,7 @@ CREATE TABLE blobs(
  state TEXT NOT NULL DEFAULT 'live' CHECK(state IN ('live','deleting'))
 );
 CREATE TABLE libraries(
+ evolution_owner_group TEXT NOT NULL DEFAULT '',
  history_state TEXT NOT NULL DEFAULT 'preparing' CHECK(history_state IN('preparing','ready')),
  id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,description TEXT NOT NULL,
  profile TEXT NOT NULL DEFAULT 'authored-v1' CHECK(profile IN('authored-v1','shared-assets-v1')),
