@@ -22,7 +22,7 @@ func (s *Store) ReserveRunBudget(ctx context.Context, lease RunLease, id string,
 		return err
 	}
 	defer tx.Rollback()
-	run, used, err := liveRunBudget(ctx, tx, lease)
+	run, used, err := liveRunBudget(ctx, tx, lease, false)
 	if err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func (s *Store) SettleRunBudget(ctx context.Context, lease RunLease, id string, 
 		return err
 	}
 	defer tx.Rollback()
-	_, used, err := liveRunBudget(ctx, tx, lease)
+	_, used, err := liveRunBudget(ctx, tx, lease, true)
 	if err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ func (s *Store) SettleRunBudget(ctx context.Context, lease RunLease, id string, 
 	}
 	return tx.Commit()
 }
-func liveRunBudget(ctx context.Context, tx *sql.Tx, lease RunLease) (evolution.Run, RunUsage, error) {
+func liveRunBudget(ctx context.Context, tx *sql.Tx, lease RunLease, reconciliation bool) (evolution.Run, RunUsage, error) {
 	var run evolution.Run
 	var usage RunUsage
 	var body []byte
@@ -99,7 +99,7 @@ func liveRunBudget(ctx context.Context, tx *sql.Tx, lease RunLease) (evolution.R
 	if err != nil {
 		return run, usage, err
 	}
-	if state != "running" || worker != lease.WorkerID || fence != lease.Fence || expires <= time.Now().UnixNano() {
+	if (state != "running" && !(reconciliation && state == "cancelling")) || worker != lease.WorkerID || fence != lease.Fence || expires <= time.Now().UnixNano() {
 		return run, usage, ErrConflict
 	}
 	run, err = evolution.Decode[evolution.Run](bytes.NewReader(body))

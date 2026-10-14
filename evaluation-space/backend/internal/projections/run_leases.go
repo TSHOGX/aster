@@ -30,7 +30,7 @@ func (s *Store) ClaimRun(ctx context.Context, run, worker string, duration time.
 	defer tx.Rollback()
 	now := time.Now().UTC()
 	result.ExpiresAt = now.Add(duration)
-	err = tx.QueryRowContext(ctx, `UPDATE runs SET state='running',worker_id=?,fence=fence+1,lease_until=? WHERE id=? AND (state='queued' OR (state='running' AND lease_until<=?)) RETURNING fence`, worker, result.ExpiresAt.UnixNano(), run, now.UnixNano()).Scan(&result.Fence)
+	err = tx.QueryRowContext(ctx, `UPDATE runs SET state=CASE WHEN state='cancelling' THEN state ELSE 'running' END,worker_id=?,fence=fence+1,lease_until=? WHERE id=? AND (state='queued' OR (state IN ('running','cancelling') AND lease_until<=?)) RETURNING fence`, worker, result.ExpiresAt.UnixNano(), run, now.UnixNano()).Scan(&result.Fence)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return result, ErrConflict
@@ -45,7 +45,7 @@ func (s *Store) RenewRun(ctx context.Context, lease RunLease, duration time.Dura
 	}
 	now := time.Now().UTC()
 	expires := now.Add(duration)
-	result, err := s.db.ExecContext(ctx, `UPDATE runs SET lease_until=? WHERE id=? AND worker_id=? AND fence=? AND state='running' AND lease_until>?`, expires.UnixNano(), lease.RunID, lease.WorkerID, lease.Fence, now.UnixNano())
+	result, err := s.db.ExecContext(ctx, `UPDATE runs SET lease_until=? WHERE id=? AND worker_id=? AND fence=? AND state IN ('running','cancelling') AND lease_until>?`, expires.UnixNano(), lease.RunID, lease.WorkerID, lease.Fence, now.UnixNano())
 	if err != nil {
 		return lease, err
 	}
@@ -85,7 +85,14 @@ func (s *Store) SettleRun(ctx context.Context, lease RunLease, state string) err
 	if current == state {
 		return nil
 	}
-	if current != "running" || expires <= time.Now().UnixNano() {
+	if (current != "running" && !(current == "cancelling" && state == "cancelled")) || expires <= time.Now().UnixNano() {
+		return ErrConflict
+	}
+	var held int
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM run_budget_reservations WHERE run_id=? AND state='held'", lease.RunID).Scan(&held); err != nil {
+		return err
+	}
+	if held > 0 {
 		return ErrConflict
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE runs SET state=?,lease_until=0 WHERE id=?", state, lease.RunID); err != nil {

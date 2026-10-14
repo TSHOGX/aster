@@ -73,6 +73,13 @@ func (s *Store) ControlRun(ctx context.Context, input RunControl) (RunControlRes
 			return result, ErrConflict
 		}
 		result.State = "cancelled"
+		var held int
+		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM run_budget_reservations WHERE run_id=? AND state='held'", input.RunID).Scan(&held); err != nil {
+			return result, err
+		}
+		if held > 0 {
+			result.State = "cancelling"
+		}
 	}
 	result.Fence++
 	if _, err = tx.ExecContext(ctx, "UPDATE runs SET state=?,fence=?,worker_id='',lease_until=0 WHERE id=?", result.State, result.Fence, input.RunID); err != nil {

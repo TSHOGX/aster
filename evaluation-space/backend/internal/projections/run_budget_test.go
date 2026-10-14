@@ -77,3 +77,51 @@ func TestBudgetReservationsHoldAcrossWorkerTakeover(t *testing.T) {
 		t.Fatal("unused ceiling not released", err)
 	}
 }
+
+func TestCancellationRetainsUnsettledBudgetAndBindingSlot(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "space.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	body, _ := json.Marshal(evolution.Run{ID: "run", GroupID: "group", Budget: evolution.Budget{MaxTokens: 10, MaxCostMicros: 20}})
+	_, err = s.db.ExecContext(ctx, `INSERT INTO runs(id,group_id,binding_id,configuration_revision,occurrence_id,request,body,state) VALUES('run','group','binding',1,'occurrence','{}',?,'queued')`, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := s.ClaimRun(ctx, "run", "worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ReserveRunBudget(ctx, lease, "call", RunUsage{8, 15}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SettleRun(ctx, lease, "completed"); err != ErrConflict {
+		t.Fatal("unsettled spending completed", err)
+	}
+	result, err := s.ControlRun(ctx, RunControl{RequestID: "cancel", RunID: "run", ExpectedFence: lease.Fence, Action: "cancel"})
+	if err != nil || result.State != "cancelling" {
+		t.Fatal(result, err)
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO runs(id,group_id,binding_id,configuration_revision,occurrence_id,request,body,state) VALUES('next','group','binding',1,'next','{}',?,'queued')`, body)
+	if err == nil {
+		t.Fatal("unsettled cancellation released binding")
+	}
+	cleanup, err := s.ClaimRun(ctx, "run", "cleanup", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ReserveRunBudget(ctx, cleanup, "new-call", RunUsage{1, 1}); err != ErrConflict {
+		t.Fatal("cleanup dispatched new work", err)
+	}
+	if err = s.SettleRun(ctx, cleanup, "completed"); err != ErrConflict {
+		t.Fatal("cancelled intent changed to success", err)
+	}
+	if err = s.SettleRunBudget(ctx, cleanup, "call", RunUsage{4, 7}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SettleRun(ctx, cleanup, "cancelled"); err != nil {
+		t.Fatal(err)
+	}
+}
