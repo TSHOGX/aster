@@ -787,3 +787,68 @@ test("rename waits for an in-flight save without an unsaved confirmation",async(
  await expect(page.getByRole("button",{name:"Open after.md",exact:true})).toBeVisible();
  await expect(page.getByRole("tab",{name:"after.md"})).toBeVisible();
 });
+
+for (const width of [390, 1440]) test(`bilingual shared-assets controls and validation preserve publication edits at ${width}px`, async ({ page }, info) => {
+  await page.setViewportSize({ width, height: 900 });
+  await signIn(page);
+  const account = await page.request.get("/api/auth/session").then(response => response.json());
+  const language = async (value: "en" | "zh") => {
+    const saved = await page.request.get("/api/me/preferences").then(response => response.json());
+    const reply = await page.request.patch("/api/me/preferences", { headers: { Origin: origin }, data: { expected_revision: saved.revision, language: value } });
+    expect(reply.ok()).toBeTruthy();
+    await page.evaluate(id => window.dispatchEvent(new StorageEvent("storage", { key: `account-appearance:${id}` })), account.id);
+    await expect(page.locator("html")).toHaveAttribute("lang", value === "zh" ? "zh-Hans" : "en");
+  };
+  try {
+    await page.getByRole("button", { name: "New library", exact: true }).click();
+    const name = `English context ${Date.now()}`;
+    await page.getByLabel("Name", { exact: true }).fill(name);
+    await page.getByRole("radio", { name: "Shared assets", exact: true }).check();
+    await language("zh");
+    const dialog = page.getByRole("dialog", { name: "新建库", exact: true });
+    await expect(dialog.getByLabel("名称", { exact: true })).toHaveValue(name);
+    const radio = dialog.getByRole("radio", { name: "共享资源", exact: true });
+    await expect(radio).toBeChecked();
+    const frame = await radio.boundingBox();
+    expect(frame!.width).toBeLessThanOrEqual(20);
+    expect(frame!.height).toBeLessThanOrEqual(20);
+    expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+    await page.screenshot({ path: info.outputPath(`profile-zh-${width}.png`) });
+    let unavailable = true;
+    await page.route("**/draft/validation", route => {
+      if (unavailable) { unavailable = false; return route.fulfill({ status: 503, json: { error: "request_failed" } }); }
+      return route.continue();
+    });
+    await dialog.getByRole("button", { name: "创建草稿", exact: true }).click();
+    const validation = page.locator(".shared-assets-validation");
+    await expect(validation).toContainText("验证暂不可用");
+    await validation.getByRole("button", { name: "重试验证", exact: true }).click();
+    await expect(validation).toContainText("请添加必需的根目录 UTF-8 文本文件。");
+    await expect(validation).toContainText("缺失");
+    expect(await validation.evaluate(node => getComputedStyle(node).display)).toBe("block");
+    await language("en");
+    await expect(validation).toContainText("Add the required root UTF-8 text file.");
+    if (width < 768) await page.getByRole("button", { name: "Show files", exact: true }).click();
+    await createFile(page, "AGENTS.md");
+    await editorText(page, "AGENTS.md", "# English Name\nKeep user content unchanged. 中文内容。");
+    await page.getByRole("button", { name: "Save file", exact: true }).click();
+    await expect(validation).toContainText("Ready to publish");
+    await language("zh");
+    await expect(page.getByRole("textbox", { name: "AGENTS.md 的内容", exact: true })).toContainText("Keep user content unchanged. 中文内容。");
+    await expect(validation).toContainText("可以发布");
+    await page.getByRole("button", { name: "审阅并发布", exact: true }).click();
+    const review = page.getByRole("dialog", { name: "审阅并发布", exact: true });
+    await expect(review).toContainText("内容类型：共享资源 · 不可变版本");
+    await review.getByLabel("版本标签", { exact: true }).fill("English version name");
+    await review.getByLabel("发布说明", { exact: true }).fill("English and 中文 release note");
+    expect(await review.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+    await page.screenshot({ path: info.outputPath(`validation-zh-${width}.png`) });
+    await language("en");
+    const englishReview = page.getByRole("dialog", { name: "Review & publish", exact: true });
+    await expect(englishReview.getByLabel("Version label", { exact: true })).toHaveValue("English version name");
+    await expect(englishReview.getByRole("textbox", { name: "Release note", exact: true })).toHaveValue("English and 中文 release note");
+    await englishReview.getByRole("button", { name: "Publish version", exact: true }).click();
+    await expect(page.getByText("published", { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  } finally { await language("en"); }
+});

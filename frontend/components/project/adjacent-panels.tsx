@@ -509,7 +509,7 @@ export function Inbox({
         <article className="schedule-card" key={notice.id}>
           <strong>
             {notice.title}
-            {!notice.read ? " · unread" : ""}
+            {!notice.read ? ` · ${tr("unread").trim()}` : ""}
           </strong>
           <p>{notice.body}</p>
           <small>{new Date(notice.created_at).toLocaleString(intlLocale())}</small>

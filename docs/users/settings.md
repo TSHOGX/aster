@@ -21,6 +21,10 @@ this account setting and do not have separate language selectors. Language chang
 preview immediately and use the same retry, reapply and revert controls as appearance changes. Switching
 language keeps your current selection and unsaved files open.
 
+Menus, validation messages, and dates and quantities follow the selected language.
+Project names, file paths, version labels and file contents retain their original
+text. Product names and technical identifiers may remain in English.
+
 Use the security controls to change your password or sign out all sessions.
 Password changes and all-session sign-out invalidate earlier sessions. Leaving
 with an unsaved name or typed password asks whether to discard it. Ordinary logout

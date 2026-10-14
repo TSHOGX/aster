@@ -1,11 +1,9 @@
 "use client";
 
-import { useCallback } from "react";
-
-import { type Locale } from "./locale";
-import { useLocale } from "@web/i18n";
+import { type Locale, type Message } from "./locale";
+import { useTranslator } from "@web/i18n";
 export { useLocale } from "@web/i18n";
-import { type MessageKey } from "./messages-en";
+import { EN, type MessageKey } from "./messages-en";
 import { translateText } from "@web/i18n/text";
 import { ZH } from "./messages-zh";
 
@@ -26,13 +24,13 @@ export { format } from "@web/i18n/locale";
 /** Looks a key up in one locale, falling back to English then to the key. */
 export function translate(
   locale: Locale,
-  key: string,
+  key: Message,
   params?: MessageParams,
 ): string {
-  return translateText(locale, key, params, ZH);
+  return translateText(locale, key, params, ZH, EN);
 }
 
-export type TFunction = (key: string, params?: MessageParams) => string;
+export type TFunction = (key: Message, params?: MessageParams) => string;
 
 /**
  * Returns the translator for the current locale.
@@ -41,9 +39,5 @@ export type TFunction = (key: string, params?: MessageParams) => string;
  * children without invalidating them each render.
  */
 export function useT(): TFunction {
-  const locale = useLocale();
-  return useCallback(
-    (key: string, params?: MessageParams) => translate(locale, key, params),
-    [locale],
-  );
+  return useTranslator(ZH, EN);
 }

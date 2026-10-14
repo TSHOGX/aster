@@ -1,6 +1,7 @@
 "use client";
 import { Menu } from "@/components/project/ui";
 import { useT } from "@/lib/i18n";
+import { message, type Message } from "@web/i18n/locale";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
@@ -136,10 +137,10 @@ export function TerminalPanel({
           <span className="truncate text-xs font-medium">{title}</span>
           <span className="text-2xs text-[var(--color-foreground-muted)]">
             {processState === "exited"
-              ? `exited ${processExitCode ?? exitCode ?? ""}`
+              ? tr("exited {code}", { code: processExitCode ?? exitCode ?? "" })
               : processState === "lost"
-                ? "process lost"
-                : describe(attachment, exitCode)}
+                ? tr("process lost")
+                : tr(describe(attachment, exitCode))}
           </span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -187,7 +188,7 @@ export function TerminalPanel({
     </section>
   );
 }
-function describe(attachment: Attachment, exitCode: number | null) {
+function describe(attachment: Attachment, exitCode: number | null): Message {
   switch (attachment) {
     case "connecting":
       return "attaching";
@@ -196,7 +197,7 @@ function describe(attachment: Attachment, exitCode: number | null) {
     case "readonly":
       return "read-only";
     case "ended":
-      return exitCode === null ? "ended" : `exited ${exitCode}`;
+      return exitCode === null ? "ended" : message("exited {code}", { code: exitCode });
     case "detached":
       // The view is gone; whether the process is still running is unknown here.
       return "view detached";

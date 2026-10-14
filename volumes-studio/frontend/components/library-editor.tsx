@@ -967,9 +967,9 @@ export function LibraryEditor({ id }: { id: string }) {
           </p>
           <p className="muted">
              {tr("This publishes the exact saved draft reviewed here.")} </p>
- <details><summary>Immutable content digest</summary><code>{preview?.tree_digest}</code></details>
- <p>Content profile: {library?.profile === "shared-assets-v1" ? "Shared assets" : "Ordinary data"} · Immutable version</p>
- {library?.profile === "shared-assets-v1" && <SharedAssetsValidation library={id} version="" />}
+ <details><summary>{tr("Immutable content digest")}</summary><code>{preview?.tree_digest}</code></details>
+ <p>{tr("Content profile: {profile} · Immutable version", { profile: tr(library?.profile === "shared-assets-v1" ? "Shared assets" : "Ordinary data") })}</p>
+ {library?.profile === "shared-assets-v1" && <SharedAssetsValidation key={preview?.revision} library={id} version="" />}
           {preview &&
             library &&
             (preview.revision !== library.draft_revision ||

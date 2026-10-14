@@ -252,7 +252,7 @@ export default function Home() {
                     {l.name}
                   </Link>
                   <p className="description">{l.description}</p>
-                  {l.builtin && <small>Built-in origin · Publish a new version to extend</small>}
+                  {l.builtin && <small>{tr("Built-in origin · Publish a new version to extend")}</small>}
                   <small className="catalog-status">{l.profile === "shared-assets-v1" ? tr("Shared assets") : tr("Ordinary data")}</small>
                 </td>
                 <td>

@@ -1,4 +1,18 @@
 export const COMMON_ZH: Record<string, string> = {
+  "Another content rollout is pending. Settle it before changing a different content type.": "另一项内容更新尚未完成。请先处理完毕，再更改其他内容类型。",
+  "Only the reviewed content references change. Sandbox releases, agent configuration, owned directories, network, capacities and mount structure are retained.": "仅更改已审阅的内容引用。沙箱版本、Agent 配置、自有目录、网络、容量和挂载结构将保留。",
+  "Project no longer has access to this environment.": "项目已无权访问此环境。",
+  "Fixed by an administrator.": "已由管理员固定。",
+  "The selected release has been retired.": "所选发布版本已停用。",
+  "update_structure_changed": "挂载结构已更改，无法应用此内容更新。",
+  "update_source_changed": "内容来源已更改，无法应用此内容更新。",
+  "update_no_changes": "所选内容没有版本变化。",
+  "update_no_eligible_projects": "没有符合条件的项目可接受此更新。",
+  "update_executor_unsupported": "当前运行环境不支持此内容更新。",
+  "update_kind_unsupported": "不支持此内容更新类型。",
+  "update_attempt_unsettled": "上一次更新的结果尚未确认。请先处理该更新。",
+  "update_stopped": "此内容更新已停止。",
+
   " · {value0} unsaved file(s) excluded": " · 不包含 {value0} 个未保存文件",
   "(capped)": "（已限制）",
   "(image not loaded)": "（图片未加载）",

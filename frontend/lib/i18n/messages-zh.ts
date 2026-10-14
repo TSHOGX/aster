@@ -1,5 +1,14 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Tool": "工具",
+  "exited {code}": "已退出 {code}",
+  "process lost": "进程连接丢失",
+  "attaching": "正在连接",
+  "input": "可输入",
+  "read-only": "只读",
+  "ended": "已结束",
+  "view detached": "视图已断开",
+
  "You do not have permission to create conversations.": "你没有创建对话的权限。",
  "Copy tasks": "复制任务",
  "Load earlier messages": "加载更早的消息",

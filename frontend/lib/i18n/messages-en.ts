@@ -1,4 +1,13 @@
 export const EN = {
+  "Tool": "Tool",
+  "exited {code}": "exited {code}",
+  "process lost": "process lost",
+  "attaching": "attaching",
+  "input": "input",
+  "read-only": "read-only",
+  "ended": "ended",
+  "view detached": "view detached",
+
  "You do not have permission to create conversations.": "You do not have permission to create conversations.",
  "Copy tasks": "Copy tasks",
  "Load earlier messages": "Load earlier messages",

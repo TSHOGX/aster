@@ -31,7 +31,7 @@ export function ActivityGroup({
   const detailsId = useId();
   const { items, live, active } = segment;
   const tools = items.filter((item) => item.kind === "tool");
-  const names = [...new Set(tools.map((item) => item.name || "Tool"))].join(
+  const names = [...new Set(tools.map((item) => item.name || tr("Tool")))].join(
     ", ",
   );
   const thinking = live?.kind === "thinking" ? live : undefined;
@@ -133,7 +133,7 @@ export function ActivityGroup({
               summary={
                 <summary
                   className={`activity-row ${isActive ? "is-active" : ""}`}
-                  title={`${item.name || "Tool"} · ${status}${detail ? ` — ${detail}` : ""}`}
+                  title={`${item.name || tr("Tool")} · ${status}${detail ? ` — ${detail}` : ""}`}
                 >
                   <TerminalSquare
                     className="activity-icon"
@@ -143,7 +143,7 @@ export function ActivityGroup({
                   <span className="activity-line">
                     <span className="activity-label">
                       {isActive ? `${status} ` : ""}
-                      {item.name || "Tool"}
+                      {item.name || tr("Tool")}
                     </span>
                     {detail && (
                       <span className="activity-preview">{detail}</span>
@@ -167,7 +167,7 @@ export function ActivityGroup({
               {() => (
                 <div className="tool-panel">
                   <div className="tool-panel-heading">
-                    <span>{item.name || "Tool"}</span>
+                    <span>{item.name || tr("Tool")}</span>
                     <span>{status}</span>
                   </div>
                   {item.truncated && (

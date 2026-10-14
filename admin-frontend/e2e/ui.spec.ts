@@ -433,8 +433,11 @@ test("Chinese browser preferences apply throughout Admin navigation and policy c
   await context.close();
 });
 
-test("shared-assets rollout retains an explicitly reviewed cohort after a lost response",async({page})=>{
+for (const width of [390, 1440]) test(`bilingual shared-assets rollout retains a reviewed cohort after a lost response at ${width}px`,async({page},info)=>{
  await adminFixture(page);
+ await page.setViewportSize({ width, height: 900 });
+ let preferences = { revision: 1, theme_mode: "system", accent: "neutral", language: "en" };
+ await page.route("**/api/me/preferences", route => route.fulfill({ json: preferences }));
  const digest=`sha256:${"b".repeat(64)}`,reference={id:"runtime",version:"v1",digest};
  const mount=(version:string)=>({key:"context",role:"shared_assets",destination:"/opt/shared-assets",storage:"shared_readonly",access:"read_only",source:{kind:"builtin",artifact_id:"context",version,digest},capacity:{}});
  const template={id:"team",name:"Team environment",description:"",kind:"environment",revision:2,enabled:true,builtin:false,environment:{revision:2,sandbox_release:reference,mounts:[mount("v2")]}};
@@ -460,8 +463,18 @@ test("shared-assets rollout retains an explicitly reviewed cohort after a lost r
  await page.getByRole("button",{name:"Preview update",exact:true}).click();
  const review=page.getByRole("region",{name:"Review environment update",exact:true});
  await expect(review).toContainText("Selected Project");await expect(review).not.toContainText("Unselected Project");
- await review.getByRole("button",{name:"Confirm",exact:true}).click();
- await page.getByRole("button",{name:"Check original request",exact:true}).click();
- await expect(page.getByRole("heading",{name:"Update 1",exact:true})).toBeVisible();
+ preferences = { ...preferences, revision: 2, language: "zh" };
+ await page.evaluate(() => window.dispatchEvent(new StorageEvent("storage", { key: "account-appearance:admin-id" })));
+ const chineseReview=page.getByRole("region",{name:"查看环境更新",exact:true});
+ await expect(chineseReview).toContainText("Selected Project");
+ await expect(chineseReview).not.toContainText("Unselected Project");
+ await expect(page.getByRole("checkbox",{name:/^Selected Project/})).toBeChecked();
+ await expect(page.getByRole("checkbox",{name:/Blocked Project/})).toBeDisabled();
+ await expect(page.getByRole("region",{name:"共享资源更新目标",exact:true})).toContainText("已选择 1 个项目");
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+ await page.screenshot({path:info.outputPath(`shared-assets-review-zh-${width}.png`),fullPage:true});
+ await chineseReview.getByRole("button",{name:"确认",exact:true}).click();
+ await page.getByRole("button",{name:"检查原请求结果",exact:true}).click();
+ await expect(page.getByRole("heading",{name:"更新 1",exact:true})).toBeVisible();
  expect(commits).toHaveLength(2);expect(commits[0]).toEqual(commits[1]);
 });

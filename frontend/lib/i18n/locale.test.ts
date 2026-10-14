@@ -123,6 +123,13 @@ describe("translate", () => {
     expect(translate("zh", "Project Files")).toBe("项目文件");
     expect(translate("en", "Project Files")).toBe("Project Files");
   });
+  it("resolves symbolic English keys and revised English copy", () => {
+    expect(translate("en", "code.copyCode")).toBe("Copy code");
+    expect(translate("en", "code.copied")).toBe("Copied");
+    expect(translate("en", "Preview nodes")).toBe("elements");
+    expect(translate("en", "Terminal start is still pending. Reopen it to retry.")).toContain("Restart terminal");
+    expect(translate("en", "unknown diagnostic")).toBe("unknown diagnostic");
+  });
 });
 
 describe("brand independence", () => {

@@ -373,13 +373,13 @@ export function LibraryDetails({
           />
         </label>
         {!library && <div>
-          <fieldset><legend>Content profile</legend>
-            <label><input type="radio" name="content-profile" value="authored-v1" checked={profile==="authored-v1"} onChange={()=>setProfile("authored-v1")} />Ordinary data</label>
-            <label><input type="radio" name="content-profile" value="shared-assets-v1" checked={profile==="shared-assets-v1"} onChange={()=>setProfile("shared-assets-v1")} />Shared assets</label>
+          <fieldset className="content-profile"><legend>{tr("Content profile")}</legend>
+            <label><input type="radio" name="content-profile" value="authored-v1" checked={profile==="authored-v1"} onChange={()=>setProfile("authored-v1")} />{tr("Ordinary data")}</label>
+            <label><input type="radio" name="content-profile" value="shared-assets-v1" checked={profile==="shared-assets-v1"} onChange={()=>setProfile("shared-assets-v1")} />{tr("Shared assets")}</label>
           </fieldset>
-          <p className="muted">Shared assets become read-only Agent system context. The profile is fixed after creation.</p>
+          <p className="muted">{tr("Shared assets become read-only Agent system context. The profile is fixed after creation.")}</p>
         </div>}
-        {library && <p>Content profile: {library.profile === "shared-assets-v1" ? "Shared assets" : "Ordinary data"} · Fixed</p>}
+        {library && <p>{tr("Content profile: {profile} · Fixed", { profile: tr(library.profile === "shared-assets-v1" ? "Shared assets" : "Ordinary data") })}</p>}
 
         <label>
            {tr("Description")} <textarea

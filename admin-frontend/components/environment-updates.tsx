@@ -225,9 +225,9 @@ export function EnvironmentUpdates({
           {tab === "updates" ? (
             <>
               <section className="panel">
-                <h3>{rollback ? `Review rollback to update ${rollback.sequence}` : "Review saved content versions"}</h3>
-                {rollback && <button disabled={mutation.blocked} onClick={()=>{setRollback(null);setCohort([]);}}>Cancel rollback selection</button>}
-                <label>Update content<Select aria-label="Update content" value={kind} disabled={mutation.blocked} onChange={e=>{setKind(e.target.value);setCohort([]);setRollback(null);}}><option value="publication_replace">Ordinary data</option><option value="system_content_replace">Shared assets</option></Select></label>
+                <h3>{rollback ? tr("Review rollback to update {sequence}", { sequence: formatQuantity(rollback.sequence) }) : tr("Review saved content versions")}</h3>
+                {rollback && <button disabled={mutation.blocked} onClick={()=>{setRollback(null);setCohort([]);}}>{tr("Cancel rollback selection")}</button>}
+                <label>{tr("Update content")}<Select aria-label={tr("Update content")} value={kind} disabled={mutation.blocked} onChange={e=>{setKind(e.target.value);setCohort([]);setRollback(null);}}><option value="publication_replace">{tr("Ordinary data")}</option><option value="system_content_replace">{tr("Shared assets")}</option></Select></label>
                 {kind==="system_content_replace" && <SystemRolloutCandidates key={rollback?.id || "new"} release={rollback?.id} path={path} selected={cohort} onSelect={setCohort} blocked={mutation.blocked} />}
 
                 {!hasPublications && (
@@ -235,7 +235,7 @@ export function EnvironmentUpdates({
                      {tr("Add an immutable data publication in Configuration before publishing an update.")} </p>
                 )}
                 <p>
-                   {tr("Configuration revision")} {formatQuantity(revision)}  {"is used for new Projects. A reviewed rollout updates only the chosen content at the next start or resume."} </p>
+                   {tr("Configuration revision")} {formatQuantity(revision)}  {tr("is used for new Projects. A reviewed rollout updates only the chosen content at the next start or resume.")} </p>
                 <label>
                    {tr("Release note")} <textarea
                     value={note}
@@ -538,7 +538,7 @@ export function EnvironmentUpdates({
               labels={proposed.release.labels}
             />
           )}
-          {proposed?.projects && <section aria-label="Selected project impact">{proposed.projects.map(p=><article key={p.project_id}><h4>{p.title} · {tr(environmentUpdateStates[p.state] || p.state)}</h4><p>{p.reason}</p><MountVersions mounts={p.current} labels={p.labels}/><p>Target</p><MountVersions mounts={p.target} labels={p.labels}/></article>)}</section>}
+          {proposed?.projects && <section className="rollout-candidates" aria-label={tr("Selected project impact")}>{proposed.projects.map(p=><article key={p.project_id}><h4>{p.title} · {tr(environmentUpdateStates[p.state] || p.state)}</h4><p>{tr(p.reason)}</p><MountVersions mounts={p.current} labels={p.labels}/><p>{tr("Target")}</p><MountVersions mounts={p.target} labels={p.labels}/></article>)}</section>}
  {proposed?.release && !proposed.projects && (
             <details>
               <summary>
@@ -552,7 +552,7 @@ export function EnvironmentUpdates({
             </details>
           )}
           <p>
-            {proposed?.new_projects_only || tr("This action controls future update attempts. Already issued operations are settled safely before another change can apply.")}
+            {tr(proposed?.new_projects_only || "This action controls future update attempts. Already issued operations are settled safely before another change can apply.")}
           </p>
           <p>
              {tr("Running projects will not be interrupted. New-project configuration is not changed by this action.")} </p>
@@ -690,19 +690,20 @@ function ReleaseMembers({ path, release }: { path: string; release: string }) {
 }
 
 function SystemRolloutCandidates({path,release,selected,onSelect,blocked}:{path:string;release?:string;selected:string[];onSelect:(ids:string[])=>void;blocked:boolean}) {
+ const tr = useT();
  const [cursor,setCursor]=useState("");
  const {data,error,refresh}=useEnvironmentQuery<Page>(`${path}/preview?kind=system_content_replace&release_id=${encodeURIComponent(release || "")}&limit=30&cursor=${encodeURIComponent(cursor)}`,!blocked);
- return <section aria-label="Shared-assets rollout targets">
-  <p>Select up to 100 eligible Projects. Review their current and target versions before confirming. Unselected Projects retain their current version.</p>
-  {error && <p role="alert">{error}<button type="button" onClick={()=>void refresh()}>Retry</button></p>}
-  {!data && !error && <p role="status">Loading eligible Projects…</p>}
+ return <section className="rollout-candidates" aria-label={tr("Shared-assets rollout targets")}>
+  <p>{tr("Select up to 100 eligible Projects. Review their current and target versions before confirming. Unselected Projects retain their current version.")}</p>
+  {error && <p role="alert">{tr(error)}<button type="button" onClick={()=>void refresh()}>{tr("Retry")}</button></p>}
+  {!data && !error && <p role="status">{tr("Loading eligible Projects…")}</p>}
   {data?.projects.map(p=><article key={p.project_id}>
-   <label className="check-label"><input type="checkbox" checked={selected.includes(p.project_id)} disabled={blocked||p.state!=="pending"||selected.length>=100&&!selected.includes(p.project_id)} onChange={e=>onSelect(e.target.checked?[...selected,p.project_id]:selected.filter(id=>id!==p.project_id))}/>{p.title} · {environmentUpdateStates[p.state] || p.state}</label>
-   {p.reason && <p>{p.reason}</p>}<MountVersions mounts={p.current} labels={p.labels}/><p>Target</p><MountVersions mounts={p.target} labels={p.labels}/>
+   <label className="check-label"><input type="checkbox" checked={selected.includes(p.project_id)} disabled={blocked||p.state!=="pending"||selected.length>=100&&!selected.includes(p.project_id)} onChange={e=>onSelect(e.target.checked?[...selected,p.project_id]:selected.filter(id=>id!==p.project_id))}/><span>{p.title} · {tr(environmentUpdateStates[p.state] || p.state)}</span></label>
+   {p.reason && <p>{tr(p.reason)}</p>}<MountVersions mounts={p.current} labels={p.labels}/><p>{tr("Target")}</p><MountVersions mounts={p.target} labels={p.labels}/>
   </article>)}
-  {data?.projects.length===0 && <p>No eligible Projects on this page.</p>}
-  <p>{selected.length} Projects selected</p>
-  {cursor && <button type="button" disabled={blocked} onClick={()=>setCursor("")}>First page</button>}
-  {data?.next_cursor && <button type="button" disabled={blocked} onClick={()=>setCursor(data.next_cursor!)}>Next page</button>}
+  {data?.projects.length===0 && <p>{tr("No eligible Projects on this page.")}</p>}
+  <p>{tr("{count} Projects selected", { count: formatQuantity(selected.length) })}</p>
+  {cursor && <button type="button" disabled={blocked} onClick={()=>setCursor("")}>{tr("First page")}</button>}
+  {data?.next_cursor && <button type="button" disabled={blocked} onClick={()=>setCursor(data.next_cursor!)}>{tr("Next page")}</button>}
  </section>;
 }

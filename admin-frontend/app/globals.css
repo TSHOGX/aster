@@ -142,3 +142,13 @@ fieldset { min-width: 0; }
 @media(pointer:coarse) {
   button, .button, td :is(button, .button), .panel li :is(button, .button), summary { min-height:44px; }
 }
+
+/* Reviewed cohorts use the same spacing and version columns as project cards. */
+.rollout-candidates { min-width: 0; }
+.rollout-candidates article { border-top: 1px solid var(--border); padding-block: 1rem; }
+.rollout-candidates .check-label { margin-block: 0 .75rem; }
+.rollout-candidates .check-label span { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
+.rollout-candidates .check-label input { accent-color: var(--accent-control); }
+.rollout-candidates > button { margin-block-start: .5rem; margin-inline-end: .5rem; }
+.environment-version-list { overflow-wrap: anywhere; }
+.environment-updates button { white-space: normal; text-align: center; }

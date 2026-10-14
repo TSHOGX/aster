@@ -1,4 +1,21 @@
 export const ZH: Record<string, string> = {
+  "Agent configuration": "Agent 配置",
+  "Platform-managed Pi settings and runner configuration. Select a reviewed operator release.": "平台管理的 Pi 设置与运行器配置。请选择经运维人员审阅的版本。",
+  "AGENTS.md is appended to the Agent system prompt. Select an exact shared-assets version; skills are optional.": "AGENTS.md 将附加到 Agent 的系统提示词中。请选择明确的共享资源版本；技能为可选内容。",
+
+  "Review rollback to update {sequence}": "审阅回滚至更新 {sequence}",
+  "Review saved content versions": "审阅已保存的内容版本",
+  "Cancel rollback selection": "取消回滚选择",
+  "Update content": "更新内容",
+  "Selected project impact": "所选项目的影响",
+  "Shared-assets rollout targets": "共享资源更新目标",
+  "Select up to 100 eligible Projects. Review their current and target versions before confirming. Unselected Projects retain their current version.": "最多选择 100 个符合条件的项目。确认前请审阅当前版本和目标版本。未选中的项目将保留当前版本。",
+  "Loading eligible Projects…": "正在加载符合条件的项目…",
+  "No eligible Projects on this page.": "本页没有符合条件的项目。",
+  "{count} Projects selected": "已选择 {count} 个项目",
+  "is used for new Projects. A reviewed rollout updates only the chosen content at the next start or resume.": "用于新项目。经审阅的更新仅在下次启动或恢复时替换所选内容。",
+  "Target unavailable": "目标版本不可用",
+
   "Shared assets": "共享资源",
   "Ordinary data": "普通数据",
   "Copy and customize": "复制并自定义",

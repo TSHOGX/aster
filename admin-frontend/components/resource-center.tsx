@@ -643,9 +643,9 @@ function TemplateEditor({
                 {environment.mounts.map((m) => (
                   <section className="runtime-mount" key={m.key}>
                     <h4>
-                      {m.role === "data" ? tr("Data directory") : m.role === "agent_config" ? "Agent configuration" : m.role === "shared_assets" ? "Shared assets" : m.role.replaceAll("_", " ")}
+                      {m.role === "data" ? tr("Data directory") : m.role === "agent_config" ? tr("Agent configuration") : m.role === "shared_assets" ? tr("Shared assets") : tr(m.role.replaceAll("_", " "))}
                     </h4>
-                    {["runtime","agent_config","shared_assets"].includes(m.role)&&<p className="hint">{m.role==="runtime" ? tr("Private runtime state. Use an empty directory or an operator-reviewed clean seed.") : m.role === "agent_config" ? "Platform-managed Pi settings and runner configuration. Select a reviewed operator release." : "AGENTS.md is appended to the Agent system prompt. Select an exact shared-assets version; skills are optional."}</p>}
+                    {["runtime","agent_config","shared_assets"].includes(m.role)&&<p className="hint">{m.role==="runtime" ? tr("Private runtime state. Use an empty directory or an operator-reviewed clean seed.") : m.role === "agent_config" ? tr("Platform-managed Pi settings and runner configuration. Select a reviewed operator release.") : tr("AGENTS.md is appended to the Agent system prompt. Select an exact shared-assets version; skills are optional.")}</p>}
                     <label>
                        {tr("Mount path")} <input
                         required
@@ -785,7 +785,7 @@ function TemplateEditor({
                                   ].includes(s.availability)
                                 }
                               >
-                                {s.library_name || s.reference.id} · {s.version_label || s.reference.version}{m.role === "shared_assets" ? ` · ${s.reference.digest.slice(-8)} · ${s.agents_status || s.availability}` : ""}
+                                {s.library_name || s.reference.id} · {s.version_label || s.reference.version}{m.role === "shared_assets" ? ` · ${s.reference.digest.slice(-8)} · ${tr(s.agents_status || s.availability)}` : ""}
                               </option>
                             ))}
                         </Select>
