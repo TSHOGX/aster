@@ -123,3 +123,13 @@ A successful request returns `204`. Retry an uncertain response with the same
 request ID. If activation fails again, inspect the new failure and use a new
 request ID for another deliberate retry; replaying the previous request cannot
 restart a later failure.
+
+To abandon a failed activation, POST `request_id` and `expected_revision` to
+`/api/admin/groups/{group}/optimization/operations/{operation}/discard`.
+This requires `config.manage` and returns `202` after recording discard intent.
+State remains `discarding` while the worker verifies and releases that operation's
+pending Studio reservations. Retry and replacement activation are blocked during
+cleanup. `discarded` confirms cleanup; the prior active revision remains unchanged.
+Already adopted Studio ownership is never released by this compensation path and
+keeps discard unresolved. Missing service configuration or revoked authority can
+also delay cleanup. Inspect operation state before submitting replacement work.

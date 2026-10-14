@@ -112,3 +112,16 @@ func (a *Authentication) retryEvolutionOperation(w http.ResponseWriter, r *http.
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (a *Authentication) discardEvolutionOperation(w http.ResponseWriter, r *http.Request) {
+	input, err := evolution.Decode[product.EvolutionRetryInput](http.MaxBytesReader(w, r.Body, 1<<16))
+	if err != nil {
+		writeError(w, 400, "invalid discard request")
+		return
+	}
+	if err = a.Store.DiscardEvolutionOperation(r.Context(), requestToken(r), r.PathValue("group"), r.PathValue("operation"), input); err != nil {
+		adminFailure(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}

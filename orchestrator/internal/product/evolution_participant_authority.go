@@ -15,7 +15,7 @@ func (s *Store) EvolutionParticipantActor(ctx context.Context, scope ProjectionS
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		if action == "cancel" || action == "lookup" {
 			var count int
-			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_group_configs WHERE group_id=? AND operation_id=? AND desired_revision=? AND desired_digest=? AND state='failed'", scope.GroupID, scope.OperationID, scope.Revision, scope.Digest).Scan(&count); err != nil {
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_group_configs WHERE group_id=? AND operation_id=? AND desired_revision=? AND desired_digest=? AND state IN ('failed','discarding')", scope.GroupID, scope.OperationID, scope.Revision, scope.Digest).Scan(&count); err != nil {
 				return err
 			}
 			if count != 1 {

@@ -94,7 +94,7 @@ func (s *Store) activateEvolutionConfig(ctx context.Context, token, group string
 		if current.DesiredRevision != input.ExpectedRevision {
 			return ErrConflict
 		}
-		if current.State == "activating" || current.State == "failed" {
+		if current.State == "activating" || current.State == "failed" || current.State == "discarding" {
 			return ErrBusy
 		}
 		result = EvolutionGroupConfig{GroupID: group, DesiredRevision: current.DesiredRevision + 1, ActiveRevision: current.ActiveRevision, DesiredDigest: digest, ActiveDigest: current.ActiveDigest, AutoEnabled: input.Configuration.AutoEnabled, State: "activating", OperationID: randomOperationID()}

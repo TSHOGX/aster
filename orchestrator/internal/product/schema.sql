@@ -1852,7 +1852,7 @@ CREATE TABLE evolution_group_configs (
  desired_digest TEXT NOT NULL,
  active_digest TEXT NOT NULL,
  auto_enabled INTEGER NOT NULL CHECK(auto_enabled IN(0,1)),
- state TEXT NOT NULL CHECK(state IN('draft','activating','active','failed')),
+ state TEXT NOT NULL CHECK(state IN('draft','activating','active','failed','discarding','discarded')),
  operation_id TEXT NOT NULL DEFAULT '',
  updated_at TEXT NOT NULL
 );

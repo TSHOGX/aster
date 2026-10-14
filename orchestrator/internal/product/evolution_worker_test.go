@@ -135,3 +135,60 @@ func TestEvolutionWorkerRecordsExplicitCatalogRejection(t *testing.T) {
 		t.Fatal("explicit retry not dispatched", calls)
 	}
 }
+
+func TestEvolutionDiscardCompensatesOnlyPendingReservations(t *testing.T) {
+	for _, state := range []string{"reserved", "adopted", "missing"} {
+		t.Run(state, func(t *testing.T) {
+			s, admin := accountStore(t)
+			token := adminTestToken(t, s, admin)
+			pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
+			must(t, err)
+			must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evaluation-space", pending.DesiredDigest, "catalog_rejected"))
+			input := EvolutionRetryInput{"discard", 1}
+			must(t, s.DiscardEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, input))
+			if err = s.RetryEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, EvolutionRetryInput{"retry", 1}); err != ErrConflict {
+				t.Fatal("retry raced discard", err)
+			}
+			cancelled := false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if state == "missing" {
+					http.NotFound(w, r)
+					return
+				}
+				result := state
+				if strings.HasSuffix(r.URL.Path, "/cancel") {
+					cancelled = true
+					result = "released"
+				}
+				json.NewEncoder(w).Encode(evolution.ActivationReceipt{Participant: "studio", OperationID: pending.OperationID, ConfigurationDigest: pending.DesiredDigest, Generation: 1, State: result})
+			}))
+			defer server.Close()
+			studio, err := studioclient.New(server.URL, strings.Repeat("x", 32))
+			must(t, err)
+			evaluation, err := evaluationclient.New(server.URL, strings.Repeat("x", 32))
+			must(t, err)
+			worker := &EvolutionWorker{Store: s, Studio: studio, Evaluation: evaluation}
+			err = worker.Step(ctx)
+			if state == "adopted" {
+				if err != ErrConflict || cancelled {
+					t.Fatal("adopted ownership compensated", err)
+				}
+			} else {
+				must(t, err)
+			}
+			current, err := s.EvolutionConfig(ctx, token, StandardUsersGroup)
+			must(t, err)
+			expected := "discarded"
+			if state == "adopted" {
+				expected = "discarding"
+			}
+			if current.State != expected || current.ActiveRevision != 0 {
+				t.Fatal(current)
+			}
+			if state == "reserved" && !cancelled {
+				t.Fatal("reservation not released")
+			}
+			must(t, s.DiscardEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, input))
+		})
+	}
+}
