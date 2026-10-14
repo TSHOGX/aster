@@ -40,7 +40,10 @@ CREATE TRIGGER IF NOT EXISTS immutable_projection BEFORE UPDATE ON projections B
 CREATE TRIGGER IF NOT EXISTS retained_projection BEFORE DELETE ON projections BEGIN SELECT RAISE(ABORT,'retain configuration provenance'); END;
 CREATE TABLE workflow_revisions(id TEXT NOT NULL,revision INTEGER NOT NULL CHECK(revision>0),digest TEXT NOT NULL,body BLOB NOT NULL,PRIMARY KEY(id,revision));
 CREATE TRIGGER immutable_workflow BEFORE UPDATE ON workflow_revisions BEGIN SELECT RAISE(ABORT,'immutable workflow revision'); END;
-CREATE TRIGGER retained_workflow BEFORE DELETE ON workflow_revisions BEGIN SELECT RAISE(ABORT,'retain workflow provenance'); END;`
+CREATE TRIGGER retained_workflow BEFORE DELETE ON workflow_revisions BEGIN SELECT RAISE(ABORT,'retain workflow provenance'); END;
+CREATE TABLE catalog_definitions(kind TEXT NOT NULL CHECK(kind IN ('service','template','profile')),id TEXT NOT NULL,revision INTEGER NOT NULL CHECK(revision>0),digest TEXT NOT NULL,body BLOB NOT NULL,PRIMARY KEY(kind,id,revision));
+CREATE TRIGGER immutable_definition BEFORE UPDATE ON catalog_definitions BEGIN SELECT RAISE(ABORT,'immutable catalog definition'); END;
+CREATE TRIGGER retained_definition BEFORE DELETE ON catalog_definitions BEGIN SELECT RAISE(ABORT,'retain catalog provenance'); END;`
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	if !filepath.IsAbs(path) {
