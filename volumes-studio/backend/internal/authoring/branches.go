@@ -287,3 +287,9 @@ func (s *Store) reconcileLibraryHistory(ctx context.Context) error {
 	}
 	return nil
 }
+
+// AuthorizeLibrary checks the current central resource grant at HTTP boundaries
+// for immutable version reads and metadata operations.
+func (s *Store) AuthorizeLibrary(ctx context.Context, a Actor, library, action string) error {
+	return s.authorizeLibrary(ctx, a, library, action)
+}

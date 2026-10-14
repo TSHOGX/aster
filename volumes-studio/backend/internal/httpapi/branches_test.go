@@ -119,6 +119,13 @@ func TestBranchHTTPJourney(t *testing.T) {
 		t.Fatal("release content differs", w.Code, w.Body.String())
 	}
 	authority.allowed = false
+	for _, path := range []string{"", "/versions", "/versions/" + version.ID, "/versions/" + version.ID + "/tree", "/versions/" + version.ID + "/content?path=note.html", "/versions/" + version.ID + "/validation", "/versions/" + version.ID + "/search?q=note", "/versions/" + version.ID + "/retention"} {
+		response := call("GET", path, nil)
+		if response.Code != 403 {
+			t.Fatalf("revoked read %s: %d %s", path, response.Code, response.Body.String())
+		}
+	}
+
 	w = call("GET", root, nil)
 	if w.Code != 403 {
 		t.Fatal("revoked branch visible", w.Code, w.Body.String())
