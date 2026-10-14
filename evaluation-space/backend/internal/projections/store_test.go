@@ -3,6 +3,7 @@ package projections
 import (
 	"aster/contracts/evolution"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -93,5 +94,31 @@ func TestProjectionStoreExclusiveLifetimeOwnership(t *testing.T) {
 	defer second.Close()
 	if err = first.Close(); err != nil {
 		t.Fatal("close not idempotent", err)
+	}
+}
+
+func TestProjectionStartupRejectsSchemaTampering(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "space.db")
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.db.ExecContext(ctx, "DROP TRIGGER immutable_projection"); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+	if reopened, err := Open(ctx, path); err == nil {
+		reopened.Close()
+		t.Fatal("missing immutability guard repaired silently")
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE name='immutable_projection'").Scan(&count); err != nil || count != 0 {
+		t.Fatal("startup modified mismatched schema", count, err)
 	}
 }

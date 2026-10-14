@@ -88,7 +88,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err = db.ExecContext(ctx, schema); err != nil {
+	if err = initializeSchema(ctx, db); err != nil {
 		db.Close()
 		return nil, err
 	}
