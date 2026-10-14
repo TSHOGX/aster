@@ -17,6 +17,8 @@ import (
 )
 
 // ErrNotFound means an authorized lookup confirmed no stored projection.
+var ErrRejected = errors.New("evaluation configuration rejected")
+
 var ErrNotFound = errors.New("evaluation projection not found")
 
 type Client struct {
@@ -77,6 +79,9 @@ func (c *Client) Reconcile(ctx context.Context, p Projection) (evolution.Activat
 		return receipt, err
 	}
 	receipt, adoptErr := c.Adopt(ctx, p)
+	if errors.Is(adoptErr, ErrRejected) {
+		return evolution.ActivationReceipt{}, adoptErr
+	}
 	if adoptErr == nil {
 		return receipt, nil
 	}
@@ -106,6 +111,9 @@ func (c *Client) call(ctx context.Context, method, path string, body []byte, p P
 	defer response.Body.Close()
 	if method == http.MethodGet && response.StatusCode == http.StatusNotFound {
 		return receipt, ErrNotFound
+	}
+	if response.StatusCode == http.StatusUnprocessableEntity {
+		return receipt, ErrRejected
 	}
 	if response.StatusCode != 200 {
 		return receipt, fmt.Errorf("participant status %d", response.StatusCode)

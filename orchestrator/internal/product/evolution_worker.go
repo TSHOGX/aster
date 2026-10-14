@@ -52,6 +52,11 @@ func (w *EvolutionWorker) Step(ctx context.Context) error {
 		}
 	}
 	receipt, err := w.Evaluation.Reconcile(ctx, projection)
+	if errors.Is(err, evaluationclient.ErrRejected) {
+		return w.Store.write(ctx, func(tx *sql.Tx) error {
+			return w.Store.failEvolutionParticipant(ctx, tx, "service:evolution", operation, "evaluation-space", projection.Digest, "catalog_rejected")
+		})
+	}
 	if err != nil {
 		return err
 	}

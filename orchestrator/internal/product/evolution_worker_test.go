@@ -94,3 +94,44 @@ func TestEvolutionWorkerCoordinatesBothParticipants(t *testing.T) {
 		t.Fatal(active, state)
 	}
 }
+
+func TestEvolutionWorkerRecordsExplicitCatalogRejection(t *testing.T) {
+	s, admin := accountStore(t)
+	token := adminTestToken(t, s, admin)
+	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
+	must(t, err)
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method == http.MethodGet {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusUnprocessableEntity)
+	}))
+	defer server.Close()
+	client, err := evaluationclient.New(server.URL, strings.Repeat("x", 32))
+	must(t, err)
+	worker := &EvolutionWorker{Store: s, Evaluation: client}
+	must(t, worker.Step(ctx))
+	failed, err := s.EvolutionConfig(ctx, token, StandardUsersGroup)
+	must(t, err)
+	if failed.State != "failed" || failed.ActiveRevision != 0 || failed.OperationID != pending.OperationID {
+		t.Fatal(failed)
+	}
+	worker = &EvolutionWorker{Store: s, Evaluation: client}
+	must(t, worker.Step(ctx))
+	if calls != 2 {
+		t.Fatal("failed operation retried without instruction", calls)
+	}
+	var code string
+	must(t, s.reader.QueryRowContext(ctx, "SELECT error FROM evolution_activation_receipts WHERE operation_id=?", pending.OperationID).Scan(&code))
+	if code != "catalog_rejected" {
+		t.Fatal(code)
+	}
+	must(t, s.RetryEvolutionActivation(ctx, token, pending.OperationID))
+	must(t, worker.Step(ctx))
+	if calls != 4 {
+		t.Fatal("explicit retry not dispatched", calls)
+	}
+}

@@ -260,9 +260,10 @@ template, and profile digests use `evolution.DefinitionDigest`, which clears onl
 the definition's own `ref.digest` when hashing. Their envelope reference must match
 the body reference. Definitions contain credential references, never secret values.
 Projection adoption rejects missing or incompatible catalog revisions, including
-unsupported workflow capabilities and incompatible output profiles. A validation
-error leaves the central operation pending; publishing the missing compatible
-revision allows reconciliation to retry.
+unsupported workflow capabilities and incompatible output profiles. An explicit validation
+rejection records a failed central operation with code `catalog_rejected`. Correct
+the catalog before explicitly retrying that operation; automatic retries stop after
+this rejection. Transport outages retain pending state for reconciliation.
 
 Parameter schemas must be self-contained JSON Schema documents. Local `$ref`
 references are supported; remote URLs and filesystem references are rejected.
