@@ -50,7 +50,7 @@ func (s *Store) PreviewEvolutionDraft(ctx context.Context, token, group string, 
 		if current != input.ExpectedRevision {
 			return ErrConflict
 		}
-		if state == "activating" || state == "failed" {
+		if state == "activating" || state == "failed" || state == "discarding" {
 			result.Issues = append(result.Issues, "activation_pending")
 		}
 		config, err := evolution.Decode[evolution.Configuration](bytes.NewBufferString(raw))

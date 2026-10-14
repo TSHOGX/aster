@@ -188,4 +188,37 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 		t.Fatal("generation update", active)
 	}
 
+	configuration.Revision = 3
+	configuration.Bindings[0].Output.ReservationGeneration = 3
+	configuration.Bindings[0].Service.Revision = 99
+	rejected, err := store.ActivateEvolutionConfig(ctx, token, configuration.GroupID, product.EvolutionActivationInput{RequestID: "invalid-service", ExpectedRevision: 2, Configuration: configuration})
+	must(t, err)
+	worker = &product.EvolutionWorker{Store: store, Evaluation: evaluation, Studio: studio}
+	must(t, worker.Step(ctx))
+	failed, err := store.EvolutionOperation(ctx, token, configuration.GroupID, rejected.OperationID)
+	must(t, err)
+	if failed.State != "failed" || len(failed.Participants) != 1 || failed.Participants[0].Error != "catalog_rejected" {
+		t.Fatal("missing durable catalog rejection", failed)
+	}
+	must(t, store.DiscardEvolutionOperation(ctx, token, configuration.GroupID, rejected.OperationID, product.EvolutionRetryInput{RequestID: "discard-invalid", ExpectedRevision: 3}))
+	worker = &product.EvolutionWorker{Store: store, Evaluation: evaluation, Studio: studio}
+	must(t, worker.Step(ctx))
+	discarded, err := store.EvolutionConfig(ctx, token, configuration.GroupID)
+	must(t, err)
+	if discarded.State != "discarded" || discarded.ActiveRevision != 2 || discarded.ActiveDigest != second.DesiredDigest {
+		t.Fatal("discard changed accepted configuration", discarded)
+	}
+	// The cancelled candidate must not consume or replace the active generation.
+	configuration.Revision = 4
+	configuration.Bindings[0].Service = service.Ref
+	replacement, err := store.ActivateEvolutionConfig(ctx, token, configuration.GroupID, product.EvolutionActivationInput{RequestID: "replacement", ExpectedRevision: 3, Configuration: configuration})
+	must(t, err)
+	worker = &product.EvolutionWorker{Store: store, Evaluation: evaluation, Studio: studio}
+	must(t, worker.Step(ctx))
+	active, err = store.EvolutionConfig(ctx, token, configuration.GroupID)
+	must(t, err)
+	if active.State != "active" || active.ActiveRevision != 4 || active.ActiveDigest != replacement.DesiredDigest {
+		t.Fatal("replacement after discard failed", active)
+	}
+
 }

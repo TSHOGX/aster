@@ -45,4 +45,12 @@ func TestEvolutionPreviewDoesNotActivateAndPinsDraft(t *testing.T) {
 	if preview.CentralValid || preview.Issues[0] != "activation_pending" {
 		t.Fatal(preview)
 	}
+	must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evaluation-space", pending.DesiredDigest, "catalog_rejected"))
+	must(t, s.DiscardEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, EvolutionRetryInput{"discard", 1}))
+	preview, err = s.PreviewEvolutionDraft(ctx, token, StandardUsersGroup, request)
+	must(t, err)
+	if preview.CentralValid || len(preview.Issues) != 1 || preview.Issues[0] != "activation_pending" {
+		t.Fatal("preview allowed replacement during cleanup", preview)
+	}
+
 }
