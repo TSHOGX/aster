@@ -10,11 +10,17 @@ import (
 	"testing"
 )
 
+func catalogTemplateBody(goal string) json.RawMessage {
+	ref := evolution.Revision{ID: "workflow", Revision: 1, Digest: evolution.Digest([]byte("workflow"))}
+	raw, _ := json.Marshal(evolution.Template{Ref: evolution.Revision{ID: "template", Revision: 1, Digest: evolution.Digest([]byte("template"))}, Goal: goal, ParametersSchema: json.RawMessage(`{"type":"object"}`), Inputs: map[string]string{"in": evolution.Digest([]byte("in"))}, Outputs: map[string]string{"out": evolution.Digest([]byte("out"))}, Profile: "authored-v1", Workflows: []evolution.Revision{ref}, SuggestedPrefix: "skills", Evaluation: evolution.EvaluationPolicy{Mode: "disabled", ReferenceStrategy: "none"}})
+	return raw
+}
+
 func TestEvolutionCatalogImmutableRevisionsAndBindings(t *testing.T) {
 	s, admin := accountStore(t)
 	ctx := context.Background()
 	token := adminTestToken(t, s, admin)
-	body := json.RawMessage(`{"schema_version":1,"goal":"lesson"}`)
+	body := catalogTemplateBody("lesson")
 	first, err := s.PublishCatalogRevision(ctx, token, CatalogRevision{Kind: "template", ID: "lesson", Revision: 1, Digest: evolution.Digest(body), Body: body, Enabled: true})
 	must(t, err)
 	if first.Revision != 1 {
@@ -26,7 +32,7 @@ func TestEvolutionCatalogImmutableRevisionsAndBindings(t *testing.T) {
 	if _, err := s.BindCatalogRevision(ctx, token, StandardUsersGroup, "binding", "template", "lesson", 1); err != nil {
 		t.Fatal(err)
 	}
-	body = json.RawMessage(`{"schema_version":1,"goal":"revised lesson"}`)
+	body = catalogTemplateBody("revised lesson")
 	if _, err := s.PublishCatalogRevision(ctx, token, CatalogRevision{Kind: "template", ID: "lesson", Revision: 2, Digest: evolution.Digest(body), Body: body, Enabled: false}); err != nil {
 		t.Fatal(err)
 	}
@@ -56,9 +62,11 @@ func TestCatalogReadAuthorityAndRetainedIntegrity(t *testing.T) {
 	s, admin := accountStore(t)
 	ctx := context.Background()
 	token := adminTestToken(t, s, admin)
-	body := json.RawMessage(`{"goal":"lesson"}`)
+	body := catalogTemplateBody("lesson")
 	_, err := s.PublishCatalogRevision(ctx, token, CatalogRevision{Kind: "template", ID: "lesson", Revision: 1, Digest: evolution.Digest(body), Body: body, Enabled: true})
-	must(t, err)
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
 	if _, err = s.CatalogRevision(ctx, "", "template", "lesson", 1); err == nil {
 		t.Fatal("unauthenticated catalog read")
 	}
@@ -145,4 +153,14 @@ func TestWorkflowCatalogRequiresPublishedBodyClosure(t *testing.T) {
 	must(t, err)
 	_, err = s.PublishCatalogRevision(ctx, token, definition)
 	must(t, err)
+}
+
+func TestCatalogSemanticKindsValidate(t *testing.T) {
+	s, admin := accountStore(t)
+	ctx := context.Background()
+	token := adminTestToken(t, s, admin)
+	bad := json.RawMessage(`{"ref":{"id":"x","revision":1,"digest":"bad"},"kind":"bad"}`)
+	if _, err := s.PublishCatalogRevision(ctx, token, CatalogRevision{Kind: "service", ID: "service", Revision: 1, Digest: evolution.Digest(bad), Body: bad}); err != ErrInvalid {
+		t.Fatal("invalid service accepted", err)
+	}
 }

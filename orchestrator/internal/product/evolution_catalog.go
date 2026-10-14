@@ -52,6 +52,9 @@ func (s *Store) PublishCatalogRevision(ctx context.Context, token string, c Cata
 	if _, err := evolution.Decode[map[string]json.RawMessage](bytes.NewReader(c.Body)); err != nil {
 		return c, ErrInvalid
 	}
+	if err := validateCatalogBody(c.Kind, c.Body); err != nil {
+		return c, ErrInvalid
+	}
 	if c.Kind == "workflow" {
 		workflow, err := evolution.DecodeWorkflow(bytes.NewReader(c.Body))
 		if err != nil || workflow.ID != c.ID {
@@ -146,4 +149,30 @@ func (s *Store) UnbindCatalogRevision(ctx context.Context, token, group, binding
 		}
 		return s.auditEvent(ctx, tx, actor.ID, "evolution.catalog.unbind", "group", group, "", 0, map[string]string{"binding": binding, "kind": kind})
 	})
+}
+
+func validateCatalogBody(kind string, body []byte) error {
+	switch kind {
+	case "service":
+		var value evolution.Service
+		if _, err := evolution.Decode[evolution.Service](bytes.NewReader(body)); err != nil {
+			return err
+		}
+		return value.Validate()
+	case "template":
+		return nil
+	case "profile":
+		var value evolution.EvaluationProfile
+		if _, err := evolution.Decode[evolution.EvaluationProfile](bytes.NewReader(body)); err != nil {
+			return err
+		}
+		if err := value.Ref.Validate(); err != nil {
+			return err
+		}
+		if err := value.Dataset.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}
+	return nil
 }
