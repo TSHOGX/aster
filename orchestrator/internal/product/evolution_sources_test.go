@@ -3,6 +3,7 @@ package product
 import (
 	"aster/contracts/evolution"
 	"context"
+	"database/sql"
 	"testing"
 )
 
@@ -17,8 +18,10 @@ func TestEvolutionSourceAuthorityCannotBeSelfDeclared(t *testing.T) {
 	if _, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, input); err != ErrForbidden {
 		t.Fatal("self-declared source accepted", err)
 	}
+	_, err := s.CreateProject(ctx, admin.ID, "project", "Source")
+	must(t, err)
 	policy := EvolutionSourcePolicyInput{"grant", 0, source}
-	_, err := s.SetEvolutionSourcePolicy(ctx, token, StandardUsersGroup, policy)
+	_, err = s.SetEvolutionSourcePolicy(ctx, token, StandardUsersGroup, policy)
 	must(t, err)
 	_, err = s.SetEvolutionSourcePolicy(ctx, token, StandardUsersGroup, policy)
 	must(t, err)
@@ -55,5 +58,38 @@ func TestEvolutionSourceAuthorityCannotBeSelfDeclared(t *testing.T) {
 	source.PolicyRevision = 3
 	if _, err = s.SetEvolutionSourcePolicy(ctx, "", StandardUsersGroup, EvolutionSourcePolicyInput{"anonymous", 2, source}); err == nil {
 		t.Fatal("anonymous policy change")
+	}
+}
+
+func TestEvolutionSourceIssuerOwnershipAndDeletion(t *testing.T) {
+	s, a, b := fixture(t)
+	source := evolution.SourceBinding{Kind: "project", ResourceID: a.ProjectID}
+	must(t, authorizeEvolutionSourceIssuer(ctx, s.reader, a.Actor, source))
+	if err := authorizeEvolutionSourceIssuer(ctx, s.reader, b.Actor, source); err != ErrForbidden {
+		t.Fatal("cross-owner source", err)
+	}
+	source.ResourceID = "missing"
+	if err := authorizeEvolutionSourceIssuer(ctx, s.reader, a.Actor, source); err != ErrForbidden {
+		t.Fatal("missing source", err)
+	}
+	_, err := s.CreateSession(ctx, a, "source-session", "Source")
+	must(t, err)
+	source.Kind = "session"
+	source.ResourceID = "source-session"
+	must(t, authorizeEvolutionSourceIssuer(ctx, s.reader, a.Actor, source))
+	if err := authorizeEvolutionSourceIssuer(ctx, s.reader, b.Actor, source); err != ErrForbidden {
+		t.Fatal("cross-owner session", err)
+	}
+	must(t, s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "UPDATE sessions SET deletion_intent=1 WHERE id=?", source.ResourceID)
+		return err
+	}))
+	if err := authorizeEvolutionSourceIssuer(ctx, s.reader, a.Actor, source); err != ErrForbidden {
+		t.Fatal("deleted session source", err)
+	}
+	source.Kind = "volume"
+	source.ResourceID = "library"
+	if err := authorizeEvolutionSourceIssuer(ctx, s.reader, a.Actor, source); err != ErrForbidden {
+		t.Fatal("ungranted volume source", err)
 	}
 }

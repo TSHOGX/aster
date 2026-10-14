@@ -1913,6 +1913,7 @@ CREATE TABLE evolution_configuration_drafts (
 );
 
 CREATE TABLE evolution_source_policies (
+ issuer_id TEXT NOT NULL REFERENCES accounts(id),
  group_id TEXT NOT NULL REFERENCES account_groups(id),
  source_id TEXT NOT NULL,
  revision INTEGER NOT NULL CHECK(revision>0),

@@ -17,12 +17,15 @@ func studioAction(action string) bool {
 // StudioAccess checks current account state and an explicit library grant. Being
 // an administrator does not implicitly confer content review or author authority.
 func (s *Store) StudioAccess(ctx context.Context, request evolution.AccessRequest) (evolution.AccessDecision, error) {
+	return studioAccess(ctx, s.reader, request)
+}
+func studioAccess(ctx context.Context, q queryer, request evolution.AccessRequest) (evolution.AccessDecision, error) {
 	denied := evolution.AccessDecision{Allowed: false, Reason: "grant_required"}
 	if request.Principal.Kind != "human" || !validID(request.Principal.Subject) || !validID(request.LibraryID) || !studioAction(request.Action) || request.RunID != "" || request.GrantID != "" || request.Fence != 0 {
 		return denied, ErrInvalid
 	}
 	var allows, denies, revision int64
-	err := s.reader.QueryRowContext(ctx, `WITH grants AS (
+	err := q.QueryRowContext(ctx, `WITH grants AS (
  SELECT g.effect,g.revision FROM studio_library_grants g WHERE g.account_id=? AND g.library_id=? AND g.action=?
  UNION ALL
  SELECT g.effect,g.revision FROM studio_group_grants g JOIN account_memberships m ON m.group_id=g.group_id WHERE m.account_id=? AND g.library_id=? AND g.action=?
