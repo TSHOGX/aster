@@ -28,7 +28,7 @@ func (s *Store) GroupCatalog(ctx context.Context, token, group string) ([]Catalo
 		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM account_memberships WHERE account_id=? AND group_id=?", account.ID, group).Scan(&member); err != nil {
 			return err
 		}
-		if member == 0 && account.ID != group {
+		if member == 0 {
 			return ErrForbidden
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT b.binding_id,b.kind,b.catalog_id,b.revision,r.digest,r.enabled FROM evolution_catalog_bindings b JOIN evolution_catalog_revisions r ON r.kind=b.kind AND r.id=b.catalog_id AND r.revision=b.revision WHERE b.group_id=? ORDER BY b.binding_id,b.kind`, group)
