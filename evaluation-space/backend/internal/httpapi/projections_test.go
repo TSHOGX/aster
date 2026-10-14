@@ -115,3 +115,33 @@ func TestProjectionAuthorityOutageIsRetryable(t *testing.T) {
 		}
 	}
 }
+
+func TestAdoptionAndLookupReturnSameTypedReceipt(t *testing.T) {
+	store, err := projections.Open(context.Background(), filepath.Join(t.TempDir(), "space.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	configuration := evolution.Configuration{GroupID: "alpha", Revision: 1, Budget: evolution.Budget{MaxTokens: 10, MaxAttempts: 1, TimeoutSeconds: 30, MaxArtifactBytes: 1024}}
+	raw, _ := json.Marshal(configuration)
+	projection := projections.Projection{OperationID: "activation", Digest: evolution.Digest(raw), Configuration: configuration}
+	handler := ProjectionAPI{Store: store, Authority: scopeAuthority{digest: projection.Digest}}.Handler()
+	raw, _ = json.Marshal(projection)
+	request := httptest.NewRequest("POST", "/evaluation-space/api/v1/projections", bytes.NewReader(raw))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer fixture")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	receipt, err := evolution.Decode[evolution.ActivationReceipt](response.Body)
+	if response.Code != 200 || err != nil || receipt.Participant != "evaluation-space" || receipt.Generation != 1 || receipt.ConfigurationDigest != projection.Digest || receipt.State != "adopted" {
+		t.Fatal(receipt, err, response.Code)
+	}
+	request = httptest.NewRequest("GET", "/evaluation-space/api/v1/groups/alpha/projections/1?"+url.Values{"operation_id": {"activation"}, "digest": {projection.Digest}}.Encode(), nil)
+	request.Header.Set("Authorization", "Bearer fixture")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	again, err := evolution.Decode[evolution.ActivationReceipt](response.Body)
+	if response.Code != 200 || err != nil || again != receipt {
+		t.Fatal("reconciliation receipt differs", again, err)
+	}
+}

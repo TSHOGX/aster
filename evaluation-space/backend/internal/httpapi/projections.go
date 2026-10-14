@@ -81,7 +81,7 @@ func (a ProjectionAPI) adopt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Adoption is a participant receipt, never a claim that central activation has settled.
-	write(w, 200, map[string]string{"operation_id": value.OperationID, "configuration_digest": value.Digest, "revision": strconv.FormatInt(value.Configuration.Revision, 10), "state": "adopted"})
+	write(w, 200, evolution.ActivationReceipt{Participant: "evaluation-space", OperationID: value.OperationID, ConfigurationDigest: value.Digest, Generation: value.Configuration.Revision, State: "adopted"})
 }
 
 func (a ProjectionAPI) lookup(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +116,7 @@ func (a ProjectionAPI) lookup(w http.ResponseWriter, r *http.Request) {
 		write(w, 409, map[string]string{"error": "projection_conflict"})
 		return
 	}
-	write(w, 200, map[string]string{"operation_id": projection.OperationID, "configuration_digest": projection.Digest, "revision": raw, "state": "adopted"})
+	write(w, 200, evolution.ActivationReceipt{Participant: "evaluation-space", OperationID: projection.OperationID, ConfigurationDigest: projection.Digest, Generation: projection.Configuration.Revision, State: "adopted"})
 }
 
 var ErrAuthorityDenied = errors.New("projection_authority_denied")
