@@ -1893,3 +1893,13 @@ BEGIN SELECT RAISE(ABORT,'immutable evolution catalog revision'); END;
 CREATE TRIGGER retained_evolution_catalog_revision
 BEFORE DELETE ON evolution_catalog_revisions
 BEGIN SELECT RAISE(ABORT,'retire evolution catalog revisions instead of deleting'); END;
+
+CREATE TABLE evolution_configuration_revisions (
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ operation_id TEXT NOT NULL UNIQUE,
+ digest TEXT NOT NULL,
+ body TEXT NOT NULL CHECK(json_valid(body)),
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(group_id,revision)
+);

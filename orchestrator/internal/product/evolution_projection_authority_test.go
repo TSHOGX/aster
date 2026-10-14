@@ -10,8 +10,8 @@ func TestProjectionAuthorityBindsCurrentOperation(t *testing.T) {
 	s, admin := accountStore(t)
 	ctx := context.Background()
 	token := adminTestToken(t, s, admin)
-	digest := evolution.Digest([]byte("configuration"))
-	config, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"save-scope", 0, digest, false})
+	digest := activationDigestFixture(1, false)
+	config, err := s.SaveEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"save-scope", 0, activationConfigFixture(1, false)})
 	must(t, err)
 	scope := ProjectionScope{StandardUsersGroup, config.OperationID, 1, digest}
 	allowed, err := s.AuthorizeEvolutionProjection(ctx, scope)

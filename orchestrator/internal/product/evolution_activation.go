@@ -1,7 +1,7 @@
 package product
 
 import (
-	manifest "aster/contracts/volumemanifest"
+	"aster/contracts/evolution"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -20,10 +20,9 @@ type EvolutionGroupConfig struct {
 	OperationID     string `json:"operation_id"`
 }
 type EvolutionActivationInput struct {
-	RequestID        string `json:"request_id"`
-	ExpectedRevision int64  `json:"expected_revision"`
-	Digest           string `json:"digest"`
-	AutoEnabled      bool   `json:"auto_enabled"`
+	RequestID        string                  `json:"request_id"`
+	ExpectedRevision int64                   `json:"expected_revision"`
+	Configuration    evolution.Configuration `json:"configuration"`
 }
 type EvolutionActivationReceipt struct {
 	Participant  string `json:"participant"`
@@ -47,9 +46,14 @@ func (s *Store) EvolutionConfig(ctx context.Context, token, group string) (Evolu
 }
 func (s *Store) SaveEvolutionConfig(ctx context.Context, token, group string, input EvolutionActivationInput) (EvolutionGroupConfig, error) {
 	var result EvolutionGroupConfig
-	if !validID(group) || input.ExpectedRevision < 0 || !manifest.ValidDigest(input.Digest) {
+	if !validID(group) || input.ExpectedRevision < 0 || input.Configuration.GroupID != group || input.Configuration.Revision != input.ExpectedRevision+1 || input.Configuration.Validate() != nil {
 		return result, ErrInvalid
 	}
+	body, err := json.Marshal(input.Configuration)
+	if err != nil || len(body) > evolution.MaxDocumentBytes {
+		return result, ErrInvalid
+	}
+	digest := evolution.Digest(body)
 	request, err := mutationRequest(input.RequestID, "evolution.config.save", group, input)
 	if err != nil {
 		return result, err
@@ -80,8 +84,11 @@ func (s *Store) SaveEvolutionConfig(ctx context.Context, token, group string, in
 		if current.State == "activating" || current.State == "failed" {
 			return ErrBusy
 		}
-		result = EvolutionGroupConfig{GroupID: group, DesiredRevision: current.DesiredRevision + 1, ActiveRevision: current.ActiveRevision, DesiredDigest: input.Digest, ActiveDigest: current.ActiveDigest, AutoEnabled: input.AutoEnabled, State: "activating", OperationID: randomOperationID()}
+		result = EvolutionGroupConfig{GroupID: group, DesiredRevision: current.DesiredRevision + 1, ActiveRevision: current.ActiveRevision, DesiredDigest: digest, ActiveDigest: current.ActiveDigest, AutoEnabled: input.Configuration.AutoEnabled, State: "activating", OperationID: randomOperationID()}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO evolution_group_configs VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET desired_revision=excluded.desired_revision,desired_digest=excluded.desired_digest,auto_enabled=excluded.auto_enabled,state='activating',operation_id=excluded.operation_id,updated_at=excluded.updated_at`, group, result.DesiredRevision, result.ActiveRevision, result.DesiredDigest, result.ActiveDigest, result.AutoEnabled, result.State, result.OperationID, s.timestamp()); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO evolution_configuration_revisions(group_id,revision,operation_id,digest,body,created_at) VALUES(?,?,?,?,?,?)`, group, result.DesiredRevision, result.OperationID, digest, string(body), s.timestamp()); err != nil {
 			return err
 		}
 		raw, err = json.Marshal(result)
