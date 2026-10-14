@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http/httptest"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,7 +16,7 @@ import (
 )
 
 func TestAuthoringHTTPJourneyAndActiveContentIsolation(t *testing.T) {
-	store, err := authoring.Open(context.Background(), authoring.Config{Directory: filepath.Join(t.TempDir(), "studio"), PublisherID: "publisher", QuotaBytes: 64 << 20})
+	store, err := authoring.Open(context.Background(), authoring.Config{Authority: &scopedTestAuthority{true}, Directory: filepath.Join(t.TempDir(), "studio"), PublisherID: "publisher", QuotaBytes: 64 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +61,15 @@ func TestAuthoringHTTPJourneyAndActiveContentIsolation(t *testing.T) {
 	data := []byte{0, 1, 2, 255}
 	sum := sha256.Sum256(data)
 	digest := "sha256:" + hex.EncodeToString(sum[:])
-	w = call("POST", root+"/uploads", map[string]any{"request_id": "upload", "expected_revision": 2, "path": "binary", "size": "4", "digest": digest})
+	main, err := store.MainCommit(context.Background(), authoring.Actor{Issuer: session.Issuer, Subject: session.Subject}, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch, err := store.CreateBranch(context.Background(), authoring.Actor{Issuer: session.Issuer, Subject: session.Subject}, l.ID, authoring.CreateBranchInput{RequestID: "upload-branch", Name: "Uploads", BaseCommit: main.CommitID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w = call("POST", root+"/uploads", map[string]any{"request_id": "upload", "branch_id": branch.ID, "expected_revision": 1, "path": "binary", "size": "4", "digest": digest})
 	if w.Code != 201 {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -70,8 +77,8 @@ func TestAuthoringHTTPJourneyAndActiveContentIsolation(t *testing.T) {
 	if err = json.Unmarshal(w.Body.Bytes(), &u); err != nil {
 		t.Fatal(err)
 	}
-	if w = call("POST", root+"/versions", map[string]any{"request_id": "publish", "expected_revision": 2, "label": "v1"}); w.Code != 409 {
-		t.Fatal("upload did not block publish")
+	if w = call("POST", root+"/versions", map[string]any{"request_id": "publish", "expected_revision": 2, "label": "v1"}); w.Code != 400 {
+		t.Fatal("obsolete draft publication accepted")
 	}
 	r = httptest.NewRequest("PUT", "https://example.com"+apiPrefix+root+"/uploads/"+u.ID+"/chunks/0", bytes.NewReader(data))
 	r.Header.Set("X-Chunk-Digest", digest)
@@ -80,29 +87,10 @@ func TestAuthoringHTTPJourneyAndActiveContentIsolation(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	if w = call("POST", root+"/uploads/"+u.ID+"/complete", map[string]any{"request_id": "complete", "expected_revision": 2}); w.Code != 200 {
+	if w = call("POST", root+"/uploads/"+u.ID+"/complete", map[string]any{"request_id": "complete", "expected_revision": 1}); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	w = call("POST", root+"/versions", map[string]any{"request_id": "publish", "expected_revision": 3, "label": "v1"})
-	if w.Code != 202 {
-		t.Fatal(w.Code, w.Body.String())
-	}
-	var v authoring.Version
-	if err = json.Unmarshal(w.Body.Bytes(), &v); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = store.ValidateNext(context.Background(), func(context.Context, authoring.Actor) error { return nil }); err != nil {
-		t.Fatal(err)
-	}
-	w = call("GET", root+"/versions/"+v.ID+"/content?path="+url.QueryEscape("binary"), nil)
-	if w.Code != 200 || !bytes.Equal(w.Body.Bytes(), data) {
-		t.Fatal("published bytes", w.Code)
-	}
-	w = call("GET", "libraries/other/versions/"+v.ID, nil)
-	if w.Code != 404 {
-		t.Fatal("version escaped library scope", w.Code)
-	}
-	w = call("POST", root+"/draft/mutations", map[string]any{"request_id": "invalid", "expected_revision": 3, "action": "text", "path": "../escape", "text": "x"})
+	w = call("POST", root+"/draft/mutations", map[string]any{"request_id": "invalid", "expected_revision": 2, "action": "text", "path": "../escape", "text": "x"})
 	if w.Code != 422 {
 		t.Fatal("path validation", w.Code)
 	}

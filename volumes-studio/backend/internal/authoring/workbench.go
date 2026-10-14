@@ -298,7 +298,7 @@ func (s *Store) versionSummaries(ctx context.Context, library string) ([]Version
 	out := []VersionSummary{}
 	for rows.Next() {
 		var v VersionSummary
-		if err = rows.Scan(&v.ID, &v.LibraryID, &v.Label, &v.Note, &v.SourceRevision, &v.DescriptorDigest, &v.State, &v.Publisher.Issuer, &v.Publisher.Subject, &v.Error, &v.Generation, &v.PublisherID, &v.Profile, &v.CreatedAt, &v.PublishedAt); err != nil {
+		if err = rows.Scan(&v.ID, &v.LibraryID, &v.Label, &v.Note, &v.SourceRevision, &v.DescriptorDigest, &v.State, &v.Publisher.Issuer, &v.Publisher.Subject, &v.Error, &v.Generation, &v.PublisherID, &v.Profile, &v.AcceptedCommit, &v.CreatedAt, &v.PublishedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)

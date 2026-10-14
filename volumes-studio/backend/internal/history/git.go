@@ -348,3 +348,34 @@ func (w *boundedWriter) Write(p []byte) (int, error) {
 	w.n += int64(n)
 	return n, err
 }
+
+func (r *Repository) MergeBase(ctx context.Context, left, right string) (string, error) {
+	if !validOID(left) || !validOID(right) {
+		return "", fmt.Errorf("invalid merge parents")
+	}
+	raw, err := r.command(ctx, nil, "merge-base", "--all", left, right)
+	if err != nil {
+		return "", err
+	}
+	bases := strings.Fields(string(raw))
+	if len(bases) != 1 {
+		return "", fmt.Errorf("merge requires one unambiguous ancestor")
+	}
+	return bases[0], nil
+}
+
+// Parents returns ordered commit parents; ordering is part of merge identity.
+func (r *Repository) Parents(ctx context.Context, commit string) ([]string, error) {
+	if !validOID(commit) {
+		return nil, fmt.Errorf("invalid commit")
+	}
+	raw, err := r.command(ctx, nil, "rev-list", "--parents", "-n", "1", commit)
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) == 0 || fields[0] != commit {
+		return nil, fmt.Errorf("invalid commit ancestry")
+	}
+	return fields[1:], nil
+}

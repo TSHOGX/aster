@@ -1827,3 +1827,20 @@ END;
 CREATE TRIGGER received_owner_update AFTER UPDATE OF display_name,username,status ON accounts BEGIN
  UPDATE received_revisions SET revision=revision+1 WHERE reader_id IN (SELECT g.reader_id FROM conversation_grants g JOIN sessions s ON s.id=g.session_id JOIN projects p ON p.id=s.project_id WHERE p.owner_id=NEW.id);
 END;
+
+CREATE TABLE studio_library_grants (
+ account_id TEXT NOT NULL REFERENCES accounts(id),
+ library_id TEXT NOT NULL,
+ action TEXT NOT NULL CHECK(action IN('volume.read','volume.author','volume.review','volume.merge','volume.publish','volume.configure')),
+ effect TEXT NOT NULL CHECK(effect IN('allow','deny')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ PRIMARY KEY(account_id,library_id,action)
+);
+CREATE TABLE studio_group_grants (
+ group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
+ library_id TEXT NOT NULL,
+ action TEXT NOT NULL CHECK(action IN('volume.read','volume.author','volume.review','volume.merge','volume.publish','volume.configure')),
+ effect TEXT NOT NULL CHECK(effect IN('allow','deny')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ PRIMARY KEY(group_id,library_id,action)
+);

@@ -23,11 +23,11 @@ type PublishInput struct {
 	Note                string  `json:"note"`
 }
 
-const versionColumns = "id,library_id,label,note,source_revision,descriptor_digest,state,issuer,subject,error,generation,(SELECT value FROM metadata WHERE key='publisher_id'),json_extract(descriptor,'$.profile')"
+const versionColumns = "id,library_id,label,note,source_revision,descriptor_digest,state,issuer,subject,error,generation,(SELECT value FROM metadata WHERE key='publisher_id'),json_extract(descriptor,'$.profile'),accepted_commit"
 
 func scanVersion(row scanner) (Version, error) {
 	var v Version
-	err := row.Scan(&v.ID, &v.LibraryID, &v.Label, &v.Note, &v.SourceRevision, &v.DescriptorDigest, &v.State, &v.Publisher.Issuer, &v.Publisher.Subject, &v.Error, &v.Generation, &v.PublisherID, &v.Profile)
+	err := row.Scan(&v.ID, &v.LibraryID, &v.Label, &v.Note, &v.SourceRevision, &v.DescriptorDigest, &v.State, &v.Publisher.Issuer, &v.Publisher.Subject, &v.Error, &v.Generation, &v.PublisherID, &v.Profile, &v.AcceptedCommit)
 	return v, normalizeDB(err)
 }
 func (s *Store) Freeze(ctx context.Context, a Actor, id string, input PublishInput) (Version, error) {
@@ -135,7 +135,7 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 	if err != nil {
 		return false, err
 	}
-	if err = authorize(ctx, v.Publisher); err != nil {
+	if err = s.authorizePublication(ctx, v, authorize); err != nil {
 		if errors.Is(err, ErrAuthority) {
 			s.mu.Lock()
 			_, persist := s.db.ExecContext(ctx, "UPDATE versions SET error='principal_authority_required' WHERE id=? AND generation=?", v.ID, v.Generation)
@@ -198,7 +198,7 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 		_, persist := s.db.ExecContext(ctx, "UPDATE versions SET state='failed',error='source_integrity_failed' WHERE id=? AND state='validating' AND generation=?", v.ID, generation)
 		return true, errors.Join(err, persist)
 	}
-	if err = authorize(ctx, v.Publisher); err != nil {
+	if err = s.authorizePublication(ctx, v, authorize); err != nil {
 		if errors.Is(err, ErrAuthority) {
 			s.mu.Lock()
 			_, persist := s.db.ExecContext(ctx, "UPDATE versions SET error='principal_authority_required' WHERE id=? AND generation=?", v.ID, generation)
@@ -272,7 +272,7 @@ func (s *Store) Collect(ctx context.Context) (int, error) {
 	if s.poisoned {
 		return 0, ErrBusy
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT digest FROM blobs b WHERE state='live' AND NOT EXISTS(SELECT 1 FROM draft_entries d WHERE d.digest=b.digest) AND NOT EXISTS(SELECT 1 FROM version_entries v WHERE v.digest=b.digest) AND NOT EXISTS(SELECT 1 FROM reader_pins p WHERE p.digest=b.digest) ORDER BY digest LIMIT 200`)
+	rows, err := s.db.QueryContext(ctx, `SELECT digest FROM blobs b WHERE state='live' AND NOT EXISTS(SELECT 1 FROM draft_entries d WHERE d.digest=b.digest) AND NOT EXISTS(SELECT 1 FROM branch_entries be WHERE be.digest=b.digest) AND NOT EXISTS(SELECT 1 FROM version_entries v WHERE v.digest=b.digest) AND NOT EXISTS(SELECT 1 FROM reader_pins p WHERE p.digest=b.digest) ORDER BY digest LIMIT 200`)
 	if err != nil {
 		return 0, err
 	}
@@ -350,4 +350,28 @@ func (s *Store) validateProfileContent(d manifest.Descriptor) error {
 		}
 		return nil, ErrNotFound
 	})
+}
+
+// Accepted releases use current library publish authority at both worker
+// admission and finalization. Older internal draft fixtures are removed with the
+// remaining single-draft layer; they use the existing principal callback here.
+func (s *Store) authorizePublication(ctx context.Context, v Version, principal func(context.Context, Actor) error) error {
+	var commit string
+	if err := s.db.QueryRowContext(ctx, "SELECT accepted_commit FROM versions WHERE id=?", v.ID).Scan(&commit); err != nil {
+		return err
+	}
+	if commit == "" {
+		return principal(ctx, v.Publisher)
+	}
+	if err := s.authorizeLibrary(ctx, v.Publisher, v.LibraryID, "volume.publish"); err != nil {
+		return err
+	}
+	var accepted int
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM merge_operations WHERE library_id=? AND new_head=? AND state='settled'", v.LibraryID, commit).Scan(&accepted); err != nil {
+		return err
+	}
+	if accepted != 1 {
+		return ErrConflict
+	}
+	return nil
 }

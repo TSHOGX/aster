@@ -22,6 +22,7 @@ export type Entry = {
   digest: string;
 };
 export type Version = {
+  accepted_commit: string;
   profile: Library["profile"];
   publisher_id: string;
   id: string;
@@ -37,6 +38,7 @@ export type Version = {
   published_at?: number | null;
 };
 export type Upload = {
+  branch_id: string;
   id: string;
   path: string;
   size: string;
@@ -73,7 +75,7 @@ export async function api<T>(
     credentials: "same-origin",
     cache: "no-store",
   });
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
     if (typeof window !== "undefined")
       window.dispatchEvent(new Event("studio-auth-expired"));
   }

@@ -129,11 +129,11 @@ func (s *Store) UploadStatus(ctx context.Context, id string) (UploadStatus, erro
 	if err != nil {
 		return UploadStatus{}, err
 	}
-	l, err := s.Library(ctx, u.LibraryID)
+	l, err := s.branch(ctx, u.LibraryID, u.BranchID)
 	if err != nil {
 		return UploadStatus{}, err
 	}
-	tree, err := entries(ctx, s.db, "draft_entries", "library_id", u.LibraryID)
+	tree, err := entries(ctx, s.db, "branch_entries", "branch_id", u.BranchID)
 	if err != nil {
 		return UploadStatus{}, err
 	}

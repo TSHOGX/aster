@@ -13,6 +13,7 @@ type Row =
   | { parent: string; depth: number; next: string };
 export function FileTree({
   library,
+  branch,
   version,
   revision,
   selected,
@@ -23,6 +24,7 @@ export function FileTree({
   searchRef,
 }: {
   library: string;
+  branch: string;
   version: string;
   revision: number;
   selected: string;
@@ -46,7 +48,7 @@ export function FileTree({
     generation = useRef(0),
     searchGeneration = useRef(0),
     pending = useRef(new Set<string>());
-  const root = `/libraries/${library}/${version ? `versions/${version}` : "draft"}`;
+  const root = `/libraries/${library}/${version ? `versions/${version}` : `branches/${encodeURIComponent(branch)}/draft`}`;
   const load = useCallback(
     async (parent: string, cursor = "") => {
       const key = parent + "\n" + cursor;
@@ -54,9 +56,12 @@ export function FileTree({
       pending.current.add(key);
       const turn = generation.current;
       try {
-        const p = await api<Page<Entry>>(
-          `${root}/tree?${query({ mode: "workbench", parent, revision: version ? undefined : revision, cursor })}`,
-        );
+        if (!version && !branch) return;
+        const p: Page<Entry> = version ? await api<Page<Entry>>(
+          `${root}/tree?${query({ mode: "workbench", parent, cursor })}`,
+        ) : await api<{entries: Entry[]; next?: string; revision: number; descendant_count: number}>(
+          `${root}/tree?${query({ parent, revision, after: cursor })}`,
+        ).then(page => ({items:page.entries,next:page.next ?? "",revision:page.revision,total:page.descendant_count,base_version:""}));
         if (turn === generation.current)
           setPages((old) => ({
             ...old,
@@ -73,16 +78,16 @@ export function FileTree({
         if (turn === generation.current) pending.current.delete(key);
       }
     },
-    [root, revision, version],
+    [root, revision, version, branch],
   );
   useEffect(() => {
-    const raw = storageRead("session", `studio-tree:${library}:${version}`);
+    const raw = storageRead("session", `studio-tree:${library}:${branch}:${version}`);
     try {
       setExpanded(new Set(raw ? JSON.parse(raw) : [""]));
     } catch {
       setExpanded(new Set([""]));
     }
-  }, [library, version]);
+  }, [library, branch, version]);
   useEffect(() => {
     const turn = ++generation.current;
     pending.current.clear();
@@ -99,11 +104,11 @@ export function FileTree({
   useEffect(() => {
     storageWrite(
       "session",
-      `studio-tree:${library}:${version}`,
+      `studio-tree:${library}:${branch}:${version}`,
       JSON.stringify([...expanded]),
     );
     for (const p of expanded) if (!pages[p]) void load(p);
-  }, [expanded, pages, load, library, version]);
+  }, [expanded, pages, load, library, branch, version]);
   useEffect(() => {
     if (!selected || needle) return;
     const parts = selected.split("/");

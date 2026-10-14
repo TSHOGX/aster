@@ -10,12 +10,13 @@ import (
 	"strings"
 	"testing"
 
+	"aster/contracts/evolution"
 	"volume-studio/backend/internal/authoring"
 )
 
 func TestAuthenticatedDistributionManifestRangeAndRevocation(t *testing.T) {
 	ctx := context.Background()
-	store, err := authoring.Open(ctx, authoring.Config{Directory: t.TempDir(), PublisherID: "publisher", QuotaBytes: 32 << 20})
+	store, err := authoring.Open(ctx, authoring.Config{Authority: distributionAuthority{}, Directory: t.TempDir(), PublisherID: "publisher", QuotaBytes: 32 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,10 +26,33 @@ func TestAuthenticatedDistributionManifestRangeAndRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.Mutate(ctx, actor, l.ID, authoring.Mutation{RequestID: "text", ExpectedRevision: 1, Action: "text", Path: "file", Text: "source bytes"}); err != nil {
+	main, err := store.MainCommit(ctx, actor, l.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := store.Freeze(ctx, actor, l.ID, authoring.PublishInput{RequestID: "publish", ExpectedRevision: 2, Label: "v1"})
+	branch, err := store.CreateBranch(ctx, actor, l.ID, authoring.CreateBranchInput{RequestID: "branch", Name: "Work", BaseCommit: main.CommitID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.SaveBranchText(ctx, actor, l.ID, branch.ID, authoring.SaveBranchTextInput{RequestID: "text", ExpectedRevision: 1, ExpectedHead: main.CommitID, Path: "file", Text: "source bytes"}); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := store.Checkpoint(ctx, actor, l.ID, branch.ID, authoring.CheckpointInput{RequestID: "checkpoint", ExpectedHead: main.CommitID, ExpectedRevision: 2, Message: "Source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := store.PrepareMerge(ctx, actor, l.ID, authoring.PrepareInput{RequestID: "prepare", BranchID: branch.ID, ExpectedHead: checkpoint.CommitID, ExpectedMain: main.CommitID, ExpectedPolicyRevision: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Review(ctx, actor, l.ID, authoring.ReviewInput{RequestID: "review", PreparedDigest: prepared.Digest, Verdict: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := store.Merge(ctx, actor, l.ID, authoring.MergeInput{RequestID: "merge", PreparedDigest: prepared.Digest, ExpectedMain: main.CommitID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := store.Release(ctx, actor, l.ID, authoring.ReleaseInput{RequestID: "publish", AcceptedCommit: accepted.AcceptedCommit, Label: "v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,4 +125,10 @@ func TestRangeBoundaries(t *testing.T) {
 			t.Fatal(c, err)
 		}
 	}
+}
+
+type distributionAuthority struct{}
+
+func (distributionAuthority) Authorize(context.Context, evolution.AccessRequest) (evolution.AccessDecision, error) {
+	return evolution.AccessDecision{Allowed: true, PolicyRevision: 1}, nil
 }

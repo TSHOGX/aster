@@ -65,6 +65,7 @@ func adminPageLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
 	return n, true
 }
 func (a *Authentication) adminRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/admin/studio-grants", a.editStudioGrant)
 	mux.HandleFunc("GET /api/admin/projects", a.adminProjects)
 	mux.HandleFunc("GET /api/admin/projects/{id}", a.adminProject)
 	for _, action := range []string{"pause", "stop", "restart", "apply-network"} {

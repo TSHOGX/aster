@@ -47,6 +47,9 @@ func (s *Store) Validation(ctx context.Context, library, version string) (Valida
 	if err != nil {
 		return out, err
 	}
+	return s.validateTree(out, tree)
+}
+func (s *Store) validateTree(out Validation, tree []manifest.Entry) (Validation, error) {
 	if out.Profile != manifest.SharedAssetsProfile {
 		return out, nil
 	}
@@ -87,4 +90,28 @@ func (s *Store) Validation(ctx context.Context, library, version string) (Valida
 		}
 	}
 	return out, nil
+}
+
+func (s *Store) BranchValidation(ctx context.Context, a Actor, library, branch string, revision int64) (Validation, error) {
+	if err := s.authorizeLibrary(ctx, a, library, "volume.read"); err != nil {
+		return Validation{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, err := s.branch(ctx, library, branch)
+	if err != nil {
+		return Validation{}, err
+	}
+	if b.DraftRevision != revision {
+		return Validation{}, ErrConflict
+	}
+	l, err := s.Library(ctx, library)
+	if err != nil {
+		return Validation{}, err
+	}
+	tree, err := entries(ctx, s.db, "branch_entries", "branch_id", branch)
+	if err != nil {
+		return Validation{}, err
+	}
+	return s.validateTree(Validation{Profile: l.Profile, Revision: b.DraftRevision, Findings: []manifest.Finding{}, Valid: true}, tree)
 }

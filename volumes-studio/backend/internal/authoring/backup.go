@@ -112,6 +112,56 @@ func (s *Store) Backup(ctx context.Context, target string) error {
 			return err
 		}
 	}
+	historyRoot := filepath.Join(s.config.Directory, "history")
+	if _, statErr := os.Stat(historyRoot); statErr == nil {
+		err = filepath.WalkDir(historyRoot, func(name string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(s.config.Directory, name)
+			if err != nil {
+				return err
+			}
+			dest := filepath.Join(target, rel)
+			if entry.IsDir() {
+				return os.MkdirAll(dest, 0700)
+			}
+			if !entry.Type().IsRegular() {
+				return ErrInvalid
+			}
+			source, err := os.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+			if err != nil {
+				return err
+			}
+			output, err := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+			if err != nil {
+				source.Close()
+				return err
+			}
+			hash := sha256.New()
+			n, err := io.Copy(io.MultiWriter(output, hash), &contextReader{ctx: ctx, reader: source})
+			if err == nil {
+				err = output.Sync()
+			}
+			err = errors.Join(err, source.Close(), output.Close())
+			if err != nil {
+				return err
+			}
+			if err = syncDir(filepath.Dir(dest)); err != nil {
+				return err
+			}
+			records = append(records, record{Path: filepath.ToSlash(rel), Size: n, Digest: "sha256:" + hex.EncodeToString(hash.Sum(nil))})
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
+	}
 	f, err := os.Open(dbPath)
 	if err != nil {
 		return err

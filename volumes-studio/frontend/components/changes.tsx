@@ -78,33 +78,40 @@ export function Changes({ library }: { library: Library }) {
     ),
     [comparison, setComparison] = useState<Message>(""),
     [error, setError] = useState("");
-  const root = `/libraries/${library.id}`;
+  const branch = studio.model.branches[library.id];
+  const root = `/libraries/${library.id}/branches/${branch?.id ?? ""}`;
   const params = query({
-    mode: "workbench",
+    head: branch?.head,
     revision: library.draft_revision,
-    base_version: library.base_version,
+
   });
   useEffect(() => {
     const abort = new AbortController();
-    void api<Page<Change>>(`${root}/draft/diff?${params}`, {
+    if (!branch) return;
+    void api<{changes: Change[];next:string;total:number}>(`${root}/draft/diff?${params}`, {
       signal: abort.signal,
     })
       .then((p) => {
-        setPage(p);
+        setPage({items:p.changes,next:p.next,total:p.total,revision:library.draft_revision,base_version:""});
         setError("");
       })
       .catch((e) => {
         if (!abort.signal.aborted) setError(String(e));
       });
     return () => abort.abort();
-  }, [root, params]);
+  }, [root, params, branch, library.draft_revision]);
   useEffect(() => {
     if (!selected) return;
     const abort = new AbortController();
     setContent(null);
     setComparison("Loading comparison…");
     const load = async (version: string, path: string) => {
-      const url = contentURL(library.id, version, path, library.draft_revision);
+      if (version) {
+        const result = await api<{text?:string;preview:string}>(`${root}/head-file?${query({head:version,path})}`,{signal:abort.signal});
+        if (result.preview !== "text") throw new Error("This file is unavailable for text comparison.");
+        return result.text ?? "";
+      }
+      const url = contentURL(library.id, version, path, library.draft_revision,studio.model.branches[library.id]?.id);
       const response = await fetch(url, { signal: abort.signal });
       if (!response.ok)
         throw new Error(
@@ -143,7 +150,7 @@ export function Changes({ library }: { library: Library }) {
         const before =
           selected.change === "added"
             ? ""
-            : await load(library.base_version, selected.path);
+            : await load(branch?.head ?? "", selected.path);
         const after =
           selected.change === "removed" ? "" : await load("", selected.path);
         if (!abort.signal.aborted) {
@@ -156,6 +163,8 @@ export function Changes({ library }: { library: Library }) {
     })();
     return () => abort.abort();
   }, [
+    studio.model.branches,
+    branch?.head,
     selected,
     library.id,
     library.draft_revision,
@@ -163,7 +172,7 @@ export function Changes({ library }: { library: Library }) {
     root,
   ]);
   const dirty = studio.model.buffers.filter(
-    (b) => b.library === library.id && b.text !== b.saved,
+    (b) => b.library === library.id && b.branch === branch?.id && b.text !== b.saved,
   ).length;
   const comparisonMessage = typeof comparison === "object" ? {
     ...comparison, params: {
@@ -179,7 +188,7 @@ export function Changes({ library }: { library: Library }) {
            {tr("Changes")} <span className="count">{page?.total ?? "…"}</span>
         </h2>
         <span className="muted">
-           {tr("Saved draft vs. base version")} {dirty ? tr(" · {value0} unsaved file(s) excluded", { value0: dirty }) : ""}
+           {tr("Saved draft vs. committed head")} {dirty ? tr(" · {value0} unsaved file(s) excluded", { value0: dirty }) : ""}
         </span>
       </div>
       {error && (
@@ -208,11 +217,11 @@ export function Changes({ library }: { library: Library }) {
           {page?.next && (
             <button
               onClick={() =>
-                void api<Page<Change>>(
-                  `${root}/draft/diff?${params}&cursor=${encodeURIComponent(page.next)}`,
+                void api<{changes:Change[];next:string;total:number}>(
+                  `${root}/draft/diff?${params}&after=${encodeURIComponent(page.next)}`,
                 )
                   .then((p) =>
-                    setPage({ ...p, items: [...page.items, ...p.items] }),
+                    setPage({ ...page,next:p.next,total:p.total,items: [...page.items, ...p.changes] }),
                   )
                   .catch((e) => setError(String(e)))
               }

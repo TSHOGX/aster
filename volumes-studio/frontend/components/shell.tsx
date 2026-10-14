@@ -409,5 +409,8 @@ export const contentURL = (
   version: string,
   path: string,
   revision?: number,
-) =>
-  `${base}/api/v1/libraries/${library}/${version ? `versions/${version}` : "draft"}/content?${query({ path, revision: version ? undefined : revision })}`;
+  branch?: string,
+) => {
+  if (!version && !branch) throw new Error("A branch is required for draft downloads.");
+  return `${base}/api/v1/libraries/${library}/${version ? `versions/${version}` : `branches/${encodeURIComponent(branch!)}/draft`}/content?${query({ path, revision: version ? undefined : revision })}`;
+};

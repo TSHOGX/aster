@@ -61,5 +61,8 @@ func (s *Store) seedSharedAssets(ctx context.Context) error {
 			return err
 		}
 	}
+	if err = initializeMergePolicy(ctx, tx, library); err != nil {
+		return err
+	}
 	return tx.Commit()
 }

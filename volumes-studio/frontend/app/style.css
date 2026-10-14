@@ -1344,3 +1344,48 @@ dd {
 .shared-assets-validation button { max-width: 100%; white-space: normal; text-align: start; }
 .dialog-actions { flex-wrap: wrap; }
 .dialog-actions > button { min-width: 0; white-space: normal; }
+
+/* Keep branch operations reachable without displacing the file workspace. */
+.branch-controls {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 44dvh;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.branch-controls > section {
+  margin: 0 0 8px;
+  min-width: 0;
+}
+.branch-controls label {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 12px 4px 0;
+  max-width: 100%;
+}
+.branch-controls input,
+.branch-controls select,
+.branch-controls textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+.branch-controls code {
+  overflow-wrap: anywhere;
+}
+.branch-controls pre {
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 767px) {
+  .branch-controls { padding: 8px; max-height: 45dvh; }
+  .branch-controls label { display: flex; margin-right: 0; }
+  .branch-controls label > input,
+  .branch-controls label > select,
+  .branch-controls label > textarea { flex: 1; }
+}

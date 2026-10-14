@@ -4,6 +4,7 @@ CREATE TABLE blobs(
  state TEXT NOT NULL DEFAULT 'live' CHECK(state IN ('live','deleting'))
 );
 CREATE TABLE libraries(
+ history_state TEXT NOT NULL DEFAULT 'preparing' CHECK(history_state IN('preparing','ready')),
  id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,description TEXT NOT NULL,
  profile TEXT NOT NULL DEFAULT 'authored-v1' CHECK(profile IN('authored-v1','shared-assets-v1')),
  metadata_revision INTEGER NOT NULL DEFAULT 1,
@@ -21,6 +22,7 @@ CREATE TABLE draft_entries(
 );
 CREATE INDEX draft_blob_refs ON draft_entries(digest);
 CREATE TABLE versions(
+ accepted_commit TEXT NOT NULL DEFAULT '',
  id TEXT PRIMARY KEY,library_id TEXT NOT NULL REFERENCES libraries(id),
  label TEXT NOT NULL,note TEXT NOT NULL,source_revision INTEGER NOT NULL,
  descriptor BLOB NOT NULL,descriptor_digest TEXT NOT NULL UNIQUE,
@@ -50,6 +52,7 @@ CREATE TABLE audit(
 CREATE INDEX audit_library ON audit(library_id,sequence);
 
 CREATE TABLE uploads(
+ branch_id TEXT NOT NULL REFERENCES branches(id),
  id TEXT PRIMARY KEY,library_id TEXT NOT NULL REFERENCES libraries(id),
  path TEXT NOT NULL,issuer TEXT NOT NULL,subject TEXT NOT NULL,
  size INTEGER NOT NULL CHECK(size>=0),digest TEXT NOT NULL,
@@ -85,3 +88,61 @@ CREATE INDEX audit_workbench_time ON audit(library_id,created_at);
 
 CREATE TRIGGER immutable_library_profile BEFORE UPDATE OF profile ON libraries
 BEGIN SELECT RAISE(ABORT,'immutable library content profile'); END;
+
+CREATE TABLE branches(
+ id TEXT PRIMARY KEY,library_id TEXT NOT NULL REFERENCES libraries(id),
+ name TEXT NOT NULL,initial_base TEXT NOT NULL,draft_revision INTEGER NOT NULL DEFAULT 1,
+ state TEXT NOT NULL DEFAULT 'preparing' CHECK(state IN('preparing','ready')),
+ issuer TEXT NOT NULL,subject TEXT NOT NULL,created_at INTEGER NOT NULL,
+ UNIQUE(library_id,name)
+);
+CREATE TABLE branch_entries(
+ branch_id TEXT NOT NULL REFERENCES branches(id),path TEXT NOT NULL,
+ kind TEXT NOT NULL CHECK(kind IN('file','directory')),size INTEGER NOT NULL CHECK(size>=0),
+ digest TEXT REFERENCES blobs(digest),PRIMARY KEY(branch_id,path),
+ CHECK((kind='directory' AND size=0 AND digest IS NULL) OR (kind='file' AND digest IS NOT NULL))
+);
+CREATE INDEX branch_blob_refs ON branch_entries(digest);
+CREATE TABLE checkpoints(
+ id TEXT PRIMARY KEY,branch_id TEXT NOT NULL REFERENCES branches(id),
+ old_head TEXT NOT NULL,new_head TEXT NOT NULL,draft_revision INTEGER NOT NULL,
+ state TEXT NOT NULL CHECK(state IN('prepared','settled'))
+);
+CREATE TABLE prepared_merges(
+ digest TEXT PRIMARY KEY,library_id TEXT NOT NULL REFERENCES libraries(id),
+ identity BLOB NOT NULL,conflicts INTEGER NOT NULL DEFAULT 0 CHECK(conflicts>=0),
+ created_at INTEGER NOT NULL
+);
+CREATE TABLE merge_reviews(
+ id TEXT PRIMARY KEY,prepared_digest TEXT NOT NULL REFERENCES prepared_merges(digest),
+ issuer TEXT NOT NULL,subject TEXT NOT NULL,verdict TEXT NOT NULL CHECK(verdict IN('approve','changes_requested','reject')),
+ rationale TEXT NOT NULL,created_at INTEGER NOT NULL,
+ UNIQUE(prepared_digest,issuer,subject)
+);
+CREATE TABLE library_merge_policies(
+ library_id TEXT PRIMARY KEY REFERENCES libraries(id),revision INTEGER NOT NULL,
+ digest TEXT NOT NULL,minimum_approvals INTEGER NOT NULL CHECK(minimum_approvals>0)
+);
+CREATE TABLE prepared_sources(
+ prepared_digest TEXT NOT NULL REFERENCES prepared_merges(digest),
+ branch_id TEXT NOT NULL REFERENCES branches(id),head TEXT NOT NULL,
+ PRIMARY KEY(prepared_digest,branch_id)
+);
+CREATE TABLE merge_operations(
+ id TEXT PRIMARY KEY,library_id TEXT NOT NULL REFERENCES libraries(id),
+ prepared_digest TEXT NOT NULL UNIQUE REFERENCES prepared_merges(digest),
+ old_head TEXT NOT NULL,new_head TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN('prepared','settled'))
+);
+CREATE TABLE conflict_workspaces(
+ id TEXT PRIMARY KEY,library_id TEXT NOT NULL REFERENCES libraries(id),
+ branch_id TEXT NOT NULL REFERENCES branches(id),base_commit TEXT NOT NULL,
+ main_commit TEXT NOT NULL,source_commit TEXT NOT NULL,policy_revision INTEGER NOT NULL,
+ policy_digest TEXT NOT NULL,conflicts BLOB NOT NULL,revision INTEGER NOT NULL DEFAULT 1,
+ state TEXT NOT NULL CHECK(state IN('open','resolved')),created_at INTEGER NOT NULL
+);
+CREATE TABLE conflict_resolutions(
+ workspace_id TEXT NOT NULL REFERENCES conflict_workspaces(id),path TEXT NOT NULL,
+ choice TEXT NOT NULL CHECK(choice IN('main','branch','delete','text')),
+ text TEXT NOT NULL,PRIMARY KEY(workspace_id,path)
+);

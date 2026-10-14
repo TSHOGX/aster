@@ -13,7 +13,7 @@ func TestBackupRestoreRetainsPublisherVersionsAndUploadCheckpoints(t *testing.T)
 	ctx := context.Background()
 	l, v := released(t, s)
 	data := []byte("resumable")
-	u := upload(t, s, l.ID, "unfinished", 2, data)
+	u := upload(t, s, l.ID, "unfinished", 1, data)
 	chunk(t, s, u.ID, 0, data[:3])
 	target := filepath.Join(t.TempDir(), "backup")
 	if err := s.Backup(ctx, target); err != nil {
@@ -22,7 +22,7 @@ func TestBackupRestoreRetainsPublisherVersionsAndUploadCheckpoints(t *testing.T)
 	if _, err := os.Stat(filepath.Join(target, "backup.json")); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := Open(ctx, Config{Directory: target, PublisherID: s.config.PublisherID, QuotaBytes: s.config.QuotaBytes})
+	restored, err := Open(ctx, Config{Authority: s.config.Authority, Directory: target, PublisherID: s.config.PublisherID, QuotaBytes: s.config.QuotaBytes})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestBackupRestoreRetainsPublisherVersionsAndUploadCheckpoints(t *testing.T)
 		t.Fatal("checkpoint lost", status, err)
 	}
 	chunk(t, restored, u.ID, 3, data[3:])
-	if _, err = restored.CompleteUpload(ctx, testActor, u.ID, CompleteInput{RequestID: "after-restore", ExpectedRevision: 2}); err != nil {
+	if _, err = restored.CompleteUpload(ctx, testActor, u.ID, CompleteInput{RequestID: "after-restore", ExpectedRevision: 1}); err != nil {
 		t.Fatal(err)
 	}
 	// Continuing one installation does not modify the independently owned copy.
@@ -70,7 +70,7 @@ func TestBackupRefusesOverwriteAndIncompleteRestore(t *testing.T) {
 	if err := s.Backup(cancelled, target); err == nil {
 		t.Fatal("canceled backup succeeded")
 	}
-	if restored, err := Open(ctx, Config{Directory: target, PublisherID: s.config.PublisherID, QuotaBytes: s.config.QuotaBytes}); err == nil {
+	if restored, err := Open(ctx, Config{Authority: s.config.Authority, Directory: target, PublisherID: s.config.PublisherID, QuotaBytes: s.config.QuotaBytes}); err == nil {
 		restored.Close()
 		t.Fatal("incomplete backup opened")
 	}

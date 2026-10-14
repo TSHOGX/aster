@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -388,23 +387,7 @@ func (s *Store) Diff(ctx context.Context, id, after string, revision int64) ([]C
 		}
 		base = d.Entries
 	}
-	old := map[string]manifest.Entry{}
-	for _, e := range base {
-		old[e.Path] = e
-	}
-	changes := []Change{}
-	for _, e := range current {
-		if before, ok := old[e.Path]; !ok {
-			changes = append(changes, Change{e.Path, "added"})
-		} else if before != e {
-			changes = append(changes, Change{e.Path, "changed"})
-		}
-		delete(old, e.Path)
-	}
-	for name := range old {
-		changes = append(changes, Change{name, "removed"})
-	}
-	sort.Slice(changes, func(i, j int) bool { return changes[i].Path < changes[j].Path })
+	changes := compareEntries(base, current)
 	out := []Change{}
 	for _, c := range changes {
 		if c.Path <= after {

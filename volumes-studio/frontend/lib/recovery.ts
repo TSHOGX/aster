@@ -4,6 +4,7 @@ export type Recovery = {
   id: string;
   account: string;
   library: string;
+  branch: string;
   path: string;
   session: string;
   text: string;

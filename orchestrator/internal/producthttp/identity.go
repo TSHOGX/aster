@@ -1,6 +1,7 @@
 package producthttp
 
 import (
+	"aster/contracts/evolution"
 	"errors"
 	"net/http"
 	"net/url"
@@ -29,6 +30,7 @@ func (a *Authentication) IdentityServiceHandler() http.Handler {
 	mux.HandleFunc("POST /api/identity/v1/introspect", a.identityIntrospect)
 	mux.HandleFunc("POST /api/identity/v1/revoke", a.identityRevoke)
 	mux.HandleFunc("POST /api/identity/v1/principal", a.identityPrincipal)
+	mux.HandleFunc("POST /api/identity/v1/studio-access", a.identityStudioAccess)
 	return mux
 }
 func identityHeaders(w http.ResponseWriter) {
@@ -182,4 +184,24 @@ func (a *Authentication) identityPrincipal(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	a.identityResponse(w, assertion, "")
+}
+
+func (a *Authentication) identityStudioAccess(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.identityService(w, r); !ok {
+		return
+	}
+	var request evolution.AccessRequest
+	if !decode(w, r, 4096, &request) {
+		return
+	}
+	if request.Principal.Issuer != a.Config.Identity.Issuer {
+		writeError(w, 403, "issuer mismatch")
+		return
+	}
+	decision, err := a.Store.StudioAccess(r.Context(), request)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, decision)
 }
