@@ -78,7 +78,7 @@ func TestExportPinsMembershipArchiveAndRetirement(t *testing.T) {
 	if n, err := s.Collect(ctx); err != nil || n != 0 {
 		t.Fatal("draft bytes collected", n, err)
 	}
-	if changes, _, err := s.Diff(ctx, l.ID, "", 2); err != nil || len(changes) != 0 {
+	if changes, _, err := diffFixture(s, ctx, l.ID, "", 2); err != nil || len(changes) != 0 {
 		t.Fatal("retirement erased base diff", changes, err)
 	}
 	mutate(t, s, l.ID, fixtureMutation{RequestID: "remove", ExpectedRevision: 2, Action: "remove", Path: "file"})

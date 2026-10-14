@@ -1,7 +1,6 @@
 package authoring
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -36,55 +35,6 @@ type TreePage struct {
 	Revision        int64            `json:"revision"`
 	Entries         []manifest.Entry `json:"entries"`
 	Next            string           `json:"next,omitempty"`
-}
-
-func (s *Store) Tree(ctx context.Context, id, parent, after string, revision int64) (TreePage, error) {
-	if parent != "" && manifest.ValidPath(parent, true) != nil {
-		return TreePage{}, ErrInvalid
-	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return TreePage{}, err
-	}
-	defer tx.Rollback()
-	var current int64
-	if err = tx.QueryRowContext(ctx, "SELECT draft_revision FROM libraries WHERE id=?", id).Scan(&current); err != nil {
-		return TreePage{}, normalizeDB(err)
-	}
-	if revision != 0 && revision != current || after != "" && revision == 0 {
-		return TreePage{}, ErrConflict
-	}
-	prefix := parent
-	if prefix != "" {
-		prefix += "/"
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT path,kind,size,coalesce(digest,'') FROM draft_entries WHERE library_id=? AND path>? AND substr(path,1,?)=? AND instr(substr(path,?),'/')=0 ORDER BY path LIMIT 201`, id, after, len([]rune(prefix)), prefix, len([]rune(prefix))+1)
-	if err != nil {
-		return TreePage{}, err
-	}
-	defer rows.Close()
-	page := TreePage{Revision: current, Entries: []manifest.Entry{}}
-	// Counting while rows are open would contend for the single SQLite connection;
-	// this count uses the same read transaction after the page cursor is closed.
-	for rows.Next() {
-		var e manifest.Entry
-		var n int64
-		if err = rows.Scan(&e.Path, &e.Kind, &n, &e.Digest); err != nil {
-			return page, err
-		}
-		e.Size = strconv.FormatInt(n, 10)
-		if len(page.Entries) == 200 {
-			page.Next = page.Entries[199].Path
-			break
-		}
-		page.Entries = append(page.Entries, e)
-	}
-	if err = rows.Err(); err != nil {
-		return page, err
-	}
-	rows.Close()
-	err = tx.QueryRowContext(ctx, "SELECT count(*) FROM draft_entries WHERE library_id=? AND substr(path,1,?)=?", id, len([]rune(prefix)), prefix).Scan(&page.DescendantCount)
-	return page, err
 }
 
 type pinnedFile struct {
@@ -155,46 +105,6 @@ func (s *Store) Content(ctx context.Context, id, name, version string, expectedR
 type Change struct {
 	Path string `json:"path"`
 	Kind string `json:"change"`
-}
-
-func (s *Store) Diff(ctx context.Context, id, after string, revision int64) ([]Change, string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	l, err := s.Library(ctx, id)
-	if err != nil {
-		return nil, "", err
-	}
-	if revision != l.DraftRevision {
-		return nil, "", ErrConflict
-	}
-	current, err := entries(ctx, s.db, "draft_entries", "library_id", id)
-	if err != nil {
-		return nil, "", err
-	}
-	base := []manifest.Entry{}
-	if l.BaseVersion != "" {
-		var raw []byte
-		if err = s.db.QueryRowContext(ctx, "SELECT descriptor FROM versions WHERE id=?", l.BaseVersion).Scan(&raw); err != nil {
-			return nil, "", err
-		}
-		d, err := manifest.Decode(bytes.NewReader(raw))
-		if err != nil {
-			return nil, "", err
-		}
-		base = d.Entries
-	}
-	changes := compareEntries(base, current)
-	out := []Change{}
-	for _, c := range changes {
-		if c.Path <= after {
-			continue
-		}
-		if len(out) == 200 {
-			return out, out[199].Path, nil
-		}
-		out = append(out, c)
-	}
-	return out, "", nil
 }
 
 // AttachmentTarget is the canonical identity stored with resumable uploads.

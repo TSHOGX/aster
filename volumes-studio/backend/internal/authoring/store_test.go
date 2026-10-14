@@ -88,7 +88,7 @@ func TestRevisionReceiptsFreezeRestoreAndRestart(t *testing.T) {
 	if entry.Digest != digestBytes([]byte("second")) {
 		t.Fatal(entry)
 	}
-	diff, _, err := s.Diff(ctx, l.ID, "", 4)
+	diff, _, err := diffFixture(s, ctx, l.ID, "", 4)
 	if err != nil || len(diff) != 1 || diff[0].Kind != "changed" {
 		t.Fatal(diff, err)
 	}
@@ -101,7 +101,7 @@ func TestRevisionReceiptsFreezeRestoreAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	page, err := s.Tree(ctx, l.ID, "", "", 5)
+	page, err := treeFixture(s, ctx, l.ID, "", "", 5)
 	if err != nil || page.Revision != 5 || page.Entries[0].Digest != entry.Digest {
 		t.Fatal(page, err)
 	}
@@ -165,7 +165,7 @@ func TestTwoTabsCannotOverwriteAndParentsRemainValid(t *testing.T) {
 	}
 	mutate(t, s, l.ID, fixtureMutation{RequestID: "mkdir", ExpectedRevision: 2, Action: "mkdir", Path: "目录"})
 	mutate(t, s, l.ID, fixtureMutation{RequestID: "child", ExpectedRevision: 3, Action: "text", Path: "目录/child", Text: "text"})
-	page, err := s.Tree(ctx, l.ID, "目录", "", 4)
+	page, err := treeFixture(s, ctx, l.ID, "目录", "", 4)
 	if err != nil || len(page.Entries) != 1 || page.Entries[0].Path != "目录/child" {
 		t.Fatal(page, err)
 	}
@@ -173,7 +173,7 @@ func TestTwoTabsCannotOverwriteAndParentsRemainValid(t *testing.T) {
 		t.Fatal("recursive delete unconfirmed", err)
 	}
 	mutate(t, s, l.ID, fixtureMutation{RequestID: "rename", ExpectedRevision: 4, Action: "move", Path: "目录", To: "renamed"})
-	if page, err := s.Tree(ctx, l.ID, "renamed", "", 5); err != nil || page.Entries[0].Path != "renamed/child" {
+	if page, err := treeFixture(s, ctx, l.ID, "renamed", "", 5); err != nil || page.Entries[0].Path != "renamed/child" {
 		t.Fatal(page, err)
 	}
 	removed := mutate(t, s, l.ID, fixtureMutation{RequestID: "delete", ExpectedRevision: 5, Action: "remove", Path: "renamed", Recursive: true})
