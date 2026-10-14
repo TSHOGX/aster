@@ -59,3 +59,41 @@ func TestEvolutionHistoricalOperationRetainsTerminalState(t *testing.T) {
 		t.Fatal("operation provenance deleted")
 	}
 }
+
+func TestEvolutionTerminalStateCannotReopen(t *testing.T) {
+	s, admin := accountStore(t)
+	token := adminTestToken(t, s, admin)
+	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
+	must(t, err)
+	// Invalid shortcuts must fail atomically, including the current-state row.
+	for _, state := range []string{"discarding", "discarded", "draft"} {
+		if err = s.write(ctx, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, "UPDATE evolution_group_configs SET state=? WHERE operation_id=?", state, pending.OperationID)
+			return err
+		}); err == nil {
+			t.Fatal("invalid transition accepted", state)
+		}
+	}
+	for _, participant := range []string{"studio", "evaluation-space"} {
+		must(t, acceptEvolutionFixture(s, ctx, token, pending.OperationID, participant, pending.DesiredDigest))
+	}
+	_, err = s.SettleEvolutionActivation(ctx, token, pending.OperationID)
+	must(t, err)
+	for _, state := range []string{"activating", "failed", "discarding", "discarded"} {
+		if err = s.write(ctx, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, "UPDATE evolution_group_configs SET state=? WHERE operation_id=?", state, pending.OperationID)
+			return err
+		}); err == nil {
+			t.Fatal("terminal activation reopened", state)
+		}
+	}
+	current, err := s.EvolutionConfig(ctx, token, StandardUsersGroup)
+	must(t, err)
+	events, err := s.EvolutionOperationEvents(ctx, token, StandardUsersGroup, pending.OperationID, 0, 100)
+	must(t, err)
+	if current.State != "active" || len(events.Events) != 2 {
+		t.Fatal("rejected transitions changed state/history", current, events)
+	}
+	_, err = s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"next", 1, activationConfigFixture(2, true)})
+	must(t, err)
+}

@@ -1978,3 +1978,12 @@ CREATE TRIGGER immutable_evolution_source_policy_revision BEFORE UPDATE ON evolu
 BEGIN SELECT RAISE(ABORT,'immutable source policy revision'); END;
 CREATE TRIGGER retained_evolution_source_policy_revision BEFORE DELETE ON evolution_source_policy_revisions
 BEGIN SELECT RAISE(ABORT,'retain source policy provenance'); END;
+
+CREATE TRIGGER evolution_operation_state_transition
+BEFORE UPDATE OF state ON evolution_operation_states
+WHEN OLD.state<>NEW.state AND NOT (
+ (OLD.state='activating' AND NEW.state IN ('active','failed')) OR
+ (OLD.state='failed' AND NEW.state IN ('activating','discarding')) OR
+ (OLD.state='discarding' AND NEW.state='discarded')
+)
+BEGIN SELECT RAISE(ABORT,'invalid activation state transition'); END;
