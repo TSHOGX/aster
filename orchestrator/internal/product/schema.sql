@@ -1858,3 +1858,24 @@ CREATE TABLE evolution_prefix_reservations (
  UNIQUE(operation_id,binding_id)
 );
 CREATE INDEX evolution_prefix_owner ON evolution_prefix_reservations(owner_group_id,state);
+
+CREATE TABLE evolution_group_configs (
+ group_id TEXT PRIMARY KEY REFERENCES account_groups(id) ON DELETE CASCADE,
+ desired_revision INTEGER NOT NULL CHECK(desired_revision>0),
+ active_revision INTEGER NOT NULL CHECK(active_revision>=0),
+ desired_digest TEXT NOT NULL,
+ active_digest TEXT NOT NULL,
+ auto_enabled INTEGER NOT NULL CHECK(auto_enabled IN(0,1)),
+ state TEXT NOT NULL CHECK(state IN('draft','activating','active','failed')),
+ operation_id TEXT NOT NULL DEFAULT '',
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE evolution_activation_receipts (
+ operation_id TEXT NOT NULL,
+ participant TEXT NOT NULL,
+ config_digest TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN('accepted','failed')),
+ error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(operation_id,participant)
+);
