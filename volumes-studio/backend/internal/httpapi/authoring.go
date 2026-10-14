@@ -375,8 +375,12 @@ func (a *AuthoringAPI) retention(w http.ResponseWriter, r *http.Request) {
 // Bounded cursor polling is the durable invalidation path. It does not hold a
 // session authority decision open indefinitely as an unaudited event stream.
 func (a *AuthoringAPI) events(w http.ResponseWriter, r *http.Request) {
-	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	if after < 0 {
+	raw := r.URL.Query().Get("after")
+	if raw == "" {
+		raw = "0"
+	}
+	after, parseErr := strconv.ParseInt(raw, 10, 64)
+	if parseErr != nil || after < 0 || strconv.FormatInt(after, 10) != raw {
 		writeError(w, 422, "invalid_cursor")
 		return
 	}
