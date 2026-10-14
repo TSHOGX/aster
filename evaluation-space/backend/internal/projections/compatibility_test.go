@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestConfigurationResolvesExactCompatibleCatalog(t *testing.T) {
@@ -111,6 +112,32 @@ func TestConfigurationResolvesExactCompatibleCatalog(t *testing.T) {
 	changed.Pins.Output.ReservationGeneration++
 	if _, err = s.AdmitRun(ctx, changed); err != ErrConflict {
 		t.Fatal("run pins changed on replay", err)
+	}
+	readRun, err := s.Run(ctx, "group", run.ID)
+	if err != nil || readRun.State != "queued" || readRun.Fence != 0 {
+		t.Fatal("queued run read", readRun, err)
+	}
+	if _, err = s.Run(ctx, "other", run.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatal("cross-group run read", err)
+	}
+	lease, err := s.ClaimRun(ctx, run.ID, "worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readRun, err = s.Run(ctx, "group", run.ID)
+	if err != nil || readRun.State != "running" || readRun.Fence != lease.Fence {
+		t.Fatal("live run read", readRun, err)
+	}
+	if err = s.SettleRun(ctx, lease, "completed"); err != nil {
+		t.Fatal(err)
+	}
+	readRun, err = s.Run(ctx, "group", run.ID)
+	if err != nil || readRun.State != "completed" || readRun.Pins.ConfigurationDigest != pins.ConfigurationDigest {
+		t.Fatal("terminal run read", readRun, err)
+	}
+	// Settling releases the binding slot without losing occurrence deduplication.
+	if _, err = s.AdmitRun(ctx, duplicate); err != nil {
+		t.Fatal("settled binding slot retained", err)
 	}
 	strict := template
 	strict.Ref.Revision = 2
