@@ -67,6 +67,15 @@ func (s *Store) PublishCatalogRevision(ctx context.Context, token string, c Cata
 		if err != nil {
 			return err
 		}
+		if c.Kind == "workflow" {
+			workflow, err := evolution.DecodeWorkflow(bytes.NewReader(c.Body))
+			if err != nil {
+				return ErrInvalid
+			}
+			if err = evolution.ValidateClosure(ctx, workflow, catalogWorkflowResolver{tx}); err != nil {
+				return ErrInvalid
+			}
+		}
 		var max int64
 		err = tx.QueryRowContext(ctx, "SELECT coalesce(max(revision),0) FROM evolution_catalog_revisions WHERE kind=? AND id=?", c.Kind, c.ID).Scan(&max)
 		if err != nil {

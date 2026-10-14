@@ -119,3 +119,30 @@ func TestWorkflowCatalogUsesExecutableValidation(t *testing.T) {
 		t.Fatal("mismatched workflow identity published", err)
 	}
 }
+
+func TestWorkflowCatalogRequiresPublishedBodyClosure(t *testing.T) {
+	s, admin := accountStore(t)
+	ctx := context.Background()
+	token := adminTestToken(t, s, admin)
+	raw, err := os.ReadFile("../../../contracts/evolution/testdata/corrections.valid.json")
+	must(t, err)
+	body, err := evolution.DecodeWorkflow(bytes.NewReader(raw))
+	must(t, err)
+	canonical, err := body.Canonical()
+	must(t, err)
+	ref := evolution.Revision{ID: body.ID, Revision: 1, Digest: evolution.Digest(canonical)}
+	wrapper := body
+	wrapper.ID = "wrapper"
+	wrapper.Nodes = []evolution.Node{{ID: "body", Kind: "subgraph", Body: &ref, InputPorts: body.Inputs, OutputPorts: body.Outputs, MaxAttempts: 1, TimeoutSeconds: 120, MaxDepth: 4}}
+	wrapper.Edges = []evolution.Edge{{From: "$input.corpus", To: "body.corpus"}, {From: "body.patch", To: "$output.patch"}}
+	wrapped, err := wrapper.Canonical()
+	must(t, err)
+	definition := CatalogRevision{Kind: "workflow", ID: wrapper.ID, Revision: 1, Digest: evolution.Digest(wrapped), Body: wrapped, Enabled: true}
+	if _, err = s.PublishCatalogRevision(ctx, token, definition); err != ErrInvalid {
+		t.Fatal("unpublished body accepted", err)
+	}
+	_, err = s.PublishCatalogRevision(ctx, token, CatalogRevision{Kind: "workflow", ID: body.ID, Revision: 1, Digest: ref.Digest, Body: canonical, Enabled: true})
+	must(t, err)
+	_, err = s.PublishCatalogRevision(ctx, token, definition)
+	must(t, err)
+}
