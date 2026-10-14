@@ -31,6 +31,7 @@ func (a *Authentication) IdentityServiceHandler() http.Handler {
 	mux.HandleFunc("POST /api/identity/v1/revoke", a.identityRevoke)
 	mux.HandleFunc("POST /api/identity/v1/principal", a.identityPrincipal)
 	mux.HandleFunc("POST /api/identity/v1/studio-access", a.identityStudioAccess)
+	mux.HandleFunc("POST /api/identity/v1/projection-authority", a.identityProjectionAuthority)
 	return mux
 }
 func identityHeaders(w http.ResponseWriter) {
@@ -204,4 +205,25 @@ func (a *Authentication) identityStudioAccess(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, 200, decision)
+}
+
+func (a *Authentication) identityProjectionAuthority(w http.ResponseWriter, r *http.Request) {
+	client, ok := a.identityService(w, r)
+	if !ok {
+		return
+	}
+	if client.ID != "evaluation-space" {
+		writeError(w, 403, "evaluation service required")
+		return
+	}
+	var scope product.ProjectionScope
+	if !decode(w, r, 4096, &scope) {
+		return
+	}
+	allowed, err := a.Store.AuthorizeEvolutionProjection(r.Context(), scope)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"allowed": allowed})
 }
