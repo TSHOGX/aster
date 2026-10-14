@@ -47,7 +47,7 @@ CREATE TRIGGER immutable_definition BEFORE UPDATE ON catalog_definitions BEGIN S
 CREATE TRIGGER retained_definition BEFORE DELETE ON catalog_definitions BEGIN SELECT RAISE(ABORT,'retain catalog provenance'); END;
 CREATE TABLE service_states(service_id TEXT PRIMARY KEY,revision INTEGER NOT NULL CHECK(revision>0),enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));
 CREATE TABLE service_state_receipts(request_id TEXT PRIMARY KEY,request TEXT NOT NULL,revision INTEGER NOT NULL);
-CREATE TABLE runs(worker_id TEXT NOT NULL DEFAULT '',fence INTEGER NOT NULL DEFAULT 0 CHECK(fence>=0),lease_until INTEGER NOT NULL DEFAULT 0,id TEXT PRIMARY KEY,group_id TEXT NOT NULL,binding_id TEXT NOT NULL,configuration_revision INTEGER NOT NULL,occurrence_id TEXT NOT NULL,request BLOB NOT NULL,body BLOB NOT NULL,state TEXT NOT NULL CHECK(state IN ('queued','running','paused','completed','failed','cancelled')),UNIQUE(group_id,binding_id,configuration_revision,occurrence_id));
+CREATE TABLE runs(tokens INTEGER NOT NULL DEFAULT 0 CHECK(tokens>=0),cost_micros INTEGER NOT NULL DEFAULT 0 CHECK(cost_micros>=0),worker_id TEXT NOT NULL DEFAULT '',fence INTEGER NOT NULL DEFAULT 0 CHECK(fence>=0),lease_until INTEGER NOT NULL DEFAULT 0,id TEXT PRIMARY KEY,group_id TEXT NOT NULL,binding_id TEXT NOT NULL,configuration_revision INTEGER NOT NULL,occurrence_id TEXT NOT NULL,request BLOB NOT NULL,body BLOB NOT NULL,state TEXT NOT NULL CHECK(state IN ('queued','running','paused','completed','failed','cancelled')),UNIQUE(group_id,binding_id,configuration_revision,occurrence_id));
 CREATE UNIQUE INDEX one_active_binding_run ON runs(group_id,binding_id) WHERE state IN ('queued','running','paused');
 CREATE TRIGGER immutable_run_admission BEFORE UPDATE OF id,group_id,binding_id,configuration_revision,occurrence_id,request,body ON runs BEGIN SELECT RAISE(ABORT,'immutable run admission'); END;
 CREATE TRIGGER retained_run BEFORE DELETE ON runs BEGIN SELECT RAISE(ABORT,'retain run provenance'); END;
@@ -62,7 +62,10 @@ CREATE TRIGGER immutable_run_checkpoint BEFORE UPDATE ON run_checkpoints BEGIN S
 CREATE TRIGGER retained_run_checkpoint BEFORE DELETE ON run_checkpoints BEGIN SELECT RAISE(ABORT,'retain run checkpoint'); END;
 CREATE TABLE artifacts(group_id TEXT NOT NULL,id TEXT NOT NULL,metadata BLOB NOT NULL,body BLOB NOT NULL,PRIMARY KEY(group_id,id));
 CREATE TRIGGER immutable_artifact BEFORE UPDATE ON artifacts BEGIN SELECT RAISE(ABORT,'immutable sealed artifact'); END;
-CREATE TRIGGER retained_artifact BEFORE DELETE ON artifacts BEGIN SELECT RAISE(ABORT,'retain artifact provenance'); END;`
+CREATE TRIGGER retained_artifact BEFORE DELETE ON artifacts BEGIN SELECT RAISE(ABORT,'retain artifact provenance'); END;
+CREATE TABLE run_usage_receipts(run_id TEXT NOT NULL REFERENCES runs(id),request_id TEXT NOT NULL,request BLOB NOT NULL,result BLOB NOT NULL,PRIMARY KEY(run_id,request_id));
+CREATE TRIGGER immutable_run_usage BEFORE UPDATE ON run_usage_receipts BEGIN SELECT RAISE(ABORT,'immutable usage receipt'); END;
+CREATE TRIGGER retained_run_usage BEFORE DELETE ON run_usage_receipts BEGIN SELECT RAISE(ABORT,'retain usage receipt'); END;`
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	if !filepath.IsAbs(path) {
