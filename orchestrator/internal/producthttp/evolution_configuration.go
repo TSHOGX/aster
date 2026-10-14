@@ -42,3 +42,51 @@ func (a *Authentication) evolutionGroupGrant(w http.ResponseWriter, r *http.Requ
 	}
 	writeJSON(w, 200, map[string]int64{"revision": revision})
 }
+
+func (a *Authentication) evolutionConfiguration(w http.ResponseWriter, r *http.Request) {
+	value, err := a.Store.EvolutionConfig(r.Context(), requestToken(r), r.PathValue("group"))
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, 200, value)
+}
+func (a *Authentication) previewEvolution(w http.ResponseWriter, r *http.Request) {
+	input, err := evolution.Decode[product.EvolutionPreviewInput](http.MaxBytesReader(w, r.Body, 1<<16))
+	if err != nil {
+		writeError(w, 400, "invalid preview request")
+		return
+	}
+	value, err := a.Store.PreviewEvolutionDraft(r.Context(), requestToken(r), r.PathValue("group"), input)
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, 200, value)
+}
+func (a *Authentication) activateEvolution(w http.ResponseWriter, r *http.Request) {
+	input, err := evolution.Decode[product.EvolutionDraftActivationInput](http.MaxBytesReader(w, r.Body, 1<<16))
+	if err != nil {
+		writeError(w, 400, "invalid activation request")
+		return
+	}
+	value, err := a.Store.ActivateEvolutionDraft(r.Context(), requestToken(r), r.PathValue("group"), input)
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, value)
+}
+func (a *Authentication) disableEvolution(w http.ResponseWriter, r *http.Request) {
+	input, err := evolution.Decode[product.DisableEvolutionInput](http.MaxBytesReader(w, r.Body, 1<<16))
+	if err != nil {
+		writeError(w, 400, "invalid disable request")
+		return
+	}
+	value, err := a.Store.DisableEvolution(r.Context(), requestToken(r), r.PathValue("group"), input)
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, 200, value)
+}

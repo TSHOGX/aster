@@ -85,3 +85,22 @@ reapplying edits; retry an unchanged request with its original request ID.
 
 These requests use the normal login session and same-origin mutation checks.
 Configuration grants do not confer source access or permission to publish content.
+
+To check a saved draft, POST to
+`/api/admin/groups/{group}/optimization/preview` with `expected_revision` (the
+current desired configuration revision, initially zero),
+`expected_draft_revision`, and `auto_enabled`. The response includes central
+validation issues and the required participants. `central_valid` does not mean
+Studio or Evaluation Space has accepted the configuration. Preview does not
+reserve output paths or start work.
+
+POST the same fields plus `request_id` to the `/activate` endpoint to create a
+pending activation. This requires both configuration read and manage access.
+A `202` response acknowledges the operation; it does not confirm activation.
+Read `/api/admin/groups/{group}/optimization` to compare desired and active
+revisions. Participant orchestration is not automatically dispatched by this
+endpoint, so the operation remains pending until its receipts are reconciled.
+
+POST `request_id` and `expected_revision` to the `/disable` endpoint to disable
+automatic admission immediately, including while activation is pending. This
+requires manage access and retains the pending operation and active revision.
