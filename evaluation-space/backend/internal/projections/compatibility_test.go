@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -56,7 +57,7 @@ func TestConfigurationResolvesExactCompatibleCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	budget := evolution.Budget{MaxTokens: 1, MaxAttempts: 1, TimeoutSeconds: 1, MaxArtifactBytes: 1}
-	config := evolution.Configuration{GroupID: "group", Revision: 1, Budget: budget, Sources: []evolution.SourceBinding{{ID: "source", Kind: "project", ResourceID: "project", PolicyRevision: 1, AudienceGroups: []string{"group"}, DerivativePublication: true}}, Bindings: []evolution.Binding{{ID: "binding", Template: template.Ref, Workflow: workflowRef, Service: service.Ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "library", Prefix: "skills", Profile: "authored-v1", ReservationGeneration: 1}, Evaluation: off, Budget: budget, Trigger: "manual"}}}
+	config := evolution.Configuration{GroupID: "group", Revision: 1, Budget: budget, Sources: []evolution.SourceBinding{{ID: "source", Kind: "project", ResourceID: "project", PolicyRevision: 1, AudienceGroups: []string{"group"}, DerivativePublication: true}}, Bindings: []evolution.Binding{{ID: "binding", Enabled: true, Template: template.Ref, Workflow: workflowRef, Service: service.Ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "library", Prefix: "skills", Profile: "authored-v1", ReservationGeneration: 1}, Evaluation: off, Budget: budget, Trigger: "manual"}}}
 	if err = s.ValidateConfiguration(ctx, config); err != nil {
 		t.Fatal("compatible disabled evaluation", err)
 	}
@@ -86,6 +87,30 @@ func TestConfigurationResolvesExactCompatibleCatalog(t *testing.T) {
 	configRaw, _ := json.Marshal(config)
 	if err = s.Adopt(ctx, Projection{OperationID: "valid", Digest: evolution.Digest(configRaw), Configuration: config}); err != nil {
 		t.Fatal("compatible projection rejected", err)
+	}
+	pins := evolution.RunPins{ConfigurationRevision: 1, ConfigurationDigest: evolution.Digest(configRaw), SourcePolicyRevision: 1, Template: template.Ref, Workflow: workflowRef, Service: service.Ref, Model: service.Ref, Inputs: []evolution.ArtifactRef{{ID: "snapshot", GroupID: "group", SchemaDigest: evolution.Digest([]byte("schema")), Digest: evolution.Digest([]byte("snapshot")), MediaType: "application/json", GrantID: "grant", PolicyRevision: 1}}, Base: evolution.ContentRef{LibraryID: "library", CommitID: strings.Repeat("a", 64), Profile: "authored-v1", TreeDigest: evolution.Digest([]byte("tree"))}, Output: config.Bindings[0].Output, Evaluation: off}
+	admission := RunAdmission{ID: "run", GroupID: "group", BindingID: "binding", OccurrenceID: "manual-one", Pins: pins}
+	run, err := s.AdmitRun(ctx, admission)
+	if err != nil {
+		t.Fatal("run admission", err)
+	}
+	replay, err := s.AdmitRun(ctx, admission)
+	if err != nil || !replay.CreatedAt.Equal(run.CreatedAt) || replay.ResultBranch != run.ResultBranch {
+		t.Fatal("run replay changed identity", err)
+	}
+	duplicate := admission
+	duplicate.ID = "duplicate"
+	if _, err = s.AdmitRun(ctx, duplicate); err != ErrConflict {
+		t.Fatal("duplicate trigger occurrence admitted", err)
+	}
+	duplicate.OccurrenceID = "manual-two"
+	if _, err = s.AdmitRun(ctx, duplicate); err != ErrBindingBusy {
+		t.Fatal("competing active run admitted", err)
+	}
+	changed := admission
+	changed.Pins.Output.ReservationGeneration++
+	if _, err = s.AdmitRun(ctx, changed); err != ErrConflict {
+		t.Fatal("run pins changed on replay", err)
 	}
 	strict := template
 	strict.Ref.Revision = 2
