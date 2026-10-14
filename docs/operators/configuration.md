@@ -282,3 +282,12 @@ revision. Reuse the original request ID and body after an uncertain response.
 Disabling prevents new configuration validation from selecting any revision of that
 service; immutable definitions and previously adopted projection receipts remain
 available as provenance. Publishing another definition does not reset admission state.
+
+Inspect retained catalog reference metadata while the service is stopped with
+`./evaluation-catalog --state-directory /absolute/evaluation-state --action list`.
+Provide `{"kind":"service","after_id":"","after_revision":0,"limit":50}` on stdin.
+Supported kinds match publication. Continue using returned `next_id` and
+`next_revision` when `has_more` is true; limits range from 1 to 100. Results include
+all retained immutable references, including disabled service definitions, and do
+not imply current admission eligibility. Connection and credential details are not
+included in this listing.
