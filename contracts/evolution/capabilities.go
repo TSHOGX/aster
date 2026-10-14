@@ -69,3 +69,38 @@ func (r capabilityResolver) ResolveWorkflow(ctx context.Context, ref Revision) (
 	}
 	return workflow, r.service.SupportsWorkflow(workflow)
 }
+
+func (c Capabilities) Validate() error {
+	if c.ProtocolVersion != ProtocolVersion {
+		return fmt.Errorf("unsupported provider protocol")
+	}
+	versions := map[int]bool{}
+	for _, version := range c.WorkflowVersions {
+		if version != 1 || versions[version] {
+			return fmt.Errorf("unsupported or duplicate workflow schema")
+		}
+		versions[version] = true
+	}
+	kinds := map[string]bool{}
+	for _, kind := range c.NodeKinds {
+		switch kind {
+		case "agent", "transform", "validator", "router", "map", "join", "subgraph", "loop":
+		default:
+			return fmt.Errorf("unsupported advertised node kind")
+		}
+		if kinds[kind] {
+			return fmt.Errorf("duplicate advertised node kind")
+		}
+		kinds[kind] = true
+	}
+	if len(kinds) > 0 && len(versions) == 0 {
+		return fmt.Errorf("node support requires workflow schema support")
+	}
+	if c.EditableGraph && (len(kinds) == 0 || len(versions) == 0) {
+		return fmt.Errorf("editable graph requires typed execution capabilities")
+	}
+	if c.EffectivePrompt && !c.NodeTrace {
+		return fmt.Errorf("effective prompt visibility requires node traces")
+	}
+	return nil
+}

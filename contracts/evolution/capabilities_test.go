@@ -7,7 +7,7 @@ import (
 
 func TestServiceWorkflowCapabilityMatching(t *testing.T) {
 	w := simpleWorkflow()
-	service := Service{Ref: Revision{"native", 1, Digest([]byte("service"))}, Kind: "evolution", ConnectionID: "native", RunnerDigest: Digest([]byte("runner")), Enabled: true, Capabilities: Capabilities{ProtocolVersion: 1, WorkflowVersions: []int{1}, NodeKinds: []string{"agent", "transform"}, EffectivePrompt: true}}
+	service := Service{Ref: Revision{"native", 1, Digest([]byte("service"))}, Kind: "evolution", ConnectionID: "native", RunnerDigest: Digest([]byte("runner")), Enabled: true, Capabilities: Capabilities{ProtocolVersion: 1, WorkflowVersions: []int{1}, NodeKinds: []string{"agent", "transform"}, EffectivePrompt: true, NodeTrace: true}}
 	if err := service.SupportsWorkflow(w); err != nil {
 		t.Fatal(err)
 	}
@@ -53,5 +53,16 @@ func TestServiceChecksNestedWorkflowCapabilities(t *testing.T) {
 	service.Capabilities.NodeKinds = []string{"subgraph", "agent", "transform"}
 	if err := service.SupportsClosure(context.Background(), wrapper, fixtureResolver{body.ID: body}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCapabilityDeclarations(t *testing.T) {
+	for _, c := range []Capabilities{{ProtocolVersion: 1, NodeKinds: []string{"agent"}}, {ProtocolVersion: 1, WorkflowVersions: []int{1, 1}}, {ProtocolVersion: 1, WorkflowVersions: []int{1}, NodeKinds: []string{"shell"}}, {ProtocolVersion: 1, EditableGraph: true}, {ProtocolVersion: 1, EffectivePrompt: true}} {
+		if c.Validate() == nil {
+			t.Fatal("invalid advertisement accepted", c)
+		}
+	}
+	if err := (Capabilities{ProtocolVersion: 1}).Validate(); err != nil {
+		t.Fatal("opaque provider rejected", err)
 	}
 }

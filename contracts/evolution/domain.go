@@ -95,7 +95,7 @@ func (s Service) Validate() error {
 	if !manifest.ValidID(s.ConnectionID) || !manifest.ValidDigest(s.RunnerDigest) || s.Capabilities.ProtocolVersion != ProtocolVersion {
 		return fmt.Errorf("invalid service capabilities or connection")
 	}
-	return nil
+	return s.Capabilities.Validate()
 }
 
 type Template struct {
