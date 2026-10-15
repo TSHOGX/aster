@@ -1,0 +1,237 @@
+package runner
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"aster/contracts/evolution"
+	"aster/evaluation-space/internal/projections"
+	"aster/evaluation-space/internal/workflow"
+)
+
+type nativeAuthority struct{ deny bool }
+
+func (a *nativeAuthority) AuthorizeRun(context.Context, evolution.Run, bool) error {
+	if a.deny {
+		return errors.New("revoked")
+	}
+	return nil
+}
+func (a *nativeAuthority) AuthorizeArtifact(context.Context, evolution.Run, evolution.ArtifactRef) error {
+	if a.deny {
+		return errors.New("revoked")
+	}
+	return nil
+}
+func (a *nativeAuthority) OutputGrant(context.Context, evolution.Run) (string, error) {
+	return "run-grant", nil
+}
+
+type nativeProvider struct {
+	store       *projections.Store
+	calls       int
+	lost        bool
+	allowLookup bool
+	outcome     *projections.ProviderOutcome
+	prompt      string
+}
+
+func (p *nativeProvider) Lookup(context.Context, projections.ProviderCall) (projections.ProviderOutcome, error) {
+	if p.outcome != nil {
+		if p.allowLookup {
+			return *p.outcome, nil
+		}
+		return projections.ProviderOutcome{}, errors.New("uncertain lookup")
+	}
+	return projections.ProviderOutcome{}, projections.ErrProviderCallNotFound
+}
+func (p *nativeProvider) Submit(ctx context.Context, call projections.ProviderCall, raw []byte, _ projections.RunUsage) (projections.ProviderOutcome, error) {
+	p.calls++
+	input, err := evolution.Decode[workflow.Call](bytes.NewReader(raw))
+	if err != nil {
+		return projections.ProviderOutcome{}, err
+	}
+	p.prompt = input.Prompt
+	out, _ := json.Marshal(workflow.Values{"value": json.RawMessage(`"model output"`)})
+	artifact := evolution.ArtifactRef{ID: "output-" + call.ID, GroupID: "group", SchemaDigest: evolution.Digest([]byte("schema")), Digest: evolution.Digest(out), Size: int64(len(out)), MediaType: "application/json", GrantID: "run-grant", PolicyRevision: 1}
+	if err = p.store.SealArtifact(ctx, artifact, bytes.NewReader(out)); err != nil {
+		return projections.ProviderOutcome{}, err
+	}
+	result := projections.ProviderOutcome{CallID: call.ID, ProviderRequestID: "request", State: "completed", Usage: projections.RunUsage{Tokens: 4, CostMicros: 7}, Output: &artifact}
+	p.outcome = &result
+	if p.lost {
+		return projections.ProviderOutcome{}, errors.New("lost response")
+	}
+	return result, nil
+}
+func (p *nativeProvider) Cancel(context.Context, projections.ProviderCall) (projections.ProviderOutcome, error) {
+	if p.outcome != nil {
+		return *p.outcome, nil
+	}
+	return projections.ProviderOutcome{}, errors.New("unknown cancellation")
+}
+func nativeFixture(t *testing.T) (*projections.Store, string, evolution.Run, *NativeExecutor, *nativeProvider) {
+	t.Helper()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "space.db")
+	store, err := projections.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	schema := json.RawMessage(`{"type":"string"}`)
+	digest := evolution.Digest(schema)
+	ref := evolution.Revision{ID: "model", Revision: 1, Digest: evolution.Digest([]byte("model"))}
+	text := "Read {{value}}"
+	graph := evolution.Workflow{SchemaVersion: 1, ID: "native", ParametersSchema: json.RawMessage(`{"type":"object"}`), Inputs: map[string]string{"value": digest}, Outputs: map[string]string{"value": digest}, Nodes: []evolution.Node{{ID: "agent", Kind: "agent", InputPorts: map[string]string{"value": digest}, OutputPorts: map[string]string{"value": digest}, Prompt: &evolution.Prompt{Text: text, Variables: []string{"value"}, Digest: evolution.Digest([]byte(text))}, ModelRef: &ref, MaxAttempts: 1, TimeoutSeconds: 10}, {ID: "build", Kind: "transform", InputPorts: map[string]string{"value": digest}, OutputPorts: map[string]string{"value": digest}, ImplementationRef: &ref, MaxAttempts: 1, TimeoutSeconds: 10}}, Edges: []evolution.Edge{{From: "$input.value", To: "agent.value"}, {From: "agent.value", To: "build.value"}, {From: "build.value", To: "$output.value"}}, Limits: evolution.Limits{MaxParallelNodes: 2, MaxTotalAttempts: 10, TimeoutSeconds: 60}}
+	raw, err := graph.Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflowRef := evolution.Revision{ID: graph.ID, Revision: 1, Digest: evolution.Digest(raw)}
+	if err = store.PublishWorkflow(ctx, workflowRef, raw); err != nil {
+		t.Fatal(err)
+	}
+	input := []byte(`"corpus"`)
+	artifact := evolution.ArtifactRef{ID: "corpus", GroupID: "group", SchemaDigest: digest, Digest: evolution.Digest(input), Size: int64(len(input)), MediaType: "application/json", GrantID: "source-grant", PolicyRevision: 1}
+	if err = store.SealArtifact(ctx, artifact, bytes.NewReader(input)); err != nil {
+		t.Fatal(err)
+	}
+	run := evolution.Run{ID: "run", GroupID: "group", BindingID: "binding", State: "queued", CreatedAt: time.Now().UTC(), Budget: evolution.Budget{MaxAttempts: 10, MaxTokens: 100, MaxCostMicros: 100, MaxArtifactBytes: 1 << 20, TimeoutSeconds: 60}, Pins: evolution.RunPins{Workflow: workflowRef, Inputs: []evolution.ArtifactRef{artifact}, InputPorts: map[string]evolution.ArtifactRef{"value": artifact}, SourcePolicyRevision: 1}}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(run)
+	_, err = db.Exec(`INSERT INTO runs(id,group_id,binding_id,configuration_revision,occurrence_id,request,body,state) VALUES('run','group','binding',1,'occurrence','{}',?,'queued')`, body)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &nativeProvider{store: store}
+	registry := &NativeRegistry{Store: store, Schemas: map[string]json.RawMessage{digest: schema}, Models: map[evolution.Revision]Model{ref: {Provider: provider, Ceiling: projections.RunUsage{Tokens: 10, CostMicros: 20}}}, Transforms: map[evolution.Revision]Transform{ref: func(_ context.Context, call workflow.Call) (workflow.Values, error) {
+		var text string
+		_ = json.Unmarshal(call.Inputs["value"], &text)
+		raw, _ := json.Marshal(strings.ToUpper(text))
+		return workflow.Values{"value": raw}, nil
+	}}}
+	return store, path, run, &NativeExecutor{Registry: registry, Authority: &nativeAuthority{}}, provider
+}
+func TestNativeRunExecutesPinnedGraphAndRecordsBudgetedResult(t *testing.T) {
+	store, _, run, executor, provider := nativeFixture(t)
+	ctx := context.Background()
+	worker := Worker{Store: store, ID: "worker", Authority: executor.Authority, Executor: executor}
+	if err := worker.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.Run(ctx, run.GroupID, run.ID)
+	if err != nil || current.State != "completed" || provider.calls != 1 || provider.prompt != "Read corpus" {
+		t.Fatal(current, err, provider.calls, provider.prompt)
+	}
+	checkpoint, err := store.LatestRunCheckpoint(ctx, run.GroupID, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := store.Artifact(ctx, checkpoint.Artifact)
+	if err != nil || string(raw) != `{"value":"MODEL OUTPUT"}` {
+		t.Fatal(string(raw), err)
+	}
+	budget, err := store.RunBudget(ctx, run.GroupID, run.ID)
+	if err != nil || budget.Spent.Tokens != 4 || budget.Spent.CostMicros != 7 || budget.Held.Tokens != 0 {
+		t.Fatal(budget, err)
+	}
+	attempts, err := store.WorkflowAttempts(ctx, run.GroupID, run.ID, "", 100)
+	if err != nil || len(attempts) != 2 {
+		t.Fatal(attempts, err)
+	}
+	events, err := store.RunEvents(ctx, run.GroupID, run.ID, 0, 100)
+	if err != nil || len(events.Events) != 4 {
+		t.Fatal(events, err)
+	}
+	if err = worker.Step(ctx); err != nil || provider.calls != 1 {
+		t.Fatal("terminal model rerun", err)
+	}
+}
+func TestNativeRecoveryUsesOriginalModelCallAndCheckpoint(t *testing.T) {
+	store, path, run, executor, provider := nativeFixture(t)
+	ctx := context.Background()
+	provider.lost = true
+	worker := Worker{Store: store, ID: "first", Authority: executor.Authority, Executor: executor}
+	if err := worker.Step(ctx); err == nil {
+		t.Fatal("uncertain response hidden")
+	}
+	if provider.calls != 1 {
+		t.Fatal(provider.calls)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec("UPDATE runs SET lease_until=0 WHERE id='run'")
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+	store, err = projections.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	provider.store = store
+	provider.allowLookup = true
+	executor.Registry.Store = store
+	worker = Worker{Store: store, ID: "replacement", Authority: executor.Authority, Executor: executor}
+	if err = worker.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.Run(ctx, run.GroupID, run.ID)
+	if err != nil || current.State != "completed" || provider.calls != 1 {
+		t.Fatal(current, err, provider.calls)
+	}
+}
+func TestNativeCancellationReconcilesWithoutNewGeneration(t *testing.T) {
+	store, _, run, executor, provider := nativeFixture(t)
+	ctx := context.Background()
+	provider.lost = true
+	worker := Worker{Store: store, ID: "first", Authority: executor.Authority, Executor: executor}
+	if err := worker.Step(ctx); err == nil {
+		t.Fatal("uncertain response hidden")
+	}
+	current, err := store.Run(ctx, run.GroupID, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canceled, err := store.ControlRunScoped(ctx, run.GroupID, projections.RunControl{GroupID: run.GroupID, RequestID: "cancel", RunID: run.ID, ExpectedFence: current.Fence, Action: "cancel"})
+	if err != nil || canceled.State != "cancelling" {
+		t.Fatal(canceled, err)
+	}
+	worker = Worker{Store: store, ID: "cleanup", Authority: executor.Authority, Executor: executor}
+	if err = worker.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	current, err = store.Run(ctx, run.GroupID, run.ID)
+	if err != nil || current.State != "cancelled" || provider.calls != 1 {
+		t.Fatal(current, err, provider.calls)
+	}
+	if _, err = store.LatestRunCheckpoint(ctx, run.GroupID, run.ID); !errors.Is(err, projections.ErrNotFound) {
+		t.Fatal("canceled run produced result", err)
+	}
+}
+
+func TestNativeRunRejectsRevokedInputsBeforeModelWork(t *testing.T) {
+	store, _, _, executor, provider := nativeFixture(t)
+	ctx := context.Background()
+	executor.Authority = &nativeAuthority{deny: true}
+	worker := Worker{Store: store, ID: "worker", Authority: &nativeAuthority{}, Executor: executor}
+	if err := worker.Step(ctx); err == nil || provider.calls != 0 {
+		t.Fatal("revoked inputs reached model", err, provider.calls)
+	}
+}

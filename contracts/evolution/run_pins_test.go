@@ -24,6 +24,11 @@ func TestRunPinsMatchFrozenConfigurationAndScopedInputs(t *testing.T) {
 		"cross-group":   func(p *RunPins) { p.Inputs = append([]ArtifactRef(nil), p.Inputs...); p.Inputs[0].GroupID = "other" },
 		"duplicate":     func(p *RunPins) { p.Inputs = append(p.Inputs, p.Inputs[0]) },
 		"model":         func(p *RunPins) { p.Model.Digest = "" },
+		"unsealed-port": func(p *RunPins) {
+			value := p.Inputs[0]
+			value.Digest = Digest([]byte("other"))
+			p.InputPorts = map[string]ArtifactRef{"corpus": value}
+		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

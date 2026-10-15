@@ -262,6 +262,15 @@
         "evaluation": {
           "$ref": "#/$defs/EvaluationPolicy"
         },
+        "input_ports": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
         "inputs": {
           "items": {
             "$ref": "#/$defs/ArtifactRef"

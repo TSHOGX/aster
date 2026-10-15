@@ -9,18 +9,19 @@ import (
 )
 
 type RunPins struct {
-	ConfigurationRevision int64            `json:"configuration_revision"`
-	ConfigurationDigest   string           `json:"configuration_digest"`
-	SourcePolicyRevision  int64            `json:"source_policy_revision"`
-	Template              Revision         `json:"template"`
-	Workflow              Revision         `json:"workflow"`
-	Service               Revision         `json:"service"`
-	Model                 Revision         `json:"model"`
-	Tools                 []Revision       `json:"tools"`
-	Inputs                []ArtifactRef    `json:"inputs"`
-	Base                  ContentRef       `json:"base"`
-	Output                OutputBinding    `json:"output"`
-	Evaluation            EvaluationPolicy `json:"evaluation"`
+	InputPorts            map[string]ArtifactRef `json:"input_ports,omitempty"`
+	ConfigurationRevision int64                  `json:"configuration_revision"`
+	ConfigurationDigest   string                 `json:"configuration_digest"`
+	SourcePolicyRevision  int64                  `json:"source_policy_revision"`
+	Template              Revision               `json:"template"`
+	Workflow              Revision               `json:"workflow"`
+	Service               Revision               `json:"service"`
+	Model                 Revision               `json:"model"`
+	Tools                 []Revision             `json:"tools"`
+	Inputs                []ArtifactRef          `json:"inputs"`
+	Base                  ContentRef             `json:"base"`
+	Output                OutputBinding          `json:"output"`
+	Evaluation            EvaluationPolicy       `json:"evaluation"`
 }
 type Run struct {
 	ID              string    `json:"id"`

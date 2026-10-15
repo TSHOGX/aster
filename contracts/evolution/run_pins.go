@@ -1,6 +1,7 @@
 package evolution
 
 import (
+	manifest "aster/contracts/volumemanifest"
 	"encoding/json"
 	"fmt"
 )
@@ -61,6 +62,21 @@ func (p RunPins) ValidateFor(config Configuration, bindingID string) error {
 			return fmt.Errorf("invalid run input group or duplicate artifact")
 		}
 		inputs[input.ID] = true
+	}
+	for name, artifact := range p.InputPorts {
+		if !manifest.ValidID(name) {
+			return fmt.Errorf("invalid workflow input port")
+		}
+		matched := false
+		for _, input := range p.Inputs {
+			if input == artifact {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("workflow port references undeclared input")
+		}
 	}
 	if err = p.Base.Validate(); err != nil {
 		return err
