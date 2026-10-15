@@ -1,4 +1,18 @@
 export const ZH: Record<string, string> = {
+ "Evaluation checks":"评估检查",
+ "Evaluation is off. No benchmark result was requested.":"评估已关闭，未请求基准测试结果。",
+ "Evaluation evidence is pending. Required checks block approval and merge.":"评估证据尚未完成，必需的检查会阻止批准和合并。",
+ "Required evaluation":"必需评估",
+ "Informational evaluation":"参考评估",
+ "Evaluation profile":"评估配置",
+ "Evaluation service":"评估服务",
+ "Reference strategy":"参照策略",
+ "Policy":"策略",
+ "generation_base":"生成基准",
+ "target_main":"目标主分支",
+ "pinned_release":"固定发布版本",
+ "none":"无",
+
  "Commit history and comparison":"提交历史与比较",
  "History":"历史",
  "History and comparisons use immutable commits. Saved drafts and later branch changes are excluded.":"历史和比较使用不可变的提交，不包含已保存的草稿及后续分支更改。",

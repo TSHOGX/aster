@@ -176,7 +176,11 @@ func (s *Store) persistPrepared(ctx context.Context, a Actor, library, request, 
 	ref := func(id string, snapshot history.Snapshot) evolution.ContentRef {
 		return evolution.ContentRef{LibraryID: library, CommitID: id, Profile: snapshot.Profile, TreeDigest: snapshot.TreeDigest()}
 	}
-	identity := evolution.PreparedIdentity{LibraryID: library, Main: ref(main, mainTree), Sources: []evolution.ContentRef{ref(b.Head, sourceTree)}, Result: ref(commit, tree), PolicyRevision: revision, PolicyDigest: policy, Checks: []evolution.CheckRequirement{}}
+	checks, err := s.preparedBindingChecks(ctx, library, b, ref(main, mainTree), tree)
+	if err != nil {
+		return result, err
+	}
+	identity := evolution.PreparedIdentity{LibraryID: library, Main: ref(main, mainTree), Sources: []evolution.ContentRef{ref(b.Head, sourceTree)}, Result: ref(commit, tree), PolicyRevision: revision, PolicyDigest: policy, Checks: checks}
 	result.Digest, err = identity.ApprovalDigest()
 	if err != nil {
 		return result, err

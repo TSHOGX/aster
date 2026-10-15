@@ -31,7 +31,7 @@ export type PreparedIntegration = {
     result: ContentRef;
     policy_revision: number;
     policy_digest: string;
-    checks: unknown[];
+    checks: {digest:string;policy_id:string;policy_revision:number;path:string;mode:"required"|"report_only";profile:{id:string;revision:number};service:{id:string;revision:number};reference_strategy:string;reference?:ContentRef}[];
   };
   conflicts: { path: string; reason: string }[];
 };

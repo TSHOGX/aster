@@ -110,6 +110,18 @@ func (s *Store) checkPrepared(ctx context.Context, library, digest string, prepa
 	for _, ref := range prepared.Sources {
 		expected[ref.CommitID] = true
 	}
+	repo, err := s.historyRepository(ctx, library)
+	if err != nil {
+		return err
+	}
+	resultTree, err := repo.Snapshot(ctx, prepared.Result.CommitID)
+	if err != nil {
+		return err
+	}
+	captured := map[string]bool{}
+	for _, check := range prepared.Checks {
+		captured[check.Digest] = true
+	}
 	for _, source := range sources {
 		branch, err := s.branch(ctx, library, source.id)
 		if err != nil {
@@ -119,15 +131,15 @@ func (s *Store) checkPrepared(ctx context.Context, library, digest string, prepa
 			return ErrConflict
 		}
 		delete(expected, source.head)
-	}
-	for _, check := range prepared.Checks {
-		if check.Mode == "required" {
-			return ErrBusy
+		current, err := s.preparedBindingChecks(ctx, library, branch, prepared.Main, resultTree)
+		if err != nil {
+			return err
 		}
-	} // S5 supplies exact-subject results.
-	repo, err := s.historyRepository(ctx, library)
-	if err != nil {
-		return err
+		for _, check := range current {
+			if !captured[check.Digest] {
+				return ErrConflict
+			}
+		}
 	}
 	main, err := repo.Head(ctx, "refs/heads/main")
 	if err != nil {
@@ -136,5 +148,10 @@ func (s *Store) checkPrepared(ctx context.Context, library, digest string, prepa
 	if main != prepared.Main.CommitID {
 		return ErrConflict
 	}
+	for _, check := range prepared.Checks {
+		if check.Mode == "required" {
+			return ErrBusy
+		}
+	} // S5 supplies exact-subject results.
 	return s.validatePreparedContent(ctx, library, prepared)
 }

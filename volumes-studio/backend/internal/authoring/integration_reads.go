@@ -12,6 +12,7 @@ import (
 )
 
 type IntegrationView struct {
+	Evaluation       string                     `json:"evaluation"`
 	Acceptance       string                     `json:"acceptance"`
 	AcceptedCommit   string                     `json:"accepted_commit,omitempty"`
 	MergeOperationID string                     `json:"merge_operation_id,omitempty"`
@@ -42,6 +43,10 @@ func (s *Store) Integration(ctx context.Context, a Actor, library, digest string
 	computed, err := view.Identity.ApprovalDigest()
 	if err != nil || computed != digest {
 		return view, ErrInvalid
+	}
+	view.Evaluation = "not_requested"
+	if len(view.Identity.Checks) > 0 {
+		view.Evaluation = "pending"
 	}
 	view.Digest = digest
 	view.Readiness = "ready_for_review"

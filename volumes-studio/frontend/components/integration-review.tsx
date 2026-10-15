@@ -7,7 +7,7 @@ import { useT } from "../lib/i18n";
 import { ConflictEditor } from "./conflict-workspace";
 import { useStudio } from "./studio-provider";
 
-type View = { digest: string; identity: NonNullable<PreparedIntegration["identity"]>; readiness: string; acceptance: string; accepted_commit?: string; reviews: ReviewDecision[] };
+type View = { evaluation: string; digest: string; identity: NonNullable<PreparedIntegration["identity"]>; readiness: string; acceptance: string; accepted_commit?: string; reviews: ReviewDecision[] };
 type Change = { path: string; change: string };
 type FilePreview = { commit_id: string; text?: string; preview: string };
 export function IntegrationReview({ branch }: { branch: Branch }) {
@@ -110,6 +110,19 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     {conflicts.length > 0 && <ul>{conflicts.map(conflict => <li key={conflict.path}><code>{conflict.path}</code> — {tr(conflict.reason)}</li>)}</ul>}
     {workspace && <ConflictEditor library={branch.library_id} id={workspace} onComplete={digest=>{setWorkspace("");setConflicts([]);void run(()=>load(digest));}} />}
     {view && <>
+      <section aria-label={tr("Evaluation checks")}>
+       <h3>{tr("Evaluation checks")}</h3>
+       {view.evaluation === "not_requested" ? <p>{tr("Evaluation is off. No benchmark result was requested.")}</p> : <>
+        <p>{tr("Evaluation evidence is pending. Required checks block approval and merge.")}</p>
+        <ul>{view.identity.checks.map(check => <li key={check.digest}>
+         <strong>{tr(check.mode === "required" ? "Required evaluation" : "Informational evaluation")}</strong> · <code>{check.path}</code>
+         <p>{tr("Evaluation profile")}: {check.profile.id} · {check.profile.revision}</p>
+         <p>{tr("Evaluation service")}: {check.service.id} · {check.service.revision}</p>
+         <p>{tr("Reference strategy")}: {tr(check.reference_strategy)} {check.reference && <code>{check.reference.commit_id}</code>}</p>
+         <p>{tr("Policy")}: <code>{check.policy_id}</code> · {check.policy_revision}</p>
+        </li>)}</ul>
+       </>}
+      </section>
       <p>{tr(view.acceptance === "accepted" ? "Accepted commit" : view.readiness === "ready_for_review" ? "Ready for expert review" : "Integration needs attention")} · <code>{view.accepted_commit ?? view.identity.result.commit_id}</code></p>
       <ul>{changes.map(change => <li key={change.path}><button disabled={busy} onClick={() => void run(() => inspect(change))}>{change.change}: {change.path}</button></li>)}</ul>
       {next && <button disabled={busy} onClick={() => void run(async () => { const page = await api<{ changes: Change[]; next: string }>(`${root}/integrations/${encodeURIComponent(view.digest)}/changes?${new URLSearchParams({ after: next })}`); setChanges(items => [...items, ...page.changes]); setNext(page.next); })}>{tr("Load more")}</button>}

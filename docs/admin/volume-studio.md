@@ -91,6 +91,15 @@ branch until completed or canceled; another branch can still be committed.
    **Merge approved integration**. A changed main, source head or review policy
    requires preparing and reviewing a new result.
 
+The **Evaluation checks** panel shows the exact profile, evaluator, path policy and
+reference commit captured for the integrated result. Off means no benchmark was
+requested. Informational evaluation does not block expert approval; required checks
+without evidence block approval and merge. Adopted group output policies also apply
+to manual changes, deletes and renames in those paths. Tightening a policy requires
+repreparing; changing a binding to off does not erase checks already captured by an
+open branch's preparation. Required evaluator execution is not yet available through
+Studio, so such checks remain pending.
+
 Main advances only after acceptance. Reviewers can also request changes or reject
 an integration. Saved conflict choices remain accessible through the workspace URL.
 Binary and oversized content are identified explicitly when a text preview is
