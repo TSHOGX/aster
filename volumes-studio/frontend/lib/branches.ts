@@ -66,9 +66,9 @@ export const branchAPI = {
     api<Checkpoint>(`${branchRoot(branch.library_id, branch.id)}/commits`, {
       method: "POST", body: JSON.stringify({ request_id: request, expected_revision: branch.draft_revision, expected_head: branch.head, message }),
     }, csrf),
-  prepare: (branch: Branch, main: ContentRef, policyRevision: number, request: string, csrf: string) =>
+  prepare: (branch: Branch, main: ContentRef, policyRevision: number, request: string, csrf: string, rebindPreparedDigest = "") =>
     api<PreparedIntegration>(`${libraryRoot(branch.library_id)}/integrations/prepare`, {
-      method: "POST", body: JSON.stringify({ request_id: request, branch_id: branch.id, expected_head: branch.head, expected_main: main.commit_id, expected_policy_revision: policyRevision }),
+      method: "POST", body: JSON.stringify({ request_id: request, branch_id: branch.id, expected_head: branch.head, expected_main: main.commit_id, expected_policy_revision: policyRevision, ...(rebindPreparedDigest ? { rebind_prepared_digest: rebindPreparedDigest } : {}) }),
     }, csrf),
   review: (library: string, digest: string, verdict: "approve" | "changes_requested" | "reject", rationale: string, request: string, csrf: string) =>
     api(`${libraryRoot(library)}/integrations/reviews`, {

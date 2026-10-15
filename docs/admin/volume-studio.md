@@ -111,6 +111,11 @@ check status without exposing dataset contents.
 
 Main advances only after acceptance. Reviewers can also request changes or reject
 an integration. Saved conflict choices remain accessible through the workspace URL.
+If an open preparation is stale only because its retained evaluation policy should
+be replaced, an authorized reviewer can explicitly choose **Rebind current policy**;
+Studio creates a new prepared identity and fresh approval requirement while keeping
+the earlier preparation immutable. Main, source-head and policy changes that cannot
+be safely rebound still require a new preparation.
 Binary and oversized content are identified explicitly when a text preview is
 unavailable; selecting a side preserves its file bytes.
 

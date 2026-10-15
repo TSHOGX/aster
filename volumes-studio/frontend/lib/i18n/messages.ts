@@ -82,6 +82,7 @@ export const ZH: Record<string, string> = {
   "Integration review": "集成审阅",
   "Prepare committed changes against main. Saved but uncommitted edits are excluded.": "将已提交的更改与主分支进行集成。已保存但未提交的编辑不包含在内。",
   "Prepare integration": "准备集成",
+  "Rebind current policy": "重新绑定当前策略",
   "Accepted commit": "已接受的提交",
   "Ready for expert review": "可供专家审阅",
   "Integration needs attention": "集成需要处理",

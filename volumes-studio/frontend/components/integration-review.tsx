@@ -74,13 +74,13 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     setView(current); setChanges(page.changes); setNext(page.next); setFile(undefined);
     const url = new URL(location.href); url.searchParams.set("integration", digest); url.searchParams.delete("conflict"); history.replaceState(null, "", url);
   };
-  const prepare = async () => {
+  const prepare = async (rebindDigest = "") => {
     if (!studio.session) return;
     const current = await branchAPI.read(branch.library_id, branch.id);
     const main = await branchAPI.main(branch.library_id);
     const policy = await api<{ revision: number }>(`${root}/merge-policy`);
     const csrf = studio.session.csrf;
-    const prepared = await mutate(JSON.stringify(["prepare",current.id,current.head,main.commit_id,policy.revision]), request => branchAPI.prepare(current, main, policy.revision, request, csrf));
+    const prepared = await mutate(JSON.stringify(["prepare",current.id,current.head,main.commit_id,policy.revision,rebindDigest]), request => branchAPI.prepare(current, main, policy.revision, request, csrf, rebindDigest));
     setConflicts(prepared.conflicts);
     setWorkspace(prepared.conflict_workspace_id ?? "");
     if(prepared.conflict_workspace_id){const url=new URL(location.href);url.searchParams.set("conflict",prepared.conflict_workspace_id);url.searchParams.delete("integration");history.replaceState(null,"",url);}
@@ -125,7 +125,8 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
   return <section className="notice" aria-label={tr("Integration review")}>
     <h2>{tr("Integration review")}</h2>
     <p>{tr("Prepare committed changes against main. Saved but uncommitted edits are excluded.")}</p>
-    <button disabled={busy} onClick={() => void run(prepare)}>{tr("Prepare integration")}</button>
+    <button disabled={busy} onClick={() => void run(() => prepare())}>{tr("Prepare integration")}</button>
+    {view?.readiness === "stale_or_conflicted" && <button disabled={busy} onClick={() => void run(() => prepare(view.digest))}>{tr("Rebind current policy")}</button>}
     {error && <p role="alert">{error}</p>}
     {conflicts.length > 0 && <ul>{conflicts.map(conflict => <li key={conflict.path}><code>{conflict.path}</code> — {tr(conflict.reason)}</li>)}</ul>}
     {workspace && <ConflictEditor library={branch.library_id} id={workspace} onComplete={digest=>{setWorkspace("");setConflicts([]);void run(()=>load(digest));}} />}
