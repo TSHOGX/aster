@@ -173,6 +173,7 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 		w.Header().Set("X-Artifact-Digest", ref.Digest)
 		w.Header().Set("X-Artifact-Size", strconv.FormatInt(ref.Size, 10))
 		w.Header().Set("Content-Type", ref.MediaType)
+		w.Header().Set("Content-Disposition", "attachment; filename=\""+ref.ID+"\"")
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.Copy(w, bytes.NewReader(raw))
 	}
