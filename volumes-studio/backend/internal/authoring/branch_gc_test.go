@@ -45,3 +45,41 @@ func TestBranchDraftPinsBlobWithoutLegacyDraft(t *testing.T) {
 		t.Fatal("unreferenced branch blob retained", removed, err)
 	}
 }
+
+func TestCollectRetainsBlobWhileReaderIsOpen(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	main, err := s.MainCommit(ctx, testActor, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateBranch(ctx, testActor, l.ID, CreateBranchInput{"reader-branch", "Reader", main.CommitID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SaveBranchText(ctx, testActor, l.ID, b.ID, SaveBranchTextInput{"reader-save", 1, b.Head, "file", "pinned"}); err != nil {
+		t.Fatal(err)
+	}
+	reader, _, err := s.BranchContent(ctx, testActor, l.ID, b.ID, "file", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.MutateBranchStructure(ctx, testActor, l.ID, b.ID, BranchStructureInput{"reader-remove", 2, b.Head, "remove", "file", "", false}); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := s.Collect(ctx); err != nil || removed != 0 {
+		t.Fatal("active reader was collected", removed, err)
+	}
+	raw, err := io.ReadAll(reader)
+	if err != nil || string(raw) != "pinned" {
+		t.Fatal("pinned reader became unreadable", string(raw), err)
+	}
+	if err = reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := s.Collect(ctx); err != nil || removed != 1 {
+		t.Fatal("closed reader blob was not collected", removed, err)
+	}
+}
