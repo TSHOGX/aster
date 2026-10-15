@@ -64,7 +64,7 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 	}
 	events := func(w http.ResponseWriter, r *http.Request) {
 		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
-		if err := authorize(r, session, "config.read"); err != nil {
+		if err := authorize(r, session, "run.start"); err != nil {
 			workflowAuthError(w, err)
 			return
 		}
@@ -93,7 +93,7 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 	}
 	attempts := func(w http.ResponseWriter, r *http.Request) {
 		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
-		if err := authorize(r, session, "config.read"); err != nil {
+		if err := authorize(r, session, "run.start"); err != nil {
 			workflowAuthError(w, err)
 			return
 		}
