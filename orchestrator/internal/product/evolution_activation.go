@@ -202,6 +202,13 @@ func (s *Store) settleEvolutionActivation(ctx context.Context, tx *sql.Tx, actor
 	if _, err = tx.ExecContext(ctx, "UPDATE evolution_group_configs SET active_revision=?,active_digest=?,state='active' WHERE operation_id=?", result.ActiveRevision, result.ActiveDigest, operation); err != nil {
 		return result, err
 	}
+	projection, err := readEvolutionProjection(ctx, tx, operation)
+	if err != nil {
+		return result, err
+	}
+	if err = resetCorpusCollectors(ctx, tx, projection.Configuration, result.AutoEnabled); err != nil {
+		return result, err
+	}
 	return result, s.auditEvent(ctx, tx, actor, "evolution.config.activate", "group", result.GroupID, operation, result.ActiveRevision, result)
 }
 func randomOperationID() string { return "evo-" + uuid.NewString() }

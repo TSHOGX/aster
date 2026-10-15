@@ -228,9 +228,8 @@ This grant provisions input authority; it does not schedule or execute a workflo
 Group configuration managers need an explicit `source.read` group grant to read
 raw corpus evidence, including when they are administrators. The source must have a
 current reuse policy, include this group in its audience, and permit derivative
-publication. Capture currently supports explicitly selected Project/session execution
-IDs with no source exclusions; policies with exclusions are rejected until a compatible
-collector can enforce them. Volume corpora can still be provisioned as explicit
+publication. Capture supports selected Project/session sources with no exclusions;
+policies with exclusions are rejected. Volume corpora can still be provisioned as explicit
 sealed inputs.
 
 Use `POST /api/admin/groups/{group}/corpus/capture` with `request_id`, `source_id`,
@@ -252,5 +251,26 @@ and source authority are rechecked and audited before content is returned.
 `GET /api/admin/groups/{group}/corpus/bindings/{binding}/sources/{source}/frontier`
 shows that binding's successful consumption. Terminal generation settlement advances
 only the successful binding that pinned the snapshot; a failed sibling retains its
-prior frontier. Capture and sealing are explicit operations, not automatic collection
-of every group member's work or an implicit historical backfill.
+prior frontier.
+
+When an active configuration has automation enabled and an enabled event or schedule
+binding, the collector automatically captures new terminal executions from that
+binding's Project/session sources and seals bounded snapshots. It uses the activation
+author's current `config.manage` and explicit `source.read` grants plus the source's
+current reuse policy. Revocation stops collection without advancing its cursor;
+restore the grants or activate an authorized configuration to resume. Missing traces
+remain labelled, and late native captures or conversation projections create new
+immutable revisions for eligible executions.
+
+Collection starts at activation. Existing terminal executions are excluded, even if
+their native captures arrive later. Disabling automation stops collection; re-enabling
+establishes a new baseline instead of replaying the disabled interval. Reactivating
+an unchanged enabled source preserves pending work. Historical capture remains an
+explicit operation using the endpoints above.
+
+Inspect `GET /api/admin/groups/{group}/corpus/collectors` with `config.read` to see each
+source's activation baseline, processed event cursor, sealed-through sequence and
+latest snapshot ID. A snapshot failure leaves the capture cursor unchanged, and
+restart resumes from durable state. Collection and sealing do not themselves dispatch
+a generation run; submit an authorized native assignment with the selected sealed
+inputs to run it.

@@ -2049,3 +2049,51 @@ CREATE TABLE corpus_consumption(
  through_sequence INTEGER NOT NULL CHECK(through_sequence>=0),snapshot_id TEXT NOT NULL REFERENCES corpus_snapshots(id),run_id TEXT NOT NULL,
  PRIMARY KEY(group_id,binding_id,source_id)
 );
+
+-- Durable observable changes, recorded with the execution/capture transaction.
+-- Terminal eligibility is distinct from late evidence so enabling collection
+-- never implicitly backfills an old execution whose trace arrives afterwards.
+CREATE TABLE corpus_discovery_events (
+ sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+ execution_id TEXT NOT NULL,
+ kind TEXT NOT NULL CHECK(kind IN ('terminal','evidence'))
+);
+CREATE INDEX corpus_discovery_execution ON corpus_discovery_events(execution_id,kind,sequence);
+CREATE TRIGGER corpus_execution_insert AFTER INSERT ON execution_runs
+WHEN NEW.state IN ('settled','failed','unknown') BEGIN
+ INSERT INTO corpus_discovery_events(execution_id,kind) VALUES(NEW.id,'terminal');
+END;
+CREATE TRIGGER corpus_execution_update AFTER UPDATE OF state,outcome ON execution_runs
+WHEN NEW.state IN ('settled','failed','unknown') AND (NEW.state<>OLD.state OR NEW.outcome<>OLD.outcome) BEGIN
+ INSERT INTO corpus_discovery_events(execution_id,kind) VALUES(NEW.id,
+ CASE WHEN OLD.state IN ('settled','failed','unknown') THEN 'evidence' ELSE 'terminal' END);
+END;
+CREATE TRIGGER corpus_native_insert AFTER INSERT ON native_captures
+WHEN NEW.state IN ('exported','archived') BEGIN
+ INSERT INTO corpus_discovery_events(execution_id,kind)
+ SELECT id,'evidence' FROM execution_runs WHERE prompt_id=NEW.turn_id AND substr(NEW.path,-length(id)-7)='/'||id||'.jsonl';
+END;
+CREATE TRIGGER corpus_native_update AFTER UPDATE OF state,digest ON native_captures
+WHEN NEW.state IN ('exported','archived') AND (NEW.state<>OLD.state OR NEW.digest<>OLD.digest) BEGIN
+ INSERT INTO corpus_discovery_events(execution_id,kind)
+ SELECT id,'evidence' FROM execution_runs WHERE prompt_id=NEW.turn_id AND substr(NEW.path,-length(id)-7)='/'||id||'.jsonl';
+END;
+CREATE TRIGGER corpus_message_insert AFTER INSERT ON messages BEGIN
+ INSERT INTO corpus_discovery_events(execution_id,kind)
+ SELECT id,'evidence' FROM execution_runs WHERE prompt_id=NEW.turn_id AND state IN ('settled','failed','unknown');
+END;
+CREATE TRIGGER corpus_message_update AFTER UPDATE OF content ON messages WHEN NEW.content<>OLD.content BEGIN
+ INSERT INTO corpus_discovery_events(execution_id,kind)
+ SELECT id,'evidence' FROM execution_runs WHERE prompt_id=NEW.turn_id AND state IN ('settled','failed','unknown');
+END;
+CREATE TABLE corpus_collectors (
+ group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
+ source_id TEXT NOT NULL,
+ source_revision INTEGER NOT NULL CHECK(source_revision>0),
+ configuration_revision INTEGER NOT NULL CHECK(configuration_revision>0),
+ baseline INTEGER NOT NULL CHECK(baseline>=0),
+ after_event INTEGER NOT NULL CHECK(after_event>=baseline),
+ sealed_through INTEGER NOT NULL CHECK(sealed_through>=0),
+ snapshot_id TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(group_id,source_id)
+);

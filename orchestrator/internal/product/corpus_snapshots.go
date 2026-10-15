@@ -36,6 +36,22 @@ type CorpusSnapshot struct {
 
 func (s *Store) SealCorpusSnapshot(ctx context.Context, token, group string, input CorpusSnapshotInput) (CorpusSnapshot, error) {
 	var result CorpusSnapshot
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		actor, err := s.evolutionGroupSession(ctx, tx, token, group, "config.manage")
+		if err != nil {
+			return err
+		}
+		result, err = s.sealCorpusSnapshot(ctx, tx, actor, group, input)
+		return err
+	})
+	if err != nil {
+		return CorpusSnapshot{}, err
+	}
+	return result, nil
+}
+
+func (s *Store) sealCorpusSnapshot(ctx context.Context, tx *sql.Tx, actor Account, group string, input CorpusSnapshotInput) (CorpusSnapshot, error) {
+	var result CorpusSnapshot
 	if !validID(group) || !validID(input.SourceID) || input.SourceRevision < 1 || input.AfterSequence < 0 || input.Limit < 1 || input.Limit > 100 {
 		return result, ErrInvalid
 	}
@@ -43,9 +59,8 @@ func (s *Store) SealCorpusSnapshot(ctx context.Context, token, group string, inp
 	if err != nil {
 		return result, err
 	}
-	err = s.write(ctx, func(tx *sql.Tx) error {
-		actor, err := s.evolutionGroupSession(ctx, tx, token, group, "config.manage")
-		if err != nil {
+	err = func() error {
+		if err := authorizeEvolutionGroup(ctx, tx, actor, group, "config.manage"); err != nil {
 			return err
 		}
 		if err = authorizeCorpusEvidence(ctx, tx, actor, group); err != nil {
@@ -127,7 +142,7 @@ func (s *Store) SealCorpusSnapshot(ctx context.Context, token, group string, inp
 			return err
 		}
 		return s.auditEvent(ctx, tx, actor.ID, "corpus.seal", "source", input.SourceID, input.RequestID, input.SourceRevision, map[string]any{"snapshot_id": result.ID, "digest": digest, "through_sequence": result.Through, "episodes": len(result.Members)})
-	})
+	}()
 	if err != nil {
 		return CorpusSnapshot{}, err
 	}

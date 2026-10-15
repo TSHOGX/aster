@@ -38,6 +38,24 @@ func TestCorpusRoutesRequireCurrentEvidenceAndOrigin(t *testing.T) {
 		handler.ServeHTTP(response, request)
 		return response.Code
 	}
+	for _, cookie := range []string{"", token} {
+		request := httptest.NewRequest("GET", "https://app/api/admin/groups/"+product.StandardUsersGroup+"/corpus/collectors", nil)
+		if cookie != "" {
+			request.AddCookie(&http.Cookie{Name: loginCookie, Value: cookie})
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		expected := http.StatusOK
+		if cookie == "" {
+			expected = http.StatusUnauthorized
+		}
+		if response.Code != expected {
+			t.Fatal("collector metadata authorization", response.Code, response.Body.String())
+		}
+		if cookie != "" && response.Body.String() != "[]\n" {
+			t.Fatal("uninitialized collector metadata", response.Body.String())
+		}
+	}
 	path := "/api/admin/groups/" + product.StandardUsersGroup + "/corpus/capture"
 	input := product.CorpusCaptureInput{RequestID: "capture", SourceID: "source", SourceRevision: 1, ExecutionID: "missing"}
 	if code := call(path, "", "https://app", input); code != 401 {

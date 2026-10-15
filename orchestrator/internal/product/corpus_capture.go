@@ -67,6 +67,22 @@ func sourcePolicy(ctx context.Context, q queryer, group, source string, revision
 // message inspection. Late capture/outcome data creates a new immutable revision.
 func (s *Store) CaptureCorpusEpisode(ctx context.Context, token, group string, input CorpusCaptureInput) (CorpusEpisodeRevision, error) {
 	var result CorpusEpisodeRevision
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		actor, err := s.evolutionGroupSession(ctx, tx, token, group, "config.manage")
+		if err != nil {
+			return err
+		}
+		result, err = s.captureCorpusEpisode(ctx, tx, actor, group, input)
+		return err
+	})
+	if err != nil {
+		return CorpusEpisodeRevision{}, err
+	}
+	return result, nil
+}
+
+func (s *Store) captureCorpusEpisode(ctx context.Context, tx *sql.Tx, actor Account, group string, input CorpusCaptureInput) (CorpusEpisodeRevision, error) {
+	var result CorpusEpisodeRevision
 	if !validID(group) || !validID(input.SourceID) || !validID(input.ExecutionID) || input.SourceRevision < 1 {
 		return result, ErrInvalid
 	}
@@ -74,9 +90,8 @@ func (s *Store) CaptureCorpusEpisode(ctx context.Context, token, group string, i
 	if err != nil {
 		return result, err
 	}
-	err = s.write(ctx, func(tx *sql.Tx) error {
-		actor, err := s.evolutionGroupSession(ctx, tx, token, group, "config.manage")
-		if err != nil {
+	err = func() error {
+		if err := authorizeEvolutionGroup(ctx, tx, actor, group, "config.manage"); err != nil {
 			return err
 		}
 		if err = authorizeCorpusEvidence(ctx, tx, actor, group); err != nil {
@@ -235,7 +250,7 @@ func (s *Store) CaptureCorpusEpisode(ctx context.Context, token, group string, i
 			return err
 		}
 		return s.auditEvent(ctx, tx, actor.ID, "corpus.capture", "source", input.SourceID, input.RequestID, result.Revision, map[string]any{"group_id": group, "execution_id": input.ExecutionID, "source_revision": input.SourceRevision, "capture_state": result.CaptureState, "digest": result.Digest})
-	})
+	}()
 	if err != nil {
 		return CorpusEpisodeRevision{}, err
 	}

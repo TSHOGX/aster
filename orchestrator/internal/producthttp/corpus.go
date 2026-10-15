@@ -53,3 +53,12 @@ func (a *Authentication) corpusFrontier(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, 200, value)
 }
+
+func (a *Authentication) corpusCollectors(w http.ResponseWriter, r *http.Request) {
+	value, err := a.Store.CorpusCollectors(r.Context(), requestToken(r), r.PathValue("group"))
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, 200, value)
+}

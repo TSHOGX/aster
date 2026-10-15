@@ -45,6 +45,9 @@ func (s *Store) DisableEvolution(ctx context.Context, token, group string, input
 		if _, err = tx.ExecContext(ctx, "UPDATE evolution_group_configs SET auto_enabled=0,updated_at=? WHERE group_id=?", s.timestamp(), group); err != nil {
 			return err
 		}
+		if _, err = tx.ExecContext(ctx, "DELETE FROM corpus_collectors WHERE group_id=?", group); err != nil {
+			return err
+		}
 		raw, err = json.Marshal(result)
 		if err != nil {
 			return err
