@@ -292,6 +292,26 @@ type EvaluationCompletion struct {
 	Usage  RunUsage                   `json:"usage"`
 }
 
+// EvaluationReportArtifact resolves only a report explicitly retained by the
+// selected evaluation job. It never exposes dataset or evaluator input bytes.
+func (s *Store) EvaluationReportArtifact(ctx context.Context, group, id, reportID string) (evolution.ArtifactRef, []byte, error) {
+	if !manifest.ValidID(group) || !manifest.ValidID(id) || !manifest.ValidID(reportID) {
+		return evolution.ArtifactRef{}, nil, fmt.Errorf("invalid evaluation report scope")
+	}
+	completion, err := s.EvaluationResult(ctx, group, id)
+	if err != nil {
+		return evolution.ArtifactRef{}, nil, err
+	}
+	for _, report := range completion.Result.Reports {
+		if report.ID != reportID {
+			continue
+		}
+		raw, readErr := s.Artifact(ctx, report)
+		return report, raw, readErr
+	}
+	return evolution.ArtifactRef{}, nil, ErrNotFound
+}
+
 // CompleteEvaluation is called only with an authenticated assigned provider
 // response by the current worker. Evidence and actual usage settle atomically.
 func (s *Store) CompleteEvaluation(ctx context.Context, lease EvaluationLease, completion EvaluationCompletion) (evolution.EvaluationResult, error) {

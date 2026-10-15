@@ -3,7 +3,9 @@ package httpapi
 import (
 	"aster/contracts/appidentity"
 	"aster/evaluation-space/internal/projections"
+	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 )
@@ -80,6 +82,42 @@ func BrowserEvaluationAPI(client *appidentity.Client, store *projections.Store) 
 		}
 		write(w, 200, completion)
 	}
+	report := func(w http.ResponseWriter, r *http.Request) {
+		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
+		if err := authorize(r, session); err != nil {
+			workflowAuthError(w, err)
+			return
+		}
+		ref, raw, err := store.EvaluationReportArtifact(r.Context(), r.PathValue("group"), r.PathValue("job"), r.PathValue("report"))
+		if errors.Is(err, projections.ErrNotFound) {
+			write(w, 404, map[string]string{"error": "report_not_found"})
+			return
+		}
+		if err != nil {
+			write(w, 422, map[string]string{"error": "report_unavailable"})
+			return
+		}
+		maxBytes := int64(1 << 20)
+		if value := r.URL.Query().Get("max_bytes"); value != "" {
+			parsed, parseErr := strconv.ParseInt(value, 10, 64)
+			if parseErr != nil || parsed < 1 || parsed > 4<<20 {
+				write(w, 400, map[string]string{"error": "invalid_max_bytes"})
+				return
+			}
+			maxBytes = parsed
+		}
+		truncated := int64(len(raw)) > maxBytes
+		if truncated {
+			raw = raw[:maxBytes]
+		}
+		w.Header().Set("X-Report-Digest", ref.Digest)
+		w.Header().Set("X-Report-Size", strconv.FormatInt(ref.Size, 10))
+		w.Header().Set("X-Report-Truncated", strconv.FormatBool(truncated))
+		w.Header().Set("Content-Type", ref.MediaType)
+		w.Header().Set("Content-Disposition", "attachment; filename=\""+ref.ID+"\"")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.Copy(w, bytes.NewReader(raw))
+	}
 	cancel := func(w http.ResponseWriter, r *http.Request) {
 		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
 		if result, err := client.EvaluationGroups(r.Context(), session, appidentity.EvaluationAccessRequest{GroupID: r.PathValue("group"), Action: "run.start", Limit: 1}); err != nil || len(result.Items) != 1 || result.Items[0].ID != r.PathValue("group") {
@@ -101,6 +139,7 @@ func BrowserEvaluationAPI(client *appidentity.Client, store *projections.Store) 
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/evaluations", list)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/evaluations/{job}", read)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/evaluations/{job}/result", result)
+	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/evaluations/{job}/reports/{report}", report)
 	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/evaluations/{job}/cancel", cancel)
 	return func(session appidentity.Session, w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(w, contextWithBrowserSession(r, session))
