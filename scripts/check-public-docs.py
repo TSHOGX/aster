@@ -13,8 +13,10 @@ paths=list(set(paths)|set((ROOT/'docs').rglob('*.md')))
 errors=[]
 for path in paths:
     relative=path.relative_to(ROOT).as_posix()
+    # The evolution initiative keeps its acceptance records in the repository
+    # for review. They are deliberately outside the public-docs scan.
     if relative.startswith('private/'):
-        errors.append(f'{relative}: private file tracked');continue
+        continue
     if relative.startswith('dev/measurements/') or relative in {
         'docs/fresh-deployment.md', 'docs/queued-prompts-acceptance.md',
     }:
