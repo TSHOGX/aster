@@ -68,7 +68,9 @@ export function LibraryEditor({ id }: { id: string }) {
     [activePublication, setActivePublication] = useState(false),
     [opened, setOpened] = useState(false),
     [moveEntry, setMoveEntry] = useState<Entry | null>(null);
-  const branchID = studio.model.branches[id]?.id ?? "";
+  const branch = studio.model.branches[id];
+  const branchID = branch?.id ?? "";
+  const draftRevision = branch?.draft_revision ?? 0;
   const scope = workspaceKey(id, version ? "" : branchID, version);
   const input = useRef<HTMLInputElement>(null),
     folderInput = useRef<HTMLInputElement>(null),
@@ -103,7 +105,6 @@ export function LibraryEditor({ id }: { id: string }) {
         const branch = await branchAPI.read(id, controller.model.branches[id].id, signal);
         if (signal?.aborted || turn !== refreshGeneration.current) return;
         controller.model.branches[id] = branch;
-        l.draft_revision = branch.draft_revision;
       }
       setLibrary(l);
       setActivePublication(
@@ -204,7 +205,7 @@ export function LibraryEditor({ id }: { id: string }) {
       setDirectory(entry.path);
       return;
     }
-    await studio.open(id, version, entry, library?.draft_revision);
+    await studio.open(id, version, entry, draftRevision);
     if (turn !== openGeneration.current) return;
     setSelected(entry.path);
     setDirectory(parentPath(entry.path));
@@ -366,7 +367,7 @@ export function LibraryEditor({ id }: { id: string }) {
           {
             label: message("Download"),
             action: () => {
-              window.location.assign(contentURL(id, version, entry.path,library?.draft_revision,branchID));
+              window.location.assign(contentURL(id, version, entry.path,draftRevision,branchID));
             },
           },
         ]
@@ -445,7 +446,7 @@ export function LibraryEditor({ id }: { id: string }) {
           branch={studio.model.branches[id]?.id ?? ""}
           library={id}
           version={version}
-          revision={library.draft_revision}
+          revision={draftRevision}
           selected={selected}
           onOpen={(entry) => void run(() => open(entry))}
           onDirectory={setDirectory}
@@ -455,7 +456,7 @@ export function LibraryEditor({ id }: { id: string }) {
         />
       )}
       <div className="sidebar-footer">
-        {version ? tr("Read-only version") : tr("Draft · revision {value0}", { value0: library?.draft_revision ?? "…" })}
+        {version ? tr("Read-only version") : tr("Draft · revision {value0}", { value0: draftRevision || "…" })}
       </div>
     </aside>
   );
@@ -539,7 +540,7 @@ export function LibraryEditor({ id }: { id: string }) {
           </>
         )}
         <section className="workspace-main">
- {library?.profile === "shared-assets-v1" && (version || branchID) && <SharedAssetsValidation key={`${id}:${version}:${library.draft_revision}:${studio.model.epoch}`} library={id} version={version} branch={branchID} revision={library.draft_revision} onOpen={()=>void run(()=>openPath("AGENTS.md"))} />}
+ {library?.profile === "shared-assets-v1" && (version || branchID) && <SharedAssetsValidation key={`${id}:${version}:${draftRevision}:${studio.model.epoch}`} library={id} version={version} branch={branchID} revision={draftRevision} onOpen={()=>void run(()=>openPath("AGENTS.md"))} />}
           <div className="workspace-nav">
             {(!sidebar || mobile) && (
               <button

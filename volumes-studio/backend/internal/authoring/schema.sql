@@ -9,8 +9,6 @@ CREATE TABLE libraries(
  id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,description TEXT NOT NULL,
  profile TEXT NOT NULL DEFAULT 'authored-v1' CHECK(profile IN('authored-v1','shared-assets-v1')),
  metadata_revision INTEGER NOT NULL DEFAULT 1,
- draft_revision INTEGER NOT NULL DEFAULT 1,
- base_version TEXT NOT NULL DEFAULT '',
  issuer TEXT NOT NULL,subject TEXT NOT NULL,
  archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN(0,1)),created_at INTEGER NOT NULL
 );

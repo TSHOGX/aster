@@ -9,8 +9,7 @@ import (
 )
 
 func TestProductionSchemaExcludesLibraryDraftTable(t *testing.T) {
-	// This package imports the test-linked authoring package, whose historical
-	// fixtures extend its schema. Use the production DDL directly for this check.
+	// Execute the production DDL directly to assert obsolete storage is absent.
 	raw, err := os.ReadFile("schema.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -27,6 +26,9 @@ func TestProductionSchemaExcludesLibraryDraftTable(t *testing.T) {
 	var legacy int
 	if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='draft_entries'").Scan(&legacy); err != nil || legacy != 0 {
 		t.Fatal("legacy draft schema retained", legacy, err)
+	}
+	if err = db.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('libraries') WHERE name IN ('draft_revision','base_version')").Scan(&legacy); err != nil || legacy != 0 {
+		t.Fatal("legacy library draft metadata retained", legacy, err)
 	}
 	for _, table := range []string{"branches", "branch_entries", "prepared_merges", "merge_reviews", "merge_operations"} {
 		var count int

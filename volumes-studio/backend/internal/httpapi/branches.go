@@ -22,7 +22,7 @@ func (a *AuthoringAPI) registerBranches() {
 	a.mux.HandleFunc("GET "+root+"/{branch}/draft/search", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		page, err := a.Store.SearchBranch(r.Context(), actor(r), r.PathValue("library"), r.PathValue("branch"), q.Get("q"), q.Get("cursor"), revision(r))
-		respond(w, 200, map[string]any{"items": page.Entries, "next": page.Next, "total": page.DescendantCount, "revision": page.Revision, "base_version": ""}, err)
+		respond(w, 200, map[string]any{"items": page.Entries, "next": page.Next, "total": page.DescendantCount, "revision": page.Revision}, err)
 	})
 	a.mux.HandleFunc("GET "+root+"/{branch}/draft/validation", func(w http.ResponseWriter, r *http.Request) {
 		value, err := a.Store.BranchValidation(r.Context(), actor(r), r.PathValue("library"), r.PathValue("branch"), revision(r))

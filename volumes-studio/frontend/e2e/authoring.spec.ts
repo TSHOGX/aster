@@ -173,17 +173,19 @@ test("local recovery and external conflict retain text", async ({ page }) => {
   ).toContainText("Unsaved local research");
   const id = libraryID(page),
     s = await session(page);
-  const l = await (
-    await page.request.get(`/volumes-studio/api/v1/libraries/${id}`)
+  const branchID = new URL(page.url()).searchParams.get("branch");
+  expect(branchID).toBeTruthy();
+  const branch = await (
+    await page.request.get(`/volumes-studio/api/v1/libraries/${id}/branches/${branchID}`)
   ).json();
   const update = await page.request.post(
-    `/volumes-studio/api/v1/libraries/${id}/draft/mutations`,
+    `/volumes-studio/api/v1/libraries/${id}/branches/${branchID}/draft/text`,
     {
       headers: { Origin: origin, "X-CSRF-Token": s.csrf },
       data: {
         request_id: "external-" + Date.now(),
-        expected_revision: l.draft_revision,
-        action: "text",
+        expected_revision: branch.draft_revision,
+        expected_head: branch.head,
         path: "notes.md",
         text: "External saved version",
       },
@@ -615,7 +617,6 @@ test("expanding an unrelated folder preserves the tree scroll and editor", async
           next: "",
           total: 1,
           revision: 2,
-          base_version: "",
         },
       });
     }

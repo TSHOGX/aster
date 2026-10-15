@@ -21,7 +21,8 @@ version includes an empty `skills/` directory. These files mount read-only at
 1. Open Studio and create a library. Choose **Ordinary data** or **Shared assets**;
    the content profile cannot change after creation. Filter the catalog by profile.
 2. Select a **Working branch**, or enter a **New branch name** and choose
-   **Create branch from main**. Each branch has its own saved draft.
+   **Create branch from main**. Each branch has its own saved draft and revision; publishing a version does not
+   change that branch's comparison head or saved revision.
 3. Add directories, create text files or upload files/folders. Edit files in tabs
    and save changes to the selected branch.
 4. Review **Changes** against the branch's committed head. Save persists draft

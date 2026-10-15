@@ -8,7 +8,6 @@ export type Library = {
   description: string;
   profile: "authored-v1" | "shared-assets-v1";
   metadata_revision: number;
-  draft_revision: number;
   archived: boolean;
   updated_at?: number;
   draft_change_count?: number;

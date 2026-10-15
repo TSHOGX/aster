@@ -82,7 +82,7 @@ export function Changes({ library }: { library: Library }) {
   const root = `/libraries/${library.id}/branches/${branch?.id ?? ""}`;
   const params = query({
     head: branch?.head,
-    revision: library.draft_revision,
+    revision: branch?.draft_revision,
 
   });
   useEffect(() => {
@@ -92,14 +92,14 @@ export function Changes({ library }: { library: Library }) {
       signal: abort.signal,
     })
       .then((p) => {
-        setPage({items:p.changes,next:p.next,total:p.total,revision:library.draft_revision});
+        setPage({items:p.changes,next:p.next,total:p.total,revision:branch.draft_revision});
         setError("");
       })
       .catch((e) => {
         if (!abort.signal.aborted) setError(String(e));
       });
     return () => abort.abort();
-  }, [root, params, branch, library.draft_revision]);
+  }, [root, params, branch, branch?.draft_revision]);
   useEffect(() => {
     if (!selected) return;
     const abort = new AbortController();
@@ -111,7 +111,7 @@ export function Changes({ library }: { library: Library }) {
         if (result.preview !== "text") throw new Error("This file is unavailable for text comparison.");
         return result.text ?? "";
       }
-      const url = contentURL(library.id, version, path, library.draft_revision,studio.model.branches[library.id]?.id);
+      const url = contentURL(library.id, version, path, branch?.draft_revision,studio.model.branches[library.id]?.id);
       const response = await fetch(url, { signal: abort.signal });
       if (!response.ok)
         throw new Error(
@@ -167,7 +167,7 @@ export function Changes({ library }: { library: Library }) {
     branch?.head,
     selected,
     library.id,
-    library.draft_revision,
+    branch?.draft_revision,
     root,
   ]);
   const dirty = studio.model.buffers.filter(

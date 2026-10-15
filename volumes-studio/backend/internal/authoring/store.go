@@ -73,8 +73,6 @@ type Library struct {
 	Description      string `json:"description"`
 	Profile          string `json:"profile"`
 	MetadataRevision int64  `json:"metadata_revision"`
-	DraftRevision    int64  `json:"draft_revision"`
-	BaseVersion      string `json:"-"`
 	Archived         bool   `json:"archived"`
 }
 type Version struct {
@@ -344,13 +342,13 @@ func validText(value string, max int) bool {
 	return utf8.ValidString(value) && len(value) <= max && !strings.ContainsRune(value, 0)
 }
 
-const libraryColumns = "id,name,description,profile,metadata_revision,draft_revision,base_version,archived"
+const libraryColumns = "id,name,description,profile,metadata_revision,archived"
 
 type scanner interface{ Scan(...any) error }
 
 func scanLibrary(row scanner) (Library, error) {
 	var l Library
-	err := row.Scan(&l.ID, &l.Name, &l.Description, &l.Profile, &l.MetadataRevision, &l.DraftRevision, &l.BaseVersion, &l.Archived)
+	err := row.Scan(&l.ID, &l.Name, &l.Description, &l.Profile, &l.MetadataRevision, &l.Archived)
 	l.Builtin = l.ID == "aster-shared-assets"
 	return l, normalizeDB(err)
 }
@@ -444,7 +442,7 @@ func (s *Store) Create(ctx context.Context, a Actor, input CreateInput) (Library
 	if exists != 0 {
 		return l, ErrConflict
 	}
-	l = Library{ID: randomID(), Name: input.Name, Description: input.Description, Profile: input.Profile, MetadataRevision: 1, DraftRevision: 1}
+	l = Library{ID: randomID(), Name: input.Name, Description: input.Description, Profile: input.Profile, MetadataRevision: 1}
 	if l.Profile == "" {
 		l.Profile = manifest.Profile
 	}

@@ -12,24 +12,22 @@ import (
 
 // Workbench queries use the current cursor and ordering contracts.
 type Query struct {
-	Profile     string `json:"profile"`
-	Q           string `json:"q"`
-	Status      string `json:"status"`
-	Changes     string `json:"changes"`
-	Sort        string `json:"sort"`
-	Direction   string `json:"direction"`
-	Parent      string `json:"parent"`
-	Cursor      string `json:"-"`
-	Limit       int    `json:"limit"`
-	Revision    int64  `json:"revision"`
-	BaseVersion string `json:"base_version"`
+	Profile   string `json:"profile"`
+	Q         string `json:"q"`
+	Status    string `json:"status"`
+	Changes   string `json:"changes"`
+	Sort      string `json:"sort"`
+	Direction string `json:"direction"`
+	Parent    string `json:"parent"`
+	Cursor    string `json:"-"`
+	Limit     int    `json:"limit"`
+	Revision  int64  `json:"revision"`
 }
 type Page[T any] struct {
-	Items       []T    `json:"items"`
-	Next        string `json:"next"`
-	Total       int    `json:"total"`
-	Revision    int64  `json:"revision"`
-	BaseVersion string `json:"base_version"`
+	Items    []T    `json:"items"`
+	Next     string `json:"next"`
+	Total    int    `json:"total"`
+	Revision int64  `json:"revision"`
 }
 type LibrarySummary struct {
 	Library
@@ -79,7 +77,7 @@ func pageOf[T any](items []T, q Query, scope string, defaultLimit int) (Page[T],
 	if end > len(items) {
 		end = len(items)
 	}
-	p := Page[T]{Items: append([]T{}, items[start:end]...), Total: len(items), Revision: q.Revision, BaseVersion: q.BaseVersion}
+	p := Page[T]{Items: append([]T{}, items[start:end]...), Total: len(items), Revision: q.Revision}
 	if end < len(items) {
 		data, _ := json.Marshal(workbenchCursor{scope, fingerprint, end, snapshot})
 		p.Next = base64.RawURLEncoding.EncodeToString(data)
@@ -94,7 +92,7 @@ func (s *Store) summaries(ctx context.Context, library string) ([]LibrarySummary
 	out := []LibrarySummary{}
 	for rows.Next() {
 		var l LibrarySummary
-		if err = rows.Scan(&l.ID, &l.Name, &l.Description, &l.Profile, &l.MetadataRevision, &l.DraftRevision, &l.BaseVersion, &l.Archived, &l.UpdatedAt); err != nil {
+		if err = rows.Scan(&l.ID, &l.Name, &l.Description, &l.Profile, &l.MetadataRevision, &l.Archived, &l.UpdatedAt); err != nil {
 			rows.Close()
 			return nil, err
 		}
