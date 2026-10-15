@@ -160,3 +160,20 @@ func TestGenerationAndEvaluationShareConcurrentCeiling(t *testing.T) {
 	_, err = s.ResolveGeneration(ctx, scope)
 	must(t, err)
 }
+
+func TestCompletedGenerationCanSettleAfterRevocationButCannotHandoff(t *testing.T) {
+	s, token, input := generationFixture(t)
+	ctx := context.Background()
+	grant, err := s.AuthorizeGeneration(ctx, input)
+	must(t, err)
+	must(t, s.ObserveGeneration(ctx, evolution.GenerationObservation{Grant: grant, Fence: 1, State: "running"}))
+	_, err = s.SetGenerationInputGrant(ctx, token, input.GroupID, GenerationInputGrantInput{RequestID: "revoke-before-observation", ExpectedRevision: 1, Artifact: input.Pins.Inputs[0], SourceIDs: []string{"source"}, Enabled: false})
+	must(t, err)
+	// This is an authenticated report of a local terminal fact, not permission
+	// to perform another effect. Accounting must not remain reserved forever.
+	must(t, s.ObserveGeneration(ctx, evolution.GenerationObservation{Grant: grant, Fence: 1, State: "completed"}))
+	must(t, s.SettleGeneration(ctx, GenerationSettlement{Grant: grant, Fence: 1, Tokens: 10, CostMicros: 20}))
+	if _, err = s.ResolveGeneration(ctx, evolution.GenerationGrantScope{Grant: grant, Fence: 1, Action: "handoff"}); !errors.Is(err, ErrForbidden) {
+		t.Fatal("revocation authorized output handoff", err)
+	}
+}

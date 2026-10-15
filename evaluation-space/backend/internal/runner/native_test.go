@@ -60,7 +60,7 @@ func (p *nativeProvider) Submit(ctx context.Context, call projections.ProviderCa
 	}
 	p.prompt = input.Prompt
 	out, _ := json.Marshal(workflow.Values{"value": json.RawMessage(`"model output"`)})
-	artifact := evolution.ArtifactRef{ID: "output-" + call.ID, GroupID: "group", SchemaDigest: evolution.Digest([]byte("schema")), Digest: evolution.Digest(out), Size: int64(len(out)), MediaType: "application/json", GrantID: "run-grant", PolicyRevision: 1}
+	artifact := evolution.ArtifactRef{ID: "output-" + call.ID, GroupID: "group", SchemaDigest: evolution.Digest([]byte("schema")), Digest: evolution.Digest(out), Size: int64(len(out)), MediaType: "application/json", GrantID: call.Request.GrantID, PolicyRevision: 1}
 	if err = p.store.SealArtifact(ctx, artifact, bytes.NewReader(out)); err != nil {
 		return projections.ProviderOutcome{}, err
 	}
@@ -104,7 +104,13 @@ func nativeFixture(t *testing.T) (*projections.Store, string, evolution.Run, *Na
 	if err = store.SealArtifact(ctx, artifact, bytes.NewReader(input)); err != nil {
 		t.Fatal(err)
 	}
-	run := evolution.Run{ID: "run", GroupID: "group", BindingID: "binding", State: "queued", CreatedAt: time.Now().UTC(), Budget: evolution.Budget{MaxAttempts: 10, MaxTokens: 100, MaxCostMicros: 100, MaxArtifactBytes: 1 << 20, TimeoutSeconds: 60}, Pins: evolution.RunPins{Workflow: workflowRef, Inputs: []evolution.ArtifactRef{artifact}, InputPorts: map[string]evolution.ArtifactRef{"value": artifact}, SourcePolicyRevision: 1}}
+	service := evolution.Service{Ref: evolution.Revision{ID: "native-service", Revision: 1}, Kind: "evolution", ConnectionID: "native", RunnerDigest: evolution.Digest([]byte("runner")), Enabled: true, Capabilities: evolution.Capabilities{ProtocolVersion: 1}}
+	service.Ref.Digest, _ = evolution.DefinitionDigest(service)
+	serviceRaw, _ := json.Marshal(service)
+	if err = store.PublishDefinition(ctx, "service", serviceRaw); err != nil {
+		t.Fatal(err)
+	}
+	run := evolution.Run{ID: "run", GroupID: "group", BindingID: "binding", State: "queued", CreatedAt: time.Now().UTC(), Budget: evolution.Budget{MaxAttempts: 10, MaxTokens: 100, MaxCostMicros: 100, MaxArtifactBytes: 1 << 20, TimeoutSeconds: 60}, Pins: evolution.RunPins{Service: service.Ref, Workflow: workflowRef, Inputs: []evolution.ArtifactRef{artifact}, InputPorts: map[string]evolution.ArtifactRef{"value": artifact}, SourcePolicyRevision: 1, Base: evolution.ContentRef{LibraryID: "library", CommitID: strings.Repeat("a", 64), Profile: "authored-v1", TreeDigest: evolution.Digest([]byte("base"))}, Output: evolution.OutputBinding{LibraryID: "library", Prefix: "lessons", Profile: "authored-v1", ReservationGeneration: 1}}}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)

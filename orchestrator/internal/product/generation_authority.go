@@ -315,7 +315,7 @@ func (s *Store) ObserveGeneration(ctx context.Context, input evolution.Generatio
 		if (state == "admitted" || state == "paused") && input.State == "running" && input.Fence <= fence {
 			return ErrConflict
 		}
-		if input.State == "running" || input.State == "completed" {
+		if input.State == "running" {
 			if _, err = s.checkGeneration(ctx, tx, assignment, false); err != nil {
 				return err
 			}

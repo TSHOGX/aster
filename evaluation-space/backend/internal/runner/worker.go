@@ -13,6 +13,9 @@ import (
 type Authority interface {
 	AuthorizeRun(context.Context, evolution.Run, bool) error
 }
+type ClaimAuthority interface {
+	AuthorizeClaim(context.Context, projections.RunLease, evolution.Run, bool) error
+}
 type Executor interface {
 	Execute(context.Context, projections.RunLease, evolution.Run) (string, error)
 	Cleanup(context.Context, projections.RunLease, evolution.Run) error
@@ -66,6 +69,11 @@ func (w *Worker) Step(ctx context.Context) error {
 		return err
 	}
 	cleanup = run.State == "cancelling"
+	if authority, ok := w.Authority.(ClaimAuthority); ok {
+		if err = authority.AuthorizeClaim(ctx, lease, run, cleanup); err != nil {
+			return err
+		}
+	}
 	work, cancel := context.WithCancel(ctx)
 	defer cancel()
 	renewed := make(chan error, 1)
