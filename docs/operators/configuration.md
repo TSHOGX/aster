@@ -286,6 +286,12 @@ compare-and-swap controls and retain `run.start` authority. Evaluation reports u
 `/evaluation-space/groups/{group}/evaluations/{job}` and expose the frozen subject,
 observed metrics, coverage and outcome; dataset bytes and evaluator credentials
 remain private. A report can be canceled while it is queued or running.
+Configuration managers can edit evaluator profiles from the Evaluation Space group
+page. The editor pins the dataset artifact, scorer, runtime, model, tools, metric
+thresholds and minimum sample/coverage requirements; publishing creates the next
+immutable profile revision. Existing runs and reports retain their earlier profile
+identity. Dataset scope is checked against the selected group and profile bytes are
+never exposed to generation-only readers.
 Frontend credentials and cookies are stripped before proxying. Application sessions
 persist in Evaluation Space's state database; Studio owns a separate session store
 and cookie path. Central identity outages reject session authorization immediately.
