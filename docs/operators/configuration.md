@@ -216,6 +216,12 @@ by looking up participant state. It does not settle activation without Studio's
 receipt. Omitting this configuration disables automatic Evaluation Space dispatch;
 it does not erase pending operations.
 
+The private listener exposes `GET /evaluation-space/healthz` and
+`GET /evaluation-space/readyz` for the process supervisor. Both return a no-store
+JSON `{"status":"ok"}` response after the state database has opened. Keep these
+probes on the private loopback listener; the browser gateway remains the only
+listener that should be routed through the shared TLS front door.
+
 Studio can expose its evolution participant API on a separate private loopback
 listener using `--participant-listen 127.0.0.1:8085`. Set
 `STUDIO_CENTRAL_SECRET` to a service credential of at least 32 characters, or select

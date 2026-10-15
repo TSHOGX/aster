@@ -136,6 +136,12 @@ func run() error {
 	projectionHandler := (httpapi.ProjectionAPI{Store: store, Authority: authority}).Handler()
 	catalogHandler := (httpapi.CatalogAPI{Store: store, Authority: authority}).Handler()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/evaluation-space/healthz" || r.URL.Path == "/evaluation-space/readyz" {
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			return
+		}
 		if generationHandler != nil && strings.HasPrefix(r.URL.Path, "/evaluation-space/internal/v1/generation/") {
 			generationHandler.ServeHTTP(w, r)
 			return
