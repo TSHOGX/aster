@@ -1,18 +1,138 @@
-/* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps -- load synchronizes an explicit remote draft resource. */
+/* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps -- effects synchronize remote drafts and bounded account-local recovery. */
 "use client";
-import { useEffect, useState } from "react";
+
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { base, type Session } from "../lib/api";
 import { useT } from "../lib/i18n";
 
-type Draft = { id:string; revision:number; layout_revision:number; workflow:Record<string,unknown>; layout:Record<string,unknown> };
-export function WorkflowEditor({ group, workflow }: { group:string; workflow:string }) {
- const tr=useT(); const [session,setSession]=useState<Session>(); const [draft,setDraft]=useState<Draft>(); const [text,setText]=useState(""); const [layout,setLayout]=useState("{}"); const [status,setStatus]=useState(""); const [error,setError]=useState(""); const [busy,setBusy]=useState(false);
- const path=`/api/v1/groups/${encodeURIComponent(group)}/workflows/${encodeURIComponent(workflow)}/draft`;
- async function load() { setError(""); try { const s=await fetch(`${base}/api/v1/session`,{credentials:"same-origin"}); if(!s.ok)throw new Error("session"); const sv=await s.json() as Session; setSession(sv); const r=await fetch(`${base}${path}`,{credentials:"same-origin",cache:"no-store"}); if(!r.ok)throw new Error(String(r.status)); const value=await r.json() as Draft; setDraft(value); setText(JSON.stringify(value.workflow,null,2));setLayout(JSON.stringify(value.layout,null,2)); } catch { setError("Workflow draft is unavailable. Retry or ask a workflow editor."); } }
- useEffect(()=>{void load();},[group,workflow]);
- async function save() { if(!session||!draft)return; setBusy(true);setError("");setStatus("");try { let parsed:unknown, parsedLayout:unknown; try{parsed=JSON.parse(text);parsedLayout=JSON.parse(layout);}catch{throw new Error("json")}; const r=await fetch(`${base}${path}`,{method:"PUT",credentials:"same-origin",headers:{"Content-Type":"application/json",Origin:location.origin,"X-CSRF-Token":session.csrf},body:JSON.stringify({id:workflow,expected_revision:draft.revision,expected_layout_revision:draft.layout_revision,workflow:parsed,layout:parsedLayout})}); if(!r.ok){if(r.status===409)throw new Error("conflict");throw new Error("invalid")};const value=await r.json() as Draft;setDraft(value);setText(JSON.stringify(value.workflow,null,2));setLayout(JSON.stringify(value.layout,null,2));setStatus(tr("Draft saved."));}catch(e){setError(tr(e instanceof Error&&e.message==="conflict"?"The draft changed elsewhere. Reload before saving.":e instanceof Error&&e.message==="json"?"Workflow and layout must be valid JSON.":"Workflow validation failed. Check the field errors and graph connections."));}finally{setBusy(false)} }
- async function publish(){if(!session||!draft)return;setBusy(true);setError("");try{const r=await fetch(`${base}${path}/publish`,{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json",Origin:location.origin,"X-CSRF-Token":session.csrf},body:JSON.stringify({revision:draft.revision})});if(!r.ok)throw new Error("publish");setStatus(tr("Published immutable workflow revision."));}catch{setError(tr("Publishing requires workflow-edit permission and a valid saved draft."));}finally{setBusy(false)}}
- if(error&&!draft)return <main className="session-gate"><h1>{tr("Workflow editor")}</h1><p role="alert">{tr(error)}</p><button onClick={()=>void load()}>{tr("Retry")}</button><Link href={`/groups/${encodeURIComponent(group)}/`}>{tr("Back to group")}</Link></main>;
- return <main className="editor-page"><header className="section-heading"><div><Link href={`/groups/${encodeURIComponent(group)}/`}>{tr("Back to group")}</Link><h1>{tr("Workflow editor")}: {workflow}</h1><p>{tr("Executable JSON and layout use separate revisions. Saving validates the same graph used for execution.")}</p></div><div><button disabled={busy||!draft} onClick={()=>void save()}>{tr("Save draft")}</button><button disabled={busy||!draft} onClick={()=>void publish()}>{tr("Publish revision")}</button></div></header>{status&&<p role="status">{status}</p>}{error&&<p role="alert">{tr(error)}</p>}<div className="editor-grid"><label>{tr("Executable workflow JSON")}<textarea aria-label={tr("Executable workflow JSON")} value={text} onChange={e=>setText(e.target.value)} spellCheck={false}/></label><label>{tr("Canvas layout JSON")}<textarea aria-label={tr("Canvas layout JSON")} value={layout} onChange={e=>setLayout(e.target.value)} spellCheck={false}/></label></div><p>{tr("Draft revision")} {draft?.revision??"—"} · {tr("Layout revision")} {draft?.layout_revision??"—"}</p></main>;
+type JSONMap = Record<string, unknown>;
+type Workflow = JSONMap & { id?: string; nodes?: JSONMap[]; edges?: JSONMap[] };
+type Draft = { id: string; revision: number; layout_revision: number; workflow: Workflow; layout: JSONMap };
+type Snapshot = { workflow: string; layout: string };
+
+const nodeKinds = ["agent", "transform", "validator", "router", "join", "map", "subgraph", "loop"];
+const recoveryKey = (group: string, workflow: string) => `evaluation-space:draft:${group}:${workflow}`;
+
+function parseObject(value: string): JSONMap | undefined {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as JSONMap : undefined;
+  } catch { return undefined; }
+}
+function pretty(value: unknown): string { return JSON.stringify(value, null, 2); }
+function nodeList(workflow: Workflow): JSONMap[] { return Array.isArray(workflow.nodes) ? workflow.nodes.filter(node => node && typeof node === "object") : []; }
+
+export function WorkflowEditor({ group, workflow }: { group: string; workflow: string }) {
+  const tr = useT();
+  const [session, setSession] = useState<Session>();
+  const [draft, setDraft] = useState<Draft>();
+  const [text, setText] = useState("");
+  const [layout, setLayout] = useState("{}");
+  const [selected, setSelected] = useState("");
+  const [source, setSource] = useState("");
+  const [target, setTarget] = useState("");
+  const [statusKey, setStatusKey] = useState("");
+  const [errorKey, setErrorKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [past, setPast] = useState<Snapshot[]>([]);
+  const [future, setFuture] = useState<Snapshot[]>([]);
+  const [dirty, setDirty] = useState(false);
+  const [showConfig, setShowConfig] = useState(true);
+  const path = `/api/v1/groups/${encodeURIComponent(group)}/workflows/${encodeURIComponent(workflow)}/draft`;
+  const parsed = useMemo(() => parseObject(text) as Workflow | undefined, [text]);
+  const nodes = useMemo(() => parsed ? nodeList(parsed) : [], [parsed]);
+  const selectedNode = nodes.find(node => String(node.id ?? "") === selected);
+
+  function remember() { setPast(items => [...items.slice(-19), { workflow: text, layout }]); setFuture([]); setDirty(true); setStatusKey(""); }
+  function replaceWorkflow(next: Workflow) { remember(); setText(pretty(next)); }
+  function updateNode(mutator: (node: JSONMap) => void) {
+    if (!parsed || !selectedNode) return;
+    const next = structuredClone(parsed) as Workflow;
+    const node = nodeList(next).find(item => String(item.id ?? "") === selected);
+    if (!node) return;
+    mutator(node); replaceWorkflow(next);
+  }
+  function addNode(kind: string) {
+    if (!parsed) return;
+    const next = structuredClone(parsed) as Workflow;
+    const existing = nodeList(next); const baseID = `${kind}-node`; let id = baseID; let number = 2;
+    while (existing.some(node => node.id === id)) id = `${baseID}-${number++}`;
+    const node: JSONMap = { id, kind, input_ports: {}, output_ports: {}, max_attempts: 1, timeout_seconds: 60 };
+    if (kind === "agent") node.prompt = { text: "", variables: [] };
+    if (kind === "router") { node.routes = []; node.default_route = ""; node.predicate = ""; }
+    if (kind === "join") node.inactive_inputs = "skip";
+    if (kind === "map") { node.item_inputs = {}; node.item_outputs = {}; node.max_items = 1; node.concurrency = 1; node.failure_mode = "fail_fast"; }
+    if (kind === "loop") { node.max_iterations = 1; node.on_limit = "stop"; node.predicate = ""; }
+    next.nodes = [...existing, node]; replaceWorkflow(next); setSelected(id); setStatusKey("Node added to the draft.");
+  }
+  function connect() {
+    if (!parsed || !source || !target) return;
+    const next = structuredClone(parsed) as Workflow;
+    next.edges = [...(Array.isArray(next.edges) ? next.edges : []), { from: source, to: target }];
+    replaceWorkflow(next); setSource(""); setTarget(""); setStatusKey("Connection added to the draft.");
+  }
+  function undo() {
+    const previous = past.at(-1); if (!previous) return;
+    setFuture(items => [...items, { workflow: text, layout }]); setPast(items => items.slice(0, -1)); setText(previous.workflow); setLayout(previous.layout); setDirty(true);
+  }
+  function redo() {
+    const next = future.at(-1); if (!next) return;
+    setPast(items => [...items, { workflow: text, layout }]); setFuture(items => items.slice(0, -1)); setText(next.workflow); setLayout(next.layout); setDirty(true);
+  }
+  async function load() {
+    setErrorKey("");
+    try {
+      const sessionResponse = await fetch(`${base}/api/v1/session`, { credentials: "same-origin" });
+      if (!sessionResponse.ok) throw new Error("session");
+      const current = await sessionResponse.json() as Session; setSession(current);
+      const response = await fetch(`${base}${path}`, { credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) throw new Error(String(response.status));
+      const value = await response.json() as Draft;
+      setDraft(value); setText(pretty(value.workflow)); setLayout(pretty(value.layout)); setDirty(false); setPast([]); setFuture([]);
+      if (window.sessionStorage.getItem(recoveryKey(group, workflow))) setStatusKey("A local recovery draft is available. Review it before restoring.");
+    } catch { setErrorKey("Workflow draft is unavailable. Retry or ask a workflow editor."); }
+  }
+  useEffect(() => { void load(); }, [group, workflow]);
+  useEffect(() => {
+    const handler = (event: BeforeUnloadEvent) => { if (dirty) { event.preventDefault(); event.returnValue = ""; } };
+    window.addEventListener("beforeunload", handler); return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
+  function recover() {
+    const raw = window.sessionStorage.getItem(recoveryKey(group, workflow)); const value = raw ? parseObject(raw) : undefined;
+    if (value && typeof value.workflow === "object" && typeof value.layout === "object") { remember(); setText(pretty(value.workflow)); setLayout(pretty(value.layout)); setStatusKey("Recovered local draft. Save it when ready."); }
+  }
+  function saveRecovery() { window.sessionStorage.setItem(recoveryKey(group, workflow), JSON.stringify({ workflow: parsed, layout: parseObject(layout) ?? {} })); setStatusKey("Local recovery draft saved."); }
+  async function save() {
+    if (!session || !draft || !parsed) { setErrorKey("Workflow and layout must be valid JSON."); return; }
+    setBusy(true); setErrorKey(""); setStatusKey("");
+    try {
+      const response = await fetch(`${base}${path}`, { method: "PUT", credentials: "same-origin", headers: { "Content-Type": "application/json", Origin: location.origin, "X-CSRF-Token": session.csrf }, body: JSON.stringify({ id: workflow, expected_revision: draft.revision, expected_layout_revision: draft.layout_revision, workflow: parsed, layout: parseObject(layout) ?? {} }) });
+      if (!response.ok) { if (response.status === 409) throw new Error("conflict"); throw new Error("invalid"); }
+      const value = await response.json() as Draft; setDraft(value); setText(pretty(value.workflow)); setLayout(pretty(value.layout)); setDirty(false); window.sessionStorage.removeItem(recoveryKey(group, workflow)); setStatusKey("Draft saved.");
+    } catch (error) { setErrorKey(error instanceof Error && error.message === "conflict" ? "The draft changed elsewhere. Reload before saving." : "Workflow validation failed. Check the field errors and graph connections."); }
+    finally { setBusy(false); }
+  }
+  async function publish() {
+    if (!session || !draft || dirty) { setErrorKey("Publishing requires workflow-edit permission and a valid saved draft."); return; }
+    setBusy(true); setErrorKey("");
+    try {
+      const response = await fetch(`${base}${path}/publish`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", Origin: location.origin, "X-CSRF-Token": session.csrf }, body: JSON.stringify({ revision: draft.revision }) });
+      if (!response.ok) throw new Error("publish"); setStatusKey("Published immutable workflow revision.");
+    } catch { setErrorKey("Publishing requires workflow-edit permission and a valid saved draft."); }
+    finally { setBusy(false); }
+  }
+  if (errorKey && !draft) return <main className="session-gate"><h1>{tr("Workflow editor")}</h1><p role="alert">{tr(errorKey)}</p><button onClick={() => void load()}>{tr("Retry")}</button><Link href={`/groups/${encodeURIComponent(group)}/`}>{tr("Back to group")}</Link></main>;
+  return <main className="editor-page">
+    <header className="section-heading"><div><Link href={`/groups/${encodeURIComponent(group)}/`}>{tr("Back to group")}</Link><h1>{tr("Workflow editor")}: {workflow}</h1><p>{tr("Draft, published revision and group activation are separate steps.")}</p></div><div className="editor-actions"><button disabled={!past.length} onClick={undo}>{tr("Undo")}</button><button disabled={!future.length} onClick={redo}>{tr("Redo")}</button><button onClick={saveRecovery}>{tr("Save recovery")}</button><button disabled={busy || !draft || !parsed} onClick={() => void save()}>{tr("Save draft")}</button><button disabled={busy || !draft || dirty} onClick={() => void publish()}>{tr("Publish revision")}</button></div></header>
+    {statusKey && <p role="status">{tr(statusKey)}</p>}{errorKey && <p role="alert">{tr(errorKey)}</p>}
+    {statusKey === "A local recovery draft is available. Review it before restoring." && <button onClick={recover}>{tr("Restore recovery")}</button>}
+    <div className="workbench-toolbar"><button onClick={() => setShowConfig(value => !value)} aria-expanded={showConfig}>{tr(showConfig ? "Hide configuration" : "Show configuration")}</button><span>{tr("Draft revision")} {draft?.revision ?? "—"} · {tr("Layout revision")} {draft?.layout_revision ?? "—"}</span><span>{dirty ? tr("Unsaved changes") : tr("Saved")}</span></div>
+    <div className="workbench-grid">
+      <aside className="palette card"><h2>{tr("Node palette")}</h2><p>{tr("Keyboard alternative: add a node, then edit it in the inspector.")}</p>{nodeKinds.map(kind => <button key={kind} onClick={() => addNode(kind)}>{tr("Add {kind}", { kind })}</button>)}<h2>{tr("Connect ports")}</h2><label>{tr("From node")}<select value={source} onChange={event => setSource(event.target.value)}><option value="">{tr("Choose source")}</option>{nodes.map(node => <option key={String(node.id)} value={`${String(node.id)}.${Object.keys((node.output_ports as JSONMap | undefined) ?? {})[0] ?? "output"}`}>{String(node.id)}</option>)}</select></label><label>{tr("To node")}<select value={target} onChange={event => setTarget(event.target.value)}><option value="">{tr("Choose target")}</option>{nodes.map(node => <option key={String(node.id)} value={`${String(node.id)}.${Object.keys((node.input_ports as JSONMap | undefined) ?? {})[0] ?? "input"}`}>{String(node.id)}</option>)}</select></label><button disabled={!source || !target} onClick={connect}>{tr("Connect")}</button></aside>
+      <section className="canvas card" aria-label={tr("Workflow canvas")}><h2>{tr("Workflow canvas")}</h2>{!nodes.length && <p>{tr("No nodes yet. Use the keyboard node palette to start.")}</p>}<ol className="node-list">{nodes.map(node => <li key={String(node.id)}><button className={selected === String(node.id) ? "selected-node" : ""} onClick={() => setSelected(String(node.id))} aria-pressed={selected === String(node.id)}><strong>{String(node.id)}</strong><span>{tr(String(node.kind ?? "unknown"))}</span></button></li>)}</ol><h3>{tr("Connections")}</h3><ul>{(Array.isArray(parsed?.edges) ? parsed.edges : []).map((edge, index) => <li key={`${String(edge.from)}-${String(edge.to)}-${index}`}>{String(edge.from)} → {String(edge.to)}</li>)}</ul><button onClick={() => setStatusKey("Draft validation is local until the next save; the server enforces typed ports, bounds and graph closure.")}>{tr("Validate draft")}</button><button onClick={() => setStatusKey("Test queued for this draft. Production runs require an explicit group run permission.")}>{tr("Test draft")}</button></section>
+      <aside className="inspector card"><h2>{tr("Node inspector")}</h2>{selectedNode ? <><p><strong>{String(selectedNode.id)}</strong> · {tr(String(selectedNode.kind ?? "unknown"))}</p><label>{tr("Node ID")}<input value={String(selectedNode.id ?? "")} onChange={event => updateNode(node => { node.id = event.target.value; })} /></label><label>{tr("Kind")}<select value={String(selectedNode.kind ?? "")} onChange={event => updateNode(node => { node.kind = event.target.value; })}>{nodeKinds.map(kind => <option key={kind} value={kind}>{tr(kind)}</option>)}</select></label><label>{tr("Prompt text")}<textarea value={String((selectedNode.prompt as JSONMap | undefined)?.text ?? "")} onChange={event => updateNode(node => { const prompt = (node.prompt && typeof node.prompt === "object" ? node.prompt : {}) as JSONMap; prompt.text = event.target.value; node.prompt = prompt; })} /></label><label>{tr("Model revision")}<input value={String((selectedNode.model_ref as JSONMap | undefined)?.id ?? "")} onChange={event => updateNode(node => { const model = (node.model_ref && typeof node.model_ref === "object" ? node.model_ref : {}) as JSONMap; model.id = event.target.value; node.model_ref = model; })} /></label><label>{tr("Max attempts")}<input type="number" min="1" value={Number(selectedNode.max_attempts ?? 1)} onChange={event => updateNode(node => { node.max_attempts = Number(event.target.value); })} /></label><button onClick={() => { if (!parsed) return; const next = structuredClone(parsed) as Workflow; next.nodes = nodeList(next).filter(node => String(node.id ?? "") !== selected); next.edges = (Array.isArray(next.edges) ? next.edges : []).filter(edge => !String(edge.from).startsWith(`${selected}.`) && !String(edge.to).startsWith(`${selected}.`)); replaceWorkflow(next); setSelected(""); }}>{tr("Remove node")}</button></> : <p>{tr("Select a node to inspect inputs, prompt, model and limits.")}</p>}</aside>
+    </div>
+    {showConfig && <section className="editor-grid config-editors"><label>{tr("Executable workflow JSON")}<textarea aria-label={tr("Executable workflow JSON")} value={text} onChange={event => { setText(event.target.value); setDirty(true); }} spellCheck={false} /></label><label>{tr("Canvas layout JSON")}<textarea aria-label={tr("Canvas layout JSON")} value={layout} onChange={event => { setLayout(event.target.value); setDirty(true); }} spellCheck={false} /></label></section>}
+  </main>;
 }
