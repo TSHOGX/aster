@@ -83,6 +83,11 @@ branch until completed or canceled; another branch can still be committed.
    changes are explicitly excluded from the checkpoint.
 3. Choose **Prepare integration** to combine the committed branch head with main.
    Inspect the changed files and the **Integrated result** before approving.
+   When several branches contain independent work, **Compose selected changes**
+   lists each immutable branch head. Select only the paths to review together;
+   omitted paths are shown as deferred and remain on their source branch. The
+   prepared result freezes every selected head and path, so later branch edits do
+   not change the review.
 4. If conflicts appear, open each path in **Resolve merge conflicts**. Compare the
    common ancestor, main and branch. Choose a side, delete the path or write
    resolved text, then **Save resolution**. Complete every choice and choose

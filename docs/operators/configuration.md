@@ -305,7 +305,11 @@ records and advertised artifacts. A single artifact can be opened through the
 same source-authorized browser boundary; responses include its digest and size and
 default to a one MiB body limit (operators may request up to four MiB). Truncated
 responses are marked with `X-Artifact-Truncated: true` and are never treated as a
-complete artifact download.
+complete artifact download. Paused run experiments keep the source run immutable;
+their comparison view aligns attempt paths and reports nested loop/map context,
+including changed, added and removed attempts. A report page distinguishes a
+pending result from a temporary read failure and only exposes retained report
+artifacts; held-out answers never appear in reports or prompts.
 Frontend credentials and cookies are stripped before proxying. Application sessions
 persist in Evaluation Space's state database; Studio owns a separate session store
 and cookie path. Central identity outages reject session authorization immediately.
