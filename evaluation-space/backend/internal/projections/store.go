@@ -69,7 +69,10 @@ CREATE TRIGGER retained_run_usage BEFORE DELETE ON run_usage_receipts BEGIN SELE
 CREATE TABLE run_budget_reservations(run_id TEXT NOT NULL REFERENCES runs(id),id TEXT NOT NULL,tokens INTEGER NOT NULL CHECK(tokens>=0),cost_micros INTEGER NOT NULL CHECK(cost_micros>=0),state TEXT NOT NULL CHECK(state IN ('held','settled')),actual_tokens INTEGER NOT NULL DEFAULT 0 CHECK(actual_tokens>=0),actual_cost_micros INTEGER NOT NULL DEFAULT 0 CHECK(actual_cost_micros>=0),PRIMARY KEY(run_id,id));
 CREATE TRIGGER immutable_budget_reservation BEFORE UPDATE OF run_id,id,tokens,cost_micros ON run_budget_reservations BEGIN SELECT RAISE(ABORT,'immutable budget reservation'); END;
 CREATE TRIGGER terminal_budget_reservation BEFORE UPDATE ON run_budget_reservations WHEN OLD.state='settled' BEGIN SELECT RAISE(ABORT,'settled budget reservation'); END;
-CREATE TRIGGER retained_budget_reservation BEFORE DELETE ON run_budget_reservations BEGIN SELECT RAISE(ABORT,'retain budget reservation'); END;`
+CREATE TRIGGER retained_budget_reservation BEFORE DELETE ON run_budget_reservations BEGIN SELECT RAISE(ABORT,'retain budget reservation'); END;
+CREATE TABLE provider_calls(run_id TEXT NOT NULL,id TEXT NOT NULL,body BLOB NOT NULL,PRIMARY KEY(run_id,id),FOREIGN KEY(run_id,id) REFERENCES run_budget_reservations(run_id,id));
+CREATE TRIGGER immutable_provider_call BEFORE UPDATE ON provider_calls BEGIN SELECT RAISE(ABORT,'immutable provider request'); END;
+CREATE TRIGGER retained_provider_call BEFORE DELETE ON provider_calls BEGIN SELECT RAISE(ABORT,'retain provider request'); END;`
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	if !filepath.IsAbs(path) {
