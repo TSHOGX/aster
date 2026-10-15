@@ -32,6 +32,13 @@ func TestBudgetReservationsHoldAcrossWorkerTakeover(t *testing.T) {
 	if err = s.ReserveRunBudget(ctx, lease, "call", RunUsage{8, 15}); err != nil {
 		t.Fatal("replay", err)
 	}
+	status, err := s.RunBudget(ctx, "group", "run")
+	if err != nil || status.Held != (RunUsage{8, 15}) || status.Available != (RunUsage{2, 5}) || status.UnsettledCalls != 1 {
+		t.Fatal("held accounting", status, err)
+	}
+	if _, err = s.RunBudget(ctx, "other", "run"); err != ErrNotFound {
+		t.Fatal("cross-group accounting", err)
+	}
 	if err = s.ReserveRunBudget(ctx, lease, "call", RunUsage{7, 15}); err != ErrConflict {
 		t.Fatal("ceiling changed", err)
 	}
@@ -76,6 +83,10 @@ func TestBudgetReservationsHoldAcrossWorkerTakeover(t *testing.T) {
 	}
 	if err = s.SettleRunBudget(ctx, next, "call", RunUsage{4, 7}); err != nil {
 		t.Fatal("settlement replay", err)
+	}
+	status, err = s.RunBudget(ctx, "group", "run")
+	if err != nil || status.Spent != (RunUsage{4, 7}) || status.Held != (RunUsage{}) || status.Available != (RunUsage{6, 13}) || status.UnsettledCalls != 0 {
+		t.Fatal("settled accounting", status, err)
 	}
 	if err = s.ReserveRunBudget(ctx, next, "call", RunUsage{8, 15}); err != ErrConflict {
 		t.Fatal("settled provider call reserved again", err)
