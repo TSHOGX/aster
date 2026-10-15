@@ -70,6 +70,10 @@ func TestRunEventsFenceReplayAndPagination(t *testing.T) {
 	if err != nil || page.HasMore || page.NextAfter != 2 {
 		t.Fatal(page, err)
 	}
+	artifacts, err := s.RunArtifacts(ctx, "group", "run")
+	if err != nil || len(artifacts) != 1 || artifacts[0] != artifact {
+		t.Fatal("run artifact metadata", artifacts, err)
+	}
 	if _, err = s.RunEvents(ctx, "other", "run", 0, 1); err != ErrNotFound {
 		t.Fatal("cross group events", err)
 	}
