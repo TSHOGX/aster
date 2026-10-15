@@ -6,19 +6,24 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 )
 
 type WorkflowDraftInput struct {
-	ID               string             `json:"id"`
-	ExpectedRevision int64              `json:"expected_revision"`
-	Workflow         evolution.Workflow `json:"workflow"`
+	Layout                 json.RawMessage    `json:"layout,omitempty"`
+	ExpectedLayoutRevision int64              `json:"expected_layout_revision"`
+	ID                     string             `json:"id"`
+	ExpectedRevision       int64              `json:"expected_revision"`
+	Workflow               evolution.Workflow `json:"workflow"`
 }
 type WorkflowDraft struct {
-	ID       string             `json:"id"`
-	Revision int64              `json:"revision"`
-	Workflow evolution.Workflow `json:"workflow"`
+	Layout         json.RawMessage    `json:"layout,omitempty"`
+	LayoutRevision int64              `json:"layout_revision"`
+	ID             string             `json:"id"`
+	Revision       int64              `json:"revision"`
+	Workflow       evolution.Workflow `json:"workflow"`
 }
 
 // SaveWorkflowDraft stores editable graph content separately from executable
@@ -42,20 +47,22 @@ func (s *Store) SaveWorkflowDraft(ctx context.Context, input WorkflowDraftInput)
 	}
 	defer tx.Rollback()
 	var revision int64
-	var prior []byte
-	err = tx.QueryRowContext(ctx, "SELECT revision,body FROM workflow_drafts WHERE id=?", input.ID).Scan(&revision, &prior)
+	var prior, layout []byte
+	var layoutRevision int64
+	err = tx.QueryRowContext(ctx, "SELECT revision,body,layout_revision,layout FROM workflow_drafts WHERE id=?", input.ID).Scan(&revision, &prior, &layoutRevision, &layout)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return result, err
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		revision = 0
+		layoutRevision = 0
 	}
-	if revision != input.ExpectedRevision {
+	if revision != input.ExpectedRevision || layoutRevision != input.ExpectedLayoutRevision {
 		return result, ErrConflict
 	}
-	result = WorkflowDraft{ID: input.ID, Revision: revision + 1, Workflow: input.Workflow}
+	result = WorkflowDraft{ID: input.ID, Revision: revision + 1, Workflow: input.Workflow, Layout: input.Layout, LayoutRevision: layoutRevision + 1}
 	body := raw
-	if _, err = tx.ExecContext(ctx, "INSERT INTO workflow_drafts(id,revision,body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,body=excluded.body", input.ID, result.Revision, body); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO workflow_drafts(id,revision,body,layout_revision,layout) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,body=excluded.body,layout_revision=excluded.layout_revision,layout=excluded.layout", input.ID, result.Revision, body, result.LayoutRevision, input.Layout); err != nil {
 		return result, err
 	}
 	return result, tx.Commit()
@@ -66,7 +73,7 @@ func (s *Store) WorkflowDraft(ctx context.Context, id string) (WorkflowDraft, er
 	if !manifest.ValidID(id) {
 		return result, fmt.Errorf("invalid workflow identity")
 	}
-	if err := s.db.QueryRowContext(ctx, "SELECT revision,body FROM workflow_drafts WHERE id=?", id).Scan(&result.Revision, &raw); err != nil {
+	if err := s.db.QueryRowContext(ctx, "SELECT revision,body,layout_revision,layout FROM workflow_drafts WHERE id=?", id).Scan(&result.Revision, &raw, &result.LayoutRevision, &result.Layout); err != nil {
 		return result, err
 	}
 	result.ID = id
