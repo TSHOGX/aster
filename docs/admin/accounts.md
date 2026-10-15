@@ -277,9 +277,10 @@ undo/redo and local recovery. Use **Activate from configuration** after publishi
 when the group should adopt the immutable workflow revision; publication alone
 never changes the active group configuration. Run and evaluation deep links retain
 the group scope; their browser views show frozen pins, deduplicated event cursors,
-authorized node attempts, effective prompts, inputs, outputs, evaluator metrics and
-explicit stale or redacted states. They never expose dataset bytes or service
-credentials.
+authorized node attempts, effective prompts, inputs, outputs, artifact metadata,
+evaluator metrics and explicit stale or redacted states. Artifact metadata includes
+identity, digest, size and media kind; bytes still require a separate current grant.
+They never expose dataset bytes or service credentials.
 
 ### Edit and activate group optimization
 

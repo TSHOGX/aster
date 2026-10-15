@@ -279,8 +279,9 @@ offers an explicit handoff to group configuration for activation; it does not
 silently change the active revision. Run detail links use
 `/evaluation-space/groups/{group}/runs/{run}`; the browser API returns only the
 current group's frozen run metadata, deduplicated event cursor and authorized
-attempt records, including effective prompts and node inputs/outputs when the
-current `source.read` grant permits them. Pause, resume and cancel are
+attempt records, including effective prompts, node inputs/outputs and artifact
+metadata when the current `source.read` grant permits them. Artifact bytes are
+served only through the separate current-grant download operation. Pause, resume and cancel are
 compare-and-swap controls and retain `run.start` authority. Evaluation reports use
 `/evaluation-space/groups/{group}/evaluations/{job}` and expose the frozen subject,
 observed metrics, coverage and outcome; dataset bytes and evaluator credentials
