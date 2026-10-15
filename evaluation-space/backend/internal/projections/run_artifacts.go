@@ -12,6 +12,27 @@ import (
 	manifest "aster/contracts/volumemanifest"
 )
 
+// RunArtifact resolves one artifact only when it is advertised by the exact
+// run. The returned bytes are still subject to the caller's current authority
+// and any transport-level response bound.
+func (s *Store) RunArtifact(ctx context.Context, group, run, id string) (evolution.ArtifactRef, []byte, error) {
+	if !manifest.ValidID(group) || !manifest.ValidID(run) || !manifest.ValidID(id) {
+		return evolution.ArtifactRef{}, nil, fmt.Errorf("invalid run artifact scope")
+	}
+	items, err := s.RunArtifacts(ctx, group, run)
+	if err != nil {
+		return evolution.ArtifactRef{}, nil, err
+	}
+	for _, ref := range items {
+		if ref.ID != id {
+			continue
+		}
+		raw, err := s.Artifact(ctx, ref)
+		return ref, raw, err
+	}
+	return evolution.ArtifactRef{}, nil, ErrNotFound
+}
+
 // RunArtifacts returns immutable artifact metadata advertised by the exact run.
 // It deliberately does not read artifact bytes; callers must use the separate
 // current-grant download boundary when bytes are permitted.

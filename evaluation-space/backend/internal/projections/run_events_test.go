@@ -74,6 +74,13 @@ func TestRunEventsFenceReplayAndPagination(t *testing.T) {
 	if err != nil || len(artifacts) != 1 || artifacts[0] != artifact {
 		t.Fatal("run artifact metadata", artifacts, err)
 	}
+	resolved, raw, err := s.RunArtifact(ctx, "group", "run", "artifact")
+	if err != nil || resolved != artifact || string(raw) != "output" {
+		t.Fatal("run artifact content", resolved, string(raw), err)
+	}
+	if _, _, err = s.RunArtifact(ctx, "group", "run", "unknown"); err != ErrNotFound {
+		t.Fatal("unadvertised artifact", err)
+	}
 	if _, err = s.RunEvents(ctx, "other", "run", 0, 1); err != ErrNotFound {
 		t.Fatal("cross group events", err)
 	}

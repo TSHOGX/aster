@@ -4,7 +4,9 @@ import (
 	"aster/contracts/appidentity"
 	"aster/contracts/evolution"
 	"aster/evaluation-space/internal/projections"
+	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 )
@@ -137,6 +139,43 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 		}
 		write(w, 200, map[string]any{"items": items})
 	}
+	artifact := func(w http.ResponseWriter, r *http.Request) {
+		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
+		if err := authorize(r, session, "source.read"); err != nil {
+			workflowAuthError(w, err)
+			return
+		}
+		ref, raw, err := store.RunArtifact(r.Context(), r.PathValue("group"), r.PathValue("run"), r.PathValue("artifact"))
+		if errors.Is(err, projections.ErrNotFound) {
+			write(w, 404, map[string]string{"error": "artifact_not_found"})
+			return
+		}
+		if err != nil {
+			write(w, 422, map[string]string{"error": "artifact_unavailable"})
+			return
+		}
+		maxBytes := int64(1 << 20)
+		if value := r.URL.Query().Get("max_bytes"); value != "" {
+			parsed, parseErr := strconv.ParseInt(value, 10, 64)
+			if parseErr != nil || parsed < 1 || parsed > 4<<20 {
+				write(w, 400, map[string]string{"error": "invalid_max_bytes"})
+				return
+			}
+			maxBytes = parsed
+		}
+		truncated := int64(len(raw)) > maxBytes
+		if truncated {
+			raw = raw[:maxBytes]
+			w.Header().Set("X-Artifact-Truncated", "true")
+		} else {
+			w.Header().Set("X-Artifact-Truncated", "false")
+		}
+		w.Header().Set("X-Artifact-Digest", ref.Digest)
+		w.Header().Set("X-Artifact-Size", strconv.FormatInt(ref.Size, 10))
+		w.Header().Set("Content-Type", ref.MediaType)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.Copy(w, bytes.NewReader(raw))
+	}
 	debugger := func(w http.ResponseWriter, r *http.Request) {
 		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
 		if err := authorize(r, session, "source.read"); err != nil {
@@ -226,6 +265,7 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/events", events)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/attempts", attempts)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/artifacts", artifacts)
+	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/artifacts/{artifact}", artifact)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/debugger", debugger)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/experiment-preview", experimentPreview)
 	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/runs/{run}/experiment", experiment)
