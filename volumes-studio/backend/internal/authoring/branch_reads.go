@@ -159,6 +159,64 @@ func (s *Store) BranchDiff(ctx context.Context, a Actor, library, branch, head, 
 	}
 	return page, nil
 }
+
+// BranchHeadDiff compares the immutable branch head with the branch's frozen
+// starting point. It is used by composition clients to choose committed paths
+// without exposing mutable draft state.
+func (s *Store) BranchHeadDiff(ctx context.Context, a Actor, library, branch, head, after string) (BranchChangePage, error) {
+	if err := s.authorizeLibrary(ctx, a, library, "volume.read"); err != nil {
+		return BranchChangePage{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, err := s.branch(ctx, library, branch)
+	if err != nil {
+		return BranchChangePage{}, err
+	}
+	if b.Head != head {
+		return BranchChangePage{}, ErrConflict
+	}
+	repo, err := s.historyRepository(ctx, library)
+	if err != nil {
+		return BranchChangePage{}, err
+	}
+	base, err := repo.Snapshot(ctx, b.InitialBase)
+	if err != nil {
+		return BranchChangePage{}, err
+	}
+	current, err := repo.Snapshot(ctx, head)
+	if err != nil {
+		return BranchChangePage{}, err
+	}
+	changes := compareEntries(base.Entries, current.Entries)
+	before := map[string]manifest.Entry{}
+	afterEntries := map[string]manifest.Entry{}
+	for _, e := range base.Entries {
+		before[e.Path] = e
+	}
+	for _, e := range current.Entries {
+		afterEntries[e.Path] = e
+	}
+	page := BranchChangePage{Changes: []BranchChange{}, Total: len(changes), Revision: b.DraftRevision, Head: head}
+	for _, change := range changes {
+		if change.Path <= after {
+			continue
+		}
+		if len(page.Changes) == 200 {
+			page.Next = page.Changes[199].Path
+			break
+		}
+		detail := BranchChange{Path: change.Path, Kind: change.Kind}
+		if e, ok := before[change.Path]; ok {
+			detail.Before = &e
+		}
+		if e, ok := afterEntries[change.Path]; ok {
+			detail.After = &e
+		}
+		page.Changes = append(page.Changes, detail)
+	}
+	return page, nil
+}
 func compareEntries(base, current []manifest.Entry) []Change {
 	old := map[string]manifest.Entry{}
 	for _, e := range base {

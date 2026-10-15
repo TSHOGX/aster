@@ -104,3 +104,22 @@ func TestComposeMergeRejectsCrossBranchConflict(t *testing.T) {
 		t.Fatal("conflicting same-Volume changes were accepted", prepared, err)
 	}
 }
+
+func TestBranchHeadDiffExposesOnlyCommittedDelta(t *testing.T) {
+	s, _ := testStore(t)
+	s.config.Authority = &branchAuthority{true}
+	ctx := context.Background()
+	l := library(t, s)
+	main, err := s.MainCommit(ctx, testActor, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := composeBranch(t, s, l.ID, main.CommitID, "head-diff", map[string]string{"committed.txt": "yes"})
+	page, err := s.BranchHeadDiff(ctx, testActor, l.ID, b.ID, b.Head, "")
+	if err != nil || page.Total != 1 || len(page.Changes) != 1 || page.Changes[0].Path != "committed.txt" {
+		t.Fatal(page, err)
+	}
+	if _, err = s.BranchHeadDiff(ctx, testActor, l.ID, b.ID, main.CommitID, ""); err != ErrConflict {
+		t.Fatal("stale branch head was accepted", err)
+	}
+}

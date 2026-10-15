@@ -55,6 +55,11 @@ func (a *AuthoringAPI) registerBranches() {
 		page, err := a.Store.BranchDiff(r.Context(), actor(r), r.PathValue("library"), r.PathValue("branch"), q.Get("head"), q.Get("after"), revision(r))
 		respond(w, 200, page, err)
 	})
+	a.mux.HandleFunc("GET "+root+"/{branch}/head-diff", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		page, err := a.Store.BranchHeadDiff(r.Context(), actor(r), r.PathValue("library"), r.PathValue("branch"), q.Get("head"), q.Get("after"))
+		respond(w, 200, page, err)
+	})
 	a.mux.HandleFunc("GET "+root+"/{branch}/draft/content", func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.Header.Get("Range"), ",") {
 			writeError(w, 416, "single_range_required")

@@ -35,6 +35,8 @@ export type PreparedIntegration = {
   };
   conflicts: { path: string; reason: string }[];
 };
+export type BranchChange = { path: string; change: string };
+export type BranchChangePage = { changes: BranchChange[]; next: string; total: number; revision: number; head: string };
 
 const libraryRoot = (library: string) => `/libraries/${encodeURIComponent(library)}`;
 export const branchRoot = (library: string, branch: string) =>
@@ -58,6 +60,8 @@ export const branchAPI = {
   tree: (branch: Branch, parent = "", after = "", signal?: AbortSignal) =>
     api<{ revision: number; entries: Entry[]; next?: string; descendant_count: number }>(
       `${branchRoot(branch.library_id, branch.id)}/draft/tree?${new URLSearchParams({ parent, after, revision: String(branch.draft_revision) })}`, { signal }),
+  headDiff: (branch: Branch, after = "", signal?: AbortSignal) =>
+    api<BranchChangePage>(`${branchRoot(branch.library_id, branch.id)}/head-diff?${new URLSearchParams({ head: branch.head, after })}`, { signal }),
   saveText: (branch: Branch, path: string, text: string, request: string, csrf: string) =>
     api<{ revision: number; affected: number }>(`${branchRoot(branch.library_id, branch.id)}/draft/text`, {
       method: "POST", body: JSON.stringify({ request_id: request, expected_revision: branch.draft_revision, expected_head: branch.head, path, text }),
@@ -69,6 +73,10 @@ export const branchAPI = {
   prepare: (branch: Branch, main: ContentRef, policyRevision: number, request: string, csrf: string, rebindPreparedDigest = "") =>
     api<PreparedIntegration>(`${libraryRoot(branch.library_id)}/integrations/prepare`, {
       method: "POST", body: JSON.stringify({ request_id: request, branch_id: branch.id, expected_head: branch.head, expected_main: main.commit_id, expected_policy_revision: policyRevision, ...(rebindPreparedDigest ? { rebind_prepared_digest: rebindPreparedDigest } : {}) }),
+    }, csrf),
+  compose: (library: string, expectedMain: string, policyRevision: number, branches: { branch_id: string; expected_head: string; selected_paths: string[] }[], request: string, csrf: string) =>
+    api<PreparedIntegration & { selections: { branch_id: string; head: string; selected_paths: string[]; deferred_paths?: string[] }[] }>(`${libraryRoot(library)}/integrations/compose`, {
+      method: "POST", body: JSON.stringify({ request_id: request, expected_main: expectedMain, expected_policy_revision: policyRevision, branches }),
     }, csrf),
   review: (library: string, digest: string, verdict: "approve" | "changes_requested" | "reject", rationale: string, request: string, csrf: string) =>
     api(`${libraryRoot(library)}/integrations/reviews`, {

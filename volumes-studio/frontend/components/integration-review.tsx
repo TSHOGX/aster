@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { api, APIError, requestID, type Version } from "../lib/api";
-import { branchAPI, conflictAPI, type Branch, type PreparedIntegration } from "../lib/branches";
+import { branchAPI, conflictAPI, type Branch, type BranchChange, type PreparedIntegration } from "../lib/branches";
 import { currentReviews, type ReviewDecision } from "../lib/reviews";
 import { useT } from "../lib/i18n";
 import { ConflictEditor } from "./conflict-workspace";
@@ -11,6 +11,8 @@ type Evaluation = {id:string;requirement_digest:string;state:string;outcome:stri
 type View = { evaluations: Evaluation[]; evaluation: string; digest: string; identity: NonNullable<PreparedIntegration["identity"]>; readiness: string; acceptance: string; accepted_commit?: string; reviews: ReviewDecision[] };
 type Change = { path: string; change: string };
 type FilePreview = { commit_id: string; text?: string; preview: string };
+type CompositionOption = { branch: Branch; changes: BranchChange[] };
+type CompositionSelection = { branch_id: string; head: string; selected_paths: string[]; deferred_paths?: string[] };
 export function IntegrationReview({ branch }: { branch: Branch }) {
   const tr = useT();
   const studio = useStudio();
@@ -27,6 +29,9 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
   const [note, setNote] = useState("");
   const [tokens,setTokens]=useState("10000"),[cost,setCost]=useState("1000000"),[timeout,setTimeoutSeconds]=useState("60");
   const [release, setRelease] = useState<Version>();
+  const [composition, setComposition] = useState<CompositionOption[]>([]);
+  const [selectedComposition, setSelectedComposition] = useState<Record<string, string[]>>({});
+  const [compositionResult, setCompositionResult] = useState<CompositionSelection[]>([]);
   const root = `/libraries/${encodeURIComponent(branch.library_id)}`;
   const pending = useRef<{ key: string; request: string } | null>(null);
   const mutate = async <T,>(key: string, action: (request: string) => Promise<T>): Promise<T> => {
@@ -52,6 +57,22 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     ]).then(([current, page]) => { if (!abort.signal.aborted) { setView(current); setChanges(page.changes); setNext(page.next); } }).catch(e => { if (!abort.signal.aborted) setError(String(e)); });
     return () => abort.abort();
   }, [root, branch.library_id]);
+  useEffect(() => {
+    const abort = new AbortController();
+    void (async () => {
+      const page = await branchAPI.list(branch.library_id, "", abort.signal);
+      const all = page.branches.some(item => item.id === branch.id) ? page.branches : [branch, ...page.branches];
+      const options = await Promise.all(all.filter(item => item.head !== "" && item.head !== item.initial_base).map(async item => ({ branch: item, changes: (await branchAPI.headDiff(item, "", abort.signal)).changes })));
+      if (abort.signal.aborted) return;
+      setComposition(options);
+      setSelectedComposition(previous => {
+        const next: Record<string, string[]> = {};
+        for (const option of options) next[option.branch.id] = previous[option.branch.id] ?? (option.branch.id === branch.id ? option.changes.map(change => change.path) : []);
+        return next;
+      });
+    })().catch(e => { if (!abort.signal.aborted) setError(String(e)); });
+    return () => abort.abort();
+  }, [branch]);
   useEffect(() => {
     if (!release || !["pending", "validating"].includes(release.state)) return;
     const abort = new AbortController();
@@ -85,6 +106,20 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     setWorkspace(prepared.conflict_workspace_id ?? "");
     if(prepared.conflict_workspace_id){const url=new URL(location.href);url.searchParams.set("conflict",prepared.conflict_workspace_id);url.searchParams.delete("integration");history.replaceState(null,"",url);}
     if (prepared.identity) await load(prepared.digest); else { setView(undefined); setChanges([]); setFile(undefined); }
+  };
+  const compose = async () => {
+    if (!studio.session) return;
+    const sources = composition.filter(option => (selectedComposition[option.branch.id] ?? []).length > 0).map(option => ({ branch_id: option.branch.id, expected_head: option.branch.head, selected_paths: selectedComposition[option.branch.id] ?? [] }));
+    if (!sources.length) return;
+    const [main, policy] = await Promise.all([branchAPI.main(branch.library_id), api<{ revision: number }>(`${root}/merge-policy`)]);
+    const result = await mutate(JSON.stringify(["compose", main.commit_id, policy.revision, sources]), request => branchAPI.compose(branch.library_id, main.commit_id, policy.revision, sources, request, studio.session!.csrf));
+    setCompositionResult(result.selections);
+    setConflicts(result.conflicts ?? []);
+    setWorkspace(result.conflict_workspace_id ?? "");
+    if (result.conflict_workspace_id) {
+      const url = new URL(location.href); url.searchParams.set("conflict", result.conflict_workspace_id); url.searchParams.delete("integration"); history.replaceState(null, "", url);
+    }
+    if (result.identity) await load(result.digest);
   };
   const inspect = async (change: Change) => {
     if (!view) return;
@@ -127,6 +162,19 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     <p>{tr("Prepare committed changes against main. Saved but uncommitted edits are excluded.")}</p>
     <button disabled={busy} onClick={() => void run(() => prepare())}>{tr("Prepare integration")}</button>
     {view?.readiness === "stale_or_conflicted" && <button disabled={busy} onClick={() => void run(() => prepare(view.digest))}>{tr("Rebind current policy")}</button>}
+    {composition.length > 0 && <section aria-label={tr("Compose selected changes")}>
+      <h3>{tr("Compose selected changes")}</h3>
+      <p>{tr("Freeze committed paths from more than one branch into one reviewable integration. Unselected paths remain deferred.")}</p>
+      {composition.map(option => <fieldset key={option.branch.id}>
+        <legend>{option.branch.name}</legend>
+        {option.changes.length === 0 ? <p>{tr("No committed changes")}</p> : option.changes.map(change => <label key={change.path}>
+          <input type="checkbox" checked={(selectedComposition[option.branch.id] ?? []).includes(change.path)} onChange={event => setSelectedComposition(previous => ({ ...previous, [option.branch.id]: event.target.checked ? [...(previous[option.branch.id] ?? []), change.path] : (previous[option.branch.id] ?? []).filter(path => path !== change.path) }))} />
+          <code>{change.path}</code> · {tr(change.change)}
+        </label>)}
+      </fieldset>)}
+      <button disabled={busy || composition.every(option => (selectedComposition[option.branch.id] ?? []).length === 0)} onClick={() => void run(compose)}>{tr("Prepare selected composition")}</button>
+      {compositionResult.length > 0 && <ul aria-label={tr("Composition selection result")}>{compositionResult.map(selection => <li key={selection.branch_id}><code>{selection.branch_id}</code>: {selection.selected_paths.join(", ") || tr("No paths selected")}{selection.deferred_paths?.length ? ` · ${tr("Deferred")}: ${selection.deferred_paths.join(", ")}` : ""}</li>)}</ul>}
+    </section>}
     {error && <p role="alert">{error}</p>}
     {conflicts.length > 0 && <ul>{conflicts.map(conflict => <li key={conflict.path}><code>{conflict.path}</code> — {tr(conflict.reason)}</li>)}</ul>}
     {workspace && <ConflictEditor library={branch.library_id} id={workspace} onComplete={digest=>{setWorkspace("");setConflicts([]);void run(()=>load(digest));}} />}

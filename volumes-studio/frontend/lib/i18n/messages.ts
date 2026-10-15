@@ -95,6 +95,13 @@ export const ZH: Record<string, string> = {
   "Request changes": "请求修改",
   "Reject integration": "拒绝集成",
   "Merge approved integration": "合并已批准的集成",
+  "Compose selected changes": "组合选定的更改",
+  "Freeze committed paths from more than one branch into one reviewable integration. Unselected paths remain deferred.": "将多个分支中的已提交路径冻结为一个可审阅的集成。未选路径将保持延后。",
+  "No committed changes": "没有已提交的更改",
+  "Prepare selected composition": "准备选定的组合",
+  "Composition selection result": "组合选择结果",
+  "No paths selected": "未选择路径",
+  "Deferred": "延后",
 
   "Commit saved draft": "提交已保存的草稿",
   "Commit message": "提交说明",

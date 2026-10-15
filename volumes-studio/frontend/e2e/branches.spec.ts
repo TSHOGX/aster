@@ -145,3 +145,85 @@ test("non-admin experts enter with scoped grants and cannot create or merge libr
     expect((await expert.request.get("/volumes-studio/api/v1/libraries?mode=workbench")).status()).toBe(401);
   } finally {await context.close();}
 });
+
+test("browser composes selected committed paths across branches", async ({ page }) => {
+  const login = await page.request.post(`${origin}/api/auth/login`, { headers: { Origin: origin }, data: { username: "studio-admin", password: "browser-fixture-password" } });
+  expect(login.ok()).toBeTruthy();
+  await page.goto("/volumes-studio/");
+  await page.getByRole("link", { name: "Sign in", exact: true }).click();
+  const session = await (await page.request.get("/volumes-studio/api/v1/session")).json();
+  const headers = { Origin: origin, "X-CSRF-Token": session.csrf };
+  const created = await page.request.post("/volumes-studio/api/v1/libraries", { headers, data: { request_id: crypto.randomUUID(), name: `Composition ${crypto.randomUUID()}` } });
+  expect(created.ok(), await created.text()).toBeTruthy();
+  const library = await created.json();
+  for (const action of ["volume.read", "volume.author", "volume.review", "volume.merge"]) {
+    const grant = await page.request.post("/api/admin/studio-grants", { headers: { Origin: origin }, data: { request_id: crypto.randomUUID(), kind: "account", subject_id: session.subject, library_id: library.id, action, effect: "allow", expected_revision: 0 } });
+    expect(grant.ok(), await grant.text()).toBeTruthy();
+  }
+  const root = `/volumes-studio/api/v1/libraries/${library.id}`;
+  const post = async (path: string, data: object) => {
+    const response = await page.request.post(root + path, { headers, data });
+    expect(response.ok(), await response.text()).toBeTruthy();
+    return response.json();
+  };
+  const main = await (await page.request.get(root + "/main")).json();
+  const first = await post("/branches", { request_id: crypto.randomUUID(), name: "Selected source", base_commit: main.commit_id });
+  const second = await post("/branches", { request_id: crypto.randomUUID(), name: "Deferred source", base_commit: main.commit_id });
+  await post(`/branches/${first.id}/draft/text`, { request_id: crypto.randomUUID(), expected_revision: 1, expected_head: first.head, path: "keep.txt", text: "defer this path" });
+  await post(`/branches/${first.id}/draft/text`, { request_id: crypto.randomUUID(), expected_revision: 2, expected_head: first.head, path: "selected.txt", text: "select this path" });
+  const firstCheckpoint = await post(`/branches/${first.id}/commits`, { request_id: crypto.randomUUID(), expected_revision: 3, expected_head: first.head, message: "Selected source" });
+  await post(`/branches/${second.id}/draft/text`, { request_id: crypto.randomUUID(), expected_revision: 1, expected_head: second.head, path: "other.txt", text: "other source" });
+  const secondCheckpoint = await post(`/branches/${second.id}/commits`, { request_id: crypto.randomUUID(), expected_revision: 2, expected_head: second.head, message: "Deferred source" });
+  await page.goto(`/volumes-studio/libraries/${library.id}?branch=${first.id}`);
+  const composition = page.getByRole("region", { name: "Compose selected changes", exact: true });
+  await expect(composition).toBeVisible();
+  await expect(composition.getByText("selected.txt", { exact: true })).toBeVisible();
+  await expect(composition.getByText("other.txt", { exact: true })).toBeVisible();
+  const firstSet = composition.locator("fieldset").filter({ hasText: "Selected source" });
+  await firstSet.getByRole("checkbox").nth(0).uncheck();
+  const secondSet = composition.locator("fieldset").filter({ hasText: "Deferred source" });
+  await secondSet.getByRole("checkbox").check();
+  await composition.getByRole("button", { name: "Prepare selected composition", exact: true }).click();
+  await expect(composition.getByRole("list", { name: "Composition selection result", exact: true })).toContainText("keep.txt");
+  await expect(page.getByText("Ready for expert review", { exact: false })).toBeVisible();
+  expect(firstCheckpoint.commit_id).toMatch(/^[a-f0-9]{64}$/);
+  expect(secondCheckpoint.commit_id).toMatch(/^[a-f0-9]{64}$/);
+});
+
+test("browser explicitly rebinds a stale prepared policy", async ({ page }) => {
+  const login = await page.request.post(`${origin}/api/auth/login`, { headers: { Origin: origin }, data: { username: "studio-admin", password: "browser-fixture-password" } });
+  expect(login.ok()).toBeTruthy();
+  await page.goto("/volumes-studio/");
+  await page.getByRole("link", { name: "Sign in", exact: true }).click();
+  const session = await (await page.request.get("/volumes-studio/api/v1/session")).json();
+  const headers = { Origin: origin, "X-CSRF-Token": session.csrf };
+  const created = await page.request.post("/volumes-studio/api/v1/libraries", { headers, data: { request_id: crypto.randomUUID(), name: `Rebind ${crypto.randomUUID()}` } });
+  expect(created.ok(), await created.text()).toBeTruthy();
+  const library = await created.json();
+  for (const action of ["volume.read", "volume.author", "volume.configure"]) {
+    const grant = await page.request.post("/api/admin/studio-grants", { headers: { Origin: origin }, data: { request_id: crypto.randomUUID(), kind: "account", subject_id: session.subject, library_id: library.id, action, effect: "allow", expected_revision: 0 } });
+    expect(grant.ok(), await grant.text()).toBeTruthy();
+  }
+  const root = `/volumes-studio/api/v1/libraries/${library.id}`;
+  const post = async (path: string, data: object) => {
+    const response = await page.request.post(root + path, { headers, data });
+    expect(response.ok(), await response.text()).toBeTruthy();
+    return response.json();
+  };
+  const main = await (await page.request.get(root + "/main")).json();
+  const branch = await post("/branches", { request_id: crypto.randomUUID(), name: "Policy candidate", base_commit: main.commit_id });
+  await post(`/branches/${branch.id}/draft/text`, { request_id: crypto.randomUUID(), expected_revision: 1, expected_head: branch.head, path: "policy.txt", text: "candidate" });
+  const checkpoint = await post(`/branches/${branch.id}/commits`, { request_id: crypto.randomUUID(), expected_revision: 2, expected_head: branch.head, message: "Policy candidate" });
+  const prepared = await post("/integrations/prepare", { request_id: crypto.randomUUID(), branch_id: branch.id, expected_head: checkpoint.commit_id, expected_main: main.commit_id, expected_policy_revision: 1 });
+  const changed = await post("/merge-policy", { request_id: crypto.randomUUID(), expected_revision: 1, minimum_approvals: 2 });
+  expect(changed.revision).toBe(2);
+  await page.goto(`/volumes-studio/libraries/${library.id}?branch=${branch.id}&integration=${encodeURIComponent(prepared.digest)}`);
+  await expect(page.getByRole("button", { name: "Rebind current policy", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Rebind current policy", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Rebind current policy", exact: true })).toHaveCount(0);
+  const rebound = new URL(page.url()).searchParams.get("integration");
+  expect(rebound).toBeTruthy();
+  expect(rebound).not.toBe(prepared.digest);
+  const reboundView = await (await page.request.get(`${root}/integrations/${encodeURIComponent(rebound!)}`)).json();
+  expect(reboundView.identity.policy_revision).toBe(2);
+});
