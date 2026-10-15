@@ -378,3 +378,22 @@ with the complete artifact reference JSON on stdin. The command verifies size an
 SHA-256 digest, retains the exact reference, and refuses a live store or symlink
 source. Provisioning bytes does not grant their use; authorize the exact artifact
 and evaluator through the group's dataset grant before requesting an evaluation.
+
+### Provision example goal definitions
+
+While Evaluation Space is stopped, `evaluation-catalog --state-directory
+/absolute/state --action examples` reads `{"model":{"id":"...","revision":1,
+"digest":"sha256:..."}}` from stdin and publishes the skills and corrections
+example packages. Choose an exact registered model revision; provisioning the same
+package again is idempotent, while substituting a different model under an existing
+workflow revision is rejected. The command outputs the exact template/workflow
+references and port schema documents for inspection and registry configuration.
+
+The skills graph drafts proposals, critiques/revises at most twice, and builds
+relative skill files. Corrections use a separate extract/verify/build graph. Both
+preserve unsupported proposals as held evidence and reject unsafe output names;
+the skill builder also rejects a critic that changes the original corpus. These
+packages do not grant source access, activate a group, or write a Volume. Running
+them requires the native model/implementation registry and authorized run admission.
+Their suggested output prefixes are `skills` and `lessons`; final publication still
+requires Studio review and the configured checks.
