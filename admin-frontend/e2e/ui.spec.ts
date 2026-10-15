@@ -219,7 +219,7 @@ for (const width of [390, 1440]) test(`resource templates use shared pickers and
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   await page.screenshot({ path: info.outputPath("resource-template.png"), fullPage: true });
   await page.getByRole("button", { name: "Validate and review", exact: true }).click();
-  expect(writes[0].network).toMatchObject({ resolvers: ["1.1.1.1"] });
+  await expect.poll(() => writes[0]?.network).toMatchObject({ resolvers: ["1.1.1.1"] });
   await page.getByRole("button", { name: "Confirm and save", exact: true }).click();
   await expect(page.getByText("Changes were saved. Reload the current data before editing again.")).toBeVisible();
   await expect(page.getByLabel("Name", { exact: true })).toBeDisabled();
