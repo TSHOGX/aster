@@ -93,7 +93,19 @@ func main() {
 			log.Fatal(err)
 		}
 		participant := httpapi.EvolutionParticipantAPI{Store: store, Authority: authority}
-		var participantHandler http.Handler = participant.Handler()
+		outputs, err := httpapi.NewEvolutionOutputAPI(store, client, os.Getenv(*participantSecretEnv))
+		if err != nil {
+			log.Fatal(err)
+		}
+		originalParticipant := participant.Handler()
+		outputHandler := outputs.Handler()
+		var participantHandler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/volumes-studio/internal/v1/evolution/outputs" {
+				outputHandler.ServeHTTP(w, r)
+				return
+			}
+			originalParticipant.ServeHTTP(w, r)
+		})
 		if *evaluationEndpoint != "" {
 			inputAPI, err := httpapi.NewEvaluationInputAPI(store, client, os.Getenv(*evaluationInputSecretEnv))
 			if err != nil {

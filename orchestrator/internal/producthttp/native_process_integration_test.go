@@ -401,6 +401,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	studioClient, err := studioclient.New("http://"+participantAddress, secret)
 	must(t, err)
 	authentication.EvolutionCatalog = evalClient
+	authentication.EvolutionOutputs = studioClient
 	var pending product.EvolutionGroupConfig
 	if browserConfig {
 		workerCtx, stop := context.WithCancel(ctx)

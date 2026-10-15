@@ -2214,3 +2214,12 @@ BEGIN SELECT RAISE(ABORT,'immutable backfill selection'); END;
 
 CREATE INDEX backfill_project_range ON execution_runs(project_id,started_at,id) WHERE state IN ('settled','failed','unknown');
 CREATE INDEX backfill_session_range ON execution_runs(session_id,started_at,id) WHERE state IN ('settled','failed','unknown');
+
+CREATE TABLE evolution_output_reads (
+ id TEXT PRIMARY KEY,
+ session_digest TEXT NOT NULL REFERENCES auth_sessions(token_digest) ON DELETE CASCADE,
+ group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
+ query_digest TEXT NOT NULL,
+ expires_at TEXT NOT NULL
+);
+CREATE INDEX evolution_output_read_expiry ON evolution_output_reads(expires_at);

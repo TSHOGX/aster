@@ -6,6 +6,8 @@ import (
 )
 
 func (a *Authentication) groupRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/outputs", a.evolutionOutputs)
+	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/outputs/{library}", a.evolutionOutputs)
 	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/catalog/{kind}", a.evolutionCatalog)
 	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/catalog/{kind}/{definition}/{revision}", a.evolutionCatalog)
 	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/permissions", a.evolutionPermissions)

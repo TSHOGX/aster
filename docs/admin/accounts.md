@@ -242,8 +242,14 @@ to each binding. These editor defaults are copied values, not server-side inheri
 Each binding retains its exact template/workflow/service revisions, selected sources,
 typed inputs, budget, output library ID, owned directory and reservation generation.
 The library must already exist with the template's required profile; configure it in
-Volume Studio first. The form currently accepts its ID rather than browsing Studio's
-library catalog. No profile conversion is performed. Expand **Workflow, inputs and
+Volume Studio first. Use **Search output libraries** to browse libraries you can read. Incompatible
+profiles, archived libraries, ownership by another group and missing configuration
+permission explain why a choice is unavailable. The selected library shows its
+owner, accepted main, latest published version and directory reservations. Overlapping
+reservations are flagged; **Use matching reservation generation** copies the current
+generation (or the next generation for a released reservation). **Refresh output
+metadata** reloads current information. Activation rechecks ownership and permissions;
+choosing a library does not reserve it or convert its profile. Expand **Workflow, inputs and
 execution limits** for parameters, source/dependency/artifact input ports, triggers,
 schedule/timezone and budget overrides. JSON parameters must be an object; published
 schema validation occurs in the compatibility preview.

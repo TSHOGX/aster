@@ -28,7 +28,8 @@ test("published catalog drives recoverable draft and two-participant activation"
     await chooseValue(page.getByRole("combobox", { name: tr("Goal template"), exact: true }), { label: `${id} · 1` });
     await page.getByRole("button", { name: tr("Add template binding"), exact: true }).click();
     const binding = page.locator("article.evolution-binding").filter({ has: page.getByRole("heading", { name: id, exact: true }) });
-    await binding.getByLabel(tr("Output library ID"), { exact: true }).fill("aster-shared-assets");
+    await chooseValue(binding.getByRole("combobox", { name: `${id}: ${tr("Output library")}`, exact: true }), "aster-shared-assets");
+    await expect(binding.getByText(tr("Accepted main"), { exact: false })).toBeVisible();
     await binding.getByRole("group", { name: tr("Source selection"), exact: true }).getByRole("checkbox", { name: "source", exact: true }).check();
     const details = binding.locator("details").filter({ has: page.locator("summary", { hasText: tr("Workflow, inputs and execution limits") }) });
     await details.locator("summary").first().click();
