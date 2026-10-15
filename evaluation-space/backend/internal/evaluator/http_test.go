@@ -101,7 +101,7 @@ func TestHTTPProviderRejectsAmbiguousAbsenceAndMalformedIdentity(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			client, err := NewHTTPProvider(p.service, Connection{server.URL, "client", strings.Repeat("s", 32)})
+			client, err := NewHTTPProvider(p.service, Connection{Endpoint: server.URL, ClientID: "client", Secret: strings.Repeat("s", 32)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,7 +123,7 @@ func TestHTTPProviderRejectsAmbiguousAbsenceAndMalformedIdentity(t *testing.T) {
 func TestHTTPRegistryUsesRegisteredConnectionOnly(t *testing.T) {
 	worker, p, _ := fixture(t)
 	for _, endpoint := range []string{"http://remote.example", "http://localhost", "https://example.com/path", "https://user:pass@example.com", "https://example.com?x=1", "https://example.com#fragment"} {
-		if _, err := NewHTTPProvider(p.service, Connection{endpoint, "client", strings.Repeat("s", 32)}); err == nil {
+		if _, err := NewHTTPProvider(p.service, Connection{Endpoint: endpoint, ClientID: "client", Secret: strings.Repeat("s", 32)}); err == nil {
 			t.Fatal("unsafe provider origin", endpoint)
 		}
 	}

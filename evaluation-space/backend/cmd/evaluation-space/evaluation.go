@@ -14,10 +14,11 @@ import (
 )
 
 type evaluationConnection struct {
-	ID        string `json:"id"`
-	Endpoint  string `json:"endpoint"`
-	ClientID  string `json:"client_id"`
-	SecretEnv string `json:"secret_env"`
+	InputSecretEnv string `json:"input_secret_env"`
+	ID             string `json:"id"`
+	Endpoint       string `json:"endpoint"`
+	ClientID       string `json:"client_id"`
+	SecretEnv      string `json:"secret_env"`
 }
 type evaluationConfig struct {
 	Connections []evaluationConnection `json:"connections"`
@@ -39,13 +40,17 @@ func readEvaluationConnections(path string) (map[string]evaluator.Connection, er
 	envName := regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 	connections := map[string]evaluator.Connection{}
 	for _, connection := range config.Connections {
-		if connection.ID == "" || !envName.MatchString(connection.SecretEnv) {
+		if connection.ID == "" || !envName.MatchString(connection.SecretEnv) || !envName.MatchString(connection.InputSecretEnv) {
 			return nil, fmt.Errorf("invalid evaluator connection reference")
 		}
 		if _, ok := connections[connection.ID]; ok {
 			return nil, fmt.Errorf("duplicate evaluator connection")
 		}
-		value := evaluator.Connection{Endpoint: connection.Endpoint, ClientID: connection.ClientID, Secret: os.Getenv(connection.SecretEnv)}
+		inputSecret := os.Getenv(connection.InputSecretEnv)
+		if len(inputSecret) < 32 || len(inputSecret) > 1024 {
+			return nil, fmt.Errorf("provider input credential required")
+		}
+		value := evaluator.Connection{InputSecret: inputSecret, Endpoint: connection.Endpoint, ClientID: connection.ClientID, Secret: os.Getenv(connection.SecretEnv)}
 		client, err := evaluator.NewHTTPProvider(evolution.Revision{ID: "validation", Revision: 1, Digest: evolution.Digest([]byte("validation"))}, value)
 		if err != nil {
 			return nil, err

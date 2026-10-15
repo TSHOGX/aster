@@ -331,13 +331,16 @@ environment references:
       "id": "team-evaluator",
       "endpoint": "https://evaluator.example.com",
       "client_id": "evaluation-space",
-      "secret_env": "TEAM_EVALUATOR_SECRET"
+      "secret_env": "TEAM_EVALUATOR_SECRET",
+      "input_secret_env": "TEAM_EVALUATOR_INPUT_SECRET"
     }
   ]
 }
 ```
 
-Set each referenced secret to a credential accepted by that evaluator. Remote
+Set each outbound secret to a credential accepted by that evaluator. Set a separate
+input secret that the evaluator uses to authenticate as its connection ID when
+reading assigned datasets and candidate/reference files. Remote
 origins require HTTPS; loopback HTTP is allowed. Redirects are refused. Connections
 cannot be supplied by workflow inputs. The provider implements the versioned
 `/evaluation/v1/jobs/{id}` submit/status/result/cancel protocol and retains request
@@ -360,3 +363,18 @@ reviewer's request before central authorization and remote admission. Restart/re
 retains the same job and budget reservation. Result refresh verifies subject and
 profile measurements before recording immutable evidence; approval and merge recheck
 current central grant and evaluator availability.
+
+Set Evaluation Space's `-studio-input-endpoint` to Studio's private participant origin
+and provide `STUDIO_EVALUATION_INPUT_SECRET` (or select it with
+`-studio-input-secret-env`). Studio uses the same inbound value, selected with
+`-evaluation-input-secret-env`; its participant listener must be enabled. These
+credentials differ from provider input credentials and central identity credentials.
+Provider input reads require the job grant and original submission fence, and stop
+on cancellation, expiry, completion or revocation.
+
+To provision an explicit dataset while Evaluation Space is stopped, run
+`evaluation-catalog --state-directory /absolute/state --action seal-artifact --artifact-file /absolute/dataset.json`
+with the complete artifact reference JSON on stdin. The command verifies size and
+SHA-256 digest, retains the exact reference, and refuses a live store or symlink
+source. Provisioning bytes does not grant their use; authorize the exact artifact
+and evaluator through the group's dataset grant before requesting an evaluation.

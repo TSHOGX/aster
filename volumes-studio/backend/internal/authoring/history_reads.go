@@ -292,3 +292,29 @@ func requireCommit(ctx context.Context, repo *history.Repository, commit string)
 	}
 	return nil
 }
+
+func (s *Store) AssignedSnapshot(ctx context.Context, a Actor, ref evolution.ContentRef) (history.Snapshot, error) {
+	if ref.Validate() != nil {
+		return history.Snapshot{}, ErrInvalid
+	}
+	if err := s.authorizeLibrary(ctx, a, ref.LibraryID, "volume.read"); err != nil {
+		return history.Snapshot{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.Library(ctx, ref.LibraryID); err != nil {
+		return history.Snapshot{}, err
+	}
+	repo, err := s.historyRepository(ctx, ref.LibraryID)
+	if err != nil {
+		return history.Snapshot{}, err
+	}
+	snapshot, err := repo.Snapshot(ctx, ref.CommitID)
+	if err != nil {
+		return snapshot, err
+	}
+	if snapshot.Profile != ref.Profile || snapshot.TreeDigest() != ref.TreeDigest {
+		return history.Snapshot{}, ErrConflict
+	}
+	return snapshot, nil
+}

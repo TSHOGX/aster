@@ -70,7 +70,8 @@ func publish(ctx context.Context, directory string, input io.Reader, output io.W
 }
 func main() {
 	directory := flag.String("state-directory", "", "absolute private Evaluation Space state directory")
-	action := flag.String("action", "publish", "publish, list, inspect-service or service-state")
+	action := flag.String("action", "publish", "publish, list, inspect-service, service-state or seal-artifact")
+	source := flag.String("artifact-file", "", "Absolute regular file to seal; reference JSON is read from stdin")
 	flag.Parse()
 	if flag.NArg() != 0 {
 		fmt.Fprintln(os.Stderr, "publication JSON is read from stdin")
@@ -78,6 +79,8 @@ func main() {
 	}
 	var err error
 	switch *action {
+	case "seal-artifact":
+		err = sealArtifact(context.Background(), *directory, *source, os.Stdin, os.Stdout)
 	case "publish":
 		err = publish(context.Background(), *directory, os.Stdin, os.Stdout)
 	case "list":

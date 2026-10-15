@@ -531,3 +531,33 @@ func (s *Store) AcknowledgeEvaluationSettlement(ctx context.Context, group, id s
 	_, err := s.db.ExecContext(ctx, `INSERT INTO evaluation_settlements(job_id) SELECT id FROM evaluation_jobs WHERE group_id=? AND id=? AND state IN('completed','error','canceled') ON CONFLICT DO NOTHING`, group, id)
 	return err
 }
+
+// EvaluationInput pins provider reads to the original dispatch, not the worker
+// takeover fence. Only an unsettled, uncanceled and unexpired job can read inputs.
+func (s *Store) EvaluationInput(ctx context.Context, group, id, grant string, fence int64) (EvaluationJob, error) {
+	var job EvaluationJob
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return job, err
+	}
+	defer tx.Rollback()
+	job, err = readEvaluationBody(ctx, tx, group, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return job, ErrNotFound
+		}
+		return job, err
+	}
+	if job.Grant == nil || job.Grant.ID != grant || job.State != "running" || job.CreatedAt.Add(time.Duration(job.Budget.TimeoutSeconds)*time.Second).Before(time.Now()) {
+		return job, ErrConflict
+	}
+	var raw []byte
+	if err = tx.QueryRowContext(ctx, "SELECT submission FROM evaluation_jobs WHERE group_id=? AND id=?", group, id).Scan(&raw); err != nil {
+		return job, err
+	}
+	submission, err := evolution.Decode[evolution.EvaluationSubmission](bytes.NewReader(raw))
+	if err != nil || submission.GrantID != grant || submission.Fence != fence || fence < 1 {
+		return job, ErrConflict
+	}
+	return job, nil
+}

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -39,6 +40,7 @@ func main() {
 	participantSecretEnv := flag.String("participant-secret-env", "STUDIO_CENTRAL_SECRET", "environment containing the central participant credential")
 	evaluationEndpoint := flag.String("evaluation-endpoint", "", "Optional private Evaluation Space origin")
 	evaluationSecretEnv := flag.String("evaluation-secret-env", "EVALUATION_SPACE_STUDIO_SECRET", "Environment containing Studio evaluation credential")
+	evaluationInputSecretEnv := flag.String("evaluation-input-secret-env", "STUDIO_EVALUATION_INPUT_SECRET", "Environment containing inbound Evaluation Space input credential")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*listen)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
@@ -87,7 +89,23 @@ func main() {
 			log.Fatal(err)
 		}
 		participant := httpapi.EvolutionParticipantAPI{Store: store, Authority: authority}
-		servers = append(servers, &http.Server{Addr: *participantListen, Handler: participant.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10})
+		var participantHandler http.Handler = participant.Handler()
+		if *evaluationEndpoint != "" {
+			inputAPI, err := httpapi.NewEvaluationInputAPI(store, client, os.Getenv(*evaluationInputSecretEnv))
+			if err != nil {
+				log.Fatal(err)
+			}
+			inputHandler := inputAPI.Handler()
+			original := participantHandler
+			participantHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, "/volumes-studio/internal/v1/evaluation-input") {
+					inputHandler.ServeHTTP(w, r)
+					return
+				}
+				original.ServeHTTP(w, r)
+			})
+		}
+		servers = append(servers, &http.Server{Addr: *participantListen, Handler: participantHandler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10})
 	}
 	if *distributionConfig != "" {
 		host, _, err := net.SplitHostPort(*distributionListen)

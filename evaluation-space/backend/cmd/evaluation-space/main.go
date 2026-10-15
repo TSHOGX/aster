@@ -19,6 +19,7 @@ import (
 	"aster/evaluation-space/internal/httpapi"
 	"aster/evaluation-space/internal/identity"
 	"aster/evaluation-space/internal/projections"
+	"aster/evaluation-space/internal/studioclient"
 )
 
 func main() {
@@ -34,6 +35,8 @@ func run() error {
 	centralSecretEnv := flag.String("central-secret-env", "EVALUATION_SPACE_CENTRAL_SECRET", "Environment variable containing inbound central credential")
 	evaluationConfigPath := flag.String("evaluation-connections", "", "Optional private JSON evaluator connections with credential environment references")
 	studioSecretEnv := flag.String("studio-secret-env", "EVALUATION_SPACE_STUDIO_SECRET", "Environment variable containing inbound Studio evaluation credential")
+	studioInputs := flag.String("studio-input-endpoint", "", "Private Studio participant origin for assigned content reads")
+	studioInputSecretEnv := flag.String("studio-input-secret-env", "STUDIO_EVALUATION_INPUT_SECRET", "Environment with outbound Studio input credential")
 	flag.Parse()
 	if !filepath.IsAbs(*directory) || *directory == "/" {
 		return fmt.Errorf("absolute state directory required")
@@ -57,7 +60,7 @@ func run() error {
 		return err
 	}
 	defer store.Close()
-	var evaluationHandler http.Handler
+	var evaluationHandler, providerInputHandler http.Handler
 	var evaluationDone chan struct{}
 	if *evaluationConfigPath != "" {
 		connections, err := readEvaluationConnections(*evaluationConfigPath)
@@ -69,6 +72,20 @@ func run() error {
 			return err
 		}
 		evaluationHandler = api.Handler()
+		content, err := studioclient.New(*studioInputs, os.Getenv(*studioInputSecretEnv))
+		if err != nil {
+			return err
+		}
+		credentials := map[string]string{}
+		for id, connection := range connections {
+			credentials[id] = connection.InputSecret
+		}
+		inputAPI, err := httpapi.NewEvaluationInputAPI(store, authority, content, credentials)
+		if err != nil {
+			return err
+		}
+		providerInputHandler = inputAPI.Handler()
+
 		workerCtx, cancel := context.WithCancel(ctx)
 		evaluationDone = make(chan struct{})
 		go func() { defer close(evaluationDone); runEvaluations(workerCtx, store, authority, connections) }()
@@ -82,6 +99,10 @@ func run() error {
 	projectionHandler := (httpapi.ProjectionAPI{Store: store, Authority: authority}).Handler()
 	catalogHandler := (httpapi.CatalogAPI{Store: store, Authority: authority}).Handler()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if providerInputHandler != nil && strings.HasPrefix(r.URL.Path, "/evaluation-space/provider/v1/") {
+			providerInputHandler.ServeHTTP(w, r)
+			return
+		}
 		if evaluationHandler != nil && strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/evaluations/") {
 			evaluationHandler.ServeHTTP(w, r)
 			return

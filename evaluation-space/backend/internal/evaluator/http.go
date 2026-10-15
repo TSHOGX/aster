@@ -24,9 +24,10 @@ var ErrProviderDenied = errors.New("evaluation_provider_denied")
 // Connection is operator configuration, never workflow/run input. Credentials
 // are effective transport secrets and must not be persisted in job definitions.
 type Connection struct {
-	Endpoint string
-	ClientID string
-	Secret   string
+	InputSecret string
+	Endpoint    string
+	ClientID    string
+	Secret      string
 }
 type HTTPProvider struct {
 	service    evolution.Revision

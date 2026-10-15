@@ -48,3 +48,49 @@ func (c *Client) AuthorizeEvaluation(ctx context.Context, assignment evolution.E
 	}
 	return grant, nil
 }
+
+func (c *Client) ResolveEvaluationInput(ctx context.Context, grant evolution.EvaluationGrant) (evolution.EvaluationAssignment, error) {
+	var assignment evolution.EvaluationAssignment
+	raw, err := json.Marshal(evolution.EvaluationGrantScope{Grant: grant, Action: "input"})
+	if err != nil {
+		return assignment, err
+	}
+	request, err := http.NewRequestWithContext(ctx, "POST", c.config.Endpoint+"/api/identity/v1/evaluation-authority", bytes.NewReader(raw))
+	if err != nil {
+		return assignment, err
+	}
+	request.SetBasicAuth(c.config.ClientID, c.config.ClientSecret)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := c.http.Do(request)
+	if err != nil {
+		return assignment, ErrUnavailable
+	}
+	defer response.Body.Close()
+	if response.StatusCode == 401 || response.StatusCode == 403 {
+		return assignment, ErrUnauthorized
+	}
+	if response.StatusCode != 200 {
+		return assignment, ErrUnavailable
+	}
+	raw, err = io.ReadAll(io.LimitReader(response.Body, evolution.MaxDocumentBytes+1))
+	if err != nil || len(raw) > evolution.MaxDocumentBytes {
+		return assignment, ErrUnavailable
+	}
+	assignment, err = evolution.Decode[evolution.EvaluationAssignment](bytes.NewReader(raw))
+	if err != nil {
+		return assignment, ErrUnavailable
+	}
+	digest, err := assignment.Digest()
+	if err != nil || digest != grant.AssignmentDigest || assignment.JobID != grant.JobID || assignment.GroupID != grant.GroupID {
+		return evolution.EvaluationAssignment{}, ErrUnavailable
+	}
+	subject, check, err := assignment.Subject()
+	if err != nil {
+		return assignment, ErrUnavailable
+	}
+	subjectDigest, _ := subject.Digest()
+	if subjectDigest != grant.SubjectDigest || check.Service != grant.Service {
+		return evolution.EvaluationAssignment{}, ErrUnavailable
+	}
+	return assignment, nil
+}

@@ -14,10 +14,10 @@ func TestEvaluationConnectionsRequireRegisteredSecretAndSafeOrigin(t *testing.T)
 		body  string
 		valid bool
 	}{
-		{`{"connections":[{"id":"evaluator","endpoint":"https://provider.example","client_id":"space","secret_env":"EVALUATOR_TEST_SECRET"}]}`, true},
-		{`{"connections":[{"id":"evaluator","endpoint":"http://provider.example","client_id":"space","secret_env":"EVALUATOR_TEST_SECRET"}]}`, false},
+		{`{"connections":[{"id":"evaluator","endpoint":"https://provider.example","client_id":"space","secret_env":"EVALUATOR_TEST_SECRET","input_secret_env":"EVALUATOR_TEST_SECRET"}]}`, true},
+		{`{"connections":[{"id":"evaluator","endpoint":"http://provider.example","client_id":"space","secret_env":"EVALUATOR_TEST_SECRET","input_secret_env":"EVALUATOR_TEST_SECRET"}]}`, false},
 		{`{"connections":[{"id":"evaluator","endpoint":"https://provider.example","client_id":"space","secret_env":"MISSING_SECRET"}]}`, false},
-		{`{"connections":[{"id":"evaluator","endpoint":"https://provider.example","client_id":"space","secret_env":"EVALUATOR_TEST_SECRET","secret":"inline"}]}`, false},
+		{`{"connections":[{"id":"evaluator","endpoint":"https://provider.example","client_id":"space","secret_env":"EVALUATOR_TEST_SECRET","input_secret_env":"EVALUATOR_TEST_SECRET","secret":"inline"}]}`, false},
 		{`{"connections":[],"connections":[]}`, false},
 	} {
 		if err := os.WriteFile(path, []byte(test.body), 0600); err != nil {

@@ -68,6 +68,14 @@ func TestEvaluationAuthorityPinsScopeBudgetAndCleanup(t *testing.T) {
 	if _, err = s.AuthorizeEvaluationAssignment(ctx, changed); !errors.Is(err, ErrCapacity) {
 		t.Fatal("group budget oversubscribed", err)
 	}
+	inputScope := evolution.EvaluationGrantScope{Grant: grant, Action: "input"}
+	_, err = s.ResolveEvaluationGrant(ctx, inputScope)
+	must(t, err)
+	var audits int
+	must(t, s.reader.QueryRowContext(ctx, "SELECT count(*) FROM audit_events WHERE action='evaluation.input.read'").Scan(&audits))
+	if audits != 1 {
+		t.Fatal("sensitive read not audited", audits)
+	}
 	scope := evolution.EvaluationGrantScope{Grant: grant, Action: "execute"}
 	_, err = s.ResolveEvaluationGrant(ctx, scope)
 	must(t, err)

@@ -211,7 +211,7 @@ func (s *Store) checkEvaluationAssignment(ctx context.Context, q queryer, input 
 // only lookup/cancel/settlement for the retained assignment after revocation.
 func (s *Store) ResolveEvaluationGrant(ctx context.Context, scope evolution.EvaluationGrantScope) (evolution.EvaluationAssignment, error) {
 	var assignment evolution.EvaluationAssignment
-	if scope.Action != "execute" && scope.Action != "read" && scope.Action != "cleanup" {
+	if scope.Action != "execute" && scope.Action != "read" && scope.Action != "cleanup" && scope.Action != "input" {
 		return assignment, ErrInvalid
 	}
 	err := s.write(ctx, func(tx *sql.Tx) error {
@@ -239,11 +239,17 @@ func (s *Store) ResolveEvaluationGrant(ctx context.Context, scope evolution.Eval
 		if scope.Action == "cleanup" {
 			return nil
 		}
-		if scope.Action == "execute" && state != "admitted" {
+		if (scope.Action == "execute" || scope.Action == "input") && state != "admitted" {
 			return ErrForbidden
 		}
 		_, err = s.checkEvaluationAssignment(ctx, tx, assignment)
-		return err
+		if err != nil {
+			return err
+		}
+		if scope.Action == "input" {
+			return s.auditEvent(ctx, tx, "evaluation-space", "evaluation.input.read", "evaluation", assignment.JobID, scope.Grant.ID, 0, map[string]string{"subject_digest": scope.Grant.SubjectDigest})
+		}
+		return nil
 	})
 	return assignment, err
 }

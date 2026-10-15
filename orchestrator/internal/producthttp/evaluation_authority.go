@@ -54,7 +54,7 @@ func (a *Authentication) identityEvaluationAuthority(w http.ResponseWriter, r *h
 		writeError(w, 400, "invalid evaluation scope")
 		return
 	}
-	if client.ID != "evaluation-space" && (client.ID != "studio" || input.Action != "read") {
+	if client.ID != "evaluation-space" && (client.ID != "studio" || (input.Action != "read" && input.Action != "input")) {
 		writeError(w, 403, "evaluation service required")
 		return
 	}
