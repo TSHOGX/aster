@@ -63,10 +63,20 @@ func BrowserAPI(client *appidentity.Client, store *projections.Store) func(appid
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups", groups)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}", groups)
 	workflow := BrowserWorkflowAPI(client, store)
+	runs := BrowserRunAPI(client, store)
+	evaluations := BrowserEvaluationAPI(client, store)
 	return func(session appidentity.Session, w http.ResponseWriter, r *http.Request) {
 		request := r.WithContext(context.WithValue(r.Context(), browserSessionKey{}, session))
 		if strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/groups/") && strings.Contains(r.URL.Path, "/workflows/") {
 			workflow(session, w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/groups/") && strings.Contains(r.URL.Path, "/runs/") {
+			runs(session, w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/groups/") && strings.Contains(r.URL.Path, "/evaluations/") {
+			evaluations(session, w, r)
 			return
 		}
 		mux.ServeHTTP(w, request)

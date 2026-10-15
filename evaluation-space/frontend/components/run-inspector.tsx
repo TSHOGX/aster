@@ -1,0 +1,31 @@
+/* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps -- polling effects synchronize remote run projections. */
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { base } from "../lib/api";
+import { useT } from "../lib/i18n";
+
+type Run = { id: string; state: string; fence: number; handoff: string; evaluation_state: string; pins: { workflow?: { id?: string; revision?: number }; service?: { id?: string; revision?: number }; configuration_revision?: number }; created_at: string };
+type Event = { id: string; sequence: number; kind: string; attempt_id?: string; timestamp: string };
+type Attempt = { call: { id: string; instance: string; node: { id?: string; kind?: string }; prompt?: string }; state: string; error_code?: string; outputs?: Record<string, unknown> };
+
+export function RunInspector({ group, run }: { group: string; run: string }) {
+  const tr = useT(); const [value, setValue] = useState<Run>(); const [events, setEvents] = useState<Event[]>([]); const [attempts, setAttempts] = useState<Attempt[]>([]); const [error, setError] = useState(""); const [stale, setStale] = useState(false); const [busy, setBusy] = useState(false); const [cursor, setCursor] = useState(0);
+  const root = `${base}/api/v1/groups/${encodeURIComponent(group)}/runs/${encodeURIComponent(run)}`;
+  async function read() {
+    try { const response = await fetch(root, { credentials: "same-origin", cache: "no-store" }); if (!response.ok) throw new Error("read"); const next = await response.json() as Run; setValue(next); setError(""); setStale(false); }
+    catch { setError("Run detail is unavailable. Retry or check group access."); setStale(true); }
+  }
+  async function readEvents() {
+    try { const response = await fetch(`${root}/events?after=${cursor}&limit=100`, { credentials: "same-origin", cache: "no-store" }); if (!response.ok) throw new Error(); const page = await response.json() as { events: Event[]; next_after: number }; setEvents(items => [...items, ...page.events.filter(event => !items.some(existing => existing.id === event.id))]); setCursor(page.next_after); }
+    catch { setStale(true); }
+  }
+  async function readAttempts() { try { const response = await fetch(`${root}/attempts?limit=100`, { credentials: "same-origin", cache: "no-store" }); if (response.ok) setAttempts((await response.json() as { items: Attempt[] }).items); } catch { setStale(true); } }
+  useEffect(() => { void read(); void readEvents(); void readAttempts(); const timer = window.setInterval(() => { void read(); void readEvents(); void readAttempts(); }, 3000); return () => window.clearInterval(timer); }, [group, run, cursor]);
+  async function control(action: string) { if (!value) return; setBusy(true); try { const response = await fetch(`${root}/control`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", Origin: location.origin, "X-CSRF-Token": (await (await fetch(`${base}/api/v1/session`, { credentials: "same-origin" })).json() as { csrf: string }).csrf }, body: JSON.stringify({ request_id: crypto.randomUUID(), run_id: run, expected_fence: value.fence, action }) }); if (!response.ok) throw new Error(); await read(); } catch { setError("Run control is unavailable or the run changed. Reload before retrying."); } finally { setBusy(false); } }
+  if (!value && error) return <main className="session-gate"><h1>{tr("Run inspector")}</h1><p role="alert">{tr(error)}</p><button onClick={() => void read()}>{tr("Retry")}</button><Link href={`/groups/${encodeURIComponent(group)}/`}>{tr("Back to group")}</Link></main>;
+  return <main className="editor-page"><header className="section-heading"><div><Link href={`/groups/${encodeURIComponent(group)}/`}>{tr("Back to group")}</Link><h1>{tr("Run inspector")}: {run}</h1><p>{tr("The workflow, provider and input references are frozen for this run.")}</p></div><button onClick={() => { void read(); void readEvents(); void readAttempts(); }}>{tr("Refresh")}</button></header>{stale && <p role="status">{tr("Connection is stale. Reconnecting from the last event cursor.")}</p>}{error && <p role="alert">{tr(error)}</p>}
+    {value && <><section className="card run-summary"><h2>{tr("Run status")}: {tr(value.state)}</h2><dl><div><dt>{tr("Workflow revision")}</dt><dd>{value.pins.workflow?.id ?? "—"} @{value.pins.workflow?.revision ?? "—"}</dd></div><div><dt>{tr("Service revision")}</dt><dd>{value.pins.service?.id ?? "—"} @{value.pins.service?.revision ?? "—"}</dd></div><div><dt>{tr("Configuration revision")}</dt><dd>{value.pins.configuration_revision ?? "—"}</dd></div><div><dt>{tr("Handoff")}</dt><dd>{tr(value.handoff)}</dd></div><div><dt>{tr("Evaluation")}</dt><dd>{tr(value.evaluation_state)}</dd></div></dl><div className="editor-actions"><button disabled={busy || !["queued", "running"].includes(value.state)} onClick={() => void control("pause")}>{tr("Pause")}</button><button disabled={busy || value.state !== "paused"} onClick={() => void control("resume")}>{tr("Resume")}</button><button disabled={busy || !["queued", "running", "paused"].includes(value.state)} onClick={() => void control("cancel")}>{tr("Cancel")}</button></div></section><div className="workbench-grid run-grid"><section className="card"><h2>{tr("Node attempts")}</h2>{!attempts.length && <p>{tr("No node attempts are visible yet.")}</p>}<ol>{attempts.map(attempt => <li key={attempt.call.id}><strong>{attempt.call.instance}</strong> · {tr(attempt.state)} {attempt.error_code && <span>({attempt.error_code})</span>}</li>)}</ol></section><section className="card"><h2>{tr("Event timeline")}</h2>{!events.length && <p>{tr("Waiting for execution events…")}</p>}<ol>{events.map(event => <li key={event.id}><time dateTime={event.timestamp}>{new Date(event.timestamp).toLocaleTimeString()}</time> · {tr(event.kind)} {event.attempt_id && <span>({event.attempt_id})</span>}</li>)}</ol></section></div></>}
+  </main>;
+}

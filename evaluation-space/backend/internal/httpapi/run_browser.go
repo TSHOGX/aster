@@ -1,0 +1,132 @@
+package httpapi
+
+import (
+	"aster/contracts/appidentity"
+	"aster/contracts/evolution"
+	"aster/evaluation-space/internal/projections"
+	"errors"
+	"net/http"
+	"strconv"
+)
+
+// BrowserRunAPI is the human trace boundary. It resolves the current group
+// grant for every read and control request before returning durable projections.
+// Worker RunAPI remains private and continues to require service identity.
+func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(appidentity.Session, http.ResponseWriter, *http.Request) {
+	mux := http.NewServeMux()
+	authorize := func(r *http.Request, session appidentity.Session, action string) error {
+		result, err := client.EvaluationGroups(r.Context(), session, appidentity.EvaluationAccessRequest{GroupID: r.PathValue("group"), Action: action, Limit: 1})
+		if err != nil {
+			return err
+		}
+		if len(result.Items) != 1 || result.Items[0].ID != r.PathValue("group") {
+			return appidentity.ErrUnauthorized
+		}
+		return nil
+	}
+	read := func(w http.ResponseWriter, r *http.Request) {
+		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
+		if err := authorize(r, session, "config.read"); err != nil {
+			workflowAuthError(w, err)
+			return
+		}
+		run, err := store.Run(r.Context(), r.PathValue("group"), r.PathValue("run"))
+		if errors.Is(err, projections.ErrNotFound) {
+			write(w, 404, map[string]string{"error": "run_not_found"})
+			return
+		}
+		if err != nil {
+			write(w, 422, map[string]string{"error": "run_unavailable"})
+			return
+		}
+		write(w, 200, run)
+	}
+	events := func(w http.ResponseWriter, r *http.Request) {
+		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
+		if err := authorize(r, session, "config.read"); err != nil {
+			workflowAuthError(w, err)
+			return
+		}
+		after, limit := int64(0), 50
+		var err error
+		if raw := r.URL.Query().Get("after"); raw != "" {
+			after, err = strconv.ParseInt(raw, 10, 64)
+		}
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			limit, err = strconv.Atoi(raw)
+		}
+		if err != nil || after < 0 || limit < 1 || limit > 100 {
+			write(w, 400, map[string]string{"error": "invalid_cursor"})
+			return
+		}
+		page, err := store.RunEvents(r.Context(), r.PathValue("group"), r.PathValue("run"), after, limit)
+		if errors.Is(err, projections.ErrNotFound) {
+			write(w, 404, map[string]string{"error": "run_not_found"})
+			return
+		}
+		if err != nil {
+			write(w, 422, map[string]string{"error": "events_unavailable"})
+			return
+		}
+		write(w, 200, page)
+	}
+	attempts := func(w http.ResponseWriter, r *http.Request) {
+		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
+		if err := authorize(r, session, "config.read"); err != nil {
+			workflowAuthError(w, err)
+			return
+		}
+		limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+		if r.URL.Query().Get("limit") == "" {
+			limit = 50
+		}
+		if err != nil || limit < 1 || limit > 100 {
+			write(w, 400, map[string]string{"error": "invalid_limit"})
+			return
+		}
+		if _, err = store.Run(r.Context(), r.PathValue("group"), r.PathValue("run")); errors.Is(err, projections.ErrNotFound) {
+			write(w, 404, map[string]string{"error": "run_not_found"})
+			return
+		}
+		if err != nil {
+			write(w, 422, map[string]string{"error": "run_unavailable"})
+			return
+		}
+		records, err := store.WorkflowAttempts(r.Context(), r.PathValue("group"), r.PathValue("run"), r.URL.Query().Get("after"), limit)
+		if err != nil {
+			write(w, 422, map[string]string{"error": "attempts_unavailable"})
+			return
+		}
+		write(w, 200, map[string]any{"items": records})
+	}
+	control := func(w http.ResponseWriter, r *http.Request) {
+		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
+		if err := authorize(r, session, "run.start"); err != nil {
+			workflowAuthError(w, err)
+			return
+		}
+		value, err := evolution.Decode[projections.RunControl](http.MaxBytesReader(w, r.Body, 1<<16))
+		if err != nil || value.RunID != r.PathValue("run") {
+			write(w, 400, map[string]string{"error": "invalid_run_control"})
+			return
+		}
+		value.GroupID = r.PathValue("group")
+		result, err := store.ControlRunScoped(r.Context(), value.GroupID, value)
+		if errors.Is(err, projections.ErrConflict) {
+			write(w, 409, map[string]string{"error": "run_control_conflict"})
+			return
+		}
+		if err != nil {
+			write(w, 422, map[string]string{"error": "run_control_rejected"})
+			return
+		}
+		write(w, 200, result)
+	}
+	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}", read)
+	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/events", events)
+	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/attempts", attempts)
+	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/runs/{run}/control", control)
+	return func(session appidentity.Session, w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, contextWithBrowserSession(r, session))
+	}
+}
