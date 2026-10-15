@@ -97,6 +97,9 @@ func (w *Worker) Step(ctx context.Context, group, id string) error {
 	if err != nil {
 		return err
 	}
+	if closer, ok := provider.(interface{ Close() }); ok {
+		defer closer.Close()
+	}
 	grant, err := w.Authority.Grant(work, job)
 	if err != nil {
 		return err
@@ -115,9 +118,9 @@ func (w *Worker) Step(ctx context.Context, group, id string) error {
 		if err = w.Authority.Check(work, job, false); err != nil {
 			return err
 		}
-		current, err := w.Store.Evaluation(work, group, id)
-		if err != nil {
-			return err
+		current, currentErr := w.Store.Evaluation(work, group, id)
+		if currentErr != nil {
+			return currentErr
 		}
 		if current.State != "running" {
 			return nil
