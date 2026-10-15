@@ -77,3 +77,32 @@ func (s *Store) WorkflowDraft(ctx context.Context, id string) (WorkflowDraft, er
 	result.Workflow = workflow
 	return result, nil
 }
+
+// PublishWorkflowDraft converts a selected draft into the next immutable
+// executable revision. It never changes group activation or service selection.
+func (s *Store) PublishWorkflowDraft(ctx context.Context, id string, draftRevision int64) (evolution.Revision, error) {
+	if !manifest.ValidID(id) || draftRevision < 1 {
+		return evolution.Revision{}, fmt.Errorf("invalid draft publication")
+	}
+	draft, err := s.WorkflowDraft(ctx, id)
+	if err != nil {
+		return evolution.Revision{}, err
+	}
+	if draft.Revision != draftRevision {
+		return evolution.Revision{}, ErrConflict
+	}
+	body, err := draft.Workflow.Canonical()
+	if err != nil {
+		return evolution.Revision{}, err
+	}
+	var revision int64
+	err = s.db.QueryRowContext(ctx, "SELECT coalesce(max(revision),0)+1 FROM workflow_revisions WHERE id=?", id).Scan(&revision)
+	if err != nil {
+		return evolution.Revision{}, err
+	}
+	ref := evolution.Revision{ID: id, Revision: revision, Digest: evolution.Digest(body)}
+	if err = s.PublishWorkflow(ctx, ref, body); err != nil {
+		return evolution.Revision{}, err
+	}
+	return ref, nil
+}
