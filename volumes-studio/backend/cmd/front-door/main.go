@@ -19,6 +19,7 @@ func main() {
 	listen := flag.String("listen", "127.0.0.1:8443", "HTTPS listener")
 	public := flag.String("public-origin", "", "canonical public HTTPS origin")
 	studio := flag.String("studio", "", "Studio gateway origin")
+	evaluation := flag.String("evaluation-space", "", "Evaluation Space browser gateway origin")
 	application := flag.String("application", "", "Aster edge origin")
 	cert := flag.String("cert", "", "TLS certificate PEM path")
 	key := flag.String("key", "", "TLS private key PEM path")
@@ -26,7 +27,7 @@ func main() {
 	if *cert == "" || *key == "" {
 		log.Fatal("TLS certificate and key are required")
 	}
-	handler, err := frontdoor.New(frontdoor.Config{PublicOrigin: *public, Studio: *studio, Application: *application})
+	handler, err := frontdoor.New(frontdoor.Config{PublicOrigin: *public, Studio: *studio, Application: *application, EvaluationSpace: *evaluation})
 	if err != nil {
 		log.Fatal(err)
 	}

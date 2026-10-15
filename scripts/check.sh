@@ -9,6 +9,14 @@ case "${1:-all}" in
     go -C evaluation-space/backend vet -mod=readonly ./...
     go -C evaluation-space/backend test -mod=readonly -race ./...
     ;;
+  evaluation-frontend)
+    npm --prefix evaluation-space/frontend run lint
+    npm --prefix evaluation-space/frontend run build
+    npm --prefix evaluation-space/frontend run typecheck
+    ;;
+  evaluation-browser)
+    npm --prefix evaluation-space/frontend run test:browser
+    ;;
   studio)
     go -C volumes-studio/backend build -mod=readonly ./...
     go -C volumes-studio/backend vet -mod=readonly ./...
@@ -36,6 +44,7 @@ case "${1:-all}" in
     scripts/check-lockfile-registry.sh
     scripts/check-lockfile-registry.sh admin-frontend/package-lock.json
     scripts/check-lockfile-registry.sh volumes-studio/frontend/package-lock.json
+    scripts/check-lockfile-registry.sh evaluation-space/frontend/package-lock.json
     scripts/check-lockfile-registry.sh orchestrator/internal/runtimerelease/package-lock.json
     while IFS= read -r -d '' script; do bash -n "$script"; done < <(git ls-files -z '*.sh')
     python3 -m unittest discover -s scripts/tests -p 'test_*.py'
@@ -91,6 +100,8 @@ case "${1:-all}" in
   all)
     "$0" source
     "$0" evaluation-space
+    "$0" evaluation-frontend
+    "$0" evaluation-browser
     "$0" studio
     "$0" studio-frontend
     "$0" studio-browser
@@ -98,5 +109,5 @@ case "${1:-all}" in
     "$0" backend
     "$0" frontend
     ;;
-  *) echo 'Usage: scripts/check.sh [source|evaluation-space|evolution-browser|studio|studio-frontend|studio-browser|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|frontend-edge|all]' >&2; exit 2 ;;
+  *) echo 'Usage: scripts/check.sh [source|evaluation-space|evaluation-frontend|evaluation-browser|evolution-browser|studio|studio-frontend|studio-browser|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|frontend-edge|all]' >&2; exit 2 ;;
 esac

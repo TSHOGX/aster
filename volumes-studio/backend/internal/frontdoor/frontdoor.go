@@ -3,6 +3,7 @@
 package frontdoor
 
 import (
+	"aster/contracts/appidentity"
 	"errors"
 	"fmt"
 	"net"
@@ -19,9 +20,10 @@ const SessionCookie = "__Secure-volumes_studio_session"
 const LoginCookie = "__Secure-volumes_studio_login"
 
 type Config struct {
-	PublicOrigin string
-	Studio       string
-	Application  string
+	PublicOrigin    string
+	Studio          string
+	EvaluationSpace string
+	Application     string
 }
 
 func origin(value string, public bool) (*url.URL, error) {
@@ -64,8 +66,16 @@ func New(config Config) (http.Handler, error) {
 		MaxIdleConns: 128, MaxIdleConnsPerHost: 64, IdleConnTimeout: 90 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 30 * time.Second, DisableCompression: true,
 	}
-	studioProxy := proxy(studio, public, transport, true)
-	appProxy := proxy(application, public, transport, false)
+	studioProxy := proxy(studio, public, transport, Prefix)
+	appProxy := proxy(application, public, transport, "")
+	var evaluationProxy *httputil.ReverseProxy
+	if config.EvaluationSpace != "" {
+		evaluation, err := origin(config.EvaluationSpace, false)
+		if err != nil {
+			return nil, err
+		}
+		evaluationProxy = proxy(evaluation, public, transport, "/evaluation-space/")
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.EqualFold(r.Host, public.Host) {
 			http.Error(w, "unrecognized public host", http.StatusMisdirectedRequest)
@@ -82,8 +92,8 @@ func New(config Config) (http.Handler, error) {
 			http.NotFound(w, r)
 			return
 		}
-		if p == strings.TrimSuffix(Prefix, "/") {
-			location := Prefix
+		if p == strings.TrimSuffix(Prefix, "/") || p == "/evaluation-space" {
+			location := p + "/"
 			if r.URL.RawQuery != "" {
 				location += "?" + r.URL.RawQuery
 			}
@@ -91,31 +101,45 @@ func New(config Config) (http.Handler, error) {
 			w.WriteHeader(http.StatusPermanentRedirect)
 			return
 		}
-		isStudio := strings.HasPrefix(p, Prefix)
-		if err := filterCookies(r, isStudio); err != nil {
+		appPrefix := ""
+		if strings.HasPrefix(p, Prefix) {
+			appPrefix = Prefix
+		}
+		if strings.HasPrefix(p, "/evaluation-space/") {
+			appPrefix = "/evaluation-space/"
+		}
+		if err := filterCookies(r, appPrefix); err != nil {
 			http.Error(w, "ambiguous session cookie", http.StatusBadRequest)
 			return
 		}
-		if isStudio {
+		if appPrefix == Prefix {
 			studioProxy.ServeHTTP(w, r)
+		} else if appPrefix == "/evaluation-space/" {
+			if evaluationProxy == nil {
+				w.Header().Set("Cache-Control", "no-store")
+				http.Error(w, "Evaluation Space is unavailable", 503)
+				return
+			}
+			evaluationProxy.ServeHTTP(w, r)
 		} else {
 			appProxy.ServeHTTP(w, r)
 		}
 	}), nil
 }
 
-func cookieAllowed(name string, studio bool) bool {
-	if studio {
-		return name == SessionCookie || name == LoginCookie
+func cookieAllowed(name, prefix string) bool {
+	if prefix != "" {
+		app := appidentity.Application{Prefix: prefix}
+		return name == app.SessionCookie() || name == app.LoginCookie()
 	}
 	return name == "project_login"
 }
 
-func filterCookies(r *http.Request, studio bool) error {
+func filterCookies(r *http.Request, prefix string) error {
 	kept := []*http.Cookie{}
 	seen := map[string]bool{}
 	for _, cookie := range r.Cookies() {
-		if !cookieAllowed(cookie.Name, studio) {
+		if !cookieAllowed(cookie.Name, prefix) {
 			continue
 		}
 		if seen[cookie.Name] {
@@ -131,7 +155,7 @@ func filterCookies(r *http.Request, studio bool) error {
 	return nil
 }
 
-func proxy(target, public *url.URL, transport http.RoundTripper, studio bool) *httputil.ReverseProxy {
+func proxy(target, public *url.URL, transport http.RoundTripper, prefix string) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Transport: transport, FlushInterval: -1,
 		Rewrite: func(p *httputil.ProxyRequest) {
@@ -139,7 +163,7 @@ func proxy(target, public *url.URL, transport http.RoundTripper, studio bool) *h
 			p.Out.Host = public.Host
 			for key := range p.Out.Header {
 				lower := strings.ToLower(key)
-				if lower == "forwarded" || lower == "authorization" || lower == "proxy-authorization" || lower == "x-real-ip" || strings.HasPrefix(lower, "x-forwarded-") || strings.HasPrefix(lower, "x-project-") || strings.HasPrefix(lower, "x-studio-") || strings.HasPrefix(lower, "x-identity-") || strings.HasPrefix(lower, "x-auth-") || lower == "remote-user" {
+				if lower == "forwarded" || lower == "authorization" || lower == "proxy-authorization" || lower == "x-real-ip" || strings.HasPrefix(lower, "x-forwarded-") || strings.HasPrefix(lower, "x-project-") || strings.HasPrefix(lower, "x-studio-") || strings.HasPrefix(lower, "x-evaluation-") || strings.HasPrefix(lower, "x-identity-") || strings.HasPrefix(lower, "x-auth-") || lower == "remote-user" {
 					p.Out.Header.Del(key)
 				}
 			}
@@ -153,13 +177,13 @@ func proxy(target, public *url.URL, transport http.RoundTripper, studio bool) *h
 		ModifyResponse: func(r *http.Response) error {
 			for _, raw := range r.Header.Values("Set-Cookie") {
 				c, err := http.ParseSetCookie(raw)
-				if err != nil || !cookieAllowed(c.Name, studio) || c.Domain != "" {
+				if err != nil || !cookieAllowed(c.Name, prefix) || c.Domain != "" {
 					return errors.New("upstream attempted unregistered cookie")
 				}
-				if studio && (c.Path != Prefix || !c.Secure || !c.HttpOnly || c.SameSite != http.SameSiteLaxMode) {
-					return errors.New("invalid Studio cookie scope")
+				if prefix != "" && (c.Path != prefix || !c.Secure || !c.HttpOnly || c.SameSite != http.SameSiteLaxMode) {
+					return errors.New("invalid application cookie scope")
 				}
-				if !studio && c.Path != "/" {
+				if prefix == "" && c.Path != "/" {
 					return errors.New("invalid application cookie scope")
 				}
 			}

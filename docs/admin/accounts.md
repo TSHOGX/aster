@@ -244,6 +244,25 @@ remain available. Generation and evaluation reservations share the group's concu
 token/cost ceiling, and uncertain work retains its hold until terminal settlement.
 This grant provisions input authority; it does not schedule or execute a workflow.
 
+### Open Evaluation Space
+
+Open `/evaluation-space/` and choose **Sign in** to use your central account.
+Non-administrators need current group membership and a `config.read` grant for
+at least one group. Select a group or search its name; switching groups preserves
+their separate permissions and configuration status. Direct group links return to
+the same page after sign-in.
+
+The overview shows desired and active revisions, automatic optimization status,
+and separate management, execution and source-evidence permissions. A configuration
+grant does not permit source evidence reads. An empty list means no groups match
+the current search or grants; a denied group and an unavailable service display
+different recovery messages. **Refresh** checks current authority and clears stale
+metadata. Language preferences are shared with the central application.
+
+**Sign out of this central session** also ends the originating central login and
+its derived application sessions. Configuration editing and activation are available
+through the group administration page described below.
+
 ### Edit and activate group optimization
 
 Open **Groups → select a group → Automatic optimization**. A configuration draft

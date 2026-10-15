@@ -220,3 +220,87 @@ func TestConfigurationRefusesUnsafeOrigins(t *testing.T) {
 		t.Fatal("remote plaintext accepted")
 	}
 }
+
+func TestEvaluationSpaceRouteAndCookieIsolation(t *testing.T) {
+	upstream := func(name string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Upstream", name)
+			w.Header().Set("X-Cookies", r.Header.Get("Cookie"))
+			if r.Header.Get("X-Evaluation-Subject") != "" {
+				t.Error("spoofed evaluation identity forwarded")
+			}
+			if cookie := r.URL.Query().Get("cookie"); cookie != "" {
+				w.Header().Set("Set-Cookie", cookie)
+			}
+		}))
+	}
+	central := upstream("central")
+	defer central.Close()
+	studio := upstream("studio")
+	defer studio.Close()
+	evaluation := upstream("evaluation")
+	defer evaluation.Close()
+	config := Config{PublicOrigin: "https://example.com", Application: central.URL, Studio: studio.URL, EvaluationSpace: evaluation.URL}
+	h, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []struct{ path, upstream, cookies string }{
+		{"/evaluation-space/", "evaluation", "__Secure-evaluation_space_session=evaluation; __Secure-evaluation_space_login=attempt"},
+		{"/evaluation-space/groups/team/", "evaluation", "__Secure-evaluation_space_session=evaluation; __Secure-evaluation_space_login=attempt"},
+		{"/volumes-studio/", "studio", SessionCookie + "=studio"},
+		{"/evaluation-space-other/", "central", "project_login=central"},
+		{"/api/auth/session", "central", "project_login=central"},
+	} {
+		r := httptest.NewRequest("GET", "https://example.com"+route.path, nil)
+		r.Header.Set("Cookie", "project_login=central; "+SessionCookie+"=studio; __Secure-evaluation_space_session=evaluation; __Secure-evaluation_space_login=attempt")
+		r.Header.Set("X-Evaluation-Subject", "forged")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != 200 || w.Header().Get("X-Upstream") != route.upstream || w.Header().Get("X-Cookies") != route.cookies {
+			t.Fatal(route.path, w.Code, w.Header())
+		}
+	}
+	if w := request(h, "/evaluation-space?group=one"); w.Code != 308 || w.Header().Get("Location") != "/evaluation-space/?group=one" {
+		t.Fatal("prefix redirect", w.Code, w.Header())
+	}
+	for _, cookie := range []string{
+		"__Secure-evaluation_space_session=one; Path=/evaluation-space/; Secure; HttpOnly; SameSite=Lax",
+		"__Secure-evaluation_space_session=one; Path=/; Secure; HttpOnly; SameSite=Lax",
+		SessionCookie + "=one; Path=/volumes-studio/; Secure; HttpOnly; SameSite=Lax",
+		"project_login=one; Path=/; Secure; HttpOnly; SameSite=Lax",
+	} {
+		r := httptest.NewRequest("GET", "https://example.com/evaluation-space/", nil)
+		query := r.URL.Query()
+		query.Set("cookie", cookie)
+		r.URL.RawQuery = query.Encode()
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		want := 502
+		if strings.HasPrefix(cookie, "__Secure-evaluation_space_session") && strings.Contains(cookie, "Path=/evaluation-space/") {
+			want = 200
+		}
+		if w.Code != want {
+			t.Fatal("cross-application cookie accepted", cookie, w.Code)
+		}
+	}
+	r := httptest.NewRequest("GET", "https://example.com/evaluation-space/", nil)
+	r.Header.Set("Cookie", "__Secure-evaluation_space_session=a; __Secure-evaluation_space_session=b")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 400 {
+		t.Fatal("duplicate evaluation cookie", w.Code)
+	}
+	evaluation.Close()
+	if request(h, "/evaluation-space/").Code != 502 || request(h, "/api/auth/session").Code != 200 || request(h, "/volumes-studio/").Code != 200 {
+		t.Fatal("evaluation outage crossed application boundary")
+	}
+	config.EvaluationSpace = ""
+	h, err = New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request(h, "/evaluation-space/").Code != 503 {
+		t.Fatal("unconfigured evaluation route escaped to central")
+	}
+}

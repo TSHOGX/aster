@@ -37,6 +37,12 @@ jobs:
           go-version-file: evaluation-space/backend/go.mod
           cache-dependency-path: evaluation-space/backend/go.sum
       - run: scripts/check.sh evaluation-space
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - run: npm ci
+        working-directory: evaluation-space/frontend
+      - run: scripts/check.sh evaluation-frontend
 
   studio:
     runs-on: ubuntu-24.04
@@ -95,6 +101,9 @@ jobs:
         working-directory: volumes-studio/frontend
       - run: npm --prefix volumes-studio/frontend run build
       - run: scripts/check.sh studio-browser
+      - run: npm ci --prefix evaluation-space/frontend
+      - run: npm --prefix evaluation-space/frontend run build
+      - run: scripts/check.sh evaluation-browser
       - name: Core race checks (main and explicit qualification)
         if: github.event_name != 'pull_request'
         run: scripts/check.sh race

@@ -265,6 +265,17 @@ Frontend credentials and cookies are stripped before proxying. Application sessi
 persist in Evaluation Space's state database; Studio owns a separate session store
 and cookie path. Central identity outages reject session authorization immediately.
 
+Build the frontend with `npm ci --prefix evaluation-space/frontend` followed by
+`npm --prefix evaluation-space/frontend run build`. Supervise it independently with
+`npm --prefix evaluation-space/frontend run start -- --hostname 127.0.0.1 --port 3003`
+and set the browser gateway's `--frontend http://127.0.0.1:3003`. The frontend uses
+`/evaluation-space` as its fixed base path. Add
+`-evaluation-space http://127.0.0.1:18485` to the shared `front-door` command.
+An unconfigured Evaluation Space route returns unavailable rather than falling
+through to the central application. Browser cookies remain confined to their
+application path; an Evaluation Space outage leaves the other application routes
+available.
+
 ### Provision Evaluation Space catalog revisions
 
 Stop Evaluation Space before offline catalog publication. Build the provisioning
