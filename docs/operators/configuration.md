@@ -286,6 +286,10 @@ compare-and-swap controls and retain `run.start` authority. Evaluation reports u
 `/evaluation-space/groups/{group}/evaluations/{job}` and expose the frozen subject,
 observed metrics, coverage and outcome; dataset bytes and evaluator credentials
 remain private. A report can be canceled while it is queued or running.
+Completed, failed and canceled runs expose an explicit retry operation that creates
+a new queued run from the retained pins and records `retry_of`; it never rewrites
+the source run or accepts caller-supplied replacement inputs. The operation is
+group-scoped and request-replay safe.
 Configuration managers can edit evaluator profiles from the Evaluation Space group
 page. The editor pins the dataset artifact, scorer, runtime, model, tools, metric
 thresholds and minimum sample/coverage requirements; publishing creates the next

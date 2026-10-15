@@ -22,6 +22,16 @@ type RunAdmission struct {
 	Pins         evolution.RunPins `json:"pins"`
 }
 
+// RunRetry requests a new execution derived from a terminal run. The server
+// copies the retained pins and budget; callers cannot submit a replacement
+// graph or input set through this control.
+type RunRetry struct {
+	GroupID     string `json:"group_id,omitempty"`
+	RequestID   string `json:"request_id"`
+	SourceRunID string `json:"source_run_id"`
+	NewRunID    string `json:"new_run_id"`
+}
+
 var ErrBindingBusy = errors.New("binding_has_active_run")
 
 // AdmitRun persists an already-authorized admission. The future admission service
@@ -109,6 +119,100 @@ func (s *Store) AdmitRun(ctx context.Context, input RunAdmission) (evolution.Run
 	}
 	_, err = tx.ExecContext(ctx, "INSERT INTO runs(id,group_id,binding_id,configuration_revision,occurrence_id,request,body,state) VALUES(?,?,?,?,?,?,?,?)", result.ID, result.GroupID, result.BindingID, input.Pins.ConfigurationRevision, input.OccurrenceID, request, body, result.State)
 	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit()
+}
+
+// RetryRun creates one fresh queued run from a completed, failed or cancelled
+// run. The original run and every pinned identity remain immutable. Request
+// receipts make a lost response replay the same new run.
+func (s *Store) RetryRun(ctx context.Context, input RunRetry) (evolution.Run, error) {
+	var result evolution.Run
+	for _, id := range []string{input.RequestID, input.SourceRunID, input.NewRunID} {
+		if !manifest.ValidID(id) {
+			return result, fmt.Errorf("invalid run retry identity")
+		}
+	}
+	if input.GroupID != "" && !manifest.ValidID(input.GroupID) {
+		return result, fmt.Errorf("invalid run retry group")
+	}
+	rawRequest, err := json.Marshal(input)
+	if err != nil || len(rawRequest) > evolution.MaxDocumentBytes {
+		return result, fmt.Errorf("invalid run retry request")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
+	var prior, receipt []byte
+	err = tx.QueryRowContext(ctx, "SELECT request,result FROM run_control_receipts WHERE request_id=?", input.RequestID).Scan(&prior, &receipt)
+	if err == nil {
+		if string(prior) != string(rawRequest) {
+			return result, ErrConflict
+		}
+		if err = json.Unmarshal(receipt, &result); err != nil {
+			return result, err
+		}
+		return result, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return result, err
+	}
+	var body []byte
+	var state, group, binding, experiment string
+	var configurationRevision, fence int64
+	var occurrence string
+	if err = tx.QueryRowContext(ctx, "SELECT group_id,binding_id,configuration_revision,occurrence_id,experiment_of,body,state,fence FROM runs WHERE id=?", input.SourceRunID).Scan(&group, &binding, &configurationRevision, &occurrence, &experiment, &body, &state, &fence); err != nil {
+		return result, err
+	}
+	if input.GroupID != "" && input.GroupID != group {
+		return result, ErrConflict
+	}
+	if state != "completed" && state != "failed" && state != "cancelled" {
+		return result, ErrConflict
+	}
+	if input.NewRunID == input.SourceRunID {
+		return result, ErrConflict
+	}
+	var active int
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE group_id=? AND binding_id=? AND experiment_of='' AND state IN ('queued','running','paused','cancelling')", group, binding).Scan(&active); err != nil {
+		return result, err
+	}
+	if active != 0 && experiment == "" {
+		return result, ErrBindingBusy
+	}
+	var exists int
+	err = tx.QueryRowContext(ctx, "SELECT 1 FROM runs WHERE id=?", input.NewRunID).Scan(&exists)
+	if err == nil {
+		return result, ErrConflict
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return result, err
+	}
+	result, err = evolution.Decode[evolution.Run](bytes.NewReader(body))
+	if err != nil {
+		return result, err
+	}
+	result.ID = input.NewRunID
+	result.State = "queued"
+	result.Fence = 0
+	result.RetryOf = input.SourceRunID
+	result.Handoff = "not_ready"
+	result.EvaluationState = evaluationState(result.Pins.Evaluation.Mode)
+	result.CreatedAt = time.Now().UTC()
+	newBody, err := json.Marshal(result)
+	if err != nil {
+		return result, err
+	}
+	retryOccurrence := "retry-" + input.NewRunID
+	if !manifest.ValidID(retryOccurrence) {
+		return result, fmt.Errorf("invalid retry occurrence")
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO runs(id,group_id,binding_id,configuration_revision,occurrence_id,experiment_of,request,body,state) VALUES(?,?,?,?,?,?,?,?,?)", result.ID, group, binding, configurationRevision, retryOccurrence, experiment, rawRequest, newBody, result.State); err != nil {
+		return result, err
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO run_control_receipts(request_id,run_id,request,result) VALUES(?,?,?,?)", input.RequestID, input.SourceRunID, rawRequest, newBody); err != nil {
 		return result, err
 	}
 	return result, tx.Commit()

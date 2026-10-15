@@ -261,6 +261,29 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 		}
 		write(w, 200, result)
 	}
+	retry := func(w http.ResponseWriter, r *http.Request) {
+		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
+		if err := authorize(r, session, "run.start"); err != nil {
+			workflowAuthError(w, err)
+			return
+		}
+		value, err := evolution.Decode[projections.RunRetry](http.MaxBytesReader(w, r.Body, 1<<16))
+		if err != nil || value.SourceRunID != r.PathValue("run") || value.GroupID != "" && value.GroupID != r.PathValue("group") {
+			write(w, 400, map[string]string{"error": "invalid_run_retry"})
+			return
+		}
+		value.GroupID = r.PathValue("group")
+		result, err := store.RetryRun(r.Context(), value)
+		if errors.Is(err, projections.ErrConflict) || errors.Is(err, projections.ErrBindingBusy) {
+			write(w, 409, map[string]string{"error": "run_retry_conflict"})
+			return
+		}
+		if err != nil {
+			write(w, 422, map[string]string{"error": "run_retry_rejected"})
+			return
+		}
+		write(w, 201, result)
+	}
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs", list)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}", read)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/events", events)
@@ -271,6 +294,7 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/experiment-preview", experimentPreview)
 	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/runs/{run}/experiment", experiment)
 	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/runs/{run}/control", control)
+	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/runs/{run}/retry", retry)
 	return func(session appidentity.Session, w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(w, contextWithBrowserSession(r, session))
 	}

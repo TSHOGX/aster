@@ -282,6 +282,11 @@ evaluator metrics and explicit stale or redacted states. Artifact metadata inclu
 identity, digest, size and media kind; bytes still require a separate current grant.
 They never expose dataset bytes or service credentials.
 
+Terminal runs also offer **Retry as new run**. The server copies the source run's
+frozen pins and budget into a fresh queued run with `retry_of` lineage; the source
+run and its evidence remain unchanged. The action requires `run.start`, rejects a
+different group scope, and is safe to replay after a lost response.
+
 ### Edit and activate group optimization
 
 Open **Groups → select a group → Automatic optimization**. A configuration draft
