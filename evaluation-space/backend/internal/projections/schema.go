@@ -34,7 +34,7 @@ func initializeSchema(ctx context.Context, db *sql.DB) error {
 	}
 	defer expectedDB.Close()
 	expectedDB.SetMaxOpenConns(1)
-	if _, err = expectedDB.ExecContext(ctx, schema+evaluationSchema+workflowExecutionSchema); err != nil {
+	if _, err = expectedDB.ExecContext(ctx, schema+evaluationSchema+workflowExecutionSchema+handoffSchema); err != nil {
 		return err
 	}
 	expected, err := schemaDigest(ctx, expectedDB)
@@ -54,7 +54,7 @@ func initializeSchema(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	if count == 0 && version == 0 {
-		if _, err = tx.ExecContext(ctx, schema+evaluationSchema+workflowExecutionSchema); err != nil {
+		if _, err = tx.ExecContext(ctx, schema+evaluationSchema+workflowExecutionSchema+handoffSchema); err != nil {
 			return err
 		}
 		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=1"); err != nil {

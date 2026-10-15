@@ -36,5 +36,18 @@ func (s *Store) Run(ctx context.Context, group, id string) (evolution.Run, error
 	}
 	result.State = state
 	result.Fence = fence
+	handoff, err := s.Handoff(ctx, group, id)
+	if err == nil {
+		result.Handoff = handoff.State
+		result.ResultBranch = handoff.BranchID
+	} else if !errors.Is(err, ErrNotFound) {
+		return evolution.Run{}, err
+	} else {
+		result.ResultBranch = ""
+		result.Handoff = "not_ready"
+		if result.State == "completed" {
+			result.Handoff = "pending"
+		}
+	}
 	return result, nil
 }

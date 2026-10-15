@@ -93,7 +93,7 @@ func (s *Store) AdmitRun(ctx context.Context, input RunAdmission) (evolution.Run
 			budget = binding.Budget
 		}
 	}
-	result = evolution.Run{ID: input.ID, GroupID: input.GroupID, BindingID: input.BindingID, Pins: input.Pins, State: "queued", Handoff: "pending", EvaluationState: input.Pins.Evaluation.Mode, ResultBranch: "run-" + input.ID, Fence: 0, Budget: budget, CreatedAt: time.Now().UTC()}
+	result = evolution.Run{ID: input.ID, GroupID: input.GroupID, BindingID: input.BindingID, Pins: input.Pins, State: "queued", Handoff: "not_ready", EvaluationState: evaluationState(input.Pins.Evaluation.Mode), Fence: 0, Budget: budget, CreatedAt: time.Now().UTC()}
 	body, err = json.Marshal(result)
 	if err != nil {
 		return result, err
@@ -103,4 +103,11 @@ func (s *Store) AdmitRun(ctx context.Context, input RunAdmission) (evolution.Run
 		return result, err
 	}
 	return result, tx.Commit()
+}
+
+func evaluationState(mode string) string {
+	if mode == "disabled" {
+		return "not_requested"
+	}
+	return "pending"
 }
