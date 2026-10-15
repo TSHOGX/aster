@@ -70,4 +70,10 @@ func TestRunLeasesFenceExpiredWorkersAndTerminalReplay(t *testing.T) {
 	if _, err = s.ClaimRun(ctx, "run", "worker-three", time.Minute); err != ErrConflict {
 		t.Fatal("terminal run reclaimed", err)
 	}
+	for _, statement := range []string{"UPDATE runs SET state='queued' WHERE id='run'", "UPDATE runs SET state='running' WHERE id='run'", "UPDATE runs SET state='failed' WHERE id='run'", "UPDATE runs SET fence=0 WHERE id='run'"} {
+		if _, err = s.db.ExecContext(ctx, statement); err == nil {
+			t.Fatal("terminal state/fence mutated", statement)
+		}
+	}
+
 }

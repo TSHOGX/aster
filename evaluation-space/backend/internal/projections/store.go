@@ -75,7 +75,18 @@ CREATE TRIGGER immutable_provider_call BEFORE UPDATE ON provider_calls BEGIN SEL
 CREATE TRIGGER retained_provider_call BEFORE DELETE ON provider_calls BEGIN SELECT RAISE(ABORT,'retain provider request'); END;
 CREATE TABLE provider_outcomes(run_id TEXT NOT NULL,call_id TEXT NOT NULL,body BLOB NOT NULL,PRIMARY KEY(run_id,call_id),FOREIGN KEY(run_id,call_id) REFERENCES provider_calls(run_id,id));
 CREATE TRIGGER immutable_provider_outcome BEFORE UPDATE ON provider_outcomes BEGIN SELECT RAISE(ABORT,'immutable provider outcome'); END;
-CREATE TRIGGER retained_provider_outcome BEFORE DELETE ON provider_outcomes BEGIN SELECT RAISE(ABORT,'retain provider outcome'); END;`
+CREATE TRIGGER retained_provider_outcome BEFORE DELETE ON provider_outcomes BEGIN SELECT RAISE(ABORT,'retain provider outcome'); END;
+CREATE TRIGGER run_state_transition BEFORE UPDATE OF state ON runs
+WHEN OLD.state<>NEW.state AND NOT (
+ (OLD.state='queued' AND NEW.state IN ('running','paused','cancelled','cancelling')) OR
+ (OLD.state='running' AND NEW.state IN ('paused','completed','failed','cancelled','cancelling')) OR
+ (OLD.state='paused' AND NEW.state IN ('queued','cancelled','cancelling')) OR
+ (OLD.state='cancelling' AND NEW.state='cancelled')
+)
+BEGIN SELECT RAISE(ABORT,'invalid run state transition'); END;
+CREATE TRIGGER monotonic_run_fence BEFORE UPDATE OF fence ON runs
+WHEN NEW.fence<OLD.fence
+BEGIN SELECT RAISE(ABORT,'run fence cannot decrease'); END;`
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	if !filepath.IsAbs(path) {
