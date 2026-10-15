@@ -9,7 +9,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"aster/contracts/evolution"
 )
@@ -154,7 +153,8 @@ func TestMapBoundsConcurrencyOrdersOutputsAndCollectsFailures(t *testing.T) {
 			body := add(c, base("body", schema, []evolution.Node{transform("work", schema)}, []evolution.Edge{{From: "$input.value", To: "work.value"}, {From: "work.value", To: "$output.value"}}))
 			node := evolution.Node{ID: "map", Kind: "map", InputPorts: map[string]string{"value": schema}, OutputPorts: map[string]string{"value": schema}, ItemInputs: map[string]string{"value": schema}, ItemOutputs: map[string]string{"value": schema}, Body: &body, MaxItems: 10, Concurrency: 2, FailureMode: mode, MaxAttempts: 1, TimeoutSeconds: 10}
 			ref := add(c, base("map", schema, []evolution.Node{node}, []evolution.Edge{{From: "$input.value", To: "map.value"}, {From: "map.value", To: "$output.value"}}))
-			var active, peak atomic.Int64
+			var active, peak, arrivals atomic.Int64
+			firstPair := make(chan struct{})
 			engine.Runtime = runtimeFunc(func(ctx context.Context, call Call) (Values, error) {
 				n := active.Add(1)
 				defer active.Add(-1)
@@ -163,13 +163,18 @@ func TestMapBoundsConcurrencyOrdersOutputsAndCollectsFailures(t *testing.T) {
 						break
 					}
 				}
-				if mode == "collect_errors" && string(call.Inputs["value"]) == "2" {
-					return nil, Failure{Code: "unsupported_fact"}
+				// Require two calls to overlap explicitly. A short sleep cannot
+				// prove concurrency when the test host schedules one call late.
+				if arrivals.Add(1) == 2 {
+					close(firstPair)
 				}
 				select {
-				case <-time.After(time.Millisecond * 5):
+				case <-firstPair:
 				case <-ctx.Done():
 					return nil, ctx.Err()
+				}
+				if mode == "collect_errors" && string(call.Inputs["value"]) == "2" {
+					return nil, Failure{Code: "unsupported_fact"}
 				}
 				return call.Inputs, nil
 			})
