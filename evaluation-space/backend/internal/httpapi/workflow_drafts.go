@@ -100,3 +100,26 @@ func (a WorkflowDraftAPI) revision(w http.ResponseWriter, r *http.Request) {
 	}
 	write(w, 200, draft)
 }
+
+func (a WorkflowDraftAPI) publish(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(w, r, "publish") {
+		return
+	}
+	value, err := evolution.Decode[struct {
+		Revision int64 `json:"revision"`
+	}](http.MaxBytesReader(w, r.Body, 1<<16))
+	if err != nil || value.Revision < 1 {
+		write(w, 400, map[string]string{"error": "invalid_publish_request"})
+		return
+	}
+	ref, err := a.Store.PublishWorkflowDraft(r.Context(), r.PathValue("workflow"), value.Revision)
+	if errors.Is(err, projections.ErrConflict) {
+		write(w, 409, map[string]string{"error": "draft_conflict"})
+		return
+	}
+	if err != nil {
+		write(w, 422, map[string]string{"error": "publish_rejected"})
+		return
+	}
+	write(w, 201, ref)
+}
