@@ -39,6 +39,12 @@ func TestRunAPIRequiresPrivateAuthorityAndExactControlScope(t *testing.T) {
 		api.ServeHTTP(w, req)
 		return w
 	}
+	if w := call("GET", "/evaluation-space/api/v1/groups/group/runs/run", "https://browser", "", ""); w.Code != 403 {
+		t.Fatal("ambient origin read", w.Code)
+	}
+	if w := call("GET", "/evaluation-space/api/v1/groups/group/runs/run", "", "session=x", ""); w.Code != 403 {
+		t.Fatal("ambient cookie read", w.Code)
+	}
 	if w := call("POST", "/evaluation-space/api/v1/groups/group/runs/run/control", "https://browser", "", `{"run_id":"run","expected_fence":0,"action":"pause","request_id":"pause"}`); w.Code != 403 {
 		t.Fatal(w.Code)
 	}

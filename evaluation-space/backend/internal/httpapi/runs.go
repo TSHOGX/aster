@@ -82,7 +82,7 @@ func (r RunAPI) authorize(w http.ResponseWriter, req *http.Request, action strin
 		write(w, 503, map[string]string{"error": "run_authority_unavailable"})
 		return false
 	}
-	if action == "read" && req.Header.Get("Cookie") != "" {
+	if req.Header.Get("Cookie") != "" || req.Header.Get("Origin") != "" {
 		write(w, 403, map[string]string{"error": "service_identity_required"})
 		return false
 	}
