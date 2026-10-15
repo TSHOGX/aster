@@ -4,6 +4,7 @@ import (
 	"aster/contracts/evolution"
 	"aster/evaluation-space/internal/projections"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -53,7 +54,7 @@ func (a CatalogAPI) list(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := a.Store.CatalogRevisions(r.Context(), projections.CatalogListInput{Kind: r.PathValue("kind"), AfterID: afterID, AfterRevision: afterRevision, Limit: limit})
 	if err != nil {
-		if errors.Is(err, projections.ErrNotFound) {
+		if errors.Is(err, projections.ErrNotFound) || errors.Is(err, sql.ErrNoRows) {
 			write(w, 404, map[string]string{"error": "catalog_not_found"})
 		} else {
 			write(w, 422, map[string]string{"error": "catalog_invalid"})
@@ -84,7 +85,7 @@ func (a CatalogAPI) definition(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := a.Store.CatalogDefinition(r.Context(), r.PathValue("kind"), evolution.Revision{ID: r.PathValue("id"), Revision: rev, Digest: digest})
 	if err != nil {
-		if errors.Is(err, projections.ErrNotFound) {
+		if errors.Is(err, projections.ErrNotFound) || errors.Is(err, sql.ErrNoRows) {
 			write(w, 404, map[string]string{"error": "definition_not_found"})
 		} else {
 			write(w, 409, map[string]string{"error": "definition_identity_conflict"})
