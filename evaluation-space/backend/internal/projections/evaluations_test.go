@@ -58,6 +58,9 @@ func TestEvaluationDispatchSurvivesRestartAndFencesCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if job.PolicyMode != "required" {
+		t.Fatalf("policy mode not frozen: %q", job.PolicyMode)
+	}
 	same, err := store.AdmitEvaluation(ctx, input)
 	if err != nil || same.CreatedAt != job.CreatedAt {
 		t.Fatal(same, err)
