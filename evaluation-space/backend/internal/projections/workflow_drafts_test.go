@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -88,5 +89,27 @@ func TestWorkflowLayoutRevisionDoesNotChangeExecutableContent(t *testing.T) {
 	body, _ := workflow.Canonical()
 	if ref.Digest != evolution.Digest(body) {
 		t.Fatal("layout changed executable digest")
+	}
+}
+
+func TestWorkflowLayoutStrictBoundedObject(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "space.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	raw, err := os.ReadFile("../../../../contracts/evolution/testdata/skills.valid.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow, err := evolution.DecodeWorkflow(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, layout := range []json.RawMessage{json.RawMessage(`[]`), json.RawMessage(`{"x":1,"x":2}`), json.RawMessage(strings.Repeat("x", evolution.MaxDocumentBytes))} {
+		if _, err = s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, Layout: layout, Workflow: workflow}); err == nil {
+			t.Fatal("invalid layout accepted")
+		}
 	}
 }
