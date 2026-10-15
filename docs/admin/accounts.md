@@ -68,12 +68,29 @@ workspace, terminal or host-file access. See [Security](../reference/security.md
 
 ## Group configuration drafts
 
+Open **Groups → select a group → Evolution permissions** to manage scoped
+configuration, run-start and source-evidence permissions. Search for an account,
+inspect its explicit grants and effective access, then choose **Allow** or **Deny**.
+Review the exact account/capability change before applying it. Ordinary accounts
+also need current group membership. Explicit denial applies to administrators;
+evidence access always requires explicit allow. Studio author/review/publish and
+workflow-editor permissions are separate.
+
+**Refresh permissions** reloads current grants. If another administrator changes a
+grant, refresh and review a new change. After a lost response or reload, use
+**Check original request** to recover the same command. Revocation affects current
+access immediately and does not erase already exported copies. Grant management
+requires platform administration and remains available to repair a group-level
+configuration denial.
+
 Group configuration drafts are available through the authenticated API. An
 administrator can assign `config.read` and `config.manage` separately with
 `PUT /api/admin/groups/{group}/optimization/grants`. Supply `request_id`,
 `account_id`, `action`, `effect` (`allow` or `deny`), and `expected_revision`
 (zero for a new grant). Ordinary accounts also need current membership in that
-group. An explicit deny takes precedence, including for administrators.
+group. An explicit deny takes precedence, including for administrators. Inspect
+`GET /api/admin/groups/{group}/optimization/grants/{account}` for saved revisions
+and current effective decisions before updating a grant.
 
 Use `GET /api/admin/groups/{group}/optimization/draft` to read the latest draft
 and `PUT` at the same path to save it. Saving requires `request_id`,

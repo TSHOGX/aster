@@ -122,5 +122,20 @@ test("published catalog drives recoverable draft and two-participant activation"
   await expect(page.getByRole("alert").filter({ hasText: tr("Enter a valid JSON object.") })).toBeVisible();
   expect(requests).toHaveLength(beforeInvalid);
   await page.getByRole("button", { name: tr("Use latest saved draft"), exact: true }).click();
+  // Platform administrators can inspect and change scoped capabilities without
+  // turning the target account into an administrator.
+  const permissions = await (await page.request.get("/api/admin/groups/standard-users/optimization/permissions")).json();
+  await page.goto("/admin/groups/standard-users/evolution-permissions");
+  await chooseValue(page.getByRole("combobox", { name: tr("Account permissions"), exact: true }), permissions.account_id);
+  const evidence = page.getByRole("row").filter({ hasText: tr("Read source evidence") });
+  await evidence.getByRole("button", { name: tr("Deny"), exact: true }).click();
+  await page.getByRole("button", { name: tr("Apply reviewed permission"), exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: tr("Permission change confirmed.") })).toBeVisible();
+  await expect.poll(async () => (await (await page.request.get("/api/admin/groups/standard-users/optimization/permissions")).json()).can_read_evidence).toBe(false);
+  await evidence.getByRole("button", { name: tr("Allow"), exact: true }).click();
+  await page.getByRole("button", { name: tr("Apply reviewed permission"), exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: tr("Permission change confirmed.") })).toBeVisible();
+  await expect.poll(async () => (await (await page.request.get("/api/admin/groups/standard-users/optimization/permissions")).json()).can_read_evidence).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   await writeFile(process.env.ADMIN_EVOLUTION_RESULT!, JSON.stringify(state));
 });

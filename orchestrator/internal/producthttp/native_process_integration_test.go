@@ -584,7 +584,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 				t.Fatal("browser did not queue exact preview", preview)
 			}
 		} else {
-			_, err = store.SetEvolutionGroupGrant(ctx, token, configuration.GroupID, product.EvolutionGroupGrantInput{RequestID: "backfill-source-read", AccountID: admin.ID, Action: "source.read", Effect: "allow"})
+			permissions, err := store.EvolutionPermissions(ctx, token, configuration.GroupID)
+			must(t, err)
+			_, err = store.SetEvolutionGroupGrant(ctx, token, configuration.GroupID, product.EvolutionGroupGrantInput{RequestID: "backfill-source-read", AccountID: admin.ID, Action: "source.read", Effect: "allow", ExpectedRevision: permissions.EvidenceGrantRevision})
 			must(t, err)
 			budgets := map[string]evolution.Budget{}
 			for _, b := range configuration.Bindings {
