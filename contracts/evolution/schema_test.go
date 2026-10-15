@@ -32,6 +32,8 @@ func TestPublishedSchemaMatchesContracts(t *testing.T) {
 	checkSchema[Attempt](t, "attempt-v1")
 	checkSchema[Event](t, "event-v1")
 	checkSchema[Patch](t, "patch-v1")
+	checkSchema[RunResultScope](t, "run-result-scope-v1")
+	checkSchema[RunResultReceipt](t, "run-result-receipt-v1")
 	checkSchema[Branch](t, "branch-v1")
 	checkSchema[MergeRequest](t, "merge-request-v1")
 	checkSchema[Review](t, "review-v1")

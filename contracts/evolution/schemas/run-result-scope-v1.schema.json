@@ -1,0 +1,90 @@
+{
+  "$defs": {
+    "ContentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "commit_id": {
+          "type": "string"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "tree_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "library_id",
+        "commit_id",
+        "profile",
+        "tree_digest"
+      ],
+      "type": "object"
+    },
+    "OutputBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "library_id": {
+          "type": "string"
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "reservation_generation": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "library_id",
+        "prefix",
+        "profile",
+        "reservation_generation"
+      ],
+      "type": "object"
+    },
+    "RunResultScope": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "$ref": "#/$defs/ContentRef"
+        },
+        "binding_id": {
+          "type": "string"
+        },
+        "fence": {
+          "type": "integer"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "output": {
+          "$ref": "#/$defs/OutputBinding"
+        },
+        "patch_digest": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "group_id",
+        "run_id",
+        "binding_id",
+        "fence",
+        "base",
+        "output",
+        "patch_digest"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/RunResultScope",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

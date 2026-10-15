@@ -204,3 +204,15 @@ CREATE TRIGGER immutable_evaluation_request BEFORE UPDATE OF id,library_id,prepa
 CREATE TRIGGER immutable_evaluation_request_grant BEFORE UPDATE OF grant ON evaluation_requests WHEN OLD.grant IS NOT NULL BEGIN SELECT RAISE(ABORT,'immutable evaluation grant'); END;
 CREATE TRIGGER immutable_evaluation_request_result BEFORE UPDATE ON evaluation_requests WHEN OLD.result IS NOT NULL BEGIN SELECT RAISE(ABORT,'immutable evaluation evidence'); END;
 CREATE TRIGGER retained_evaluation_request BEFORE DELETE ON evaluation_requests BEGIN SELECT RAISE(ABORT,'retain evaluation lineage'); END;
+
+CREATE TABLE run_results(
+ group_id TEXT NOT NULL,run_id TEXT NOT NULL,library_id TEXT NOT NULL REFERENCES libraries(id),
+ scope BLOB NOT NULL,patch BLOB NOT NULL,patch_digest TEXT NOT NULL,
+ branch_id TEXT REFERENCES branches(id),commit_id TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN('prepared','submitted','no_change')),
+ created_at INTEGER NOT NULL,PRIMARY KEY(group_id,run_id)
+);
+CREATE UNIQUE INDEX run_result_branch ON run_results(branch_id) WHERE branch_id IS NOT NULL;
+CREATE TRIGGER immutable_run_result BEFORE UPDATE OF group_id,run_id,library_id,scope,patch,patch_digest,branch_id,commit_id,created_at ON run_results BEGIN SELECT RAISE(ABORT,'immutable run result'); END;
+CREATE TRIGGER terminal_run_result BEFORE UPDATE ON run_results WHEN OLD.state<>'prepared' BEGIN SELECT RAISE(ABORT,'terminal run result'); END;
+CREATE TRIGGER retained_run_result BEFORE DELETE ON run_results BEGIN SELECT RAISE(ABORT,'retain run result lineage'); END;

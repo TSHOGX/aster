@@ -50,6 +50,8 @@ func (a Actor) valid() bool {
 }
 
 type Config struct {
+	RunResults       RunResultAuthority
+	RunArtifacts     RunResultArtifacts
 	Evaluator        Evaluator
 	Authority        evolution.Authority
 	SeedSharedAssets bool
@@ -130,6 +132,9 @@ func Open(ctx context.Context, c Config) (*Store, error) {
 		return fail(err)
 	}
 	if err = s.reconcileUploads(ctx); err != nil {
+		return fail(err)
+	}
+	if err = s.reconcileRunResults(ctx); err != nil {
 		return fail(err)
 	}
 	if err = s.reconcileBranches(ctx); err != nil {

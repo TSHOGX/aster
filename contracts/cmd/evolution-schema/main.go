@@ -35,6 +35,8 @@ func main() {
 	write[evolution.Attempt](directory, "attempt-v1")
 	write[evolution.Event](directory, "event-v1")
 	write[evolution.Patch](directory, "patch-v1")
+	write[evolution.RunResultScope](directory, "run-result-scope-v1")
+	write[evolution.RunResultReceipt](directory, "run-result-receipt-v1")
 	write[evolution.Branch](directory, "branch-v1")
 	write[evolution.MergeRequest](directory, "merge-request-v1")
 	write[evolution.Review](directory, "review-v1")
