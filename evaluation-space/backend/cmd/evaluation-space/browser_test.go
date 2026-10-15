@@ -20,6 +20,7 @@ import (
 func TestBrowserGatewayPersistsSessionsAndSeparatesPrivateRoutes(t *testing.T) {
 	ctx := context.Background()
 	var centralState atomic.Int32
+	var groupState atomic.Int32
 	challenge := ""
 	central := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, password, ok := r.BasicAuth()
@@ -39,6 +40,28 @@ func TestBrowserGatewayPersistsSessionsAndSeparatesPrivateRoutes(t *testing.T) {
 		}
 		if centralState.Load() == 2 {
 			w.WriteHeader(403)
+			return
+		}
+		if r.URL.Path == "/api/identity/v1/evaluation-space-access" {
+			var input appidentity.EvaluationAccessRequest
+			if json.NewDecoder(r.Body).Decode(&input) != nil || input.Grant != strings.Repeat("g", 43) || input.Action != "config.read" || !input.ValidScope() {
+				t.Error("invalid scoped authority request")
+				w.WriteHeader(400)
+				return
+			}
+			if groupState.Load() == 1 || input.GroupID == "foreign" {
+				w.WriteHeader(403)
+				return
+			}
+			if groupState.Load() == 2 {
+				w.WriteHeader(503)
+				return
+			}
+			result := appidentity.EvaluationAccess{Subject: "member", ExpiresAt: time.Now().Add(time.Minute), Items: []appidentity.EvaluationGroup{{ID: "group", Name: "Team", State: "unconfigured"}}, NextAfter: "group"}
+			if groupState.Load() == 3 {
+				result.Subject = "other"
+			}
+			_ = json.NewEncoder(w).Encode(result)
 			return
 		}
 		var input map[string]string
@@ -154,6 +177,30 @@ func TestBrowserGatewayPersistsSessionsAndSeparatesPrivateRoutes(t *testing.T) {
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &session) != nil || session.Subject != "member" || session.CSRF == "" {
 		t.Fatal(w.Code, w.Body.String())
 	}
+	for _, endpoint := range []string{"/evaluation-space/api/v1/groups?limit=1", "/evaluation-space/api/v1/groups/group"} {
+		w := call("GET", endpoint, []*http.Cookie{app}, "", "")
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `"id":"group"`) || strings.Contains(w.Body.String(), `"subject"`) || strings.Contains(w.Body.String(), strings.Repeat("g", 43)) {
+			t.Fatal("invalid browser group response", w.Code, w.Body.String())
+		}
+	}
+	for _, query := range []string{"limit=0", "limit=51", "limit=1&limit=2", "subject=other", "grant=forged", "after=%2Fforeign", "search=%ZZ"} {
+		if w := call("GET", "/evaluation-space/api/v1/groups?"+query, []*http.Cookie{app}, "", ""); w.Code != 400 {
+			t.Fatal("invalid query accepted", query, w.Code)
+		}
+	}
+	if w := call("GET", "/evaluation-space/api/v1/groups/foreign", []*http.Cookie{app}, "", ""); w.Code != 403 {
+		t.Fatal("foreign group", w.Code)
+	}
+	for _, check := range []struct {
+		state  int32
+		status int
+	}{{1, 403}, {2, 503}, {3, 403}} {
+		groupState.Store(check.state)
+		if w := call("GET", "/evaluation-space/api/v1/groups/group", []*http.Cookie{app}, "", ""); w.Code != check.status {
+			t.Fatal("stale or substituted group authority", check.state, w.Code)
+		}
+	}
+	groupState.Store(0)
 	for _, path := range []string{"/evaluation-space/api/v1/catalog/service", "/evaluation-space/api/v1/workflows/secret/draft"} {
 		if w := call("GET", path, []*http.Cookie{app}, "", ""); w.Code != 404 {
 			t.Fatal("private handler mounted publicly", path, w.Code)

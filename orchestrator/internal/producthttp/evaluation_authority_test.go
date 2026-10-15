@@ -20,7 +20,7 @@ func TestEvaluationAuthorityPrivateServiceBoundaries(t *testing.T) {
 	secret := strings.Repeat("s", 32)
 	t.Setenv("EVALUATION_AUTH_TEST_SECRET", secret)
 	clients := []identityconfig.Client{}
-	for _, id := range []string{"studio", "evaluation-space", "producer"} {
+	for _, id := range []string{"studio", "evaluation-space"} {
 		callback := "/volumes-studio/auth/callback"
 		if id == "evaluation-space" {
 			callback = "/evaluation-space/auth/callback"

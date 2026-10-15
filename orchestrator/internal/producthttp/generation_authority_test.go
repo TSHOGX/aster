@@ -19,7 +19,7 @@ func TestGenerationAuthorityIsServiceSpecificAndPrivate(t *testing.T) {
 	defer store.Close()
 	secret := strings.Repeat("s", 32)
 	t.Setenv("GENERATION_TEST_SECRET", secret)
-	config := &identityconfig.Config{Issuer: "https://app", Listen: "127.0.0.1:8083", Clients: []identityconfig.Client{{ID: "studio", Callback: "https://app/volumes-studio/auth/callback", SecretEnvs: []string{"GENERATION_TEST_SECRET"}}, {ID: "evaluation-space", Callback: "https://app/evaluation-space/auth/callback", SecretEnvs: []string{"GENERATION_TEST_SECRET"}}, {ID: "producer", Callback: "https://app/volumes-studio/auth/callback", SecretEnvs: []string{"GENERATION_TEST_SECRET"}}}}
+	config := &identityconfig.Config{Issuer: "https://app", Listen: "127.0.0.1:8083", Clients: []identityconfig.Client{{ID: "studio", Callback: "https://app/volumes-studio/auth/callback", SecretEnvs: []string{"GENERATION_TEST_SECRET"}}, {ID: "evaluation-space", Callback: "https://app/evaluation-space/auth/callback", SecretEnvs: []string{"GENERATION_TEST_SECRET"}}}}
 	must(t, config.CheckCredentials())
 	auth := NewAuthentication(store, Config{Identity: config})
 	call := func(handler http.Handler, action, client, password, cookie, origin string) int {

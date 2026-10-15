@@ -255,8 +255,12 @@ HTTPS issuer, and `--frontend` to its frontend origin together. Plain HTTP front
 origins must use a literal loopback address. Keep this listener behind the shared
 TLS front door and route only `/evaluation-space/` browser traffic to it. Never
 route public traffic to the private worker listener. The browser gateway provides
-login, callback, logout and `/evaluation-space/api/v1/session`; other browser APIs
-are currently unavailable. It does not expose the private catalog or worker APIs.
+login, callback, logout, `/evaluation-space/api/v1/session`, and readable groups at
+`/evaluation-space/api/v1/groups` and `/evaluation-space/api/v1/groups/{group}`.
+Group lists filter current grants and membership before pagination. They expose
+configuration revision/status and separate management, execution and evidence
+permissions. Source evidence still requires an explicit grant for administrators.
+It does not expose the private catalog or worker APIs.
 Frontend credentials and cookies are stripped before proxying. Application sessions
 persist in Evaluation Space's state database; Studio owns a separate session store
 and cookie path. Central identity outages reject session authorization immediately.
