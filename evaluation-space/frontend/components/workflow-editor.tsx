@@ -59,17 +59,6 @@ export function WorkflowEditor({ group, workflow }: { group: string; workflow: s
     if (!node) return;
     mutator(node); replaceWorkflow(next);
   }
-  function updatePromptText(value: string) {
-    if (!parsed || !selectedNode) return;
-    const next = structuredClone(parsed) as Workflow;
-    const node = nodeList(next).find(item => String(item.id ?? "") === selected);
-    if (!node) return;
-    const prompt = (node.prompt && typeof node.prompt === "object" ? node.prompt : {}) as JSONMap;
-    prompt.text = value;
-    prompt.digest = "";
-    node.prompt = prompt;
-    replaceWorkflow(next);
-  }
   function selectNode(id: string) {
     setSelected(id);
     const node = nodes.find(item => String(item.id ?? "") === id);
