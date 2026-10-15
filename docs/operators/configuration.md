@@ -465,3 +465,22 @@ Evaluation Space obtains fresh central input-use authority before reading the bo
 then verifies digest/size and seals it under the immutable reference. Changed bytes,
 revoked policies and ungranted references are rejected. The endpoint has the artifact
 store's 64 MiB per-artifact bound and requires native configuration to be enabled.
+
+
+With both central participant connections and identity configured, the central
+service also runs automatic generation dispatch for independent bindings. Declare
+workflow input ports in the active binding and enable its schedule or event trigger.
+The dispatcher reads Studio output bases through the authenticated
+`/volumes-studio/internal/v1/evolution/bases` route, freezes a batch, reserves central
+capacity, transfers locally captured inputs, and submits the exact native assignment.
+A batch resolves each output Volume once. Source snapshots and composed inputs retain
+immutable references; raw exports require the activation author's current explicit
+`source.read` grant. Already provisioned artifact inputs need their exact reuse grant.
+
+Inspect the group's trigger metadata for pending reasons and dispatch errors. On an
+uncertain admission response, the dispatcher reuses the stored run ID and assignment;
+restart does not select a new base or input range. Disabling automation supersedes
+unadmitted assignments and lets admitted work drain under current authority. Do not
+remove pending assignment or authorization records to force a retry. Bindings with
+typed cross-binding dependencies remain pending until their dependency input mapping
+is available.

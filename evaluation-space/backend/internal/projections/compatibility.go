@@ -27,6 +27,9 @@ func validateConfigurationCatalog(ctx context.Context, tx *sql.Tx, config evolut
 		if err != nil {
 			return fmt.Errorf("binding %s workflow: %w", binding.ID, err)
 		}
+		if err = binding.ValidateInputPorts(workflow); err != nil {
+			return err
+		}
 		definition, err := readDefinition(ctx, tx, "template", binding.Template)
 		if err != nil {
 			return fmt.Errorf("binding %s template: %w", binding.ID, err)

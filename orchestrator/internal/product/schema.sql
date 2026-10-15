@@ -2125,6 +2125,7 @@ CREATE TABLE evolution_trigger_occurrences (
  first_at TEXT NOT NULL,
  latest_at TEXT NOT NULL,
  ranges BLOB NOT NULL CHECK(json_valid(ranges)),
+ last_error TEXT NOT NULL DEFAULT '',
  run_id TEXT NOT NULL DEFAULT '',
  UNIQUE(group_id,binding_id,configuration_revision,id)
 );
@@ -2135,3 +2136,24 @@ BEGIN SELECT RAISE(ABORT,'immutable trigger occurrence'); END;
 CREATE INDEX execution_corpus_prompt ON execution_runs(prompt_id,id);
 CREATE INDEX corpus_snapshot_source_frontier ON corpus_snapshots(group_id,source_id,source_revision,sealed_through);
 CREATE INDEX evolution_occurrence_group ON evolution_trigger_occurrences(group_id);
+
+CREATE TABLE generation_dispatches (
+ run_id TEXT PRIMARY KEY,
+ batch_id TEXT NOT NULL,
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ binding_id TEXT NOT NULL,
+ occurrence_id TEXT NOT NULL UNIQUE REFERENCES evolution_trigger_occurrences(id),
+ assignment BLOB NOT NULL CHECK(json_valid(assignment)),
+ state TEXT NOT NULL CHECK(state IN ('pending','dispatched','superseded')),
+ last_error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL
+);
+CREATE INDEX generation_dispatch_group ON generation_dispatches(group_id,binding_id,state);
+CREATE TRIGGER immutable_generation_dispatch BEFORE UPDATE OF run_id,batch_id,group_id,binding_id,occurrence_id,assignment,created_at ON generation_dispatches
+BEGIN SELECT RAISE(ABORT,'immutable dispatch assignment'); END;
+CREATE TABLE generation_input_payloads (
+ artifact_id TEXT PRIMARY KEY,
+ body BLOB NOT NULL
+);
+CREATE TRIGGER immutable_generation_payload BEFORE UPDATE ON generation_input_payloads
+BEGIN SELECT RAISE(ABORT,'immutable generation input'); END;

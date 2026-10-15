@@ -12,11 +12,12 @@ import (
 )
 
 type CorpusSnapshotInput struct {
-	RequestID      string `json:"request_id"`
-	SourceID       string `json:"source_id"`
-	SourceRevision int64  `json:"source_revision"`
-	AfterSequence  int64  `json:"after_sequence"`
-	Limit          int    `json:"limit"`
+	RequestID       string `json:"request_id"`
+	SourceID        string `json:"source_id"`
+	SourceRevision  int64  `json:"source_revision"`
+	AfterSequence   int64  `json:"after_sequence"`
+	ThroughSequence int64  `json:"through_sequence,omitempty"`
+	Limit           int    `json:"limit"`
 }
 type CorpusMember struct {
 	EpisodeID string `json:"episode_id"`
@@ -52,7 +53,7 @@ func (s *Store) SealCorpusSnapshot(ctx context.Context, token, group string, inp
 
 func (s *Store) sealCorpusSnapshot(ctx context.Context, tx *sql.Tx, actor Account, group string, input CorpusSnapshotInput) (CorpusSnapshot, error) {
 	var result CorpusSnapshot
-	if !validID(group) || !validID(input.SourceID) || input.SourceRevision < 1 || input.AfterSequence < 0 || input.Limit < 1 || input.Limit > 100 {
+	if !validID(group) || !validID(input.SourceID) || input.SourceRevision < 1 || input.AfterSequence < 0 || input.ThroughSequence < 0 || input.ThroughSequence > 0 && input.ThroughSequence <= input.AfterSequence || input.Limit < 1 || input.Limit > 100 {
 		return result, ErrInvalid
 	}
 	request, err := mutationRequest(input.RequestID, "corpus.seal", group, input)
@@ -77,7 +78,13 @@ func (s *Store) sealCorpusSnapshot(ctx context.Context, tx *sql.Tx, actor Accoun
 		if replay {
 			return json.Unmarshal(prior, &result)
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT e.episode_id,e.revision,e.rowid,e.digest,e.body FROM corpus_episodes e WHERE e.group_id=? AND e.source_id=? AND e.source_revision=? AND e.rowid>? AND NOT EXISTS(SELECT 1 FROM corpus_episodes newer WHERE newer.group_id=e.group_id AND newer.source_id=e.source_id AND newer.episode_id=e.episode_id AND newer.revision>e.revision) ORDER BY e.rowid LIMIT ?`, group, input.SourceID, input.SourceRevision, input.AfterSequence, input.Limit)
+		through := input.ThroughSequence
+		if through == 0 {
+			if err = tx.QueryRowContext(ctx, "SELECT coalesce(max(rowid),0) FROM corpus_episodes").Scan(&through); err != nil {
+				return err
+			}
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT e.episode_id,e.revision,e.rowid,e.digest,e.body FROM corpus_episodes e WHERE e.group_id=? AND e.source_id=? AND e.source_revision=? AND e.rowid>? AND e.rowid<=? AND NOT EXISTS(SELECT 1 FROM corpus_episodes newer WHERE newer.group_id=e.group_id AND newer.source_id=e.source_id AND newer.episode_id=e.episode_id AND newer.revision>e.revision AND newer.rowid<=?) ORDER BY e.rowid LIMIT ?`, group, input.SourceID, input.SourceRevision, input.AfterSequence, through, through, input.Limit)
 		if err != nil {
 			return err
 		}

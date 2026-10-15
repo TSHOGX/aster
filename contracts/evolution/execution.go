@@ -16,8 +16,6 @@ type RunPins struct {
 	Template              Revision               `json:"template"`
 	Workflow              Revision               `json:"workflow"`
 	Service               Revision               `json:"service"`
-	Model                 Revision               `json:"model"`
-	Tools                 []Revision             `json:"tools"`
 	Inputs                []ArtifactRef          `json:"inputs"`
 	Base                  ContentRef             `json:"base"`
 	Output                OutputBinding          `json:"output"`

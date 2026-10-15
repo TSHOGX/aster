@@ -217,21 +217,29 @@ type SourceBinding struct {
 	Exclusions            []string `json:"exclusions"`
 	CaptureFrontier       string   `json:"capture_frontier"`
 }
+
+// BindingInput maps a workflow port either to a corpus assembled from explicit
+// source deltas or to one already sealed, centrally granted artifact.
+type BindingInput struct {
+	Sources  []string     `json:"sources,omitempty"`
+	Artifact *ArtifactRef `json:"artifact,omitempty"`
+}
 type Binding struct {
-	ID         string           `json:"id"`
-	Enabled    bool             `json:"enabled"`
-	Template   Revision         `json:"template"`
-	Workflow   Revision         `json:"workflow"`
-	Service    Revision         `json:"service"`
-	Parameters json.RawMessage  `json:"parameters"`
-	SourceIDs  []string         `json:"source_ids"`
-	Output     OutputBinding    `json:"output"`
-	Evaluation EvaluationPolicy `json:"evaluation"`
-	Budget     Budget           `json:"budget"`
-	Trigger    string           `json:"trigger"`
-	Schedule   string           `json:"schedule,omitempty"`
-	Timezone   string           `json:"timezone,omitempty"`
-	DependsOn  []string         `json:"depends_on"`
+	Inputs     map[string]BindingInput `json:"inputs,omitempty"`
+	ID         string                  `json:"id"`
+	Enabled    bool                    `json:"enabled"`
+	Template   Revision                `json:"template"`
+	Workflow   Revision                `json:"workflow"`
+	Service    Revision                `json:"service"`
+	Parameters json.RawMessage         `json:"parameters"`
+	SourceIDs  []string                `json:"source_ids"`
+	Output     OutputBinding           `json:"output"`
+	Evaluation EvaluationPolicy        `json:"evaluation"`
+	Budget     Budget                  `json:"budget"`
+	Trigger    string                  `json:"trigger"`
+	Schedule   string                  `json:"schedule,omitempty"`
+	Timezone   string                  `json:"timezone,omitempty"`
+	DependsOn  []string                `json:"depends_on"`
 }
 type Configuration struct {
 	GroupID     string          `json:"group_id"`

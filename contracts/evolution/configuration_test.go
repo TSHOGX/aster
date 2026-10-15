@@ -67,6 +67,7 @@ func TestScheduleRequiresExplicitTimezone(t *testing.T) {
 	for _, zone := range []string{"UTC", "Asia/Shanghai", "America/New_York"} {
 		c := configFixture()
 		c.Bindings[0].Trigger = "schedule"
+		c.Bindings[0].Inputs = map[string]BindingInput{"corpus": {Artifact: &ArtifactRef{ID: "corpus", GroupID: c.GroupID, SchemaDigest: Digest(nil), Digest: Digest(nil), Size: 0, MediaType: "application/json", GrantID: "grant", PolicyRevision: 1}}}
 		c.Bindings[0].Schedule = "0 9 * * *"
 		c.Bindings[0].Timezone = zone
 		if err := c.Validate(); err != nil {
@@ -76,6 +77,7 @@ func TestScheduleRequiresExplicitTimezone(t *testing.T) {
 	for _, zone := range []string{"", "Local", "invalid/zone", "UTC TZ=other"} {
 		c := configFixture()
 		c.Bindings[0].Trigger = "schedule"
+		c.Bindings[0].Inputs = map[string]BindingInput{"corpus": {Artifact: &ArtifactRef{ID: "corpus", GroupID: c.GroupID, SchemaDigest: Digest(nil), Digest: Digest(nil), Size: 0, MediaType: "application/json", GrantID: "grant", PolicyRevision: 1}}}
 		c.Bindings[0].Schedule = "0 9 * * *"
 		c.Bindings[0].Timezone = zone
 		if err := c.Validate(); err == nil {
@@ -86,5 +88,35 @@ func TestScheduleRequiresExplicitTimezone(t *testing.T) {
 	c.Bindings[0].Timezone = "UTC"
 	if c.Validate() == nil {
 		t.Fatal("timezone accepted for manual trigger")
+	}
+}
+
+func TestAutomaticInputDeclarationsAndWorkflowPortSchemas(t *testing.T) {
+	c := configFixture()
+	c.Sources[0].Kind = "project"
+	b := &c.Bindings[0]
+	b.Trigger = "event"
+	if c.Validate() == nil {
+		t.Fatal("automatic binding lacks explicit ports")
+	}
+	b.Inputs = map[string]BindingInput{"evidence": {Sources: []string{"corpus"}}}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	workflow := Workflow{Inputs: map[string]string{"evidence": Digest(CorpusSchema)}}
+	if err := b.ValidateInputPorts(workflow); err != nil {
+		t.Fatal(err)
+	}
+	workflow.Inputs["evidence"] = Digest([]byte("other schema"))
+	if b.ValidateInputPorts(workflow) == nil {
+		t.Fatal("wrong corpus schema accepted")
+	}
+	b.Inputs["evidence"] = BindingInput{Sources: []string{"corpus", "corpus"}}
+	if c.Validate() == nil {
+		t.Fatal("duplicate source accepted")
+	}
+	b.Inputs["evidence"] = BindingInput{Sources: []string{"unbound"}}
+	if c.Validate() == nil {
+		t.Fatal("unbound source accepted")
 	}
 }

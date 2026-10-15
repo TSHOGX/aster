@@ -170,7 +170,7 @@ func TestCorpusConsumptionAdvancesOnlySuccessfulPinnedBinding(t *testing.T) {
 	must(t, err)
 	must(t, grantFixture(s, ctx, token, "account", scope.Actor, "library", "volume.read", "allow", 0))
 	for _, binding := range config.Bindings {
-		pins := evolution.RunPins{ConfigurationRevision: 1, ConfigurationDigest: pending.DesiredDigest, SourcePolicyRevision: 1, Template: ref, Workflow: ref, Service: ref, Model: ref, Inputs: []evolution.ArtifactRef{snapshot.Artifact}, InputPorts: map[string]evolution.ArtifactRef{"corpus": snapshot.Artifact}, Base: evolution.ContentRef{LibraryID: "library", CommitID: strings.Repeat("a", 64), Profile: "authored-v1", TreeDigest: evolution.Digest([]byte("base"))}, Output: binding.Output, Evaluation: binding.Evaluation}
+		pins := evolution.RunPins{ConfigurationRevision: 1, ConfigurationDigest: pending.DesiredDigest, SourcePolicyRevision: 1, Template: ref, Workflow: ref, Service: ref, Inputs: []evolution.ArtifactRef{snapshot.Artifact}, InputPorts: map[string]evolution.ArtifactRef{"corpus": snapshot.Artifact}, Base: evolution.ContentRef{LibraryID: "library", CommitID: strings.Repeat("a", 64), Profile: "authored-v1", TreeDigest: evolution.Digest([]byte("base"))}, Output: binding.Output, Evaluation: binding.Evaluation}
 		assignment := evolution.GenerationAssignment{RunID: binding.ID, GroupID: "fixture-users", BindingID: binding.ID, OccurrenceID: "manual", Requester: evolution.Principal{Issuer: "https://app", Subject: scope.Actor, Kind: "human"}, Pins: pins, Budget: budget}
 		grant, err := s.AuthorizeGeneration(ctx, assignment)
 		must(t, err)

@@ -22,7 +22,7 @@ func generationFixture(t *testing.T) (*Store, string, evolution.GenerationAssign
 	artifact := evolution.ArtifactRef{ID: "corpus", GroupID: config.GroupID, SchemaDigest: evolution.Digest([]byte("schema")), Digest: evolution.Digest([]byte("bytes")), Size: 5, MediaType: "application/json", GrantID: "source-grant", PolicyRevision: 1}
 	_, err := s.SetGenerationInputGrant(ctx, token, config.GroupID, GenerationInputGrantInput{RequestID: "input", Artifact: artifact, SourceIDs: []string{"source"}, Enabled: true})
 	must(t, err)
-	pins := evolution.RunPins{ConfigurationRevision: 1, ConfigurationDigest: evolution.Digest(configRaw), SourcePolicyRevision: 1, Template: binding.Template, Workflow: binding.Workflow, Service: binding.Service, Model: binding.Service, Inputs: []evolution.ArtifactRef{artifact}, InputPorts: map[string]evolution.ArtifactRef{"corpus": artifact}, Base: evaluation.Prepared.Main, Output: binding.Output, Evaluation: binding.Evaluation}
+	pins := evolution.RunPins{ConfigurationRevision: 1, ConfigurationDigest: evolution.Digest(configRaw), SourcePolicyRevision: 1, Template: binding.Template, Workflow: binding.Workflow, Service: binding.Service, Inputs: []evolution.ArtifactRef{artifact}, InputPorts: map[string]evolution.ArtifactRef{"corpus": artifact}, Base: evaluation.Prepared.Main, Output: binding.Output, Evaluation: binding.Evaluation}
 	return s, token, evolution.GenerationAssignment{RunID: "run", GroupID: config.GroupID, BindingID: binding.ID, OccurrenceID: "manual", Requester: evaluation.Requester, Pins: pins, Budget: binding.Budget}
 }
 func TestGenerationGrantPinsScopeAndMonotonicWinningFence(t *testing.T) {

@@ -12,23 +12,24 @@ import (
 // has its own bounded loop so file recovery and host-only work cannot stall
 // admission, process attachments or lifecycle observations.
 type Workers struct {
-	Evolution      *EvolutionWorker
-	Store          *Store
-	Lifecycle      *Lifecycle
-	Agents         *Agents
-	Terminals      *Terminals
-	Files          *Files
-	Shares         *Shares
-	Captures       *Captures
-	Recovery       *AgentRecovery
-	Retirement     *ChildRetirement
-	Titles         TitleGenerator
-	IdleAfter      time.Duration
-	IdleAgentAfter time.Duration
-	Interval       time.Duration
-	Report         func(string, error)
-	cursor         string
-	displayCursor  string
+	Evolution         *EvolutionWorker
+	EvolutionDispatch *EvolutionDispatcher
+	Store             *Store
+	Lifecycle         *Lifecycle
+	Agents            *Agents
+	Terminals         *Terminals
+	Files             *Files
+	Shares            *Shares
+	Captures          *Captures
+	Recovery          *AgentRecovery
+	Retirement        *ChildRetirement
+	Titles            TitleGenerator
+	IdleAfter         time.Duration
+	IdleAgentAfter    time.Duration
+	Interval          time.Duration
+	Report            func(string, error)
+	cursor            string
+	displayCursor     string
 }
 
 func (w *Workers) report(kind string, err error) {
@@ -70,6 +71,9 @@ func (w *Workers) Run(ctx context.Context) {
 	loop("corpus discovery", time.Second, collector.Step)
 	triggers := &EvolutionTriggerWorker{Store: w.Store}
 	loop("evolution triggers", time.Second, triggers.Step)
+	if w.EvolutionDispatch != nil {
+		loop("evolution dispatch", time.Second, w.EvolutionDispatch.Step)
+	}
 	loop("runtime", interval, w.Step)
 	loop("shared volumes", time.Second, func(ctx context.Context) error {
 		if w.Lifecycle == nil {

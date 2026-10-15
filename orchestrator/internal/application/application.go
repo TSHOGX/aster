@@ -144,6 +144,9 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 		}
 		app.Workers.Evolution.Studio = client
 	}
+	if cfg.Identity != nil && app.Workers.Evolution != nil && app.Workers.Evolution.Evaluation != nil && app.Workers.Evolution.Studio != nil {
+		app.Workers.EvolutionDispatch = &product.EvolutionDispatcher{Store: store, Evaluation: app.Workers.Evolution.Evaluation, Studio: app.Workers.Evolution.Studio, Issuer: cfg.Identity.Issuer}
+	}
 	transportConfig := producthttp.Config{TrustForwardedHost: true, Identity: cfg.Identity}
 	if cfg.HTTPMetrics {
 		transportConfig.ObserveHTTP = func(o producthttp.HTTPObservation) {

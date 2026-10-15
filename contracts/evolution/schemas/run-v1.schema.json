@@ -280,9 +280,6 @@
             "null"
           ]
         },
-        "model": {
-          "$ref": "#/$defs/Revision"
-        },
         "output": {
           "$ref": "#/$defs/OutputBinding"
         },
@@ -295,15 +292,6 @@
         "template": {
           "$ref": "#/$defs/Revision"
         },
-        "tools": {
-          "items": {
-            "$ref": "#/$defs/Revision"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        },
         "workflow": {
           "$ref": "#/$defs/Revision"
         }
@@ -315,8 +303,6 @@
         "template",
         "workflow",
         "service",
-        "model",
-        "tools",
         "inputs",
         "base",
         "output",

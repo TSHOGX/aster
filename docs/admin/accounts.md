@@ -242,7 +242,8 @@ copy provenance remains explicitly unknown.
 
 A late exported capture creates a new immutable episode revision. Seal a bounded
 snapshot with `POST /api/admin/groups/{group}/corpus/snapshots`, supplying `request_id`,
-`source_id`, `source_revision`, `after_sequence` and `limit` (1–100). Sealing chooses
+`source_id`, `source_revision`, `after_sequence` and `limit` (1–100). Optional
+`through_sequence` freezes the upper bound, excluding later revisions. Sealing chooses
 the latest revisions, freezes content and records its exact input-use grant atomically.
 It does not consume any goal's frontier. Download the sealed bytes from
 `GET /api/admin/groups/{group}/corpus/snapshots/{snapshot}/content`; current evidence
@@ -271,10 +272,8 @@ explicit operation using the endpoints above.
 Inspect `GET /api/admin/groups/{group}/corpus/collectors` with `config.read` to see each
 source's activation baseline, processed event cursor, sealed-through sequence and
 latest snapshot ID. A snapshot failure leaves the capture cursor unchanged, and
-restart resumes from durable state. Collection and sealing do not themselves dispatch
-a generation run; submit an authorized native assignment with the selected sealed
-inputs to run it.
-
+restart resumes from durable state. Automatic bindings dispatch through the configured
+Evaluation Space and Studio participant connections.
 
 Automatic binding schedules require an explicit IANA `timezone` and either a
 five-field cron expression or `@every Nm` with 1–10080 minutes. For example,
@@ -287,7 +286,37 @@ coalesce into that occurrence, and newly sealed input updates its selected sourc
 ranges. Event bindings queue when a new snapshot is sealed. Use
 `GET /api/admin/groups/{group}/evolution/triggers?after=0` with `config.read` to inspect
 up to 50 occurrences and their ranges; use the response's `next` cursor for subsequent
-pages. Reload from zero to refresh pending state. These are queue records; automatic
-generation dispatch is not yet available. Disabling automation or activating a new
-configuration supersedes pending occurrences. Re-enabling starts a new schedule and
-input baseline without historical replay.
+pages. Reload from zero to refresh pending state. `pending_reason` explains missing
+input, an exceeded input budget, or a required dependency mapping. `dispatch_state`
+shows whether the frozen assignment is pending, dispatched, or superseded;
+`dispatch_error` distinguishes authority denial, budget waiting, and admission retry.
+Disabling automation or activating a new configuration supersedes work that has not
+been admitted. Already admitted work retains exact retry and drain behavior, subject
+to current source and resource grants. Re-enabling starts a new schedule and input
+baseline without historical replay.
+
+Each automatic binding requires `inputs`, keyed by the published workflow's input-port
+names. Use `{"sources":["source-id"]}` to assemble a bounded corpus delta, or
+`{"artifact":{...}}` for a complete immutable artifact reference already sealed in
+Evaluation Space and granted for generation. A port selects one of these forms.
+Source lists must select the binding's approved Project/session sources. Activation
+checks port names and schemas against the published workflow. For example:
+
+```json
+"inputs": {
+  "corpus": {"sources": ["team-project"]}
+}
+```
+
+Dispatch freezes input references, configuration and output bases before transmission.
+Bindings prepared together share the same base for each output Volume and reuse
+identical sealed inputs. New evidence remains pending while a binding's generation is
+active or its spending is unsettled. Retries preserve the original run and assignment;
+a lost response does not create a replacement run. Node models and tools are pinned
+by the immutable workflow graph, including nested workflows.
+
+Current automatic dispatch supports independent bindings. Bindings with `depends_on`
+remain pending with `dependency_input_required` until typed dependency inputs can be
+resolved. For an input-size limit, reduce the selected sources or raise the binding's
+artifact budget within the group ceiling. Restore revoked permissions before retrying
+an authority-denied assignment; its original pins remain unchanged.

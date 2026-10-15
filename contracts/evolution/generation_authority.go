@@ -7,6 +7,7 @@ import (
 )
 
 type GenerationAssignment struct {
+	BatchID      string    `json:"batch_id,omitempty"`
 	RunID        string    `json:"run_id"`
 	GroupID      string    `json:"group_id"`
 	BindingID    string    `json:"binding_id"`
@@ -18,6 +19,9 @@ type GenerationAssignment struct {
 }
 
 func (a GenerationAssignment) Digest() (string, error) {
+	if a.BatchID != "" && !manifest.ValidID(a.BatchID) {
+		return "", fmt.Errorf("invalid batch identity")
+	}
 	for _, id := range []string{a.RunID, a.GroupID, a.BindingID, a.OccurrenceID, a.Requester.Subject} {
 		if !manifest.ValidID(id) {
 			return "", fmt.Errorf("invalid generation identity")

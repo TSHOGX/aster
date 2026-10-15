@@ -16,7 +16,7 @@ func activateCorpusCollector(t *testing.T, s *Store, token string, source evolut
 	ref := evolution.Revision{ID: "ref", Revision: 1, Digest: evolution.Digest([]byte("ref"))}
 	budget := evolution.Budget{MaxTokens: 100, MaxCostMicros: 100, MaxAttempts: 1, TimeoutSeconds: 60, MaxArtifactBytes: 1 << 20}
 	config := evolution.Configuration{GroupID: "fixture-users", Revision: revision, AutoEnabled: enabled, Sources: []evolution.SourceBinding{source}, Budget: budget,
-		Bindings: []evolution.Binding{{ID: "skills", Enabled: true, Template: ref, Workflow: ref, Service: ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{source.ID}, Output: evolution.OutputBinding{LibraryID: "library", Prefix: "skills", Profile: "authored-v1", ReservationGeneration: 1}, Evaluation: evolution.EvaluationPolicy{Mode: "disabled", ReferenceStrategy: "none"}, Budget: budget, Trigger: "event"}}}
+		Bindings: []evolution.Binding{{ID: "skills", Enabled: true, Template: ref, Workflow: ref, Service: ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{source.ID}, Output: evolution.OutputBinding{LibraryID: "library", Prefix: "skills", Profile: "authored-v1", ReservationGeneration: 1}, Evaluation: evolution.EvaluationPolicy{Mode: "disabled", ReferenceStrategy: "none"}, Budget: budget, Trigger: "event", Inputs: map[string]evolution.BindingInput{"corpus": {Sources: []string{source.ID}}}}}}
 	for _, mutate := range mutations {
 		mutate(&config)
 	}

@@ -10,7 +10,7 @@ func TestRunPinsMatchFrozenConfigurationAndScopedInputs(t *testing.T) {
 	config := configFixture()
 	raw, _ := json.Marshal(config)
 	binding := config.Bindings[0]
-	pins := RunPins{ConfigurationRevision: config.Revision, ConfigurationDigest: Digest(raw), SourcePolicyRevision: 1, Template: binding.Template, Workflow: binding.Workflow, Service: binding.Service, Model: binding.Service, Output: binding.Output, Evaluation: binding.Evaluation, Base: ContentRef{LibraryID: binding.Output.LibraryID, CommitID: strings.Repeat("a", 64), Profile: binding.Output.Profile, TreeDigest: Digest([]byte("tree"))}, Inputs: []ArtifactRef{{ID: "snapshot", GroupID: config.GroupID, SchemaDigest: Digest([]byte("schema")), Digest: Digest([]byte("snapshot")), MediaType: "application/json", GrantID: "grant", PolicyRevision: 1}}}
+	pins := RunPins{ConfigurationRevision: config.Revision, ConfigurationDigest: Digest(raw), SourcePolicyRevision: 1, Template: binding.Template, Workflow: binding.Workflow, Service: binding.Service, Output: binding.Output, Evaluation: binding.Evaluation, Base: ContentRef{LibraryID: binding.Output.LibraryID, CommitID: strings.Repeat("a", 64), Profile: binding.Output.Profile, TreeDigest: Digest([]byte("tree"))}, Inputs: []ArtifactRef{{ID: "snapshot", GroupID: config.GroupID, SchemaDigest: Digest([]byte("schema")), Digest: Digest([]byte("snapshot")), MediaType: "application/json", GrantID: "grant", PolicyRevision: 1}}}
 	if err := pins.ValidateFor(config, binding.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +23,6 @@ func TestRunPinsMatchFrozenConfigurationAndScopedInputs(t *testing.T) {
 		"inputs":        func(p *RunPins) { p.Inputs = nil },
 		"cross-group":   func(p *RunPins) { p.Inputs = append([]ArtifactRef(nil), p.Inputs...); p.Inputs[0].GroupID = "other" },
 		"duplicate":     func(p *RunPins) { p.Inputs = append(p.Inputs, p.Inputs[0]) },
-		"model":         func(p *RunPins) { p.Model.Digest = "" },
 		"unsealed-port": func(p *RunPins) {
 			value := p.Inputs[0]
 			value.Digest = Digest([]byte("other"))

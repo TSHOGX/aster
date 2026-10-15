@@ -176,6 +176,29 @@ func (s *Store) checkGeneration(ctx context.Context, q queryer, input evolution.
 		if err != nil {
 			return config, err
 		}
+		for port, ref := range input.Pins.InputPorts {
+			if ref.ID != artifact.ID {
+				continue
+			}
+			spec, declared := binding.Inputs[port]
+			if !declared || spec.Artifact != nil {
+				continue
+			}
+			if len(sources) == 0 {
+				return config, ErrForbidden
+			}
+			for _, source := range sources {
+				selected := false
+				for _, id := range spec.Sources {
+					if id == source.ID {
+						selected = true
+					}
+				}
+				if !selected {
+					return config, ErrForbidden
+				}
+			}
+		}
 		for _, source := range sources {
 			expected, ok := allowedSources[source.ID]
 			a, _ := json.Marshal(source)

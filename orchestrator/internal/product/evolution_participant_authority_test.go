@@ -47,3 +47,29 @@ func TestEvolutionParticipantUsesSavedActorAndCurrentGrant(t *testing.T) {
 		t.Fatal("evaluation dispatch ignored actor revocation")
 	}
 }
+
+func TestEvolutionBasesRequireCurrentlyActiveAutomaticOperation(t *testing.T) {
+	s, admin := accountStore(t)
+	token := adminTestToken(t, s, admin)
+	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
+	must(t, err)
+	scope := ProjectionScope{StandardUsersGroup, pending.OperationID, 1, pending.DesiredDigest}
+	if _, err = s.EvolutionParticipantActor(ctx, scope, "bases"); err != ErrForbidden {
+		t.Fatal("pending operation read generation bases", err)
+	}
+	for _, participant := range []string{"studio", "evaluation-space"} {
+		must(t, acceptEvolutionFixture(s, ctx, token, pending.OperationID, participant, pending.DesiredDigest))
+	}
+	_, err = s.SettleEvolutionActivation(ctx, token, pending.OperationID)
+	must(t, err)
+	subject, err := s.EvolutionParticipantActor(ctx, scope, "bases")
+	must(t, err)
+	if subject != admin.ID {
+		t.Fatal("caller selected base reader", subject)
+	}
+	_, err = s.DisableEvolution(ctx, token, StandardUsersGroup, DisableEvolutionInput{"disable", 1})
+	must(t, err)
+	if _, err = s.EvolutionParticipantActor(ctx, scope, "bases"); err != ErrForbidden {
+		t.Fatal("disabled operation read generation bases", err)
+	}
+}

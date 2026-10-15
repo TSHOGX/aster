@@ -37,19 +37,7 @@ func (p RunPins) ValidateFor(config Configuration, bindingID string) error {
 	if string(expected) != string(actual) {
 		return fmt.Errorf("run evaluation pins differ from configuration")
 	}
-	if err = p.Model.Validate(); err != nil {
-		return err
-	}
-	tools := map[Revision]bool{}
-	for _, tool := range p.Tools {
-		if err = tool.Validate(); err != nil {
-			return err
-		}
-		if tools[tool] {
-			return fmt.Errorf("duplicate run tool revision")
-		}
-		tools[tool] = true
-	}
+	// Model and tool references belong to the immutable typed workflow closure.
 	if p.SourcePolicyRevision < 1 || len(p.Inputs) == 0 {
 		return fmt.Errorf("run requires source policy and sealed inputs")
 	}
@@ -62,6 +50,17 @@ func (p RunPins) ValidateFor(config Configuration, bindingID string) error {
 			return fmt.Errorf("invalid run input group or duplicate artifact")
 		}
 		inputs[input.ID] = true
+	}
+	if len(selected.Inputs) > 0 {
+		if len(selected.Inputs) != len(p.InputPorts) {
+			return fmt.Errorf("run input ports differ from binding")
+		}
+		for name, spec := range selected.Inputs {
+			ref, ok := p.InputPorts[name]
+			if !ok || spec.Artifact != nil && ref != *spec.Artifact || spec.Artifact == nil && ref.SchemaDigest != Digest(CorpusSchema) {
+				return fmt.Errorf("run input differs from binding")
+			}
+		}
 	}
 	for name, artifact := range p.InputPorts {
 		if !manifest.ValidID(name) {

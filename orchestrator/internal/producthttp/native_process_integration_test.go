@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -27,8 +28,30 @@ import (
 	"harness-platform/orchestrator/internal/studioclient"
 )
 
+var errLostNativeAdmission = errors.New("lost native admission reply")
+
+type lostNativeAdmission struct {
+	client *evaluationclient.Client
+	calls  int
+}
+
+func (l *lostNativeAdmission) SealGenerationInput(ctx context.Context, ref evolution.ArtifactRef, raw []byte) error {
+	return l.client.SealGenerationInput(ctx, ref, raw)
+}
+func (l *lostNativeAdmission) AdmitGeneration(ctx context.Context, a evolution.GenerationAssignment) (evolution.Run, error) {
+	result, err := l.client.AdmitGeneration(ctx, a)
+	if err != nil {
+		return result, err
+	}
+	l.calls++
+	if l.calls == 1 {
+		return evolution.Run{}, errLostNativeAdmission
+	}
+	return result, nil
+}
+
 func TestNativeGenerationRealProcesses(t *testing.T) {
-	for _, mode := range []string{"success", "sibling-failure", "lost-model-reply"} {
+	for _, mode := range []string{"success", "sibling-failure", "lost-model-reply", "automatic"} {
 		t.Run(mode, func(t *testing.T) { nativeGenerationProcesses(t, mode) })
 	}
 }
@@ -281,6 +304,15 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	for _, pkg := range packages {
 		configuration.Bindings = append(configuration.Bindings, evolution.Binding{ID: pkg.Template.Ref.ID, Enabled: true, Template: pkg.Template.Ref, Workflow: pkg.Template.Workflows[0], Service: service.Ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: pkg.Template.SuggestedPrefix, Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: pkg.Template.Evaluation, Budget: budget, Trigger: "manual"})
 	}
+	if mode == "automatic" {
+		configuration.AutoEnabled = true
+		for i := range configuration.Bindings {
+			configuration.Bindings[i].Trigger = "schedule"
+			configuration.Bindings[i].Schedule = "@every 1m"
+			configuration.Bindings[i].Timezone = "Asia/Shanghai"
+			configuration.Bindings[i].Inputs = map[string]evolution.BindingInput{"corpus": {Artifact: &artifact}}
+		}
+	}
 	pending, err := store.ActivateEvolutionConfig(ctx, token, configuration.GroupID, product.EvolutionActivationInput{RequestID: "activate", Configuration: configuration})
 	must(t, err)
 	evalClient, err := evaluationclient.New(spaceOrigin, secret)
@@ -388,13 +420,47 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		must(t, err)
 		return response.StatusCode, raw
 	}
-	for _, binding := range configuration.Bindings {
-		pins := evolution.RunPins{ConfigurationRevision: 1, ConfigurationDigest: pending.DesiredDigest, SourcePolicyRevision: 1, Template: binding.Template, Workflow: binding.Workflow, Service: binding.Service, Model: modelRef, InputPorts: map[string]evolution.ArtifactRef{"corpus": artifact}, Inputs: []evolution.ArtifactRef{artifact}, Base: main, Output: binding.Output, Evaluation: binding.Evaluation}
-		assignment := evolution.GenerationAssignment{RunID: binding.ID, GroupID: configuration.GroupID, BindingID: binding.ID, OccurrenceID: "manual", Requester: evolution.Principal{Issuer: issuer, Subject: admin.ID, Kind: "human"}, Pins: pins, Budget: budget}
-		status, raw := privateCall("admit", assignment)
-		if status != 200 {
-			t.Fatal("admission", binding.ID, status, string(raw))
+	runIDs := map[string]string{}
+	if mode == "automatic" {
+		triggers := &product.EvolutionTriggerWorker{Store: store}
+		transport := &lostNativeAdmission{client: evalClient}
+		dispatcher := &product.EvolutionDispatcher{Store: store, Evaluation: transport, Studio: studioClient, Issuer: issuer}
+		for deadline := time.Now().Add(80 * time.Second); time.Now().Before(deadline); {
+			must(t, triggers.Step(ctx))
+			if err := dispatcher.Step(ctx); errors.Is(err, errLostNativeAdmission) {
+				dispatcher = &product.EvolutionDispatcher{Store: store, Evaluation: transport, Studio: studioClient, Issuer: issuer}
+			} else {
+				must(t, err)
+			}
+			page, err := store.EvolutionTriggers(ctx, token, configuration.GroupID, 0)
+			must(t, err)
+			for _, item := range page.Items {
+				if item.DispatchState == "dispatched" {
+					runIDs[item.BindingID] = item.RunID
+				}
+			}
+			if len(runIDs) == len(configuration.Bindings) {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
+		if transport.calls != 3 {
+			t.Fatal("admission response loss did not replay exactly", transport.calls)
+		}
+		if len(runIDs) != 2 {
+			t.Fatal("automatic schedule not dispatched", runIDs)
+		}
+	} else {
+		for _, binding := range configuration.Bindings {
+			runIDs[binding.ID] = binding.ID
+			pins := evolution.RunPins{ConfigurationRevision: 1, ConfigurationDigest: pending.DesiredDigest, SourcePolicyRevision: 1, Template: binding.Template, Workflow: binding.Workflow, Service: binding.Service, InputPorts: map[string]evolution.ArtifactRef{"corpus": artifact}, Inputs: []evolution.ArtifactRef{artifact}, Base: main, Output: binding.Output, Evaluation: binding.Evaluation}
+			assignment := evolution.GenerationAssignment{RunID: binding.ID, GroupID: configuration.GroupID, BindingID: binding.ID, OccurrenceID: "manual", Requester: evolution.Principal{Issuer: issuer, Subject: admin.ID, Kind: "human"}, Pins: pins, Budget: budget}
+			status, raw := privateCall("admit", assignment)
+			if status != 200 {
+				t.Fatal("admission", binding.ID, status, string(raw))
+			}
+		}
+
 	}
 	branches := map[string]string{}
 	failed := map[string]bool{}
@@ -403,7 +469,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			if branches[binding.ID] != "" || failed[binding.ID] {
 				continue
 			}
-			status, raw := privateCall("read", map[string]string{"group_id": configuration.GroupID, "run_id": binding.ID})
+			status, raw := privateCall("read", map[string]string{"group_id": configuration.GroupID, "run_id": runIDs[binding.ID]})
 			if status != 200 {
 				t.Fatal("status", status, string(raw))
 			}
@@ -467,7 +533,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		get("/main", &unchanged)
 	}
 	modelMu.Lock()
-	skillCalls, correctionCalls := calls["example-skills"], calls["example-corrections"]
+	skillCalls, correctionCalls := calls[runIDs["example-skills"]], calls[runIDs["example-corrections"]]
 	modelMu.Unlock()
 	if skillCalls != 2 || correctionCalls != 1 {
 		t.Fatal("independent graph model calls", skillCalls, correctionCalls)

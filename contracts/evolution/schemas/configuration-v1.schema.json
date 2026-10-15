@@ -1,5 +1,45 @@
 {
   "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "grant_id": {
+          "type": "string"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "policy_revision": {
+          "type": "integer"
+        },
+        "schema_digest": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "group_id",
+        "schema_digest",
+        "digest",
+        "size",
+        "media_type",
+        "grant_id",
+        "policy_revision"
+      ],
+      "type": "object"
+    },
     "Binding": {
       "additionalProperties": false,
       "properties": {
@@ -23,6 +63,15 @@
         },
         "id": {
           "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "$ref": "#/$defs/BindingInput"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
         },
         "output": {
           "$ref": "#/$defs/OutputBinding"
@@ -70,6 +119,25 @@
         "trigger",
         "depends_on"
       ],
+      "type": "object"
+    },
+    "BindingInput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "sources": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [],
       "type": "object"
     },
     "Budget": {

@@ -149,6 +149,27 @@ func (c Configuration) Validate() error {
 				return fmt.Errorf("source audience excludes owning group")
 			}
 		}
+		if b.Trigger != "manual" && len(b.Inputs) == 0 {
+			return fmt.Errorf("automatic binding requires explicit input ports")
+		}
+		for port, input := range b.Inputs {
+			if !manifest.ValidID(port) || (len(input.Sources) == 0) == (input.Artifact == nil) {
+				return fmt.Errorf("input requires either sources or sealed artifact")
+			}
+			if input.Artifact != nil {
+				if input.Artifact.Validate() != nil || input.Artifact.GroupID != c.GroupID {
+					return fmt.Errorf("invalid input artifact")
+				}
+			}
+			selected := map[string]bool{}
+			for _, id := range input.Sources {
+				source, ok := sources[id]
+				if !ok || !seen[id] || selected[id] || source.Kind == "volume" {
+					return fmt.Errorf("invalid corpus input source")
+				}
+				selected[id] = true
+			}
+		}
 		for _, other := range c.Bindings[:i] {
 			if b.Output.LibraryID == other.Output.LibraryID && PrefixesOverlap(b.Output.Prefix, other.Output.Prefix) {
 				return fmt.Errorf("overlapping output ownership")
@@ -183,6 +204,27 @@ func (c Configuration) Validate() error {
 	for id := range bindings {
 		if err := visit(id); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// ValidateInputPorts checks declared automatic inputs against the published graph.
+// Manual experiments may supply their own explicit artifact ports at admission.
+func (b Binding) ValidateInputPorts(workflow Workflow) error {
+	if len(b.Inputs) == 0 && b.Trigger == "manual" {
+		return nil
+	}
+	if len(b.Inputs) != len(workflow.Inputs) {
+		return fmt.Errorf("binding input ports differ from workflow")
+	}
+	for name, input := range b.Inputs {
+		schema := Digest(CorpusSchema)
+		if input.Artifact != nil {
+			schema = input.Artifact.SchemaDigest
+		}
+		if workflow.Inputs[name] != schema {
+			return fmt.Errorf("binding input %s schema differs from workflow", name)
 		}
 	}
 	return nil

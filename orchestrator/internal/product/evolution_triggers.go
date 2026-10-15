@@ -22,6 +22,9 @@ type EvolutionTriggerRange struct {
 	Through        int64  `json:"through_sequence"`
 }
 type EvolutionTrigger struct {
+	PendingReason         string                  `json:"pending_reason"`
+	DispatchState         string                  `json:"dispatch_state"`
+	DispatchError         string                  `json:"dispatch_error"`
 	ID                    string                  `json:"id"`
 	BindingID             string                  `json:"binding_id"`
 	ConfigurationRevision int64                   `json:"configuration_revision"`
@@ -77,6 +80,12 @@ func (s *Store) resetEvolutionTriggers(ctx context.Context, tx *sql.Tx, config e
 	return nil
 }
 func clearEvolutionTriggers(ctx context.Context, tx *sql.Tx, group string) error {
+	// No remote effect can exist without the central admission retained first.
+	// Supersede only unadmitted assignments; admitted work keeps exact replay rights.
+	if _, err := tx.ExecContext(ctx, "UPDATE generation_dispatches SET state='superseded',last_error='' WHERE group_id=? AND state='pending' AND NOT EXISTS(SELECT 1 FROM generation_authorizations a WHERE a.run_id=generation_dispatches.run_id)", group); err != nil {
+		return err
+	}
+
 	if _, err := tx.ExecContext(ctx, "UPDATE evolution_trigger_occurrences SET state='superseded' WHERE group_id=? AND state='pending'", group); err != nil {
 		return err
 	}
@@ -100,7 +109,7 @@ func (s *Store) EvolutionTriggers(ctx context.Context, token, group string, afte
 		if _, err := s.evolutionGroupSession(ctx, tx, token, group, "config.read"); err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, "SELECT rowid,id,binding_id,configuration_revision,trigger_kind,state,first_at,latest_at,ranges,run_id FROM evolution_trigger_occurrences WHERE group_id=? AND rowid>? ORDER BY rowid LIMIT 50", group, after)
+		rows, err := tx.QueryContext(ctx, "SELECT o.rowid,o.id,o.binding_id,o.configuration_revision,o.trigger_kind,o.state,o.first_at,o.latest_at,o.ranges,o.run_id,o.last_error,coalesce(d.state,''),coalesce(d.last_error,'') FROM evolution_trigger_occurrences o LEFT JOIN generation_dispatches d ON d.occurrence_id=o.id WHERE o.group_id=? AND o.rowid>? ORDER BY o.rowid LIMIT 50", group, after)
 		if err != nil {
 			return err
 		}
@@ -108,7 +117,7 @@ func (s *Store) EvolutionTriggers(ctx context.Context, token, group string, afte
 		for rows.Next() {
 			var item EvolutionTrigger
 			var raw []byte
-			if err = rows.Scan(&result.Next, &item.ID, &item.BindingID, &item.ConfigurationRevision, &item.Kind, &item.State, &item.FirstAt, &item.LatestAt, &raw, &item.RunID); err != nil {
+			if err = rows.Scan(&result.Next, &item.ID, &item.BindingID, &item.ConfigurationRevision, &item.Kind, &item.State, &item.FirstAt, &item.LatestAt, &raw, &item.RunID, &item.PendingReason, &item.DispatchState, &item.DispatchError); err != nil {
 				return err
 			}
 			if err = json.Unmarshal(raw, &item.Ranges); err != nil {
