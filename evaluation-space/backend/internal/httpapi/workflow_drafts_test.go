@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -27,10 +28,13 @@ func TestWorkflowDraftAPIStrictScopedCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	raw := []byte(`{"schema_version":1,"id":"skills","parameters_schema":{"type":"object"},"inputs":{"corpus":"sha256:3a72f07297ac25e9b49b196620faaa449c23a766d94ab185ab"},"outputs":{"patch":"sha256:fcfe5081d91449812405675a8ce8d0d20958524d5068679f54d86b0dc46d7cad"},"limits":{"max_parallel_nodes":1,"max_total_attempts":1,"timeout_seconds":1},"capabilities":[],"nodes":[],"edges":[]}`)
+	raw, err := os.ReadFile("../../../../contracts/evolution/testdata/skills.valid.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 	workflow, err := evolution.DecodeWorkflow(bytes.NewReader(raw))
 	if err != nil {
-		t.Skip("fixture shape differs", err)
+		t.Fatal(err)
 	}
 	api := WorkflowDraftAPI{Store: s, Authority: draftAuthFixture{true}}.Handler()
 	body, _ := json.Marshal(projections.WorkflowDraftInput{ID: "skills", Workflow: workflow})

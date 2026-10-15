@@ -19,119 +19,164 @@ type WorkflowDraftInput struct {
 	Workflow               evolution.Workflow `json:"workflow"`
 }
 type WorkflowDraft struct {
-	Layout         json.RawMessage    `json:"layout,omitempty"`
+	Layout         json.RawMessage    `json:"layout"`
 	LayoutRevision int64              `json:"layout_revision"`
 	ID             string             `json:"id"`
 	Revision       int64              `json:"revision"`
 	Workflow       evolution.Workflow `json:"workflow"`
 }
 
-// SaveWorkflowDraft stores editable graph content separately from executable
-// catalog revisions. Layout-only metadata may be layered later without changing
-// Workflow.Canonical identity.
+func canonicalLayout(raw []byte) ([]byte, error) {
+	if len(raw) == 0 {
+		raw = []byte(`{}`)
+	}
+	layout, err := evolution.Decode[map[string]json.RawMessage](bytes.NewReader(raw))
+	if err != nil || layout == nil {
+		return nil, fmt.Errorf("bounded layout object required")
+	}
+	return json.Marshal(layout)
+}
+
+// SaveWorkflowDraft advances executable and layout revisions independently.
+// Both expected revisions are required to avoid overwriting concurrent edits.
 func (s *Store) SaveWorkflowDraft(ctx context.Context, input WorkflowDraftInput) (WorkflowDraft, error) {
 	var result WorkflowDraft
-	if !manifest.ValidID(input.ID) {
-		return result, fmt.Errorf("invalid workflow identity")
+	if !manifest.ValidID(input.ID) || input.ExpectedRevision < 0 || input.ExpectedLayoutRevision < 0 || input.Workflow.ID != input.ID {
+		return result, fmt.Errorf("invalid workflow draft identity")
 	}
-	if input.ExpectedRevision < 0 || input.Workflow.ID != input.ID || input.Workflow.Validate() != nil {
-		return result, fmt.Errorf("invalid workflow draft")
-	}
-	raw, err := input.Workflow.Canonical()
+	body, err := input.Workflow.Canonical()
 	if err != nil {
-		return result, fmt.Errorf("invalid workflow identity")
+		return result, err
+	}
+	if len(body) > evolution.MaxDocumentBytes {
+		return result, fmt.Errorf("workflow document too large")
+	}
+	layout, err := canonicalLayout(input.Layout)
+	if err != nil {
+		return result, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return result, err
 	}
 	defer tx.Rollback()
-	var revision int64
-	var prior, layout []byte
-	var layoutRevision int64
-	err = tx.QueryRowContext(ctx, "SELECT revision,body,layout_revision,layout FROM workflow_drafts WHERE id=?", input.ID).Scan(&revision, &prior, &layoutRevision, &layout)
+	var revision, layoutRevision int64
+	var prior, priorLayout []byte
+	err = tx.QueryRowContext(ctx, "SELECT revision,body,layout_revision,layout FROM workflow_drafts WHERE id=?", input.ID).Scan(&revision, &prior, &layoutRevision, &priorLayout)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return result, err
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		revision = 0
-		layoutRevision = 0
 	}
 	if revision != input.ExpectedRevision || layoutRevision != input.ExpectedLayoutRevision {
 		return result, ErrConflict
 	}
-	result = WorkflowDraft{ID: input.ID, Revision: revision + 1, Workflow: input.Workflow, Layout: input.Layout, LayoutRevision: layoutRevision + 1}
-	body := raw
-	if _, err = tx.ExecContext(ctx, "INSERT INTO workflow_draft_revisions(id,revision,body,layout_revision,layout) VALUES(?,?,?,?,?)", input.ID, result.Revision, body, result.LayoutRevision, input.Layout); err != nil {
+	if revision == 0 || !bytes.Equal(prior, body) {
+		revision++
+	}
+	if layoutRevision == 0 || !bytes.Equal(priorLayout, layout) {
+		layoutRevision++
+	}
+	workflow, err := evolution.DecodeWorkflow(bytes.NewReader(body))
+	if err != nil {
 		return result, err
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO workflow_drafts(id,revision,body,layout_revision,layout) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,body=excluded.body,layout_revision=excluded.layout_revision,layout=excluded.layout", input.ID, result.Revision, body, result.LayoutRevision, input.Layout); err != nil {
+	result = WorkflowDraft{ID: input.ID, Revision: revision, Workflow: workflow, Layout: layout, LayoutRevision: layoutRevision}
+	if revision == input.ExpectedRevision && layoutRevision == input.ExpectedLayoutRevision {
+		return result, nil
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO workflow_draft_revisions(id,revision,body,layout_revision,layout) VALUES(?,?,?,?,?)", input.ID, revision, body, layoutRevision, layout); err != nil {
+		return result, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workflow_drafts(id,revision,body,layout_revision,layout) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,body=excluded.body,layout_revision=excluded.layout_revision,layout=excluded.layout`, input.ID, revision, body, layoutRevision, layout); err != nil {
 		return result, err
 	}
 	return result, tx.Commit()
 }
+func decodeDraft(id string, revision, layoutRevision int64, body, layout []byte) (WorkflowDraft, error) {
+	var result WorkflowDraft
+	workflow, err := evolution.DecodeWorkflow(bytes.NewReader(body))
+	if err != nil || workflow.ID != id {
+		return result, fmt.Errorf("stored draft identity mismatch")
+	}
+	normalized, err := canonicalLayout(layout)
+	if err != nil {
+		return result, err
+	}
+	return WorkflowDraft{ID: id, Revision: revision, LayoutRevision: layoutRevision, Workflow: workflow, Layout: normalized}, nil
+}
 func (s *Store) WorkflowDraft(ctx context.Context, id string) (WorkflowDraft, error) {
-	var result WorkflowDraft
-	var raw []byte
 	if !manifest.ValidID(id) {
-		return result, fmt.Errorf("invalid workflow identity")
+		return WorkflowDraft{}, fmt.Errorf("invalid workflow identity")
 	}
-	if err := s.db.QueryRowContext(ctx, "SELECT revision,body,layout_revision,layout FROM workflow_drafts WHERE id=?", id).Scan(&result.Revision, &raw, &result.LayoutRevision, &result.Layout); err != nil {
-		return result, err
+	var revision, layoutRevision int64
+	var body, layout []byte
+	err := s.db.QueryRowContext(ctx, "SELECT revision,body,layout_revision,layout FROM workflow_drafts WHERE id=?", id).Scan(&revision, &body, &layoutRevision, &layout)
+	if errors.Is(err, sql.ErrNoRows) {
+		return WorkflowDraft{}, ErrNotFound
 	}
-	result.ID = id
-	workflow, err := evolution.DecodeWorkflow(bytes.NewReader(raw))
 	if err != nil {
-		return result, err
+		return WorkflowDraft{}, err
 	}
-	result.Workflow = workflow
-	return result, nil
+	return decodeDraft(id, revision, layoutRevision, body, layout)
 }
 
-// PublishWorkflowDraft converts a selected draft into the next immutable
-// executable revision. It never changes group activation or service selection.
-func (s *Store) PublishWorkflowDraft(ctx context.Context, id string, draftRevision int64) (evolution.Revision, error) {
-	if !manifest.ValidID(id) || draftRevision < 1 {
-		return evolution.Revision{}, fmt.Errorf("invalid draft publication")
-	}
-	draft, err := s.WorkflowDraft(ctx, id)
-	if err != nil {
-		return evolution.Revision{}, err
-	}
-	if draft.Revision != draftRevision {
-		return evolution.Revision{}, ErrConflict
-	}
-	body, err := draft.Workflow.Canonical()
-	if err != nil {
-		return evolution.Revision{}, err
-	}
-	var revision int64
-	err = s.db.QueryRowContext(ctx, "SELECT coalesce(max(revision),0)+1 FROM workflow_revisions WHERE id=?", id).Scan(&revision)
-	if err != nil {
-		return evolution.Revision{}, err
-	}
-	ref := evolution.Revision{ID: id, Revision: revision, Digest: evolution.Digest(body)}
-	if err = s.PublishWorkflow(ctx, ref, body); err != nil {
-		return evolution.Revision{}, err
-	}
-	return ref, nil
-}
-
+// WorkflowDraftRevision retrieves executable history with its latest retained
+// layout. Layout edits never modify executable content at this revision.
 func (s *Store) WorkflowDraftRevision(ctx context.Context, id string, revision int64) (WorkflowDraft, error) {
-	var result WorkflowDraft
-	var raw []byte
 	if !manifest.ValidID(id) || revision < 1 {
-		return result, fmt.Errorf("invalid draft revision")
+		return WorkflowDraft{}, fmt.Errorf("invalid draft revision")
 	}
-	if err := s.db.QueryRowContext(ctx, "SELECT body,layout_revision,layout FROM workflow_draft_revisions WHERE id=? AND revision=?", id, revision).Scan(&raw, &result.LayoutRevision, &result.Layout); err != nil {
-		return result, err
+	var layoutRevision int64
+	var body, layout []byte
+	err := s.db.QueryRowContext(ctx, "SELECT body,layout_revision,layout FROM workflow_draft_revisions WHERE id=? AND revision=? ORDER BY layout_revision DESC LIMIT 1", id, revision).Scan(&body, &layoutRevision, &layout)
+	if errors.Is(err, sql.ErrNoRows) {
+		return WorkflowDraft{}, ErrNotFound
 	}
-	workflow, err := evolution.DecodeWorkflow(bytes.NewReader(raw))
 	if err != nil {
-		return result, err
+		return WorkflowDraft{}, err
 	}
-	result.ID = id
-	result.Revision = revision
-	result.Workflow = workflow
-	return result, nil
+	return decodeDraft(id, revision, layoutRevision, body, layout)
+}
+
+// PublishWorkflowDraft atomically checks the selected draft and records its
+// immutable publication. Replays return the same published reference.
+func (s *Store) PublishWorkflowDraft(ctx context.Context, id string, draftRevision int64) (evolution.Revision, error) {
+	var ref evolution.Revision
+	if !manifest.ValidID(id) || draftRevision < 1 {
+		return ref, fmt.Errorf("invalid draft publication")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ref, err
+	}
+	defer tx.Rollback()
+	ref.ID = id
+	err = tx.QueryRowContext(ctx, "SELECT revision,digest FROM workflow_draft_publications WHERE id=? AND draft_revision=?", id, draftRevision).Scan(&ref.Revision, &ref.Digest)
+	if err == nil {
+		return ref, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return ref, err
+	}
+	var current int64
+	var body []byte
+	if err = tx.QueryRowContext(ctx, "SELECT revision,body FROM workflow_drafts WHERE id=?", id).Scan(&current, &body); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ref, ErrNotFound
+		}
+		return ref, err
+	}
+	if current != draftRevision {
+		return ref, ErrConflict
+	}
+	if err = tx.QueryRowContext(ctx, "SELECT coalesce(max(revision),0)+1 FROM workflow_revisions WHERE id=?", id).Scan(&ref.Revision); err != nil {
+		return ref, err
+	}
+	ref.Digest = evolution.Digest(body)
+	if err = publishWorkflow(ctx, tx, ref, body); err != nil {
+		return ref, err
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO workflow_draft_publications(id,draft_revision,revision,digest) VALUES(?,?,?,?)", id, draftRevision, ref.Revision, ref.Digest); err != nil {
+		return ref, err
+	}
+	return ref, tx.Commit()
 }

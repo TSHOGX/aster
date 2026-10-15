@@ -29,6 +29,17 @@ func (r workflowResolver) ResolveWorkflow(ctx context.Context, ref evolution.Rev
 // PublishWorkflow is the storage boundary for Evaluation Space's immutable
 // workflow catalog. Callers must authorize publication before invoking it.
 func (s *Store) PublishWorkflow(ctx context.Context, ref evolution.Revision, body []byte) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = publishWorkflow(ctx, tx, ref, body); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func publishWorkflow(ctx context.Context, tx *sql.Tx, ref evolution.Revision, body []byte) error {
 	if ref.Validate() != nil || len(body) > evolution.MaxDocumentBytes || evolution.Digest(body) != ref.Digest {
 		return fmt.Errorf("invalid workflow revision")
 	}
@@ -43,11 +54,6 @@ func (s *Store) PublishWorkflow(ctx context.Context, ref evolution.Revision, bod
 	if err != nil || !bytes.Equal(canonical, body) {
 		return fmt.Errorf("canonical workflow document required")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 	var priorDigest string
 	err = tx.QueryRowContext(ctx, "SELECT digest FROM workflow_revisions WHERE id=? AND revision=?", ref.ID, ref.Revision).Scan(&priorDigest)
 	if err == nil {
@@ -72,7 +78,7 @@ func (s *Store) PublishWorkflow(ctx context.Context, ref evolution.Revision, bod
 	if _, err = tx.ExecContext(ctx, "INSERT INTO workflow_revisions(id,revision,digest,body) VALUES(?,?,?,?)", ref.ID, ref.Revision, ref.Digest, body); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 func (s *Store) Workflow(ctx context.Context, ref evolution.Revision) (evolution.Workflow, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})

@@ -28,12 +28,13 @@ func TestWorkflowDraftHistoryReadsExactLayoutRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.Nodes[0].Prompt.Text = "changed"
+	workflowPrompt(w).Text = "changed {{corpus}}"
+	workflowPrompt(w).Digest = evolution.Digest([]byte(workflowPrompt(w).Text))
 	if _, err = s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: w.ID, ExpectedRevision: first.Revision, ExpectedLayoutRevision: first.LayoutRevision, Layout: []byte(`{"x":2}`), Workflow: w}); err != nil {
 		t.Fatal(err)
 	}
 	old, err := s.WorkflowDraftRevision(ctx, w.ID, 1)
-	if err != nil || old.Workflow.Nodes[0].Prompt.Text == "changed" || string(old.Layout) != `{"x":1}` {
+	if err != nil || workflowPrompt(old.Workflow).Text == "changed {{corpus}}" || string(old.Layout) != `{"x":1}` {
 		t.Fatal(old, err)
 	}
 	if _, err = s.WorkflowDraftRevision(ctx, w.ID, 3); err == nil {

@@ -41,11 +41,14 @@ type Projection struct {
 const schema = `CREATE TABLE IF NOT EXISTS projections(group_id TEXT NOT NULL,revision INTEGER NOT NULL,digest TEXT NOT NULL,operation_id TEXT NOT NULL UNIQUE,body BLOB NOT NULL,PRIMARY KEY(group_id,revision));
 CREATE TRIGGER IF NOT EXISTS immutable_projection BEFORE UPDATE ON projections BEGIN SELECT RAISE(ABORT,'immutable configuration projection'); END;
 CREATE TRIGGER IF NOT EXISTS retained_projection BEFORE DELETE ON projections BEGIN SELECT RAISE(ABORT,'retain configuration provenance'); END;
-CREATE TABLE workflow_draft_revisions(id TEXT NOT NULL,revision INTEGER NOT NULL CHECK(revision>0),body BLOB NOT NULL,layout_revision INTEGER NOT NULL,layout BLOB NOT NULL,PRIMARY KEY(id,revision));
+CREATE TABLE workflow_draft_revisions(id TEXT NOT NULL,revision INTEGER NOT NULL CHECK(revision>0),body BLOB NOT NULL,layout_revision INTEGER NOT NULL,layout BLOB NOT NULL,PRIMARY KEY(id,revision,layout_revision));
 CREATE TRIGGER immutable_workflow_draft_history_revision BEFORE UPDATE ON workflow_draft_revisions BEGIN SELECT RAISE(ABORT,'immutable workflow draft revision'); END;
 CREATE TRIGGER retained_workflow_draft_revision BEFORE DELETE ON workflow_draft_revisions BEGIN SELECT RAISE(ABORT,'retain workflow draft history'); END;
 CREATE TABLE workflow_drafts(id TEXT PRIMARY KEY,revision INTEGER NOT NULL CHECK(revision>0),body BLOB NOT NULL,layout_revision INTEGER NOT NULL DEFAULT 0,layout BLOB NOT NULL DEFAULT '{}');
-CREATE TRIGGER immutable_workflow_draft_revision BEFORE UPDATE OF id,revision ON workflow_drafts BEGIN SELECT RAISE(ABORT,'immutable workflow draft identity'); END;
+CREATE TRIGGER immutable_workflow_draft_revision BEFORE UPDATE OF id ON workflow_drafts BEGIN SELECT RAISE(ABORT,'immutable workflow draft identity'); END;
+CREATE TABLE workflow_draft_publications(id TEXT NOT NULL,draft_revision INTEGER NOT NULL,revision INTEGER NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(id,draft_revision),UNIQUE(id,revision));
+CREATE TRIGGER immutable_draft_publication BEFORE UPDATE ON workflow_draft_publications BEGIN SELECT RAISE(ABORT,'immutable draft publication'); END;
+CREATE TRIGGER retained_draft_publication BEFORE DELETE ON workflow_draft_publications BEGIN SELECT RAISE(ABORT,'retain draft publication'); END;
 CREATE TABLE workflow_revisions(id TEXT NOT NULL,revision INTEGER NOT NULL CHECK(revision>0),digest TEXT NOT NULL,body BLOB NOT NULL,PRIMARY KEY(id,revision));
 CREATE TRIGGER immutable_workflow BEFORE UPDATE ON workflow_revisions BEGIN SELECT RAISE(ABORT,'immutable workflow revision'); END;
 CREATE TRIGGER retained_workflow BEFORE DELETE ON workflow_revisions BEGIN SELECT RAISE(ABORT,'retain workflow provenance'); END;

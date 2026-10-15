@@ -36,13 +36,14 @@ func TestWorkflowDraftCASAndPublishSeparation(t *testing.T) {
 	if _, err = s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 0, Workflow: workflow}); err != ErrConflict {
 		t.Fatal("stale draft", err)
 	}
-	workflow.Nodes[0].Prompt.Text = "changed"
-	next, err := s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 1, Workflow: workflow})
+	workflowPrompt(workflow).Text = "changed {{corpus}}"
+	workflowPrompt(workflow).Digest = evolution.Digest([]byte(workflowPrompt(workflow).Text))
+	next, err := s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 1, ExpectedLayoutRevision: 1, Workflow: workflow})
 	if err != nil || next.Revision != 2 {
 		t.Fatal(next, err)
 	}
 	read, err := s.WorkflowDraft(ctx, workflow.ID)
-	if err != nil || read.Revision != 2 || read.Workflow.Nodes[0].Prompt.Text != "changed" {
+	if err != nil || read.Revision != 2 || workflowPrompt(read.Workflow).Text != "changed {{corpus}}" {
 		t.Fatal(read, err)
 	}
 	if _, err = s.Workflow(ctx, evolution.Revision{ID: workflow.ID, Revision: 1, Digest: evolution.Digest(raw)}); err == nil {
@@ -73,13 +74,13 @@ func TestWorkflowLayoutRevisionDoesNotChangeExecutableContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Revision != 2 || second.LayoutRevision != 2 {
+	if second.Revision != 1 || second.LayoutRevision != 2 {
 		t.Fatal(second)
 	}
 	if string(second.Layout) != `{"x":2}` {
 		t.Fatal(string(second.Layout))
 	}
-	if _, err = s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 2, ExpectedLayoutRevision: 1, Layout: json.RawMessage(`{"x":3}`), Workflow: workflow}); err != ErrConflict {
+	if _, err = s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 1, ExpectedLayoutRevision: 1, Layout: json.RawMessage(`{"x":3}`), Workflow: workflow}); err != ErrConflict {
 		t.Fatal("layout stale CAS", err)
 	}
 	ref, err := s.PublishWorkflowDraft(ctx, workflow.ID, second.Revision)
@@ -112,8 +113,20 @@ func TestWorkflowLayoutStrictBoundedObject(t *testing.T) {
 			t.Fatal("invalid layout accepted")
 		}
 	}
+	if _, err = s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, Workflow: workflow}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = s.db.ExecContext(ctx, "DELETE FROM workflow_draft_revisions WHERE id=?", workflow.ID); err == nil {
 		t.Fatal("draft history deleted")
 	}
 
+}
+
+func workflowPrompt(w evolution.Workflow) *evolution.Prompt {
+	for _, node := range w.Nodes {
+		if node.ID == "extract" {
+			return node.Prompt
+		}
+	}
+	panic("fixture is missing extract node")
 }

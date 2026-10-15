@@ -22,6 +22,8 @@ func (a WorkflowDraftAPI) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /evaluation-space/api/v1/workflows/{workflow}/draft", a.read)
 	mux.HandleFunc("PUT /evaluation-space/api/v1/workflows/{workflow}/draft", a.write)
+	mux.HandleFunc("GET /evaluation-space/api/v1/workflows/{workflow}/draft/revisions/{revision}", a.revision)
+	mux.HandleFunc("POST /evaluation-space/api/v1/workflows/{workflow}/draft/publish", a.publish)
 	return mux
 }
 func (a WorkflowDraftAPI) authorized(w http.ResponseWriter, r *http.Request, action string) bool {
@@ -64,7 +66,7 @@ func (a WorkflowDraftAPI) write(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	value, err := evolution.Decode[projections.WorkflowDraftInput](http.MaxBytesReader(w, r.Body, evolution.MaxDocumentBytes))
-	if err != nil || value.Workflow.ID != r.PathValue("workflow") {
+	if err != nil || value.ID != r.PathValue("workflow") || value.Workflow.ID != r.PathValue("workflow") {
 		write(w, 400, map[string]string{"error": "invalid_workflow_draft"})
 		return
 	}
@@ -105,6 +107,11 @@ func (a WorkflowDraftAPI) publish(w http.ResponseWriter, r *http.Request) {
 	if !a.authorized(w, r, "publish") {
 		return
 	}
+	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || media != "application/json" {
+		write(w, 415, map[string]string{"error": "json_required"})
+		return
+	}
 	value, err := evolution.Decode[struct {
 		Revision int64 `json:"revision"`
 	}](http.MaxBytesReader(w, r.Body, 1<<16))
@@ -115,6 +122,10 @@ func (a WorkflowDraftAPI) publish(w http.ResponseWriter, r *http.Request) {
 	ref, err := a.Store.PublishWorkflowDraft(r.Context(), r.PathValue("workflow"), value.Revision)
 	if errors.Is(err, projections.ErrConflict) {
 		write(w, 409, map[string]string{"error": "draft_conflict"})
+		return
+	}
+	if errors.Is(err, projections.ErrNotFound) {
+		write(w, 404, map[string]string{"error": "draft_not_found"})
 		return
 	}
 	if err != nil {
