@@ -24,7 +24,51 @@ async function createLibrary(page: Page, name: string) {
   await page.getByLabel("Name", { exact: true }).fill(name);
   await page.getByLabel("Description").fill("Reusable research source files.");
   await page.getByRole("button", { name: "Create draft", exact: true }).click();
-  await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/libraries\/[^/?]+/);
+  await provisionBranch(page);
+}
+async function provisionBranch(page: Page) {
+  await expect(page).toHaveURL(/\/libraries\/[^/?]+/);
+  const id = libraryID(page);
+  const identity = await session(page);
+  for (const action of ["volume.read", "volume.author", "volume.review", "volume.merge", "volume.publish"]) {
+    const grant = await page.request.post("/api/admin/studio-grants", { headers: { Origin: origin }, data: { request_id: crypto.randomUUID(), kind: "account", subject_id: identity.subject, library_id: id, action, effect: "allow", expected_revision: 0 } });
+    expect(grant.ok(), await grant.text()).toBeTruthy();
+  }
+  await page.reload();
+  await page.getByLabel("New branch name", { exact: true }).fill("Human edits");
+  await page.getByRole("button", { name: "Create branch from main", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Working branch", exact: true })).toHaveValue(/.+/);
+}
+function branchRoot(page: Page) {
+  const branch = new URL(page.url()).searchParams.get("branch");
+  expect(branch).toBeTruthy();
+  return `/volumes-studio/api/v1/libraries/${libraryID(page)}/branches/${branch}`;
+}
+async function savedContent(page: Page, path: string) {
+  const root = branchRoot(page);
+  const branch = await (await page.request.get(root)).json();
+  return page.request.get(`${root}/draft/content?${new URLSearchParams({path, revision: String(branch.draft_revision)})}`);
+}
+async function acceptBranch(page: Page, checkpoint = true) {
+ if (checkpoint) {
+  await page.getByLabel("Commit message", { exact: true }).fill("Reviewed candidate");
+  await page.getByRole("button", { name: "Commit saved draft", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Committed saved revision" })).toBeVisible();
+ }
+  await page.getByRole("button", { name: "Prepare integration", exact: true }).click();
+  await page.getByRole("button", { name: "Approve integration", exact: true }).click();
+  await page.getByRole("button", { name: "Merge approved integration", exact: true }).click();
+  await expect(page.getByText("Acceptance is complete. Publishing creates a version; it does not deploy to Projects.")).toBeVisible();
+}
+async function publishAccepted(page: Page) {
+  const response = page.waitForResponse(r => r.request().method() === "POST" && r.url().endsWith(`/libraries/${libraryID(page)}/versions`));
+  await page.getByRole("button", { name: "Publish accepted commit", exact: true }).click();
+  const reply = await response;
+  expect(reply.status(), await reply.text()).toBe(202);
+  const version = await reply.json();
+  await expect.poll(async () => (await (await page.request.get(`/volumes-studio/api/v1/libraries/${libraryID(page)}/versions/${version.id}`)).json()).state).toBe("published");
+  return version;
 }
 async function createFile(page: Page, name: string) {
   await page.getByRole("button", { name: "Add files", exact: true }).click();
@@ -71,7 +115,7 @@ test("central login, multi-tab edit, publish, immutable version and logout", asy
   const saveReply = new Promise<void>((resolve) => {
     releaseSave = resolve;
   });
-  await page.route("**/draft/mutations", async (route) => {
+  await page.route("**/draft/text", async (route) => {
     if (route.request().postDataJSON().path === "readme.md") {
       const response = await route.fetch();
       saved();
@@ -81,25 +125,22 @@ test("central login, multi-tab edit, publish, immutable version and logout", asy
   });
   await page.getByRole("button", { name: "Save file", exact: true }).click();
   await saveArrived;
-  await page
-    .getByRole("button", { name: "Review & publish", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Preparing review…", exact: true }),
-  ).toBeDisabled();
+  await expect(page.getByText("Unsaved editor changes are excluded from this commit.")).toBeVisible();
+  let checkpoints = 0;
+  page.on("request", request => { if (request.method() === "POST" && request.url().endsWith("/commits")) checkpoints++; });
+  await page.getByLabel("Commit message", {exact:true}).fill("Save then checkpoint");
+  await page.getByRole("button", {name:"Commit saved draft",exact:true}).click();
+  await expect(page.getByRole("button", {name:"Commit saved draft",exact:true})).toBeDisabled();
+  expect(checkpoints).toBe(0);
   releaseSave();
+  await expect(page.getByRole("status").filter({hasText:"Committed saved revision"})).toBeVisible();
+  expect(checkpoints).toBe(1);
+  await page.unroute("**/draft/text");
+  await acceptBranch(page, false);
   await page.getByLabel("Version label").fill("v1");
-  await page.unroute("**/draft/mutations");
   await page.getByLabel("Release note").fill("Reviewed starter handbook.");
-  await page
-    .getByRole("button", { name: "Publish version", exact: true })
-    .click();
-  await expect(page.getByText("published", { exact: true })).toBeVisible({
-    timeout: 20000,
-  });
-  await page
-    .getByRole("button", { name: "Inspect files", exact: true })
-    .click();
+  const published = await publishAccepted(page);
+  await page.goto(`/volumes-studio/libraries/${libraryID(page)}?branch=${new URL(page.url()).searchParams.get("branch")}&version=${published.id}`);
   await page
     .getByRole("button", { name: "Open readme.md", exact: true })
     .click();
@@ -218,6 +259,7 @@ test("resume durable upload and fit narrow workbench", async ({ page }) => {
     headers,
     data: {
       request_id: "resume-admit-" + id,
+      branch_id: new URL(page.url()).searchParams.get("branch"),
       expected_revision: 1,
       path: "dataset.bin",
       size: "6",
@@ -239,9 +281,9 @@ test("resume durable upload and fit narrow workbench", async ({ page }) => {
     ).ok(),
   ).toBeTruthy();
   await page.reload();
-  await expect(
-    page.getByRole("button", { name: "Review & publish", exact: true }),
-  ).toBeDisabled();
+  await page.getByLabel("Commit message", { exact: true }).fill("Upload pending");
+  await page.getByRole("button", { name: "Commit saved draft", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Commit saved draft", exact: true }).getByRole("alert")).toBeVisible();
   await page.getByLabel("Select files", { exact: true }).setInputFiles({
     name: "dataset.bin",
     mimeType: "application/octet-stream",
@@ -257,7 +299,7 @@ test("resume durable upload and fit narrow workbench", async ({ page }) => {
     .toBe("complete");
   expect(
     await (
-      await page.request.get(`${root}/draft/content?path=dataset.bin`)
+      await savedContent(page, "dataset.bin")
     ).body(),
   ).toEqual(data);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -314,9 +356,9 @@ test("save response preserves subsequent typing and file tabs preserve undo", as
   let arrived!: () => void;
   const pending = new Promise<void>((r) => (arrived = r));
   const gate = new Promise<void>((r) => (release = r));
-  await page.route("**/draft/mutations", async (route) => {
+  await page.route("**/draft/text", async (route) => {
     const body = route.request().postDataJSON();
-    if (body.action === "text" && body.text === "first submission") {
+    if (body.text === "first submission") {
       const response = await route.fetch();
       arrived();
       await gate;
@@ -338,7 +380,7 @@ test("save response preserves subsequent typing and file tabs preserve undo", as
   await expect(
     page.getByRole("textbox", { name: "Contents of a.md" }),
   ).toContainText("typed during save");
-  await page.unroute("**/draft/mutations");
+  await page.unroute("**/draft/text");
   await createFile(page, "b.md");
   await editorText(page, "b.md", "second file");
   await page.getByRole("tab", { name: "a.md" }).click();
@@ -502,7 +544,7 @@ test("lost save response replays its receipt and keeps later edits unsaved", asy
   await editorText(page, "receipt.md", "Accepted server text");
   let first = true;
   const requests: string[] = [];
-  await page.route("**/draft/mutations", async (route) => {
+  await page.route("**/draft/text", async (route) => {
     requests.push(route.request().postData() || "");
     if (first) {
       first = false;
@@ -537,9 +579,7 @@ test("lost save response replays its receipt and keeps later edits unsaved", asy
   await expect(
     page.locator(".editor-toolbar").getByText("Saved", { exact: true }),
   ).toBeVisible();
-  const response = await page.request.get(
-    `/volumes-studio/api/v1/libraries/${libraryID(page)}/draft/content?path=receipt.md`,
-  );
+  const response = await savedContent(page, "receipt.md");
   expect(await response.text()).toBe("Newer local text");
 });
 
@@ -611,11 +651,11 @@ test("expanding an unrelated folder preserves the tree scroll and editor", async
     if (parent) {
       return route.fulfill({
         json: {
-          items: [
+          entries: [
             { path: `${parent}/child.md`, kind: "file", size: "0", digest: "" },
           ],
           next: "",
-          total: 1,
+          descendant_count: 1,
           revision: 2,
         },
       });
@@ -631,8 +671,8 @@ test("expanding an unrelated folder preserves the tree scroll and editor", async
     await route.fulfill({
       json: {
         ...value,
-        items: [...directories, ...value.items],
-        total: 51,
+        entries: [...directories, ...value.entries],
+        descendant_count: 51,
         next: "",
       },
     });
@@ -734,11 +774,10 @@ test("language changes keep Studio unsaved content, selection, and confirmation 
   await expect(page.getByRole("textbox", { name: "English Name.md 的内容", exact: true })).toContainText("# Unsaved bilingual content");
   await page.getByRole("button", { name: "保存文件", exact: true }).click();
   await expect(page.getByText("已保存", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "审阅并发布", exact: true }).click();
-  const versionLabel = page.getByRole("textbox", { name: "版本标签", exact: true });
-  await versionLabel.fill("Active");
-  await expect(versionLabel).toHaveValue("Active");
-  await page.getByRole("dialog", { name: "审阅并发布", exact: true }).getByRole("button", { name: "取消", exact: true }).click();
+  await page.getByLabel("提交说明", {exact:true}).fill("Active");
+  await expect(page.getByLabel("提交说明", {exact:true})).toHaveValue("Active");
+  await page.getByRole("button", {name:"提交已保存的草稿",exact:true}).click();
+  await expect(page.getByRole("status").filter({hasText:"已提交保存的修订"})).toBeVisible();
   await page.reload();
   await expect(page.getByRole("link", { name: "库", exact: true })).toBeVisible();
   const saved = await page.request.get("/api/me/preferences").then(response => response.json());
@@ -755,18 +794,15 @@ test("shared assets show actionable validation and publish immutable system cont
  await page.getByLabel("Name",{exact:true}).fill(`Shared context ${Date.now()}`);
  await page.getByRole("dialog").getByRole("radio",{name:"Shared assets",exact:true}).check();
  await page.getByRole("button",{name:"Create draft",exact:true}).click();
- await expect(page.getByText("Add the required root UTF-8 text file.",{exact:false})).toBeVisible();
- await page.getByRole("button",{name:"Review & publish",exact:true}).click();
- await expect(page.getByRole("alert").filter({hasText:"AGENTS.md"})).toBeVisible();
- await createFile(page,"AGENTS.md");
+ await provisionBranch(page);
+ await page.getByRole("button",{name:"Open AGENTS.md",exact:true}).click();
  await editorText(page,"AGENTS.md","# Aster context\nUse the available runtime tools.");
  await page.getByRole("button",{name:"Save file",exact:true}).click();
- await page.getByRole("button",{name:"Review & publish",exact:true}).click();
- await expect(page.getByText("Content profile: Shared assets · Immutable version",{exact:true})).toBeVisible();
+ await expect(page.locator(".shared-assets-validation")).toContainText("Content checks passed");
+ await acceptBranch(page);
  await page.getByLabel("Version label").fill("v1");
- await page.getByRole("button",{name:"Publish version",exact:true}).click();
- await expect(page.getByText("published",{exact:true})).toBeVisible();
- await page.getByRole("button",{name:"Inspect files",exact:true}).click();
+ const version = await publishAccepted(page);
+ await page.goto(`/volumes-studio/libraries/${libraryID(page)}?version=${version.id}`);
  await page.getByRole("button",{name:"Open AGENTS.md",exact:true}).click();
  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable","false");
  await expect(page.locator(".cm-content")).toContainText("Use the available runtime tools.");
@@ -778,8 +814,8 @@ test("rename waits for an in-flight save without an unsaved confirmation",async(
  await editorText(page,"before.md","Saved before rename");
  let started!:()=>void,release!:()=>void;
  const saving=new Promise<void>(resolve=>{started=resolve;});const gate=new Promise<void>(resolve=>{release=resolve;});
- await page.route("**/draft/mutations",async route=>{
-  if(route.request().postDataJSON().action==="text") {const response=await route.fetch();started();await gate;await route.fulfill({response});} else await route.continue();
+ await page.route("**/draft/text",async route=>{
+  if(route.request().postDataJSON().path==="before.md") {const response=await route.fetch();started();await gate;await route.fulfill({response});} else await route.continue();
  });
  await page.getByRole("button",{name:"Save file",exact:true}).click();await saving;
  await page.getByRole("button",{name:"Actions for before.md",exact:true}).click();await page.getByRole("menuitem",{name:"Rename",exact:true}).click();
@@ -816,40 +852,35 @@ for (const width of [390, 1440]) test(`bilingual shared-assets controls and vali
     expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
     await page.screenshot({ path: info.outputPath(`profile-zh-${width}.png`) });
     let unavailable = true;
-    await page.route("**/draft/validation", route => {
+    await page.route("**/draft/validation?*", route => {
       if (unavailable) { unavailable = false; return route.fulfill({ status: 503, json: { error: "request_failed" } }); }
       return route.continue();
     });
     await dialog.getByRole("button", { name: "创建草稿", exact: true }).click();
+    await language("en");
+    await provisionBranch(page);
     const validation = page.locator(".shared-assets-validation");
-    await expect(validation).toContainText("验证暂不可用");
-    await validation.getByRole("button", { name: "重试验证", exact: true }).click();
-    await expect(validation).toContainText("请添加必需的根目录 UTF-8 文本文件。");
-    await expect(validation).toContainText("缺失");
-    expect(await validation.evaluate(node => getComputedStyle(node).display)).toBe("block");
-    await language("en");
-    await expect(validation).toContainText("Add the required root UTF-8 text file.");
-    if (width < 768) await page.getByRole("button", { name: "Show files", exact: true }).click();
-    await createFile(page, "AGENTS.md");
-    await editorText(page, "AGENTS.md", "# English Name\nKeep user content unchanged. 中文内容。");
-    await page.getByRole("button", { name: "Save file", exact: true }).click();
-    await expect(validation).toContainText("Ready to publish");
+    await expect(validation).toContainText("Validation unavailable");
+    await validation.getByRole("button", {name:"Retry validation",exact:true}).click();
+    await expect(validation).toContainText("Content checks passed");
+    if (width < 768) await page.getByRole("button", {name:"Show files",exact:true}).click();
+    await page.getByRole("button", {name:"Open AGENTS.md",exact:true}).click();
+    await editorText(page,"AGENTS.md","# English Name\nKeep user content unchanged. 中文内容。");
+    await page.getByRole("button", {name:"Save file",exact:true}).click();
+    await expect(page.getByRole("button", {name:"Save file",exact:true})).toBeDisabled();
+    await acceptBranch(page);
     await language("zh");
-    await expect(page.getByRole("textbox", { name: "AGENTS.md 的内容", exact: true })).toContainText("Keep user content unchanged. 中文内容。");
-    await expect(validation).toContainText("可以发布");
-    await page.getByRole("button", { name: "审阅并发布", exact: true }).click();
-    const review = page.getByRole("dialog", { name: "审阅并发布", exact: true });
-    await expect(review).toContainText("内容类型：共享资源 · 不可变版本");
-    await review.getByLabel("版本标签", { exact: true }).fill("English version name");
-    await review.getByLabel("发布说明", { exact: true }).fill("English and 中文 release note");
+    await expect(page.getByRole("textbox", {name:"AGENTS.md 的内容",exact:true})).toContainText("Keep user content unchanged. 中文内容。");
+    const review = page.getByRole("region", {name:"发布已接受的提交",exact:true});
+    await review.getByLabel("版本标签", {exact:true}).fill("English version name");
+    await review.getByLabel("发布说明", {exact:true}).fill("English and 中文 release note");
     expect(await review.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
-    await page.screenshot({ path: info.outputPath(`validation-zh-${width}.png`) });
+    await page.screenshot({path:info.outputPath(`validation-zh-${width}.png`)});
     await language("en");
-    const englishReview = page.getByRole("dialog", { name: "Review & publish", exact: true });
-    await expect(englishReview.getByLabel("Version label", { exact: true })).toHaveValue("English version name");
-    await expect(englishReview.getByRole("textbox", { name: "Release note", exact: true })).toHaveValue("English and 中文 release note");
-    await englishReview.getByRole("button", { name: "Publish version", exact: true }).click();
-    await expect(page.getByText("published", { exact: true })).toBeVisible();
+    const englishReview = page.getByRole("region", {name:"Publish accepted commit",exact:true});
+    await expect(englishReview.getByLabel("Version label", {exact:true})).toHaveValue("English version name");
+    await expect(englishReview.getByRole("textbox", {name:"Release note",exact:true})).toHaveValue("English and 中文 release note");
+    await publishAccepted(page);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   } finally { await language("en"); }
 });

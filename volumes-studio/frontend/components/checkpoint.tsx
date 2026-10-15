@@ -19,11 +19,17 @@ export function BranchCheckpoint({ branch, onCommitted }: { branch: Branch; onCo
     if (!studio.session) return;
     setBusy(true); setError("");
     try {
-      if (!pending.current) pending.current = { branch: { ...branch }, message, request: requestID() };
+      if (!pending.current) {
+        // Save acknowledgements can arrive before the periodic branch refresh.
+        // Settle this branch's writes, then pin its current saved revision.
+        await studio.queue.run(`${branch.library_id}:${branch.id}`, async () => {});
+        const current = await branchAPI.read(branch.library_id, branch.id);
+        pending.current = { branch: current, message, request: requestID() };
+      }
       const operation = pending.current;
       const checkpoint = await branchAPI.checkpoint(operation.branch, operation.message, operation.request, studio.session.csrf);
       pending.current = null; setUncertain(false); setResult(checkpoint);
-      studio.selectBranch({ ...branch, head: checkpoint.commit_id });
+      studio.selectBranch({ ...operation.branch, head: checkpoint.commit_id });
       onCommitted();
     } catch (e) {
       setError(String(e));

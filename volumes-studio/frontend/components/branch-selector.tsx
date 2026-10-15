@@ -18,7 +18,7 @@ export function BranchSelector({ library, onSelect }: { library: string; onSelec
   const pending = useRef<{ name: string; base: string; request: string } | null>(null);
   const account = studio.session ? `${studio.session.issuer}:${studio.session.subject}` : "";
   const storageKey = `studio-branch-create:${account}:${library}`;
-  const restoreSelection = useEffectEvent((branch: Branch) => { studio.selectBranch(branch); onSelect(); });
+  const restoreSelection = useEffectEvent((branch: Branch) => { studio.selectBranch(branch); });
   useEffect(() => {
     const abort = new AbortController();
     void (async () => {

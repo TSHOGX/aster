@@ -128,6 +128,7 @@ export function LibraryEditor({ id }: { id: string }) {
   }, []);
   useEffect(() => {
     const p = new URLSearchParams(location.search);
+    const initialScope = workspaceKey(id, p.get("version") ? "" : p.get("branch") || "", p.get("version") || "");
     setVersion(p.get("version") || "");
     setView(
       ["files", "changes", "versions"].includes(p.get("view") || "")
@@ -137,7 +138,7 @@ export function LibraryEditor({ id }: { id: string }) {
     setSelected(
       p.get("path") ||
         refs.current.model.buffers.find(
-          (b) => b.key === refs.current.model.active[scope],
+          (b) => b.key === refs.current.model.active[initialScope],
         )?.entry.path ||
         "",
     );
@@ -153,7 +154,7 @@ export function LibraryEditor({ id }: { id: string }) {
     setSidebar(innerWidth >= 768);
     setReady(true);
     setOpened(false);
-  }, [id, refs, scope]);
+  }, [id, refs]);
   useEffect(() => {
     const abort = new AbortController();
     const update = () => {
@@ -170,7 +171,7 @@ export function LibraryEditor({ id }: { id: string }) {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", update);
     };
-  }, [refresh, activePublication, studio.model.epoch, refs]);
+  }, [refresh, activePublication, studio.model.epoch, refs, branchID]);
   useEffect(() => {
     if (!ready) return;
     const params = new URLSearchParams(location.search);
@@ -228,12 +229,12 @@ export function LibraryEditor({ id }: { id: string }) {
     }
   };
   useEffect(() => {
-    if (!ready || !library || opened) return;
+    if (!ready || !library || opened || (!version && !branchID)) return;
     setOpened(true);
     if (selected) void openPath(selected).catch((e) => setError(String(e)));
     // Load the initial deep link once. Further navigation is explicit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, library, opened]);
+  }, [ready, library, opened, branchID, version]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "p") {
