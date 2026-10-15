@@ -1,4 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
+import fs from "node:fs";
+import path from "node:path";
+import { createHash } from "node:crypto";
 const origin = "https://127.0.0.1:18543";
 async function provision(admin: Page) {
   expect((await admin.request.post("/api/auth/login", { headers: { Origin: origin }, data: { username: "evaluation-admin", password: "browser-fixture-password" } })).ok()).toBeTruthy();
@@ -137,5 +140,45 @@ test("failed reads clear stale metadata and language changes preserve navigation
     await page.unroute("**/evaluation-space/api/v1/session");
     await page.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(overview.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
+  } finally { await context.close(); }
+});
+
+test("workflow workbench edits, validates, publishes and preserves layout identity", async ({ page: admin, browser }) => {
+  const { beta, user } = await provision(admin);
+  const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: "en-US", viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  try {
+    await login(page, user);
+    await page.goto(`/evaluation-space/groups/${beta.id}/`);
+    await page.getByRole("link", { name: "Sign in", exact: true }).click();
+    const workflow = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8"));
+    workflow.id = `skills-${crypto.randomUUID().slice(0, 8)}`;
+    const session = await (await page.request.get("/evaluation-space/api/v1/session")).json() as { csrf: string };
+    const draftPath = `/evaluation-space/api/v1/groups/${beta.id}/workflows/${workflow.id}/draft`;
+    const seeded = await page.request.put(draftPath, { headers: { Origin: origin, "X-CSRF-Token": session.csrf }, data: { id: workflow.id, expected_revision: 0, expected_layout_revision: 0, workflow, layout: { extract: { x: 12, y: 24 } } } });
+    expect(seeded.status(), await seeded.text()).toBe(200);
+    await page.goto(`/evaluation-space/groups/${beta.id}/workflows/${workflow.id}/`);
+    await expect(page.getByRole("heading", { name: new RegExp(`Workflow editor: ${workflow.id}`), exact: true })).toBeVisible();
+    await page.getByRole("button", { name: /^extract\b/ }).click();
+    const executable = page.getByLabel("Executable workflow JSON", { exact: true });
+    const edited = JSON.parse(await executable.inputValue());
+    edited.nodes.find((node: { id: string }) => node.id === "extract").prompt.text = "Extract {{corpus}} with evidence";
+    const extract = edited.nodes.find((node: { id: string }) => node.id === "extract");
+    extract.prompt.digest = `sha256:${createHash("sha256").update(extract.prompt.text).digest("hex")}`;
+    await executable.fill(JSON.stringify(edited, null, 2));
+    await page.getByRole("button", { name: "Validate draft", exact: true }).click();
+    await page.waitForTimeout(200);
+    await expect(page.getByRole("status").filter({ hasText: "Executable digest" })).toContainText("sha256:");
+    const digest = await page.getByRole("status").filter({ hasText: "Executable digest" }).innerText();
+    await page.getByRole("button", { name: "Save draft", exact: true }).click();
+    await expect(page.getByRole("status", { name: "" }).filter({ hasText: "Draft saved." })).toBeVisible();
+    await page.getByLabel("Canvas layout JSON", { exact: true }).fill('{"extract":{"x":80,"y":120}}');
+    await page.getByRole("button", { name: "Save draft", exact: true }).click();
+    await expect(page.getByText("Draft revision 2", { exact: false })).toBeVisible();
+    await page.getByRole("button", { name: "Publish revision", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Published immutable workflow revision." })).toBeVisible();
+    expect(digest).toContain("sha256:");
+    await expect(page.locator("html")).toHaveAttribute("lang", "en");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   } finally { await context.close(); }
 });
