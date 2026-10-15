@@ -95,15 +95,7 @@ func runEvaluations(ctx context.Context, store *projections.Store, authority *id
 			}
 			completion, err := store.EvaluationResult(ctx, item.GroupID, item.JobID)
 			if err != nil {
-				if job.State != "canceled" {
-					continue
-				}
-				// Undispatched cancellation is the only local zero-spend terminal outcome.
-				budget, err := store.EvaluationBudget(ctx, item.GroupID, item.JobID)
-				if err != nil || budget.Held.Tokens != 0 || budget.Held.CostMicros != 0 {
-					continue
-				}
-				completion = projections.EvaluationCompletion{Result: evolution.EvaluationResult{JobID: job.ID, Service: job.Service, Subject: job.Subject, State: "canceled", Outcome: "inconclusive"}}
+				continue
 			}
 			if err = authority.SettleEvaluation(ctx, *job.Grant, completion); err == nil {
 				_ = store.AcknowledgeEvaluationSettlement(ctx, item.GroupID, item.JobID)

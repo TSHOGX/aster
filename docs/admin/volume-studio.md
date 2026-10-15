@@ -101,7 +101,10 @@ open branch's preparation. When your operator has connected Evaluation Space, se
 and time limits and choose **Request evaluation**. The group ceiling and exact
 dataset/evaluator grant must permit the request. **Retry evaluation admission**
 resumes an uncertain request with the same job identity; **Refresh evaluation**
-retrieves its result. Passing evidence enables approval only for the exact prepared
+retrieves its result. **Cancel evaluation** records cancellation intent and preserves
+uncertain spending until the provider reconciles. A job canceled before dispatch
+records zero spending explicitly. After cancellation settles, **Request evaluation**
+creates a new attempt without changing the canceled history. Passing evidence enables approval only for the exact prepared
 result. Missing, failed, canceled, inconclusive or revoked evidence leaves required
 checks blocked. Detailed held-out reports remain in Evaluation Space; Studio shows
 check status without exposing dataset contents.

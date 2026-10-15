@@ -1,4 +1,9 @@
 export const ZH: Record<string, string> = {
+ "Cancel evaluation":"取消评估",
+ "Keep evaluation":"保留评估",
+ "Stop this evaluation? Dispatched work may still be reconciling and charged.":"停止此评估？已派发的工作可能仍在核对中并产生费用。",
+ "Cancellation requested; spending remains reserved until reconciliation finishes.":"已请求取消；完成核对前仍会保留费用预留。",
+
  "Evaluation evidence passed for this exact integrated result.":"此精确集成结果的评估证据已通过。",
  "Evaluation token limit":"评估令牌上限",
  "Evaluation cost limit (micros)":"评估费用上限（微单位）",

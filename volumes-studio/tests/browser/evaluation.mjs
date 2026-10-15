@@ -36,6 +36,26 @@ try {
   await language('en');
   await checks.getByRole('button', { name: 'Request evaluation', exact: true }).click();
   await expect(checks.getByRole('button', { name: 'Refresh evaluation', exact: true })).toBeVisible();
+  if (config.cancel_first) {
+    await expect.poll(async()=> (await (await page.request.get(`${config.origin}/fixture/evaluation-dispatched`)).json()).count).toBe(1);
+    await checks.getByRole('button',{name:'Cancel evaluation',exact:true}).click();
+    await page.getByRole('dialog',{name:'Cancel evaluation',exact:true}).getByRole('button',{name:'Cancel evaluation',exact:true}).click();
+    await expect(checks).toContainText('Cancellation requested; spending remains reserved until reconciliation finishes.');
+    await expect(async()=>{
+      const refresh=checks.getByRole('button',{name:'Refresh evaluation',exact:true});
+      if(await refresh.isVisible())await refresh.click();
+      await expect(checks.getByRole('button',{name:'Request evaluation',exact:true})).toBeEnabled();
+      await expect(checks).toContainText('inconclusive');
+    }).toPass({timeout:20000,intervals:[200,500,1000]});
+    await expect(page.getByRole('button',{name:'Approve integration',exact:true})).toBeDisabled();
+    await page.reload();
+    await expect(checks).toContainText('inconclusive');
+    await checks.getByLabel('Evaluation token limit',{exact:true}).fill('1000');
+    await checks.getByLabel('Evaluation cost limit (micros)',{exact:true}).fill('10000');
+    await checks.getByLabel('Evaluation timeout (seconds)',{exact:true}).fill('60');
+    await checks.getByRole('button',{name:'Request evaluation',exact:true}).click();
+  }
+
   await expect(async () => {
     const refresh = checks.getByRole('button', { name: 'Refresh evaluation', exact: true });
     if (await refresh.isVisible()) await refresh.click();

@@ -372,7 +372,19 @@ func (s *Store) CancelEvaluation(ctx context.Context, group, id string) error {
 	if len(submission) > 0 {
 		next = "cancelling"
 	}
-	if _, err = tx.ExecContext(ctx, "UPDATE evaluation_jobs SET state=? WHERE group_id=? AND id=?", next, group, id); err != nil {
+	var localResult any
+	if next == "canceled" {
+		job, err := readEvaluationBody(ctx, tx, group, id)
+		if err != nil {
+			return err
+		}
+		completion := EvaluationCompletion{Result: evolution.EvaluationResult{JobID: id, Service: job.Service, Subject: job.Subject, Fence: 0, State: "canceled", Outcome: "inconclusive"}}
+		localResult, err = json.Marshal(completion)
+		if err != nil {
+			return err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE evaluation_jobs SET state=?,result=? WHERE group_id=? AND id=?", next, localResult, group, id); err != nil {
 		return err
 	}
 	return tx.Commit()

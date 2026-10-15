@@ -7,6 +7,10 @@ import (
 
 func (a *AuthoringAPI) registerEvaluations() {
 	root := apiPrefix + "libraries/{library}"
+	a.mux.HandleFunc("POST "+root+"/evaluations/{job}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		value, err := a.Store.CancelEvaluation(r.Context(), actor(r), r.PathValue("library"), r.PathValue("job"))
+		respond(w, 202, value, err)
+	})
 	a.mux.HandleFunc("POST "+root+"/integrations/{digest}/evaluations", func(w http.ResponseWriter, r *http.Request) {
 		var input authoring.EvaluationRequestInput
 		if !decodeBody(w, r, &input) {

@@ -84,7 +84,7 @@ func AssessEvaluation(profile EvaluationProfile, assigned EvaluationSubject, res
 	if err != nil || actual != expected {
 		return result, fmt.Errorf("evaluation subject mismatch")
 	}
-	if !manifest.ValidID(result.JobID) || result.Fence < 1 || result.Service.Validate() != nil {
+	if !manifest.ValidID(result.JobID) || result.Fence < 0 || result.Fence == 0 && (result.State != "canceled" || len(result.Metrics) != 0 || len(result.Reports) != 0) || result.Service.Validate() != nil {
 		return result, fmt.Errorf("invalid evaluation result identity")
 	}
 	if result.State != "completed" && result.State != "error" && result.State != "canceled" {

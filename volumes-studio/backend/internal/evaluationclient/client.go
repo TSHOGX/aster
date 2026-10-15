@@ -161,3 +161,8 @@ func (c *Client) Verify(ctx context.Context, grant evolution.EvaluationGrant) er
 	}
 	return nil
 }
+
+func (c *Client) Cancel(ctx context.Context, grant evolution.EvaluationGrant) error {
+	_, err := c.call(ctx, "cancel", grant)
+	return err
+}

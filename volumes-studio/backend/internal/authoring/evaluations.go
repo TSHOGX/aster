@@ -13,6 +13,7 @@ import (
 )
 
 type Evaluator interface {
+	Cancel(context.Context, evolution.EvaluationGrant) error
 	Verify(context.Context, evolution.EvaluationGrant) error
 	Profile(context.Context, evolution.EvaluationProfileScope) (evolution.EvaluationProfile, error)
 	Authorize(context.Context, evolution.EvaluationAssignment) (evolution.EvaluationGrant, error)
@@ -168,6 +169,18 @@ func (s *Store) ReconcileEvaluation(ctx context.Context, a Actor, library, id st
 		summary.Outcome = result.Outcome
 		return summary, nil
 	}
+	var state string
+	if err = s.db.QueryRowContext(ctx, "SELECT state FROM evaluation_requests WHERE library_id=? AND id=?", library, id).Scan(&state); err != nil {
+		return summary, err
+	}
+	if state == "cancelling" {
+		if grant == nil {
+			return summary, ErrConflict
+		}
+		err = s.config.Evaluator.Cancel(ctx, *grant)
+		summary.State = "cancelling"
+		return summary, err
+	}
 	if grant == nil {
 		value, err := s.config.Evaluator.Authorize(ctx, assignment)
 		if err != nil {
@@ -188,10 +201,12 @@ func (s *Store) ReconcileEvaluation(ctx context.Context, a Actor, library, id st
 	if err = s.config.Evaluator.Admit(ctx, *grant); err != nil {
 		return summary, err
 	}
-	if _, err = s.db.ExecContext(ctx, "UPDATE evaluation_requests SET state='admitted' WHERE library_id=? AND id=? AND result IS NULL", library, id); err != nil {
+	if _, err = s.db.ExecContext(ctx, "UPDATE evaluation_requests SET state='admitted' WHERE library_id=? AND id=? AND result IS NULL AND state='pending'", library, id); err != nil {
 		return summary, err
 	}
-	summary.State = "admitted"
+	if err = s.db.QueryRowContext(ctx, "SELECT state FROM evaluation_requests WHERE library_id=? AND id=?", library, id).Scan(&summary.State); err != nil {
+		return summary, err
+	}
 	return summary, nil
 }
 
@@ -214,9 +229,20 @@ func (s *Store) RefreshEvaluation(ctx context.Context, a Actor, library, id stri
 	if grant == nil || s.config.Evaluator == nil {
 		return summary, nil
 	}
+	var currentState string
+	if err = s.db.QueryRowContext(ctx, "SELECT state FROM evaluation_requests WHERE library_id=? AND id=?", library, id).Scan(&currentState); err != nil {
+		return summary, err
+	}
+	if currentState == "cancelling" {
+		if err = s.config.Evaluator.Cancel(ctx, *grant); err != nil {
+			return summary, err
+		}
+	}
 	result, err := s.config.Evaluator.Result(ctx, *grant)
 	if errors.Is(err, evolution.ErrEvaluationPending) {
-		summary.State = "admitted"
+		if err = s.db.QueryRowContext(ctx, "SELECT state FROM evaluation_requests WHERE library_id=? AND id=?", library, id).Scan(&summary.State); err != nil {
+			return summary, err
+		}
 		return summary, nil
 	}
 	if err != nil {
@@ -327,4 +353,50 @@ func (s *Store) evaluationCheckPassed(ctx context.Context, library, prepared, re
 		}
 	}
 	return false, rows.Err()
+}
+
+// CancelEvaluation persists intent before remote effects. Retrying the command or
+// refreshing after an uncertain response cannot readmit a canceled job.
+func (s *Store) CancelEvaluation(ctx context.Context, a Actor, library, id string) (EvaluationSummary, error) {
+	if err := s.authorizeLibrary(ctx, a, library, "volume.review"); err != nil {
+		return EvaluationSummary{}, err
+	}
+	if s.config.Evaluator == nil {
+		return EvaluationSummary{}, ErrBusy
+	}
+	_, grant, result, err := s.evaluationRequest(ctx, library, id)
+	if err != nil {
+		return EvaluationSummary{}, err
+	}
+	if result != nil {
+		return s.RefreshEvaluation(ctx, a, library, id)
+	}
+	// Reconcile uncertain admission first to retain its exact central reservation.
+	var currentState string
+	if err = s.db.QueryRowContext(ctx, "SELECT state FROM evaluation_requests WHERE library_id=? AND id=?", library, id).Scan(&currentState); err != nil {
+		return EvaluationSummary{}, err
+	}
+	if grant == nil || currentState == "pending" {
+		if _, err = s.ReconcileEvaluation(ctx, a, library, id); err != nil {
+			return EvaluationSummary{}, err
+		}
+	}
+	s.mu.Lock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err == nil {
+		_, err = tx.ExecContext(ctx, "UPDATE evaluation_requests SET state='cancelling' WHERE library_id=? AND id=? AND result IS NULL", library, id)
+		if err == nil {
+			_, err = tx.ExecContext(ctx, "INSERT INTO audit(issuer,subject,action,library_id,request_id,revision,created_at) VALUES(?,?,'evaluation.cancel',?,?,0,?)", a.Issuer, a.Subject, library, id, s.now().Unix())
+		}
+		if err == nil {
+			err = tx.Commit()
+		} else {
+			_ = tx.Rollback()
+		}
+	}
+	s.mu.Unlock()
+	if err != nil {
+		return EvaluationSummary{}, err
+	}
+	return s.ReconcileEvaluation(ctx, a, library, id)
 }

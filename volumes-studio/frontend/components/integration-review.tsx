@@ -116,6 +116,12 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
    await api(`${root}/evaluations/${encodeURIComponent(job.id)}/${job.state==="pending"?"retry":"refresh"}`,{method:"POST",body:"{}"},studio.session.csrf);
    await load(view.digest);
   };
+  const cancelEvaluation=async(job:Evaluation)=>{
+   if(!studio.session||!view)return;
+   if(await studio.ask("Cancel evaluation", "Stop this evaluation? Dispatched work may still be reconciling and charged.", ["Keep evaluation","Cancel evaluation"])!=="Cancel evaluation")return;
+   await api(`${root}/evaluations/${encodeURIComponent(job.id)}/cancel`,{method:"POST",body:"{}"},studio.session.csrf);
+   await load(view.digest);
+  };
   return <section className="notice" aria-label={tr("Integration review")}>
     <h2>{tr("Integration review")}</h2>
     <p>{tr("Prepare committed changes against main. Saved but uncommitted edits are excluded.")}</p>
@@ -139,8 +145,8 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
          <p>{tr("Evaluation service")}: {check.service.id} · {check.service.revision}</p>
          <p>{tr("Reference strategy")}: {tr(check.reference_strategy)} {check.reference && <code>{check.reference.commit_id}</code>}</p>
          <p>{tr("Policy")}: <code>{check.policy_id}</code> · {check.policy_revision}</p>
-         {view.evaluations.filter(job=>job.requirement_digest===check.digest).map(job=><div key={job.id}><p><code>{job.id}</code> · {tr(job.state)} · {tr(job.outcome)}</p>{(job.state==="pending"||job.state==="admitted")&&<button disabled={busy} onClick={()=>void run(()=>reconcileEvaluation(job))}>{tr(job.state==="pending"?"Retry evaluation admission":"Refresh evaluation")}</button>}</div>)}
-         <button disabled={busy||view.evaluations.some(job=>job.requirement_digest===check.digest&&(job.state==="pending"||job.state==="admitted"))} onClick={()=>void run(()=>requestEvaluation(check.digest))}>{tr("Request evaluation")}</button>
+         {view.evaluations.filter(job=>job.requirement_digest===check.digest).map(job=><div key={job.id}><p><code>{job.id}</code> · {tr(job.state)} · {tr(job.outcome)}</p>{(job.state==="pending"||job.state==="admitted"||job.state==="cancelling")&&<button disabled={busy} onClick={()=>void run(()=>reconcileEvaluation(job))}>{tr(job.state==="pending"?"Retry evaluation admission":"Refresh evaluation")}</button>}{(job.state==="pending"||job.state==="admitted")&&<button disabled={busy} onClick={()=>void run(()=>cancelEvaluation(job))}>{tr("Cancel evaluation")}</button>}{job.state==="cancelling"&&<p>{tr("Cancellation requested; spending remains reserved until reconciliation finishes.")}</p>}</div>)}
+         <button disabled={busy||view.evaluations.some(job=>job.requirement_digest===check.digest&&(job.state==="pending"||job.state==="admitted"||job.state==="cancelling"))} onClick={()=>void run(()=>requestEvaluation(check.digest))}>{tr("Request evaluation")}</button>
         </li>)}</ul>
        </>}
       </section>

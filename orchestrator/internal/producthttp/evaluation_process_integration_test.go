@@ -98,9 +98,24 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 	central := httptest.NewServer(authentication.IdentityServiceHandler())
 	defer central.Close()
 	var providerMu sync.Mutex
-	var submitted *evolution.EvaluationSubmission
+	submissions := map[string]*evolution.EvaluationSubmission{}
+	states := map[string]string{}
+	cancellationJourney := os.Getenv("STUDIO_TEST_EVALUATION_CANCEL") == "1"
 	inputReads := 0
 	providerFailure := ""
+	if cancellationJourney {
+		original := publicHandler
+		publicHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/fixture/evaluation-dispatched" {
+				providerMu.Lock()
+				count := len(submissions)
+				providerMu.Unlock()
+				_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
+				return
+			}
+			original.ServeHTTP(w, r)
+		})
+	}
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		providerMu.Lock()
 		defer providerMu.Unlock()
@@ -117,6 +132,7 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 				w.WriteHeader(400)
 				return
 			}
+			submitted := submissions[value.JobID]
 			if submitted != nil {
 				if submitted.RequestID != value.RequestID {
 					providerFailure = "second provider submission"
@@ -169,23 +185,39 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 					w.WriteHeader(500)
 					return
 				}
-				submitted = &value
+				submissions[value.JobID] = &value
+				states[value.JobID] = "completed"
+				if cancellationJourney && len(submissions) == 1 {
+					states[value.JobID] = "running"
+				}
 			}
-			_ = json.NewEncoder(w).Encode(evolution.JobStatus{JobID: value.JobID, Fence: value.Fence, State: "completed"})
+			_ = json.NewEncoder(w).Encode(evolution.JobStatus{JobID: value.JobID, Fence: value.Fence, State: states[value.JobID]})
 			return
 		}
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) < 4 {
+			w.WriteHeader(404)
+			return
+		}
+		jobID := parts[3]
+		submitted := submissions[jobID]
 		if submitted == nil {
 			w.WriteHeader(404)
 			_, _ = w.Write([]byte(`{"error":"evaluation_job_not_found"}`))
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/cancel") {
+			states[jobID] = "canceled"
+			w.WriteHeader(204)
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/result") {
 			service := evolution.Revision{ID: r.Header.Get("X-Evaluation-Service-ID"), Revision: 1, Digest: r.Header.Get("X-Evaluation-Service-Digest")}
-			result := evolution.EvaluationResult{JobID: submitted.JobID, Fence: submitted.Fence, Service: service, Subject: submitted.Subject, State: "completed", Outcome: "fail", Metrics: []evolution.Metric{{Name: "accuracy", Unit: "ratio", Value: 1, Samples: 10, Coverage: 1}}}
+			result := evolution.EvaluationResult{JobID: submitted.JobID, Fence: submitted.Fence, Service: service, Subject: submitted.Subject, State: states[jobID], Outcome: "fail", Metrics: []evolution.Metric{{Name: "accuracy", Unit: "ratio", Value: 1, Samples: 10, Coverage: 1}}}
 			_ = json.NewEncoder(w).Encode(map[string]any{"result": result, "usage": map[string]int64{"tokens": 10, "cost_micros": 20}})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(evolution.JobStatus{JobID: submitted.JobID, Fence: submitted.Fence, State: "completed"})
+		_ = json.NewEncoder(w).Encode(evolution.JobStatus{JobID: submitted.JobID, Fence: submitted.Fence, State: states[jobID]})
 	}))
 	defer provider.Close()
 	spaceDirectory := t.TempDir()
@@ -441,7 +473,7 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 		if browserName == "" {
 			browserName = "chromium"
 		}
-		raw, _ := json.Marshal(map[string]any{"backend": "http://" + studioAddress, "origin": issuer, "cookies": cookies, "central_cookie": token, "branch": branch.ID, "prepared": prepared.Digest, "width": width, "browser": browserName})
+		raw, _ := json.Marshal(map[string]any{"backend": "http://" + studioAddress, "origin": issuer, "cookies": cookies, "central_cookie": token, "branch": branch.ID, "prepared": prepared.Digest, "width": width, "browser": browserName, "cancel_first": cancellationJourney})
 		cmd := exec.CommandContext(ctx, "node", filepath.Join(root, "volumes-studio/tests/browser/evaluation.mjs"))
 		cmd.Stdin = bytes.NewReader(raw)
 		output, err := cmd.CombinedOutput()
@@ -482,7 +514,11 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 	providerMu.Lock()
 	verifiedReads, providerError := inputReads, providerFailure
 	providerMu.Unlock()
-	if verifiedReads != 3 || providerError != "" {
+	expectedReads := 3
+	if cancellationJourney {
+		expectedReads = 6
+	}
+	if verifiedReads != expectedReads || providerError != "" {
 		t.Fatal("provider did not read exact inputs", verifiedReads, providerError)
 	}
 	var accepted evolution.ContentRef

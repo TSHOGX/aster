@@ -91,3 +91,21 @@ func TestEvaluationFixedModelAndReportScope(t *testing.T) {
 		}
 	}
 }
+
+func TestZeroFenceIsOnlyUndispatchedCancellation(t *testing.T) {
+	profile, subject, result := evaluationFixture(t)
+	result.Fence = 0
+	if _, err := AssessEvaluation(profile, subject, result); err == nil {
+		t.Fatal("unassigned pass accepted")
+	}
+	result.State = "canceled"
+	result.Metrics = nil
+	got, err := AssessEvaluation(profile, subject, result)
+	if err != nil || got.Outcome != "inconclusive" {
+		t.Fatal(got, err)
+	}
+	result.Metrics = []Metric{{Name: "claimed", Unit: "ratio", Value: 1, Samples: 1, Coverage: 1}}
+	if _, err = AssessEvaluation(profile, subject, result); err == nil {
+		t.Fatal("undispatched metrics accepted")
+	}
+}

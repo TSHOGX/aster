@@ -147,6 +147,10 @@ func (a *EvaluationAPI) serve(w http.ResponseWriter, r *http.Request, action str
 		result, err := a.Store.EvaluationResult(r.Context(), grant.GroupID, grant.JobID)
 		a.reply(w, result, err)
 	case "cancel":
+		if job.State == "completed" || job.State == "error" || job.State == "canceled" {
+			a.reply(w, map[string]string{"state": job.State}, nil)
+			return
+		}
 		err := a.Store.CancelEvaluation(r.Context(), grant.GroupID, grant.JobID)
 		a.reply(w, map[string]string{"state": "cancel_requested"}, err)
 	}

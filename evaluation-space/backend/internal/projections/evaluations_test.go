@@ -202,3 +202,38 @@ func TestEvaluationAdmissionRejectsDisabledServiceAndForeignDataset(t *testing.T
 		t.Fatal("disabled evaluator admitted")
 	}
 }
+
+func TestUndispatchedCancellationHasDurableZeroSpendResult(t *testing.T) {
+	store, path, input := evaluationAdmissionFixture(t)
+	ctx := context.Background()
+	if _, err := store.AdmitEvaluation(ctx, input); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CancelEvaluation(ctx, input.GroupID, input.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CancelEvaluation(ctx, input.GroupID, input.ID); err != nil {
+		t.Fatal("cancel replay", err)
+	}
+	completion, err := store.EvaluationResult(ctx, input.GroupID, input.ID)
+	if err != nil || completion.Result.State != "canceled" || completion.Result.Fence != 0 || completion.Result.Outcome != "inconclusive" || completion.Usage != (RunUsage{}) {
+		t.Fatal(completion, err)
+	}
+	store.Close()
+	store, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	again, err := store.EvaluationResult(ctx, input.GroupID, input.ID)
+	if err != nil || again.Result.State != "canceled" {
+		t.Fatal(again, err)
+	}
+	if _, err = store.ClaimEvaluation(ctx, input.GroupID, input.ID, "worker", time.Minute); !errors.Is(err, ErrConflict) {
+		t.Fatal("canceled job dispatched", err)
+	}
+	budget, err := store.EvaluationBudget(ctx, input.GroupID, input.ID)
+	if err != nil || budget.Held != (RunUsage{}) || budget.Spent != (RunUsage{}) {
+		t.Fatal(budget, err)
+	}
+}

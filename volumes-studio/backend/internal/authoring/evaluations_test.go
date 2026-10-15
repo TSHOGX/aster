@@ -10,6 +10,7 @@ import (
 )
 
 type testEvaluator struct {
+	admitGate  func()
 	profile    evolution.EvaluationProfile
 	assignment evolution.EvaluationAssignment
 	grant      evolution.EvaluationGrant
@@ -36,6 +37,9 @@ func (e *testEvaluator) Authorize(_ context.Context, a evolution.EvaluationAssig
 }
 func (e *testEvaluator) Admit(context.Context, evolution.EvaluationGrant) error {
 	e.calls++
+	if e.admitGate != nil {
+		e.admitGate()
+	}
 	if e.lost {
 		return errors.New("reply lost")
 	}
@@ -185,5 +189,75 @@ func TestEvaluationOutcomeAndSuccessfulMerge(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func (e *testEvaluator) Cancel(context.Context, evolution.EvaluationGrant) error {
+	e.result.State = "canceled"
+	e.result.Outcome = "inconclusive"
+	return nil
+}
+
+func TestStudioCancellationPersistsIntentAndCannotApprove(t *testing.T) {
+	s, l, _, prepared, evaluator := evaluatorFixture(t)
+	ctx := context.Background()
+	input := EvaluationRequestInput{RequestID: "request", RequirementDigest: prepared.Identity.Checks[0].Digest, Budget: evolution.Budget{MaxTokens: 100, MaxCostMicros: 100, MaxAttempts: 1, TimeoutSeconds: 60, MaxArtifactBytes: 1024}}
+	job, err := s.RequestEvaluation(ctx, testActor, l.ID, prepared.Digest, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := s.CancelEvaluation(ctx, testActor, l.ID, job.ID)
+	if err != nil || summary.State != "cancelling" {
+		t.Fatal(summary, err)
+	}
+	config := s.config
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	summary, err = s.RefreshEvaluation(ctx, testActor, l.ID, job.ID)
+	if err != nil || summary.State != "canceled" || summary.Outcome != "inconclusive" {
+		t.Fatal(summary, err)
+	}
+	if _, err = s.Review(ctx, testActor, l.ID, ReviewInput{"approve", prepared.Digest, "approve", ""}); !errors.Is(err, ErrBusy) {
+		t.Fatal("canceled evidence approved", err)
+	}
+	if evaluator.calls != 1 {
+		t.Fatal("cancellation readmitted job", evaluator.calls)
+	}
+	input.RequestID = "new-attempt"
+	next, err := s.RequestEvaluation(ctx, testActor, l.ID, prepared.Digest, input)
+	if err != nil || next.ID == job.ID {
+		t.Fatal("retry rewrote canceled job", next, err)
+	}
+}
+
+func TestLateEvaluationAdmissionCannotEraseCancelIntent(t *testing.T) {
+	s, l, _, prepared, evaluator := evaluatorFixture(t)
+	ctx := context.Background()
+	job, err := s.RequestEvaluation(ctx, testActor, l.ID, prepared.Digest, EvaluationRequestInput{RequestID: "request", RequirementDigest: prepared.Identity.Checks[0].Digest, Budget: evolution.Budget{MaxTokens: 100, MaxCostMicros: 100, MaxAttempts: 1, TimeoutSeconds: 60, MaxArtifactBytes: 1024}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, release := make(chan struct{}), make(chan struct{})
+	evaluator.admitGate = func() { close(started); <-release }
+	done := make(chan error, 1)
+	go func() { _, err := s.ReconcileEvaluation(ctx, testActor, l.ID, job.ID); done <- err }()
+	<-started
+	if _, err = s.CancelEvaluation(ctx, testActor, l.ID, job.ID); err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	close(release)
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+	view, err := s.Integration(ctx, testActor, l.ID, prepared.Digest)
+	if err != nil || len(view.Evaluations) != 1 || view.Evaluations[0].State != "cancelling" {
+		t.Fatal("late admission erased cancellation", view, err)
 	}
 }
