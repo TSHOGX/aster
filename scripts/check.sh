@@ -4,6 +4,11 @@ set -euo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo"
 case "${1:-all}" in
+  evaluation-space)
+    go -C evaluation-space/backend build -mod=readonly ./...
+    go -C evaluation-space/backend vet -mod=readonly ./...
+    go -C evaluation-space/backend test -mod=readonly -race ./...
+    ;;
   studio)
     go -C volumes-studio/backend build -mod=readonly ./...
     go -C volumes-studio/backend vet -mod=readonly ./...
@@ -78,11 +83,12 @@ case "${1:-all}" in
     ;;
   all)
     "$0" source
+    "$0" evaluation-space
     "$0" studio
     "$0" studio-frontend
     "$0" studio-browser
     "$0" backend
     "$0" frontend
     ;;
-  *) echo 'Usage: scripts/check.sh [source|studio|studio-frontend|studio-browser|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|frontend-edge|all]' >&2; exit 2 ;;
+  *) echo 'Usage: scripts/check.sh [source|evaluation-space|studio|studio-frontend|studio-browser|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|frontend-edge|all]' >&2; exit 2 ;;
 esac

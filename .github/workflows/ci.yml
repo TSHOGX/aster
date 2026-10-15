@@ -27,6 +27,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  evaluation-space:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: evaluation-space/backend/go.mod
+          cache-dependency-path: evaluation-space/backend/go.sum
+      - run: scripts/check.sh evaluation-space
+
   studio:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
