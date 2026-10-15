@@ -82,7 +82,10 @@ func BrowserEvaluationAPI(client *appidentity.Client, store *projections.Store) 
 	}
 	cancel := func(w http.ResponseWriter, r *http.Request) {
 		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
-		if err := authorize(r, session); err != nil {
+		if result, err := client.EvaluationGroups(r.Context(), session, appidentity.EvaluationAccessRequest{GroupID: r.PathValue("group"), Action: "run.start", Limit: 1}); err != nil || len(result.Items) != 1 || result.Items[0].ID != r.PathValue("group") {
+			if err == nil {
+				err = appidentity.ErrUnauthorized
+			}
 			workflowAuthError(w, err)
 			return
 		}
