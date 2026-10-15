@@ -15,30 +15,31 @@ func TestSharedAssetsDraftPublicationAndCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	b := newDraftBranch(t, s, l.ID)
 	revision := int64(1)
 	mutateDraft := func(action, path, text string) {
-		revision = mutate(t, s, l.ID, fixtureMutation{RequestID: fmt.Sprint(revision), ExpectedRevision: revision, Action: action, Path: path, Text: text}).Revision
+		revision = editDraft(t, s, b, draftEdit{RequestID: fmt.Sprint(revision), ExpectedRevision: revision, Action: action, Path: path, Text: text}).Revision
 	}
-	mutateDraft("mkdir", "skills", "")
-	if _, err = previewFixture(s, ctx, l.ID, revision); err == nil {
+	mutateDraft("remove", "AGENTS.md", "")
+	if v, err := s.BranchValidation(ctx, testActor, l.ID, b.ID, revision); err != nil || v.Valid {
 		t.Fatal("incomplete draft published")
 	}
 	mutateDraft("text", "AGENTS.md", "Use the tools available to this Project.")
 	mutateDraft("mkdir", "skills/reference", "")
-	if _, err = freezeFixture(s, ctx, testActor, l.ID, fixturePublicationInput{RequestID: "incomplete", ExpectedRevision: revision, Label: "incomplete"}); err == nil {
+	if _, err = releaseDraft(s, ctx, testActor, b, draftRelease{RequestID: "incomplete", ExpectedRevision: revision, Label: "incomplete"}); err == nil {
 		t.Fatal("missing SKILL.md accepted")
 	}
 	mutateDraft("text", "skills/reference/SKILL.md", "# Reference\nConsult the supplied reference.")
 	mutateDraft("text", "skills/reference/example.txt", "reference bytes")
-	d, err := previewFixture(s, ctx, l.ID, revision)
-	if err != nil {
-		t.Fatal(err)
+	d, err := s.BranchValidation(ctx, testActor, l.ID, b.ID, revision)
+	if err != nil || !d.Valid {
+		t.Fatal(d, err)
 	}
 	if d.Profile != manifest.SharedAssetsProfile {
 		t.Fatal(d)
 	}
-	v := publish(t, s, l.ID, revision)
-	if _, err = s.ValidateNext(ctx, allow); err != nil {
+	v := publishDraft(t, s, b, revision)
+	if _, err = s.ValidateNext(ctx); err != nil {
 		t.Fatal(err)
 	}
 	before, err := s.Descriptor(ctx, v.ID)

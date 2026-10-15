@@ -91,7 +91,7 @@ func TestBackupRestoresReviewedHistoryAndIndependentDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ValidateNext(ctx, allow); err != nil {
+	if _, err = s.ValidateNext(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.SaveBranchText(ctx, testActor, l.ID, b.ID, SaveBranchTextInput{"draft-after-release", 2, b.Head, "note", "uncommitted draft"}); err != nil {

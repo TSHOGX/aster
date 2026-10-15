@@ -111,7 +111,7 @@ func TestBranchHTTPJourney(t *testing.T) {
 	if err = json.Unmarshal(w.Body.Bytes(), &version); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ValidateNext(ctx, func(context.Context, authoring.Actor) error { return nil }); err != nil {
+	if _, err = s.ValidateNext(ctx); err != nil {
 		t.Fatal(err)
 	}
 	w = call("GET", "/versions/"+version.ID+"/content?path=note.html", nil)

@@ -29,7 +29,7 @@ func TestReleaseRequiresAcceptedCommit(t *testing.T) {
 	if err != nil || again.ID != version.ID {
 		t.Fatal("release replay changed", err)
 	}
-	if _, err = s.ValidateNext(ctx, allow); err != nil {
+	if _, err = s.ValidateNext(ctx); err != nil {
 		t.Fatal(err)
 	}
 	v, err := s.Version(ctx, version.ID)
@@ -72,7 +72,7 @@ func TestReleaseWorkerRechecksScopedPublishGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.config.Authority = publishRevokedAuthority{}
-	processed, err := s.ValidateNext(ctx, allow)
+	processed, err := s.ValidateNext(ctx)
 	if !processed || !errors.Is(err, ErrAuthority) {
 		t.Fatal("revoked publisher admitted", processed, err)
 	}

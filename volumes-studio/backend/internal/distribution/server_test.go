@@ -56,7 +56,7 @@ func TestAuthenticatedDistributionManifestRangeAndRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.ValidateNext(ctx, func(context.Context, authoring.Actor) error { return nil }); err != nil {
+	if _, err = store.ValidateNext(ctx); err != nil {
 		t.Fatal(err)
 	}
 	secret := strings.Repeat("credential", 4)

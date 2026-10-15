@@ -118,16 +118,7 @@ func main() {
 			case <-ticker.C:
 				_, _ = store.ExpireUploads(ctx)
 				_ = store.ExpireExports(ctx)
-				_, err := store.ValidateNext(ctx, func(ctx context.Context, actor authoring.Actor) error {
-					if actor.Issuer != *issuer {
-						return identity.ErrUnauthorized
-					}
-					_, err := client.Principal(ctx, actor.Subject)
-					if errors.Is(err, identity.ErrUnauthorized) {
-						return authoring.ErrAuthority
-					}
-					return err
-				})
+				_, err := store.ValidateNext(ctx)
 				if err != nil && !errors.Is(err, context.Canceled) {
 					log.Print("publication awaiting integrity or principal check; inspect operation state")
 				}

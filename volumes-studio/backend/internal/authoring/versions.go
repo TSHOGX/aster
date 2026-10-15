@@ -45,10 +45,7 @@ func (s *Store) Versions(ctx context.Context, library, after string) ([]Version,
 // an interrupted 'validating' job from its frozen tree. Current principal checks
 // gate both admission to hashing and publication finalization; session logout
 // does not revoke a principal's already admitted work.
-func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context, Actor) error) (bool, error) {
-	if authorize == nil {
-		return false, ErrInvalid
-	}
+func (s *Store) ValidateNext(ctx context.Context) (bool, error) {
 	s.mu.Lock()
 	v, err := scanVersion(s.db.QueryRowContext(ctx, "SELECT "+versionColumns+" FROM versions WHERE state IN ('pending','validating') AND error!='principal_authority_required' ORDER BY created_at,id LIMIT 1"))
 	s.mu.Unlock()
@@ -58,7 +55,7 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 	if err != nil {
 		return false, err
 	}
-	if err = s.authorizePublication(ctx, v, authorize); err != nil {
+	if err = s.authorizePublication(ctx, v); err != nil {
 		if errors.Is(err, ErrAuthority) {
 			s.mu.Lock()
 			_, persist := s.db.ExecContext(ctx, "UPDATE versions SET error='principal_authority_required' WHERE id=? AND generation=?", v.ID, v.Generation)
@@ -121,7 +118,7 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 		_, persist := s.db.ExecContext(ctx, "UPDATE versions SET state='failed',error='source_integrity_failed' WHERE id=? AND state='validating' AND generation=?", v.ID, generation)
 		return true, errors.Join(err, persist)
 	}
-	if err = s.authorizePublication(ctx, v, authorize); err != nil {
+	if err = s.authorizePublication(ctx, v); err != nil {
 		if errors.Is(err, ErrAuthority) {
 			s.mu.Lock()
 			_, persist := s.db.ExecContext(ctx, "UPDATE versions SET error='principal_authority_required' WHERE id=? AND generation=?", v.ID, generation)
@@ -242,16 +239,11 @@ func (s *Store) validateProfileContent(d manifest.Descriptor) error {
 	})
 }
 
-// Accepted releases use current library publish authority at both worker
-// admission and finalization. Older internal draft fixtures are removed with the
-// remaining single-draft layer; they use the existing principal callback here.
-func (s *Store) authorizePublication(ctx context.Context, v Version, principal func(context.Context, Actor) error) error {
-	var commit string
-	if err := s.db.QueryRowContext(ctx, "SELECT accepted_commit FROM versions WHERE id=?", v.ID).Scan(&commit); err != nil {
-		return err
-	}
+// Publication requires current scoped authority and a settled accepted commit.
+func (s *Store) authorizePublication(ctx context.Context, v Version) error {
+	commit := v.AcceptedCommit
 	if commit == "" {
-		return principal(ctx, v.Publisher)
+		return ErrConflict
 	}
 	if err := s.authorizeLibrary(ctx, v.Publisher, v.LibraryID, "volume.publish"); err != nil {
 		return err

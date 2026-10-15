@@ -23,7 +23,7 @@ func TestBranchDraftPinsBlobWithoutLegacyDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	var legacy int
-	if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM draft_entries").Scan(&legacy); err != nil || legacy != 0 {
+	if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='draft_entries'").Scan(&legacy); err != nil || legacy != 0 {
 		t.Fatal("fixture depends on old draft", legacy, err)
 	}
 	if removed, err := s.Collect(ctx); err != nil || removed != 0 {

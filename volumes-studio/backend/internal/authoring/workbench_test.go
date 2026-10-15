@@ -3,6 +3,7 @@ package authoring
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 )
 
@@ -41,74 +42,69 @@ func TestWorkbenchTreeEntryAndPinnedContent(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	l := library(t, s)
-	mutate := func(action, path, text string) {
-		t.Helper()
-		result, err := mutateFixture(s, ctx, testActor, l.ID, fixtureMutation{RequestID: fmt.Sprint(l.DraftRevision), ExpectedRevision: l.DraftRevision, Action: action, Path: path, Text: text})
-		if err != nil {
-			t.Fatal(err)
-		}
-		l.DraftRevision = result.Revision
-	}
-	mutate("mkdir", "文档", "")
-	mutate("text", "文档/a_%.md", "original")
-	mutate("text", "a.txt", "alpha")
-	p, err := workbenchTreeFixture(s, ctx, l.ID, "", Query{Limit: 1}, false)
-	if err != nil || p.Items[0].Path != "文档" || p.Next == "" {
+	b := newDraftBranch(t, s, l.ID)
+	editDraft(t, s, b, draftEdit{RequestID: "directory", ExpectedRevision: 1, Action: "mkdir", Path: "文档"})
+	editDraft(t, s, b, draftEdit{RequestID: "nested", ExpectedRevision: 2, Action: "text", Path: "文档/a_%.md", Text: "original"})
+	editDraft(t, s, b, draftEdit{RequestID: "root", ExpectedRevision: 3, Action: "text", Path: "a.txt", Text: "alpha"})
+	p, err := s.BranchTree(ctx, testActor, l.ID, b.ID, "", "", 4)
+	if err != nil || len(p.Entries) != 2 || p.Entries[0].Path != "a.txt" {
 		t.Fatal(p, err)
 	}
-	p2, err := workbenchTreeFixture(s, ctx, l.ID, "", Query{Limit: 1, Cursor: p.Next, Revision: p.Revision}, false)
-	if err != nil || p2.Items[0].Path != "a.txt" {
-		t.Fatal(p2, err)
-	}
-	found, err := workbenchTreeFixture(s, ctx, l.ID, "", Query{Q: "_%", Revision: l.DraftRevision}, true)
-	if err != nil || found.Total != 1 {
+	found, err := s.SearchBranch(ctx, testActor, l.ID, b.ID, "_%", "", 4)
+	if err != nil || found.DescendantCount != 1 {
 		t.Fatal(found, err)
 	}
-	e, err := entryFixture(s, ctx, l.ID, "文档/a_%.md")
-	if err != nil || e.Entry == nil || e.Revision != l.DraftRevision {
+	e, err := s.BranchEntry(ctx, testActor, l.ID, b.ID, "文档/a_%.md", 4)
+	if err != nil || e.Entry == nil || e.Revision != 4 {
 		t.Fatal(e, err)
 	}
-	mutate("text", "a.txt", "updated")
-	if _, err = workbenchTreeFixture(s, ctx, l.ID, "", Query{Limit: 1, Cursor: p.Next, Revision: p.Revision}, false); err != ErrConflict {
+	editDraft(t, s, b, draftEdit{RequestID: "update", ExpectedRevision: 4, Action: "text", Path: "a.txt", Text: "updated"})
+	if _, err = s.BranchTree(ctx, testActor, l.ID, b.ID, "", "a.txt", 4); err != ErrConflict {
 		t.Fatal("stale page", err)
 	}
-	if r, _, err := contentFixture(s, ctx, l.ID, "文档/a_%.md", "", e.Revision); err != ErrConflict {
-		if r != nil {
-			r.Close()
+	if reader, _, err := s.BranchContent(ctx, testActor, l.ID, b.ID, "文档/a_%.md", e.Revision); err != ErrConflict {
+		if reader != nil {
+			reader.Close()
 		}
 		t.Fatal("stale content", err)
 	}
 }
-func TestPublicationDoesNotChangeDraftComparisonBase(t *testing.T) {
+func TestPublicationDoesNotChangeBranchComparison(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	l := library(t, s)
-	result, err := mutateFixture(s, ctx, testActor, l.ID, fixtureMutation{RequestID: "file", ExpectedRevision: l.DraftRevision, Action: "text", Path: "a.txt", Text: "one"})
+	b := newDraftBranch(t, s, l.ID)
+	editDraft(t, s, b, draftEdit{RequestID: "file", ExpectedRevision: 1, Action: "text", Path: "a.txt", Text: "one"})
+	accepted, err := acceptDraft(s, ctx, testActor, b, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := Query{Revision: result.Revision}
-	p, err := workbenchDiffFixture(s, ctx, l.ID, q)
-	if err != nil || p.Total != 1 {
-		t.Fatal(p, err)
-	}
-	v, err := freezeFixture(s, ctx, testActor, l.ID, fixturePublicationInput{RequestID: "freeze", ExpectedRevision: result.Revision, Label: "v1"})
+	current, err := s.Branch(ctx, testActor, l.ID, b.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ValidateNext(ctx, allow); err != nil {
+	editDraft(t, s, b, draftEdit{RequestID: "later", ExpectedRevision: 2, Action: "text", Path: "a.txt", Text: "two"})
+	before, err := s.BranchDiff(ctx, testActor, l.ID, b.ID, current.Head, "", 3)
+	if err != nil || before.Total != 1 {
+		t.Fatal(before, err)
+	}
+	v, err := s.Release(ctx, testActor, l.ID, ReleaseInput{RequestID: "release", AcceptedCommit: accepted.AcceptedCommit, Label: "v1"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	p, err = workbenchDiffFixture(s, ctx, l.ID, q)
-	if err != nil || p.Total != 1 {
-		t.Fatal("publication changed saved draft comparison", p, err)
+	if _, err = s.ValidateNext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after, err := s.BranchDiff(ctx, testActor, l.ID, b.ID, current.Head, "", 3)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatal("publication changed branch comparison", after, err)
 	}
 	version, err := s.Version(ctx, v.ID)
 	if err != nil || version.State != "published" {
 		t.Fatal(version, err)
 	}
 	summary, err := s.Summary(ctx, l.ID)
-	if err != nil || summary.DraftChangeCount != 0 || summary.LatestPublishedVersion == nil || summary.LatestPublishedVersion.PublishedAt == nil {
+	if err != nil || summary.DraftChangeCount != 1 || summary.LatestPublishedVersion == nil || summary.LatestPublishedVersion.PublishedAt == nil {
 		t.Fatal(summary, err)
 	}
 }
@@ -117,17 +113,22 @@ func TestWorkbenchVersionSearchBeyondFirstPage(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	l := library(t, s)
-	result, err := mutateFixture(s, ctx, testActor, l.ID, fixtureMutation{RequestID: "seed", ExpectedRevision: l.DraftRevision, Action: "mkdir", Path: "empty"})
+	b := newDraftBranch(t, s, l.ID)
+	result, err := editDraftAs(s, ctx, testActor, b, draftEdit{RequestID: "seed", ExpectedRevision: b.DraftRevision, Action: "mkdir", Path: "empty"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	l.DraftRevision = result.Revision
+	b.DraftRevision = result.Revision
+	accepted, err := acceptDraft(s, ctx, testActor, b, b.DraftRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 205; i++ {
-		_, err := freezeFixture(s, ctx, testActor, l.ID, fixturePublicationInput{RequestID: fmt.Sprintf("publish-%d", i), ExpectedRevision: l.DraftRevision, Label: fmt.Sprintf("version-%03d", i)})
+		_, err := s.Release(ctx, testActor, l.ID, ReleaseInput{RequestID: fmt.Sprintf("publish-%d", i), AcceptedCommit: accepted.AcceptedCommit, Label: fmt.Sprintf("version-%03d", i)})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = s.ValidateNext(ctx, allow); err != nil {
+		if _, err = s.ValidateNext(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}

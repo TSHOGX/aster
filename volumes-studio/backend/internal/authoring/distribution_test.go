@@ -11,9 +11,10 @@ import (
 func released(t *testing.T, s *Store) (Library, Version) {
 	t.Helper()
 	l := library(t, s)
-	mutate(t, s, l.ID, fixtureMutation{RequestID: "file", ExpectedRevision: 1, Action: "text", Path: "file", Text: "portable bytes"})
-	v := publish(t, s, l.ID, 2)
-	if _, err := s.ValidateNext(context.Background(), allow); err != nil {
+	b := newDraftBranch(t, s, l.ID)
+	editDraft(t, s, b, draftEdit{RequestID: "file", ExpectedRevision: 1, Action: "text", Path: "file", Text: "portable bytes"})
+	v := publishDraft(t, s, b, 2)
+	if _, err := s.ValidateNext(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	v, err := s.Version(context.Background(), v.ID)
@@ -87,7 +88,7 @@ func TestExportPinsMembershipArchiveAndRetirement(t *testing.T) {
 	if _, err = s.SaveBranchText(ctx, testActor, l.ID, branch.ID, SaveBranchTextInput{"retain", 1, main.CommitID, "file", "portable bytes"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.ExecContext(ctx, "DELETE FROM draft_entries WHERE library_id=?", l.ID); err != nil {
+	if _, err = s.db.ExecContext(ctx, "DELETE FROM branch_entries WHERE branch_id IN (SELECT id FROM branches WHERE library_id=? AND name='Test draft')", l.ID); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := s.Collect(ctx); err != nil || n != 0 {
