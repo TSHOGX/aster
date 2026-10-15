@@ -4,6 +4,7 @@ import (
 	"aster/contracts/evolution"
 	manifest "aster/contracts/volumemanifest"
 	"context"
+	"database/sql"
 	"fmt"
 )
 
@@ -59,4 +60,40 @@ func (s *Store) CatalogRevisions(ctx context.Context, input CatalogListInput) (C
 		result.NextRevision = ref.Revision
 	}
 	return result, rows.Err()
+}
+
+func (s *Store) CatalogDefinition(ctx context.Context, kind string, ref evolution.Revision) ([]byte, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if kind == "workflow" {
+		return s.workflowDefinition(ctx, tx, ref)
+	}
+	return s.definitionBytes(ctx, tx, kind, ref)
+}
+func (s *Store) workflowDefinition(ctx context.Context, tx *sql.Tx, ref evolution.Revision) ([]byte, error) {
+	var raw []byte
+	if err := tx.QueryRowContext(ctx, "SELECT body FROM workflow_revisions WHERE id=? AND revision=?", ref.ID, ref.Revision).Scan(&raw); err != nil {
+		return nil, err
+	}
+	if evolution.Digest(raw) != ref.Digest {
+		return nil, ErrConflict
+	}
+	return raw, nil
+}
+func (s *Store) definitionBytes(ctx context.Context, tx *sql.Tx, kind string, ref evolution.Revision) ([]byte, error) {
+	if kind != "service" && kind != "template" && kind != "profile" {
+		return nil, fmt.Errorf("unsupported catalog kind")
+	}
+	var raw []byte
+	var digest string
+	if err := tx.QueryRowContext(ctx, "SELECT body,digest FROM catalog_definitions WHERE kind=? AND id=? AND revision=?", kind, ref.ID, ref.Revision).Scan(&raw, &digest); err != nil {
+		return nil, err
+	}
+	if digest != ref.Digest {
+		return nil, ErrConflict
+	}
+	return raw, nil
 }

@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"aster/contracts/evolution"
 	"aster/evaluation-space/internal/projections"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -57,4 +59,35 @@ func (a CatalogAPI) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, page)
+}
+
+func (a CatalogAPI) definition(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Cookie") != "" || r.Header.Get("Origin") != "" {
+		write(w, 403, map[string]string{"error": "service_identity_required"})
+		return
+	}
+	if a.Store == nil || a.Authority == nil || a.Authority.AuthorizeCatalog(r, r.PathValue("kind")) != nil {
+		write(w, 403, map[string]string{"error": "catalog_authority_denied"})
+		return
+	}
+	rev, err := strconv.ParseInt(r.PathValue("revision"), 10, 64)
+	if err != nil || rev < 1 || strconv.FormatInt(rev, 10) != r.PathValue("revision") {
+		write(w, 400, map[string]string{"error": "invalid_revision"})
+		return
+	}
+	digest := r.URL.Query().Get("digest")
+	if len(digest) == 0 {
+		write(w, 400, map[string]string{"error": "digest_required"})
+		return
+	}
+	body, err := a.Store.CatalogDefinition(r.Context(), r.PathValue("kind"), evolution.Revision{ID: r.PathValue("id"), Revision: rev, Digest: digest})
+	if err != nil {
+		if errors.Is(err, projections.ErrNotFound) {
+			write(w, 404, map[string]string{"error": "definition_not_found"})
+		} else {
+			write(w, 409, map[string]string{"error": "definition_identity_conflict"})
+		}
+		return
+	}
+	write(w, 200, json.RawMessage(body))
 }
