@@ -298,3 +298,19 @@ and `{"service_id":"SERVICE_ID"}` on stdin. The result contains `service_id`,
 `revision`, and `enabled`. Use that revision as `expected_revision` for the mutation;
 it is independent of immutable catalog definition revisions. Inspection follows
 the same stopped-service ownership requirement as other offline catalog commands.
+
+### Online Evaluation Space catalog access
+
+When the Evaluation Space service is running, its private API serves catalog metadata
+and exact definitions under `/evaluation-space/api/v1/catalog/{kind}`. The service
+must use the registered `evaluation-space` identity client and central catalog
+authority. Browser Cookie and Origin headers are rejected; these routes are private
+service/API boundaries, not browser endpoints.
+
+Metadata listing uses `limit`, `after_id`, and `after_revision` cursors. Definition
+reads use `/catalog/{kind}/{id}/{revision}?digest=...`; the digest is mandatory and
+must match the immutable stored definition. A mismatch returns a conflict. The
+metadata response omits connection and credential fields; definition payload access
+requires the separate catalog authority decision and must be redacted by any caller
+before exposing it to users. Offline provisioning remains available when the service
+is stopped.
