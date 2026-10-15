@@ -87,3 +87,61 @@ test("branch creation and selection use real scoped authority", async ({ page })
   await expect(page.getByText("Acceptance is complete. Publishing creates a version; it does not deploy to Projects.")).toBeVisible();
 
 });
+
+test("non-admin experts enter with scoped grants and cannot create or merge libraries", async ({ page, browser }) => {
+  const login = await page.request.post(`${origin}/api/auth/login`, {headers:{Origin:origin},data:{username:"studio-admin",password:"browser-fixture-password"}});
+  expect(login.ok()).toBeTruthy();
+  await page.goto("/volumes-studio/");
+  await page.getByRole("link",{name:"Sign in",exact:true}).click();
+  const session=await (await page.request.get("/volumes-studio/api/v1/session")).json();
+  expect(session.can_create_library).toBe(true);
+  const headers={Origin:origin,"X-CSRF-Token":session.csrf};
+  const created=await page.request.post("/volumes-studio/api/v1/libraries",{headers,data:{request_id:crypto.randomUUID(),name:`Expert review ${crypto.randomUUID()}`}});
+  expect(created.ok(),await created.text()).toBeTruthy();
+  const library=await created.json();
+  const userResponse=await page.request.post("/api/admin/users",{headers:{Origin:origin},data:{request_id:crypto.randomUUID(),username:`expert-${crypto.randomUUID()}`,display_name:"Scoped expert",role:"user",group_ids:[]}});
+  expect(userResponse.status(),await userResponse.text()).toBe(201);
+  const user=await userResponse.json();
+  const grant=async(subject:string,action:string,effect="allow",revision=0)=>{
+    const response=await page.request.post("/api/admin/studio-grants",{headers:{Origin:origin},data:{request_id:crypto.randomUUID(),kind:"account",subject_id:subject,library_id:library.id,action,effect,expected_revision:revision}});
+    expect(response.ok(),await response.text()).toBeTruthy();
+  };
+  for(const action of ["volume.read","volume.author"]) await grant(session.subject,action);
+  for(const action of ["volume.read","volume.review"]) await grant(user.user.id,action);
+  const root=`/volumes-studio/api/v1/libraries/${library.id}`;
+  const post=async(path:string,data:object)=>{
+    const response=await page.request.post(root+path,{headers,data});
+    expect(response.ok(),await response.text()).toBeTruthy();return response.json();
+  };
+  const main=await (await page.request.get(root+"/main")).json();
+  const branch=await post("/branches",{request_id:crypto.randomUUID(),name:"Candidate",base_commit:main.commit_id});
+  await post(`/branches/${branch.id}/draft/text`,{request_id:crypto.randomUUID(),expected_revision:1,expected_head:branch.head,path:"lesson.md",text:"Exact candidate for expert review"});
+  const checkpoint=await post(`/branches/${branch.id}/commits`,{request_id:crypto.randomUUID(),expected_revision:2,expected_head:branch.head,message:"Candidate"});
+  const prepared=await post("/integrations/prepare",{request_id:crypto.randomUUID(),branch_id:branch.id,expected_head:checkpoint.commit_id,expected_main:main.commit_id,expected_policy_revision:1});
+  const context=await browser.newContext({baseURL:origin,ignoreHTTPSErrors:true});
+  try {
+    const expert=await context.newPage();
+    expect((await expert.request.post("/api/auth/login",{headers:{Origin:origin},data:{username:user.user.username,password:user.temporary_password}})).ok()).toBeTruthy();
+    expect((await expert.request.post("/api/auth/password/setup",{headers:{Origin:origin},data:{new_password:"permanent-expert-fixture-password"}})).ok()).toBeTruthy();
+    await expert.goto("/volumes-studio/");
+    await expert.getByRole("link",{name:"Sign in",exact:true}).click();
+    await expect(expert.getByRole("button",{name:"New library",exact:true})).toBeDisabled();
+    const expertSession=await (await expert.request.get("/volumes-studio/api/v1/session")).json();
+    expect(expertSession.can_create_library).toBe(false);
+    const expertHeaders={Origin:origin,"X-CSRF-Token":expertSession.csrf};
+    expect((await expert.request.post("/volumes-studio/api/v1/libraries",{headers:expertHeaders,data:{request_id:crypto.randomUUID(),name:"Forbidden creation"}})).status()).toBe(403);
+    const catalog=await (await expert.request.get("/volumes-studio/api/v1/libraries?mode=workbench")).json();
+    expect(catalog.total).toBe(1);expect(catalog.items[0].id).toBe(library.id);
+    expect((await expert.request.get("/api/admin/users")).status()).toBe(403);
+    await expert.goto(`/volumes-studio/libraries/${library.id}?branch=${branch.id}&integration=${encodeURIComponent(prepared.digest)}`);
+    await expert.getByRole("button",{name:"added: lesson.md",exact:true}).click();
+    await expect(expert.locator("pre").filter({hasText:"Exact candidate for expert review"})).toBeVisible();
+    await expert.getByRole("button",{name:"Approve integration",exact:true}).click();
+    await expect(expert.getByRole("button",{name:"Merge approved integration",exact:true})).toBeEnabled();
+    await expert.getByRole("button",{name:"Merge approved integration",exact:true}).click();
+    await expect(expert.getByRole("region",{name:"Integration review",exact:true}).getByRole("alert")).toBeVisible();
+    const unchanged=await (await page.request.get(root+"/main")).json();expect(unchanged.commit_id).toBe(main.commit_id);
+    await grant(user.user.id,"volume.read","deny",1);
+    expect((await expert.request.get("/volumes-studio/api/v1/libraries?mode=workbench")).status()).toBe(401);
+  } finally {await context.close();}
+});

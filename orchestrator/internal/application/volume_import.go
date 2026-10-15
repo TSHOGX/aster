@@ -334,7 +334,7 @@ func (a *Application) runVolumeImports(ctx context.Context) {
 	}
 }
 func (a *Application) performVolumeImport(ctx context.Context, i product.VolumeImport) error {
-	if _, err := a.Store.IdentityPrincipal(ctx, i.ActorID); err != nil {
+	if err := a.Store.AuthorizeVolumeImport(ctx, i.ActorID); err != nil {
 		return a.Store.AdvanceVolumeImport(ctx, i.ID, i.State, "paused", "principal_authority_required")
 	}
 	root := filepath.Join(a.Config.StateDirectory, "volume-transfers", i.ID)
@@ -374,14 +374,14 @@ func (a *Application) performVolumeImport(ctx context.Context, i product.VolumeI
 	if cache.Status().State != volumeimport.SourceAcquired {
 		return fmt.Errorf("verified local source unavailable")
 	}
-	if _, err = a.Store.IdentityPrincipal(ctx, i.ActorID); err != nil {
+	if err = a.Store.AuthorizeVolumeImport(ctx, i.ActorID); err != nil {
 		return a.Store.AdvanceVolumeImport(ctx, i.ID, i.State, "paused", "principal_authority_required")
 	}
 	revision, err := i.Revision(cache)
 	if err != nil {
 		return err
 	}
-	volume, err := (content.Publisher{Repository: a.Store, Backend: a.Backend, Authorize: func(ctx context.Context) error { _, err := a.Store.IdentityPrincipal(ctx, i.ActorID); return err }}).Publish(ctx, i.PublicationPurpose(), revision, i.Capacity)
+	volume, err := (content.Publisher{Repository: a.Store, Backend: a.Backend, Authorize: func(ctx context.Context) error { return a.Store.AuthorizeVolumeImport(ctx, i.ActorID) }}).Publish(ctx, i.PublicationPurpose(), revision, i.Capacity)
 	if err != nil {
 		if errors.Is(err, product.ErrUnauthorized) || errors.Is(err, product.ErrForbidden) {
 			return a.Store.AdvanceVolumeImport(ctx, i.ID, i.State, "paused", "principal_authority_required")

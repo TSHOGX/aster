@@ -97,7 +97,7 @@ no identity, journals, live handles or secrets.
 Publication can retain staging and derivative allocations during uncertain outcomes.
 Do not delete staging to clear capacity. Repeating the identical publication is
 idempotent; reusing its immutable identity for different bytes or capacity conflicts.
-Use [Volume Studio](../admin/volume-studio.md) for administrator-authored libraries.
+Use [Volume Studio](../admin/volume-studio.md) for libraries authored and reviewed through scoped grants.
 
 ## Disable, enable and retire
 

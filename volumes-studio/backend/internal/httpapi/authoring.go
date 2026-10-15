@@ -57,6 +57,10 @@ func NewAuthoringAPI(store *authoring.Store) *AuthoringAPI {
 	return a
 }
 func (a *AuthoringAPI) Serve(session identity.Session, w http.ResponseWriter, r *http.Request) {
+	if r.Method == "POST" && r.URL.Path == apiPrefix+"libraries" && !session.CanCreateLibrary {
+		authoringError(w, authoring.ErrAuthority)
+		return
+	}
 	if r.Method != "GET" && r.Method != "HEAD" {
 		select {
 		case a.mutations <- struct{}{}:

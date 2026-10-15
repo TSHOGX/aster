@@ -42,12 +42,13 @@ type Sessions struct {
 	now    func() time.Time
 }
 type Session struct {
-	Issuer         string `json:"issuer"`
-	Subject        string `json:"subject"`
-	CentralSession string `json:"-"`
-	Epoch          int64  `json:"-"`
-	CSRF           string `json:"csrf"`
-	Grant          string `json:"-"`
+	CanCreateLibrary bool   `json:"can_create_library"`
+	Issuer           string `json:"issuer"`
+	Subject          string `json:"subject"`
+	CentralSession   string `json:"-"`
+	Epoch            int64  `json:"-"`
+	CSRF             string `json:"csrf"`
+	Grant            string `json:"-"`
 }
 
 func OpenSessions(ctx context.Context, name string, client *Client) (*Sessions, error) {
@@ -154,6 +155,11 @@ func (s *Sessions) Authorize(ctx context.Context, token string) (Session, error)
 	}
 	if a.Issuer != session.Issuer || a.Subject != session.Subject || a.CentralSession != session.CentralSession || a.Epoch != session.Epoch {
 		return Session{}, ErrUnauthorized
+	}
+	for _, entitlement := range a.Entitlements {
+		if entitlement == CreateEntitlement {
+			session.CanCreateLibrary = true
+		}
 	}
 	return session, nil
 }

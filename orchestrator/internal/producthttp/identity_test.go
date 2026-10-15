@@ -116,7 +116,5 @@ func TestCentralIdentityHTTPCodeFlowAndSharedLogout(t *testing.T) {
 	if _, err := store.Login(ctx, cookie); err == nil {
 		t.Fatal("central session survived Studio logout")
 	}
-	if got := service("principal", map[string]string{"subject": account.ID}, secret, "", ""); got.Code != 200 {
-		t.Fatal("worker principal incorrectly revoked on ordinary logout", got.Code)
-	}
+
 }

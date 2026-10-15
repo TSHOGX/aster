@@ -29,7 +29,6 @@ func (a *Authentication) IdentityServiceHandler() http.Handler {
 	mux.HandleFunc("POST /api/identity/v1/token", a.identityToken)
 	mux.HandleFunc("POST /api/identity/v1/introspect", a.identityIntrospect)
 	mux.HandleFunc("POST /api/identity/v1/revoke", a.identityRevoke)
-	mux.HandleFunc("POST /api/identity/v1/principal", a.identityPrincipal)
 	mux.HandleFunc("POST /api/identity/v1/studio-access", a.identityStudioAccess)
 	mux.HandleFunc("POST /api/identity/v1/projection-authority", a.identityProjectionAuthority)
 	mux.HandleFunc("POST /api/identity/v1/catalog-authority", a.identityCatalogAuthority)
@@ -171,25 +170,6 @@ func (a *Authentication) identityRevoke(w http.ResponseWriter, r *http.Request) 
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-func (a *Authentication) identityPrincipal(w http.ResponseWriter, r *http.Request) {
-	_, ok := a.identityService(w, r)
-	if !ok {
-		return
-	}
-	var b struct {
-		Subject string `json:"subject"`
-	}
-	if !decode(w, r, 1024, &b) {
-		return
-	}
-	assertion, err := a.Store.IdentityPrincipal(r.Context(), b.Subject)
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	a.identityResponse(w, assertion, "")
-}
-
 func (a *Authentication) identityStudioAccess(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.identityService(w, r); !ok {
 		return

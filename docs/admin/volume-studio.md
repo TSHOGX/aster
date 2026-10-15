@@ -5,15 +5,16 @@
 Volume Studio at `/volumes-studio/` prepares reusable file libraries and publishes
 immutable versions. Aster imports a version into local storage before Projects
 can use it. Studio publication and Aster availability are separate steps.
-Studio sign-in currently requires an active central administrator account. Library
-read, author, review, merge and publish permissions are separate grants; administrator
-status alone does not grant those actions. Ask your installation administrator to
+Studio sign-in requires an active central account with a library read grant, or an
+administrator account. Only administrators can create libraries. Read, author,
+review, merge and publish permissions are separate grants; administrator status
+alone does not grant those actions. Ask your installation administrator to
 provision the required library permissions before editing. The catalog lists only
 libraries with a current read grant; removing that grant also removes their summaries
 and search results.
 
-Shared-assets libraries use the immutable `shared-assets-v1` profile and are
-available only to administrators. A published version must contain root
+Shared-assets libraries use the immutable `shared-assets-v1` profile and the same
+explicit library grants. A published version must contain root
 `AGENTS.md`; skill entries must be directories containing `SKILL.md`. The base
 version includes an empty `skills/` directory. These files mount read-only at
 `/opt/shared-assets` as system context rather than ordinary Project data.

@@ -94,7 +94,7 @@ func TestIdentityExpiryAndEvidenceBounds(t *testing.T) {
 		t.Fatal("expired central session accepted", err)
 	}
 }
-func TestIdentityRevocationAndWorkerPrincipal(t *testing.T) {
+func TestIdentityRevocation(t *testing.T) {
 	for _, mode := range []string{"logout", "all-devices", "password", "disable", "demote", "derived-logout"} {
 		t.Run(mode, func(t *testing.T) {
 			s, admin := accountStore(t)
@@ -129,21 +129,19 @@ func TestIdentityRevocationAndWorkerPrincipal(t *testing.T) {
 			if _, _, err := s.ExchangeIdentityCode(ctx, "studio", identityCallback, code, identityVerifier); !errors.Is(err, ErrUnauthorized) {
 				t.Fatal("revoked code exchanged", err)
 			}
-			principal, err := s.IdentityPrincipal(ctx, admin.ID)
+
+			authorityErr := s.AuthorizeVolumeImport(ctx, admin.ID)
 			if mode == "disable" || mode == "demote" {
-				if !errors.Is(err, ErrUnauthorized) {
-					t.Fatal("revoked worker accepted", err)
+				if !errors.Is(authorityErr, ErrUnauthorized) {
+					t.Fatal("revoked import authority accepted", authorityErr)
 				}
 			} else {
-				must(t, err)
-				if principal.Subject != admin.ID || principal.CentralSession != "" {
-					t.Fatal("worker depends on browser session")
-				}
+				must(t, authorityErr)
 			}
 		})
 	}
 }
-func TestIdentityAdmissionRequiresCurrentAdminAndBoundedCodes(t *testing.T) {
+func TestIdentityAdmissionRequiresCurrentSessionAndBoundedCodes(t *testing.T) {
 	s, admin := accountStore(t)
 	token := adminTestToken(t, s, admin)
 	challenge, _ := pkceChallenge(identityVerifier)
@@ -187,5 +185,67 @@ func TestIdentityGrantsSurviveRestartWithoutRawCredentials(t *testing.T) {
 	must(t, err)
 	if after.Subject != before.Subject || after.CentralSession != before.CentralSession {
 		t.Fatal("identity changed after restart")
+	}
+}
+
+func TestStudioIdentitySupportsScopedExpertsAndCurrentRevocation(t *testing.T) {
+	s, admin := accountStore(t)
+	ctx := context.Background()
+	adminToken := adminTestToken(t, s, admin)
+	user, password, err := createTestAccount(t, s, admin.ID, "expert", "Expert", "user")
+	must(t, err)
+	_, restricted, err := s.Authenticate(ctx, user.Username, password)
+	must(t, err)
+	_, token, err := s.ChangePassword(ctx, restricted, "", "expert-permanent-password", true)
+	must(t, err)
+	challenge, _ := pkceChallenge(identityVerifier)
+	if _, err = s.AdmitIdentityCode(ctx, token, "studio", identityCallback, challenge); !errors.Is(err, ErrForbidden) {
+		t.Fatal("ungranted entrance", err)
+	}
+	must(t, grantFixture(s, ctx, adminToken, "account", user.ID, "alpha", "volume.read", "allow", 0))
+	assertion, grant := identityExchange(t, s, token)
+	if len(assertion.Entitlements) != 1 || assertion.Entitlements[0] != StudioAccessEntitlement {
+		t.Fatal("expert obtained library creation", assertion)
+	}
+	if err = s.AuthorizeVolumeImport(ctx, user.ID); !errors.Is(err, ErrUnauthorized) {
+		t.Fatal("Studio access grants import authority", err)
+	}
+	must(t, grantFixture(s, ctx, adminToken, "account", user.ID, "alpha", "volume.read", "deny", 1))
+	if _, err = s.IntrospectIdentity(ctx, "studio", grant); !errors.Is(err, ErrForbidden) {
+		t.Fatal("revoked read grant retained entrance", err)
+	}
+	// A different library can retain entrance; it never revives the denied grant.
+	must(t, grantFixture(s, ctx, adminToken, "account", user.ID, "beta", "volume.read", "allow", 0))
+	_, err = s.IntrospectIdentity(ctx, "studio", grant)
+	must(t, err)
+	must(t, s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "INSERT INTO account_memberships(account_id,group_id) VALUES(?,?) ON CONFLICT DO NOTHING", user.ID, StandardUsersGroup)
+		return err
+	}))
+	must(t, grantFixture(s, ctx, adminToken, "group", StandardUsersGroup, "beta", "volume.read", "deny", 0))
+	if _, err = s.IntrospectIdentity(ctx, "studio", grant); !errors.Is(err, ErrForbidden) {
+		t.Fatal("group deny ignored", err)
+	}
+	must(t, grantFixture(s, ctx, adminToken, "group", StandardUsersGroup, "gamma", "volume.read", "allow", 0))
+	_, err = s.IntrospectIdentity(ctx, "studio", grant)
+	must(t, err)
+	must(t, s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "DELETE FROM account_memberships WHERE account_id=? AND group_id=?", user.ID, StandardUsersGroup)
+		return err
+	}))
+	// beta's direct grant is now effective after leaving the denying group.
+	_, err = s.IntrospectIdentity(ctx, "studio", grant)
+	must(t, err)
+	must(t, grantFixture(s, ctx, adminToken, "account", user.ID, "beta", "volume.read", "deny", 1))
+	if _, err = s.IntrospectIdentity(ctx, "studio", grant); !errors.Is(err, ErrForbidden) {
+		t.Fatal("removed membership still grants entrance", err)
+	}
+	must(t, s.RevokeIdentity(ctx, "studio", grant))
+	if _, err = s.Login(ctx, token); !errors.Is(err, ErrUnauthorized) {
+		t.Fatal("revoked expert could not log out", err)
+	}
+	adminAssertion, _ := identityExchange(t, s, adminToken)
+	if len(adminAssertion.Entitlements) != 2 || adminAssertion.Entitlements[1] != StudioCreateEntitlement {
+		t.Fatal(adminAssertion)
 	}
 }

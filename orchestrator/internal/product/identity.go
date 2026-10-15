@@ -12,7 +12,8 @@ import (
 	"harness-platform/orchestrator/internal/sqlitex"
 )
 
-const StudioAuthorEntitlement = "volumes_studio.author"
+const StudioAccessEntitlement = "volumes_studio.access"
+const StudioCreateEntitlement = "volumes_studio.create"
 const IdentityEvidenceTTL = 60 * time.Second
 
 // IdentityAssertion contains central authority evidence for a registered client.
@@ -43,7 +44,7 @@ func pkceChallenge(verifier string) (string, error) {
 }
 
 // AdmitIdentityCode requires the HTTP boundary to resolve a registered client and
-// exact callback first. Current session and administrator authority are rechecked
+// exact callback first. Current session and scoped application access are rechecked
 // transactionally here. Codes are single-use and expire in at most 60 seconds.
 func (s *Store) AdmitIdentityCode(ctx context.Context, token, client, callback, challenge string) (string, error) {
 	if !validID(client) || len(callback) == 0 || len(callback) > 2048 || !validPKCEChallenge(challenge) {
@@ -54,7 +55,7 @@ func (s *Store) AdmitIdentityCode(ctx context.Context, token, client, callback, 
 		return "", err
 	}
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		a, err := s.adminSession(ctx, tx, token)
+		a, err := s.identitySession(ctx, tx, tokenDigest(token))
 		if err != nil {
 			return err
 		}
@@ -72,7 +73,7 @@ func (s *Store) AdmitIdentityCode(ctx context.Context, token, client, callback, 
 		if err != nil {
 			return err
 		}
-		return s.auditEvent(ctx, tx, a.ID, "identity.authorize", "identity_client", client, "", a.SessionRevision, nil)
+		return s.auditEvent(ctx, tx, a.Subject, "identity.authorize", "identity_client", client, "", a.Epoch, nil)
 	})
 	if err != nil {
 		return "", err
@@ -80,16 +81,16 @@ func (s *Store) AdmitIdentityCode(ctx context.Context, token, client, callback, 
 	return code, nil
 }
 
-// identitySession uses one joined statement so revocation cannot be mixed with an
-// older account read. It returns bounded evidence, not the underlying credential.
+// identitySession is called inside a transaction so session, account and grant
+// checks share one snapshot. It returns bounded evidence, not a credential.
 func (s *Store) identitySession(ctx context.Context, q queryer, session string) (IdentityAssertion, error) {
 	var a IdentityAssertion
-	var expires string
-	err := q.QueryRowContext(ctx, `SELECT a.id,a.session_revision,s.expires_at
+	var expires, role string
+	err := q.QueryRowContext(ctx, `SELECT a.id,a.session_revision,s.expires_at,a.role
  FROM auth_sessions s JOIN accounts a ON a.id=s.account_id
  WHERE s.token_digest=? AND s.expires_at>? AND s.restricted=0
- AND a.status='active' AND a.role='admin' AND a.must_change_password=0
- AND a.session_revision=s.session_revision`, session, s.timestamp()).Scan(&a.Subject, &a.Epoch, &expires)
+ AND a.status='active' AND a.must_change_password=0
+ AND a.session_revision=s.session_revision`, session, s.timestamp()).Scan(&a.Subject, &a.Epoch, &expires, &role)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrUnauthorized
 	}
@@ -97,7 +98,25 @@ func (s *Store) identitySession(ctx context.Context, q queryer, session string) 
 		return a, err
 	}
 	a.CentralSession = session
-	a.Entitlements = []string{StudioAuthorEntitlement}
+	a.Entitlements = []string{StudioAccessEntitlement}
+	if role == "admin" {
+		a.Entitlements = append(a.Entitlements, StudioCreateEntitlement)
+	} else {
+		// Entrance grants no content authority; it requires at least one effective
+		// read grant and all subsequent resource actions remain separately checked.
+		var visible int
+		err = q.QueryRowContext(ctx, `WITH grants AS (
+   SELECT library_id,effect FROM studio_library_grants WHERE account_id=? AND action='volume.read'
+   UNION ALL
+   SELECT g.library_id,g.effect FROM studio_group_grants g JOIN account_memberships m ON m.group_id=g.group_id WHERE m.account_id=? AND g.action='volume.read'
+  ) SELECT count(*) FROM (SELECT library_id FROM grants GROUP BY library_id HAVING sum(effect='allow')>0 AND sum(effect='deny')=0)`, a.Subject, a.Subject).Scan(&visible)
+		if err != nil {
+			return IdentityAssertion{}, err
+		}
+		if visible == 0 {
+			return IdentityAssertion{}, ErrForbidden
+		}
+	}
 	a.ExpiresAt = sqlitex.FormatTime(s.now().Add(IdentityEvidenceTTL))
 	if expires < a.ExpiresAt {
 		a.ExpiresAt = expires
@@ -185,33 +204,17 @@ func (s *Store) RevokeIdentity(ctx context.Context, client, grant string) error 
 		if err != nil {
 			return err
 		}
-		a, err := s.identitySession(ctx, tx, session)
+		// The client-bound grant authorizes logout even after all content grants
+		// are revoked. Losing application access must not strand a login session.
+		var subject string
+		var revision int64
+		err = tx.QueryRowContext(ctx, `DELETE FROM auth_sessions WHERE token_digest=? RETURNING account_id,session_revision`, session).Scan(&subject, &revision)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrUnauthorized
+		}
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `DELETE FROM auth_sessions WHERE token_digest=?`, session); err != nil {
-			return err
-		}
-		return s.auditEvent(ctx, tx, a.Subject, "identity.logout", "identity_client", client, "", a.Epoch, nil)
+		return s.auditEvent(ctx, tx, subject, "identity.logout", "identity_client", client, "", revision, nil)
 	})
-}
-
-// IdentityPrincipal is worker authority, independent of browser-session lifetime.
-// Only registered service clients may call it through the HTTP adapter. Disabling
-// the principal or removing admin status refuses unfinished privileged phases.
-func (s *Store) IdentityPrincipal(ctx context.Context, subject string) (IdentityAssertion, error) {
-	if !validID(subject) {
-		return IdentityAssertion{}, ErrInvalid
-	}
-	var a IdentityAssertion
-	err := s.reader.QueryRowContext(ctx, `SELECT id,authorization_revision FROM accounts WHERE id=? AND status='active' AND role='admin' AND must_change_password=0`, subject).Scan(&a.Subject, &a.Epoch)
-	if errors.Is(err, sql.ErrNoRows) {
-		return a, ErrUnauthorized
-	}
-	if err != nil {
-		return a, err
-	}
-	a.Entitlements = []string{StudioAuthorEntitlement}
-	a.ExpiresAt = sqlitex.FormatTime(s.now().Add(IdentityEvidenceTTL))
-	return a, nil
 }

@@ -1,6 +1,6 @@
 import { intlLocale } from "../../../web/i18n/locale";
 export const base = "/volumes-studio";
-export type Session = { issuer: string; subject: string; csrf: string };
+export type Session = { can_create_library: boolean; issuer: string; subject: string; csrf: string };
 export type Library = {
   builtin?: boolean;
   id: string;

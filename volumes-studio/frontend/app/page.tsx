@@ -134,7 +134,7 @@ export default function Home() {
         <h1>
            {tr("Libraries")} <span className="count">{page?.total ?? "…"}</span>
         </h1>
-        <button className="primary" onClick={() => setEditing(null)}>
+        <button className="primary" disabled={!studio.session?.can_create_library} onClick={() => setEditing(null)}>
           <Plus size={16} />
            {tr("New library")} </button>
       </div>

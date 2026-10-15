@@ -16,7 +16,8 @@ import (
 	"time"
 )
 
-const AuthorEntitlement = "volumes_studio.author"
+const AccessEntitlement = "volumes_studio.access"
+const CreateEntitlement = "volumes_studio.create"
 
 var ErrUnavailable = errors.New("identity_unavailable")
 var ErrUnauthorized = errors.New("identity_unauthorized")
@@ -103,16 +104,16 @@ func (c *Client) call(ctx context.Context, action string, body any) (Assertion, 
 	if a.Issuer != c.config.Issuer || a.Subject == "" || len(a.Subject) > 128 || a.Epoch < 1 || !a.ExpiresAt.After(time.Now()) || len(a.Entitlements) > 32 {
 		return Assertion{}, ErrUnauthorized
 	}
-	author := false
+	admitted := false
 	for _, e := range a.Entitlements {
-		if e == AuthorEntitlement {
-			author = true
+		if e == AccessEntitlement {
+			admitted = true
 		}
 	}
-	if !author {
+	if !admitted {
 		return Assertion{}, ErrUnauthorized
 	}
-	if action != "principal" && a.CentralSession == "" {
+	if a.CentralSession == "" {
 		return Assertion{}, ErrUnauthorized
 	}
 	if action == "token" && len(a.Grant) != 43 {
@@ -128,13 +129,6 @@ func (c *Client) Exchange(ctx context.Context, code, verifier string) (Assertion
 }
 func (c *Client) Introspect(ctx context.Context, grant string) (Assertion, error) {
 	return c.call(ctx, "introspect", map[string]string{"grant": grant})
-}
-func (c *Client) Principal(ctx context.Context, subject string) (Assertion, error) {
-	a, err := c.call(ctx, "principal", map[string]string{"subject": subject})
-	if err == nil && a.Subject != subject {
-		return Assertion{}, ErrUnauthorized
-	}
-	return a, err
 }
 func (c *Client) Revoke(ctx context.Context, grant string) error {
 	_, err := c.call(ctx, "revoke", map[string]string{"grant": grant})

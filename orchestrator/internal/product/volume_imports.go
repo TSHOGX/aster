@@ -441,3 +441,20 @@ func (i VolumeImport) PublicationPurpose() string {
 	}
 	return "authored"
 }
+
+// AuthorizeVolumeImport rechecks the retained import actor independently of
+// browser-session lifetime. Studio application access is not import authority.
+func (s *Store) AuthorizeVolumeImport(ctx context.Context, subject string) error {
+	if !validID(subject) {
+		return ErrInvalid
+	}
+	var allowed int
+	err := s.reader.QueryRowContext(ctx, `SELECT count(*) FROM accounts WHERE id=? AND status='active' AND role='admin' AND must_change_password=0`, subject).Scan(&allowed)
+	if err != nil {
+		return err
+	}
+	if allowed != 1 {
+		return ErrUnauthorized
+	}
+	return nil
+}

@@ -47,7 +47,7 @@ func fixture(t *testing.T) (*Client, *atomic.Int32, *string) {
 			w.WriteHeader(204)
 			return
 		}
-		a := Assertion{Issuer: "https://example.com", Subject: "subject", CentralSession: "central-session", Epoch: 1, Entitlements: []string{AuthorEntitlement}, ExpiresAt: time.Now().Add(time.Minute)}
+		a := Assertion{Issuer: "https://example.com", Subject: "subject", CentralSession: "central-session", Epoch: 1, Entitlements: []string{AccessEntitlement}, ExpiresAt: time.Now().Add(time.Minute)}
 		if r.URL.Path == "/api/identity/v1/token" {
 			sum := sha256.Sum256([]byte(body["code_verifier"]))
 			if base64.RawURLEncoding.EncodeToString(sum[:]) != challenge || body["redirect_uri"] != "https://example.com/volumes-studio/auth/callback" {
@@ -55,8 +55,7 @@ func fixture(t *testing.T) (*Client, *atomic.Int32, *string) {
 				return
 			}
 			a.Grant = strings.Repeat("g", 43)
-		} else if r.URL.Path == "/api/identity/v1/principal" {
-			a.CentralSession = ""
+
 		} else if body["grant"] != strings.Repeat("g", 43) {
 			http.Error(w, "grant", 401)
 			return
