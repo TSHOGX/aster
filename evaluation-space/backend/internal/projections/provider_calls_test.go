@@ -97,4 +97,29 @@ func TestProviderCallIdentitySurvivesTakeover(t *testing.T) {
 		t.Fatal("usage double charged", tokens, cost, err)
 	}
 
+	if _, err = s.db.ExecContext(ctx, "UPDATE runs SET lease_until=0 WHERE id='run'"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := s.ClaimRun(ctx, "run", "outcome-recovery", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := s.ProviderOutcome(ctx, recovery, "call")
+	if err != nil || recovered.ProviderRequestID != outcome.ProviderRequestID || recovered.Usage != outcome.Usage || recovered.Output == nil || *recovered.Output != *outcome.Output {
+		t.Fatal("lost retained result", recovered, err)
+	}
+	if _, err = s.ProviderOutcome(ctx, replacement, "call"); err != ErrConflict {
+		t.Fatal("old worker read recovered outcome", err)
+	}
+	if _, err = s.ProviderOutcome(ctx, recovery, "unknown"); err != ErrNotFound {
+		t.Fatal("unknown outcome", err)
+	}
+
 }

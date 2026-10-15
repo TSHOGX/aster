@@ -75,3 +75,33 @@ func (s *Store) RecordProviderOutcome(ctx context.Context, lease RunLease, value
 	}
 	return tx.Commit()
 }
+
+// ProviderOutcome retrieves an already-recorded result for current execution or
+// cleanup. A settled budget without a provider lookup is not a reason to resubmit.
+func (s *Store) ProviderOutcome(ctx context.Context, lease RunLease, id string) (ProviderOutcome, error) {
+	var result ProviderOutcome
+	if !manifest.ValidID(id) {
+		return result, fmt.Errorf("invalid provider call identity")
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
+	run, _, err := liveRunBudget(ctx, tx, lease, true)
+	if err != nil {
+		return result, err
+	}
+	var raw []byte
+	if err = tx.QueryRowContext(ctx, "SELECT body FROM provider_outcomes WHERE run_id=? AND call_id=?", lease.RunID, id).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return result, ErrNotFound
+		}
+		return result, err
+	}
+	result, err = evolution.Decode[ProviderOutcome](bytes.NewReader(raw))
+	if err != nil || result.CallID != id || result.Output != nil && result.Output.GroupID != run.GroupID {
+		return ProviderOutcome{}, fmt.Errorf("invalid retained provider outcome")
+	}
+	return result, nil
+}
