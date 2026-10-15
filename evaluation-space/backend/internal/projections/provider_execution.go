@@ -62,6 +62,14 @@ func (s *Store) ExecuteProviderCall(ctx context.Context, lease RunLease, call Pr
 		if readErr != nil {
 			return zero, readErr
 		}
+		if err = authority.AuthorizeProviderCall(ctx, lease, prepared); err != nil {
+			return zero, err
+		}
+		// Lookup and artifact reads can block. Revalidate the execution lease
+		// after them so an observed pause/cancel/takeover prevents submission.
+		if _, err = s.PrepareProviderCall(ctx, lease, prepared.ID, prepared.Request); err != nil {
+			return zero, err
+		}
 		outcome, err = provider.Submit(ctx, prepared, request, ceiling)
 		if err != nil {
 			original := err

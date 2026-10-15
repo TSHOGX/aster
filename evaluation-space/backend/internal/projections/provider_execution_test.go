@@ -21,13 +21,17 @@ func (a *callAuthorityFixture) AuthorizeProviderCall(context.Context, RunLease, 
 }
 
 type providerFixture struct {
-	outcome   ProviderOutcome
-	submitted int
-	committed bool
-	key       string
+	outcome      ProviderOutcome
+	submitted    int
+	committed    bool
+	key          string
+	beforeLookup func()
 }
 
 func (p *providerFixture) Lookup(_ context.Context, call ProviderCall) (ProviderOutcome, error) {
+	if p.beforeLookup != nil {
+		p.beforeLookup()
+	}
 	if !p.committed {
 		return ProviderOutcome{}, ErrProviderCallNotFound
 	}
@@ -90,5 +94,45 @@ func TestProviderExecutionRecoversLostReplyWithoutDuplicateSubmission(t *testing
 	authority.denied = true
 	if _, err = s.ExecuteProviderCall(ctx, lease, call, RunUsage{8, 15}, provider, authority); err == nil {
 		t.Fatal("retained outcome bypassed current authority")
+	}
+}
+
+func TestProviderLookupCancellationPreventsSubmission(t *testing.T) {
+	for _, action := range []string{"pause", "cancel", "revoke"} {
+		t.Run(action, func(t *testing.T) {
+			ctx := context.Background()
+			s, err := Open(ctx, filepath.Join(t.TempDir(), "space.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			body, _ := json.Marshal(evolution.Run{ID: "run", GroupID: "group", Budget: evolution.Budget{MaxTokens: 10, MaxCostMicros: 20}})
+			_, err = s.db.ExecContext(ctx, `INSERT INTO runs(id,group_id,binding_id,configuration_revision,occurrence_id,request,body,state) VALUES('run','group','binding',1,'occurrence','{}',?,'queued')`, body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lease, err := s.ClaimRun(ctx, "run", "worker", time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			artifact := evolution.ArtifactRef{ID: "request", GroupID: "group", SchemaDigest: evolution.Digest([]byte("schema")), Digest: evolution.Digest([]byte("request")), Size: 7, MediaType: "application/json", GrantID: "grant", PolicyRevision: 1}
+			if err = s.SealArtifact(ctx, artifact, strings.NewReader("request")); err != nil {
+				t.Fatal(err)
+			}
+			authority := &callAuthorityFixture{}
+			provider := &providerFixture{beforeLookup: func() {
+				if action == "revoke" {
+					authority.denied = true
+					return
+				}
+				if _, err := s.ControlRun(ctx, RunControl{RequestID: "control", RunID: "run", ExpectedFence: lease.Fence, Action: action}); err != nil {
+					t.Error(err)
+				}
+			}}
+			_, err = s.ExecuteProviderCall(ctx, lease, ProviderCall{ID: "call", RunID: "run", Request: artifact}, RunUsage{8, 15}, provider, authority)
+			if err != ErrConflict || provider.submitted != 0 {
+				t.Fatal("lookup race submitted new provider work", err, provider.submitted)
+			}
+		})
 	}
 }
