@@ -105,3 +105,40 @@ func TestWorkerDoesNotSettleAfterPauseOrUncertainEffect(t *testing.T) {
 		})
 	}
 }
+
+type revocableAuthority struct{ revoked chan struct{} }
+
+func (a revocableAuthority) AuthorizeRun(ctx context.Context, _ evolution.Run, _ bool) error {
+	select {
+	case <-a.revoked:
+		return errors.New("run authority revoked")
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+func TestWorkerCancelsExecutorWhenAuthorityRevokedDuringRun(t *testing.T) {
+	store := workerStore(t)
+	authority := revocableAuthority{revoked: make(chan struct{})}
+	worker := Worker{Store: store, ID: "worker", Authority: authority, LeaseDuration: time.Second, Executor: executorFixture{execute: func(ctx context.Context, _ projections.RunLease, _ evolution.Run) (string, error) {
+		close(authority.revoked)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(3 * time.Second):
+			return "completed", nil
+		}
+	}}}
+	start := time.Now()
+	if err := worker.Step(context.Background()); err == nil {
+		t.Fatal("revoked execution settled")
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatal("revocation did not cancel active execution")
+	}
+	run, err := store.Run(context.Background(), "group", "run")
+	if err != nil || run.State != "running" {
+		t.Fatal("uncertain effects marked settled", run, err)
+	}
+}

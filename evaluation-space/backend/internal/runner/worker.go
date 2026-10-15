@@ -78,6 +78,11 @@ func (w *Worker) Step(ctx context.Context) error {
 				renewed <- nil
 				return
 			case <-timer.C:
+				if err := w.Authority.AuthorizeRun(work, run, cleanup); err != nil {
+					cancel()
+					renewed <- err
+					return
+				}
 				if _, err := w.Store.RenewRun(work, lease, duration); err != nil {
 					cancel()
 					renewed <- err
