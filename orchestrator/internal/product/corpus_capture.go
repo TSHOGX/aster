@@ -1,13 +1,11 @@
 package product
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -54,7 +52,10 @@ func sourcePolicy(ctx context.Context, q queryer, group, source string, revision
 			audience = true
 		}
 	}
-	if !audience || !result.DerivativePublication || len(result.Exclusions) > 0 {
+	if result.ValidateExclusions() != nil {
+		return result, ErrForbidden
+	}
+	if !audience || !result.DerivativePublication {
 		return result, ErrForbidden
 	}
 	if err = authorizeEvolutionSources(ctx, q, evolution.Configuration{GroupID: group, Sources: []evolution.SourceBinding{result}}); err != nil {
@@ -122,8 +123,16 @@ func (s *Store) captureCorpusEpisode(ctx context.Context, tx *sql.Tx, actor Acco
 		if outcome != "completed" && outcome != "failed" {
 			outcome = "unknown"
 		}
-		episode := evolution.CorpusEpisode{ID: input.ExecutionID, FamilyID: prompt, Outcome: outcome, Text: "", Truncated: false}
-		rows, err := tx.QueryContext(ctx, "SELECT role,substr(content,1,65536),length(CAST(content AS BLOB)) FROM messages WHERE turn_id=? ORDER BY sequence LIMIT 201", prompt)
+		family, kind, err := corpusEvidenceFamily(ctx, tx, prompt)
+		if err != nil {
+			return err
+		}
+		if sourceExcludesEpisode(source, session, prompt, input.ExecutionID) {
+			return ErrForbidden
+		}
+		episode := evolution.CorpusEpisode{ID: input.ExecutionID, FamilyID: family, FamilyKind: kind, Outcome: outcome}
+
+		rows, err := tx.QueryContext(ctx, `SELECT m.role,substr(m.content,1,65536),length(CAST(m.content AS BLOB)) FROM messages m WHERE m.turn_id=? AND (m.role='user' OR EXISTS(SELECT 1 FROM agent_records r WHERE r.command_id=? AND m.id=r.incarnation_id||'/'||r.sequence)) ORDER BY m.sequence LIMIT 201`, prompt, input.ExecutionID)
 		if err != nil {
 			return err
 		}
@@ -140,7 +149,7 @@ func (s *Store) captureCorpusEpisode(ctx context.Context, tx *sql.Tx, actor Acco
 			}
 			text.WriteString(value)
 		}
-		appendText("Evidence family is the local prompt ID; imported-copy family provenance is unknown.\n")
+		appendText("Evidence family: " + kind + "; repeated copies and retries are not independent support.\n")
 		for rows.Next() {
 			var role, content string
 			var size int
@@ -208,7 +217,7 @@ func (s *Store) captureCorpusEpisode(ctx context.Context, tx *sql.Tx, actor Acco
 			if int64(len(raw)) != size || evolution.Digest(raw) != digest {
 				return ErrConflict
 			}
-			observations, incomplete, err := observableNativeCapture(raw)
+			observations, incomplete, err := observableNativeCapture(raw, input.ExecutionID)
 			if err != nil {
 				return err
 			}
@@ -217,7 +226,7 @@ func (s *Store) captureCorpusEpisode(ctx context.Context, tx *sql.Tx, actor Acco
 				result.CaptureState = "partial"
 				episode.Truncated = true
 			}
-			appendText("Native capture is a session snapshot; repeated history is not independent supporting evidence.\n")
+			appendText("Native observations are scoped to this execution; prior session and imported history are excluded.\n")
 			appendText(observations)
 		} else {
 			episode.Truncated = true
@@ -259,76 +268,127 @@ func (s *Store) captureCorpusEpisode(ctx context.Context, tx *sql.Tx, actor Acco
 
 // Only observable text/tool-call/tool-result blocks are exported. Thinking,
 // signatures, provider credentials and unknown event payloads are not copied.
-func observableNativeCapture(raw []byte) (string, bool, error) {
-	scanner := bufio.NewScanner(bytes.NewReader(raw))
-	scanner.Buffer(make([]byte, 4096), 1<<20)
+func observableNativeCapture(raw []byte, execution string) (string, bool, error) {
 	var result strings.Builder
-	incomplete := false
+	active, started, ended, incomplete := false, false, false, false
 	messages := 0
-	for scanner.Scan() {
-		if _, err := evolution.Decode[json.RawMessage](bytes.NewReader(scanner.Bytes())); err != nil {
-			return "", false, ErrInvalid
+	appendText := func(value string) {
+		remaining := corpusEpisodeLimit - result.Len()
+		if len(value) > remaining {
+			value = value[:remaining]
+			for !utf8.ValidString(value) && len(value) > 0 {
+				value = value[:len(value)-1]
+			}
+			incomplete = true
 		}
-		var row struct {
-			Type    string `json:"type"`
-			Message struct {
-				Role     string          `json:"role"`
-				Content  json.RawMessage `json:"content"`
-				ToolName string          `json:"toolName"`
-			} `json:"message"`
+		result.WriteString(value)
+	}
+	for len(raw) > 0 {
+		line, rest, _ := bytes.Cut(raw, []byte{'\n'})
+		raw = rest
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
 		}
-		if json.Unmarshal(scanner.Bytes(), &row) != nil {
-			return "", false, ErrInvalid
-		}
-		if row.Type != "message" {
-			// Compaction or unknown native entries can omit observable history. Only
-			// known non-content metadata is safe to ignore without marking incompleteness.
-			if row.Type != "session" && row.Type != "model_change" && row.Type != "thinking_level_change" {
+		if len(line) > 1<<20 {
+			if active {
 				incomplete = true
 			}
+			continue
+		}
+		var row struct {
+			Type       string          `json:"type"`
+			CustomType string          `json:"customType"`
+			Data       json.RawMessage `json:"data"`
+			Message    json.RawMessage `json:"message"`
+		}
+		if _, err := evolution.Decode[json.RawMessage](bytes.NewReader(line)); err != nil {
+			return "", false, ErrInvalid
+		}
+		if err := json.Unmarshal(line, &row); err != nil {
+			return "", false, ErrInvalid
+		}
+		if row.Type == "custom" && row.CustomType == "aster.execution" {
+			var marker struct {
+				RunID string `json:"run_id"`
+				Phase string `json:"phase"`
+			}
+			if json.Unmarshal(row.Data, &marker) != nil {
+				return "", false, ErrInvalid
+			}
+
+			if marker.RunID == execution {
+				switch marker.Phase {
+				case "start":
+					if started || ended {
+						return "", true, ErrConflict
+					}
+					started = true
+					active = true
+				case "end":
+					if !active {
+						return "", true, ErrConflict
+					}
+					active = false
+					ended = true
+				default:
+					return "", true, ErrInvalid
+				}
+			} else if active {
+				return "", true, ErrConflict
+			}
+			continue
+		}
+		if !active {
+			continue
+		}
+		if row.Type != "message" {
+			if row.Type != "model_change" && row.Type != "thinking_level_change" {
+				incomplete = true
+			}
+			continue
+		}
+		var message struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(row.Message, &message) != nil {
+			incomplete = true
 			continue
 		}
 		messages++
-		if row.Message.Role != "user" && row.Message.Role != "assistant" && row.Message.Role != "toolResult" {
+		if message.Role != "user" && message.Role != "assistant" && message.Role != "toolResult" {
 			incomplete = true
 			continue
 		}
-		var text string
-		if json.Unmarshal(row.Message.Content, &text) == nil {
-			result.WriteString(row.Message.Role + ": " + text + "\n")
-		} else {
-			var blocks []struct {
-				Type      string          `json:"type"`
-				Text      string          `json:"text"`
-				Name      string          `json:"name"`
-				Arguments json.RawMessage `json:"arguments"`
-			}
-			if json.Unmarshal(row.Message.Content, &blocks) != nil {
-				incomplete = true
-				continue
-			}
-			for _, block := range blocks {
-				switch block.Type {
-				case "text":
-					result.WriteString(row.Message.Role + ": " + block.Text + "\n")
-				case "toolCall":
-					result.WriteString("tool call " + block.Name + ": " + string(block.Arguments) + "\n")
-				case "thinking":
-				default:
-					incomplete = true
-				}
-			}
+		var value string
+		if json.Unmarshal(message.Content, &value) == nil {
+			appendText(message.Role + ": " + value + "\n")
+			continue
 		}
-		if result.Len() > corpusEpisodeLimit {
+		var blocks []struct {
+			Type      string          `json:"type"`
+			Text      string          `json:"text"`
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		}
+		if json.Unmarshal(message.Content, &blocks) != nil {
 			incomplete = true
-			break
+			continue
+		}
+		for _, block := range blocks {
+			switch block.Type {
+			case "text":
+				appendText(message.Role + ": " + block.Text + "\n")
+			case "toolCall":
+				appendText("tool call " + block.Name + ": " + string(block.Arguments) + "\n")
+			case "thinking":
+			default:
+				incomplete = true
+			}
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return "", false, fmt.Errorf("native capture line exceeds bound")
+	if !started {
+		return "", true, nil
 	}
-	if messages == 0 {
-		incomplete = true
-	}
-	return result.String(), incomplete, nil
+	return result.String(), incomplete || !ended || messages == 0, nil
 }

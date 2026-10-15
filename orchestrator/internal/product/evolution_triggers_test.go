@@ -56,7 +56,7 @@ func TestEvolutionTriggersCoalesceNewCorpusAndKeepSiblingRanges(t *testing.T) {
 	if _, err = s.db.Exec("UPDATE evolution_trigger_occurrences SET latest_at='changed' WHERE id=?", coalesced[0].ID); err == nil {
 		t.Fatal("frozen occurrence mutable")
 	}
-	_, err = s.db.Exec(`INSERT INTO messages(id,project_id,session_id,turn_id,role,content,sequence,created_at) SELECT 'late-message',project_id,session_id,id,'assistant','late observation',999,created_at FROM turns WHERE id=?`, command.TurnID)
+	_, err = s.IngestAgent(ctx, incarnation, record(incarnation, command, 3, "native", `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"late observation"}]}}`))
 	must(t, err)
 	must(t, (&CorpusCollector{Store: s}).Step(ctx))
 	// Simulate successful consumption by only one sibling.

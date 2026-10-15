@@ -33,7 +33,8 @@ func corpusFixture(t *testing.T) (*Store, Scope, Incarnation, agentwire.Frame, s
 }
 func TestCorpusCaptureSealsRevisionsAndAuditsOnlyApprovedSource(t *testing.T) {
 	s, _, incarnation, command, token, source := corpusFixture(t)
-	native := `{"type":"session","id":"session"}` + "\n" + `{"type":"message","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hidden reasoning sentinel"},{"type":"text","text":"Task completed"},{"type":"toolCall","name":"read","arguments":{"path":"file"}}]}}` + "\n" + `{"type":"message","message":{"role":"toolResult","content":[{"type":"text","text":"observable tool result"}]}}` + "\n"
+	native := `{"type":"message","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hidden reasoning sentinel"},{"type":"text","text":"Task completed"},{"type":"toolCall","name":"read","arguments":{"path":"file"}}]}}` + "\n" + `{"type":"message","message":{"role":"toolResult","content":[{"type":"text","text":"observable tool result"}]}}` + "\n"
+	native = scopedNativeFixture(command.CommandID, native)
 	payload := fmt.Sprintf(`{"path":"/runtime/sessions/agent/native/captures/%s.jsonl","digest":"%s","size":%d}`, command.CommandID, evolution.Digest([]byte(native)), len(native))
 	_, err := s.IngestAgent(ctx, incarnation, record(incarnation, command, 2, "command.completed", payload))
 	must(t, err)
@@ -97,6 +98,7 @@ func TestCorpusCaptureSealsRevisionsAndAuditsOnlyApprovedSource(t *testing.T) {
 func TestCorpusSnapshotFailureDoesNotAdvanceAndCorruptionCannotEscape(t *testing.T) {
 	s, _, incarnation, command, token, source := corpusFixture(t)
 	native := `{"type":"message","message":{"role":"user","content":"task"}}` + "\n"
+	native = scopedNativeFixture(command.CommandID, native)
 	payload := fmt.Sprintf(`{"path":"/runtime/sessions/agent/native/captures/%s.jsonl","digest":"%s","size":%d}`, command.CommandID, evolution.Digest([]byte(native)), len(native))
 	_, err := s.IngestAgent(ctx, incarnation, record(incarnation, command, 2, "command.completed", payload))
 	must(t, err)
@@ -232,4 +234,12 @@ func TestCorpusConfigurationManagerNeedsExplicitEvidenceGrant(t *testing.T) {
 	if !errors.Is(err, ErrForbidden) || result.Episode.Text != "" {
 		t.Fatal("administrator/config manager implicitly read evidence", result, err)
 	}
+}
+
+func scopedNativeFixture(execution, observations string) string {
+	boundary := func(phase string) string {
+		raw, _ := json.Marshal(map[string]any{"type": "custom", "customType": "aster.execution", "data": map[string]string{"run_id": execution, "phase": phase}})
+		return string(raw) + "\n"
+	}
+	return `{"type":"session","id":"session"}` + "\n" + boundary("start") + observations + boundary("end")
 }

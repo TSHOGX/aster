@@ -255,7 +255,7 @@ func (s *Store) CreateConversationCopy(ctx context.Context, actor string, input 
 				return err
 			}
 			for _, table := range []string{"bundle_items", "bundle_messages", "bundle_turns"} {
-				columns := map[string]string{"bundle_items": "id,turn_id,position,block_index,data,detail", "bundle_messages": "id,turn_id,role,content,sequence,created_at", "bundle_turns": "id,sequence,content,data"}[table]
+				columns := map[string]string{"bundle_items": "id,turn_id,position,block_index,data,detail", "bundle_messages": "id,turn_id,role,content,sequence,created_at", "bundle_turns": "id,sequence,content,data,family_id"}[table]
 				if _, err := tx.ExecContext(ctx, `INSERT INTO `+table+` SELECT ?,`+columns+` FROM `+table+` WHERE bundle_id=?`, v.bundle, sourceBundle); err != nil {
 					return err
 				}

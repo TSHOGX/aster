@@ -68,10 +68,8 @@ func (c Configuration) Validate() error {
 			}
 			audience[id] = true
 		}
-		for _, p := range s.Exclusions {
-			if err := manifest.ValidPath(p, false); err != nil {
-				return err
-			}
+		if err := s.ValidateExclusions(); err != nil {
+			return err
 		}
 		sources[s.ID] = s
 	}

@@ -9,7 +9,7 @@ const code = readFileSync(process.argv[2], 'utf8').replace(/^import .*;\n/gm, ''
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function deferred() { let resolve, reject; const promise = new Promise((a,b) => {resolve=a;reject=b;}); return {promise,resolve,reject}; }
 async function fixture(mode = 'normal') {
-  const outputs = [], queue = [], prompt = deferred(), preflight = deferred();
+  const outputs = [], queue = [], boundaries = [], prompt = deferred(), preflight = deferred();
   let line, listener;
   const agent = {
     prompt(message) { agent.processEvents({type:'message_start',message}); },
@@ -23,6 +23,7 @@ async function fixture(mode = 'normal') {
     subscribe(fn) { if (mode === 'queue_failure') listener = fn; return () => {}; },
   };
   const session = {
+    sessionManager: { appendCustomEntry(type, data) { boundaries.push({type, ...data}); } },
     agent, bindExtensions: async () => {}, subscribe(fn) {listener=mode==='queue_failure' ? (event) => { if (event.type==='queue_update') throw new Error('queue observer failed'); return fn(event); } : fn;return () => {};},
     async prompt(text, options) {
       if (mode === 'handled') return;
@@ -45,7 +46,7 @@ async function fixture(mode = 'normal') {
   });
   vm.runInContext(code+'\nglobalThis.start = runRpcMode;',context);
   void context.start({session,setRebindSession() {}}); await tick();
-  return {outputs,queue,prompt,preflight,agent,send(command) {line(JSON.stringify(command));}};
+  return {outputs,queue,prompt,preflight,agent,boundaries,send(command) {line(JSON.stringify(command));}};
 }
 const normal = {type:'prompt',id:'run',input_token:'normal',message:'same text'};
 const steering = {type:'steer',id:'steer',run_id:'run',input_token:'guidance',message:'same text'};
@@ -119,4 +120,12 @@ test('core cleanup failure emits no removal proof and fences subsequent prompts'
  assert.equal(f.outputs.some(e=>e.type==='inputs_reconciled'||e.type==='prompt_end'),false);
  f.send({...normal,id:'next',input_token:'next'});await tick();
  assert.equal(f.outputs.find(e=>e.id==='next'&&e.type==='response').success,false);
+});
+
+
+test('execution boundaries enclose only the selected prompt', async () => {
+ const f=await fixture();f.send(normal);await tick();
+ assert.deepEqual(f.boundaries.map(b=>({...b})),[{type:'aster.execution',run_id:'run',phase:'start'}]);
+ f.prompt.resolve();await tick();await tick();
+ assert.deepEqual(f.boundaries.map(b=>({...b})),[{type:'aster.execution',run_id:'run',phase:'start'},{type:'aster.execution',run_id:'run',phase:'end'}]);
 });

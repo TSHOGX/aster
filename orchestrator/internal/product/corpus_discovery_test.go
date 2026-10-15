@@ -31,6 +31,7 @@ func activateCorpusCollector(t *testing.T, s *Store, token string, source evolut
 func finishCorpusExecution(t *testing.T, s *Store, incarnation Incarnation, command agentwire.Frame) string {
 	t.Helper()
 	native := `{"type":"message","message":{"role":"assistant","content":"Verified task completed"}}` + "\n"
+	native = scopedNativeFixture(command.CommandID, native)
 	payload := fmt.Sprintf(`{"path":"/runtime/sessions/agent/native/captures/%s.jsonl","digest":"%s","size":%d}`, command.CommandID, evolution.Digest([]byte(native)), len(native))
 	_, err := s.IngestAgent(ctx, incarnation, record(incarnation, command, 2, "command.completed", payload))
 	must(t, err)
@@ -115,7 +116,7 @@ func TestCorpusDiscoverySealsAtomicallyAndRecoversLateEvidence(t *testing.T) {
 	if countCorpus(t, s, "corpus_episodes") != 2 || countCorpus(t, s, "corpus_snapshots") != 2 {
 		t.Fatal("restart replay duplicated artifacts")
 	}
-	_, err = s.db.Exec(`INSERT INTO messages(id,project_id,session_id,turn_id,role,content,sequence,created_at) SELECT 'late-message',project_id,session_id,id,'assistant','late observation',999,created_at FROM turns WHERE id=?`, command.TurnID)
+	_, err = s.IngestAgent(ctx, incarnation, record(incarnation, command, 3, "native", `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"late observation"}]}}`))
 	must(t, err)
 	must(t, (&CorpusCollector{Store: s}).Step(ctx))
 	if countCorpus(t, s, "corpus_episodes") != 3 || countCorpus(t, s, "corpus_snapshots") != 3 {

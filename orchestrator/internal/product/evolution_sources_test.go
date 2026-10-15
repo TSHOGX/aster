@@ -12,7 +12,7 @@ func TestEvolutionSourceAuthorityCannotBeSelfDeclared(t *testing.T) {
 	s, admin := accountStore(t)
 	ctx := context.Background()
 	token := adminTestToken(t, s, admin)
-	source := evolution.SourceBinding{ID: "corpus", Kind: "project", ResourceID: "project", PolicyRevision: 1, AudienceGroups: []string{StandardUsersGroup}, DerivativePublication: true, Exclusions: []string{"private"}}
+	source := evolution.SourceBinding{ID: "corpus", Kind: "project", ResourceID: "project", PolicyRevision: 1, AudienceGroups: []string{StandardUsersGroup}, DerivativePublication: true, Exclusions: []string{"sessions/private"}}
 	config := activationConfigFixture(1, true)
 	config.Sources = []evolution.SourceBinding{source}
 	input := EvolutionActivationInput{"activate", 0, config}

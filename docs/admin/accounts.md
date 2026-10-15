@@ -228,17 +228,28 @@ This grant provisions input authority; it does not schedule or execute a workflo
 Group configuration managers need an explicit `source.read` group grant to read
 raw corpus evidence, including when they are administrators. The source must have a
 current reuse policy, include this group in its audience, and permit derivative
-publication. Capture supports selected Project/session sources with no exclusions;
-policies with exclusions are rejected. Volume corpora can still be provisioned as explicit
-sealed inputs.
+publication. Project/session policies can exclude exact `sessions/ID`, `turns/ID`
+or `executions/ID` selectors. Excluding a turn covers its retries; excluding an
+execution selects only that attempt. Wildcards, prose filters, and workspace-file
+paths are not Project/session evidence selectors. Excluded records produce no corpus
+episode; automatic collection advances past them. Volume corpora can be provisioned
+as explicitly approved sealed inputs.
 
 Use `POST /api/admin/groups/{group}/corpus/capture` with `request_id`, `source_id`,
 `source_revision` and `execution_id`. Running tasks are rejected. Completed/failed/
 unknown outcomes remain distinct. Stored conversation text is bounded and accompanied
 by available verified native text/tool observations; missing, partial or truncated
 captures are labelled and are not treated as complete evidence. Hidden reasoning
-blocks are omitted. Local prompt IDs group retries into an evidence family; imported
-copy provenance remains explicitly unknown.
+blocks are omitted. The current native runtime records execution boundaries, so
+capture excludes earlier session and imported history. Missing or incomplete boundaries
+produce partial evidence rather than exporting the whole session snapshot.
+
+Local prompt IDs group retries into an evidence family. Conversation copies retain
+their original family ID through subsequent copies. Corpus records include
+`family_kind`: `local`, `copy`, `declared` for explicitly curated evidence, or `unknown`.
+The example validators hold unknown-family evidence and collapse citations from the
+same family to one representative; copying or retrying an incident cannot multiply
+its support. Imported historical turns are not new executions.
 
 A late exported capture creates a new immutable episode revision. Seal a bounded
 snapshot with `POST /api/admin/groups/{group}/corpus/snapshots`, supplying `request_id`,

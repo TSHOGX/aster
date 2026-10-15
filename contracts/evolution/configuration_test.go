@@ -153,3 +153,20 @@ func TestTypedBindingDependencyDeclarations(t *testing.T) {
 		t.Fatal("dependency silently inherited undeclared sources")
 	}
 }
+
+func TestSourceExclusionsUseExplicitEvidenceSelectors(t *testing.T) {
+	c := configFixture()
+	c.Sources[0].Kind = "project"
+	for _, selectors := range [][]string{{"sessions/private"}, {"turns/task", "executions/attempt"}} {
+		c.Sources[0].Exclusions = selectors
+		if err := c.Validate(); err != nil {
+			t.Fatal(selectors, err)
+		}
+	}
+	for _, selectors := range [][]string{{"private"}, {"sessions/*"}, {"turns/../private"}, {"unknown/id"}, {"turns/task", "turns/task"}} {
+		c.Sources[0].Exclusions = selectors
+		if c.Validate() == nil {
+			t.Fatal("unsupported selector accepted", selectors)
+		}
+	}
+}

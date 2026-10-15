@@ -28,7 +28,7 @@ func freezeConversation(ctx context.Context, tx *sql.Tx, id, session, title, sta
 	if _, err = tx.ExecContext(ctx, `INSERT INTO conversation_bundles VALUES(?,?,?,?)`, id, title, frontier, stamp); err != nil {
 		return 0, err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO bundle_turns SELECT ?,t.id,t.sequence,t.content,json_remove(v.data,'$.run_id','$.segment_id') FROM turns t JOIN conversation_turns v ON v.session_id=t.session_id AND v.turn_id=t.id WHERE t.session_id=? AND json_extract(v.data,'$.state') IN ('completed','continued','failed','canceled') AND EXISTS(SELECT 1 FROM messages m WHERE m.turn_id=t.id AND m.sequence<=?)`, id, session, frontier); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO bundle_turns SELECT ?,t.id,t.sequence,t.content,json_remove(v.data,'$.run_id','$.segment_id'),coalesce((SELECT family_id FROM turn_evidence_families f WHERE f.turn_id=t.id),t.id) FROM turns t JOIN conversation_turns v ON v.session_id=t.session_id AND v.turn_id=t.id WHERE t.session_id=? AND json_extract(v.data,'$.state') IN ('completed','continued','failed','canceled') AND EXISTS(SELECT 1 FROM messages m WHERE m.turn_id=t.id AND m.sequence<=?)`, id, session, frontier); err != nil {
 		return 0, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO bundle_messages SELECT ?,m.id,m.turn_id,m.role,m.content,m.sequence,m.created_at FROM messages m JOIN bundle_turns t ON t.bundle_id=? AND t.id=m.turn_id WHERE m.session_id=? AND m.sequence<=?`, id, id, session, frontier); err != nil {

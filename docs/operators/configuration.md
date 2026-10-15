@@ -467,6 +467,12 @@ revoked policies and ungranted references are rejected. The endpoint has the art
 store's 64 MiB per-artifact bound and requires native configuration to be enabled.
 
 
+The pinned native runtime records start/end boundaries for each execution in its
+Session log. Corpus extraction uses those boundaries to exclude prior and imported
+history. Keep the runtime’s native capture export enabled; absent or incomplete boundaries
+remain explicitly partial evidence. Curated corpus JSON must include `family_kind`
+for each episode alongside `family_id`.
+
 With both central participant connections and identity configured, the central
 service also runs automatic generation dispatch. Declare
 workflow input ports in the active binding and enable its schedule or event trigger.
@@ -481,7 +487,8 @@ Inspect the group's trigger metadata for pending reasons and dispatch errors. On
 uncertain admission response, the dispatcher reuses the stored run ID and assignment;
 restart does not select a new base or input range. Disabling automation supersedes
 unadmitted assignments and lets admitted work drain under current authority. Do not
-remove pending assignment or authorization records to force a retry. For typed cross-binding dependencies, the dispatcher retains waiting consumer plans
+remove pending assignment or authorization records to force a retry. For typed
+cross-binding dependencies, the dispatcher retains waiting consumer plans
 and reads exact successful output references from
 `POST /evaluation-space/internal/v1/generation/output`. This private route requires
 the producer's exact group, run, output port and winning fence plus current central

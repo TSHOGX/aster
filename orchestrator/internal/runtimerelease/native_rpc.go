@@ -14,7 +14,7 @@ import (
 const NativeProtocol = 1
 const NativeRPCPath = NativeRoot + "/" + PiPackage + "/dist/modes/rpc/rpc-mode.js"
 const nativeRPCOriginal = "sha256:d0f92418f6aedaa4c64da68f65cb6f93e18dc65d13969eba45349d99f36dfca7"
-const nativeRPCPatched = "sha256:81f8486c512a7971d37c9d7b8916d2fde9169e90d1d51b744c50a3c0b0d864c2"
+const nativeRPCPatched = "sha256:476b4e6cd8454c222a1589b0a3d9f3e039e14206bbe3f8928c39e0ea60579d04"
 
 const identityHooks = `    let session = runtimeHost.session;
     let activePrompt;
@@ -79,6 +79,7 @@ const settledPrompt = `            case "prompt": {
                     return error(id, "prompt", "A prompt is still settling");
                 }
                 const operation = { id, outcome: "completed", abortRequested: false, closed: false, finished: false, normalCompleted: false, inputTokens: new Set(), modelInputs: new Set(), enqueued: new Set(), preflights: new Set(), started: process.hrtime.bigint() };
+                session.sessionManager.appendCustomEntry("aster.execution", { run_id: id, phase: "start" });
                 activePrompt = operation;
                 if (command.input_token) operation.inputTokens.add(command.input_token);
                 const started = operation.started;
@@ -102,6 +103,13 @@ const settledPrompt = `            case "prompt": {
                     const removed = [...operation.inputTokens].filter((token) => !handled.includes(token));
                     if (handled.length) output({ type: "inputs_handled", run_id: operation.id, input_tokens: handled, occurred_at: new Date().toISOString() });
                     output({ type: "inputs_reconciled", run_id: operation.id, removed_input_tokens: removed, complete: true, occurred_at: new Date().toISOString(), run_elapsed_ms: Number((process.hrtime.bigint() - started) / 1000000n) });
+                    try {
+                        session.sessionManager.appendCustomEntry("aster.execution", { run_id: operation.id, phase: "end" });
+                    } catch {
+                        cleanupFailed = true;
+                        output({ type: "input_cleanup_failed", run_id: operation.id });
+                        return; // Missing boundary cannot be reported as a complete capture.
+                    }
                     if (activePrompt === operation) activePrompt = undefined;
                     if (!rejected) output({ type: "prompt_end", id, outcome, ...(failure ? { error: String(failure).slice(0, 1024) } : {}) });
                 };

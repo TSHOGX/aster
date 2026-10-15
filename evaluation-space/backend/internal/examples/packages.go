@@ -49,9 +49,9 @@ type PublishedWorkflow struct {
 	Workflow evolution.Workflow `json:"workflow"`
 }
 
-var Verify = evolution.Revision{ID: "example-evidence-verify", Revision: 1, Digest: evolution.Digest([]byte("example-evidence-verify-v1:original-corpus-family-outcome-and-truncation"))}
-var BuildSkills = evolution.Revision{ID: "example-skills-build", Revision: 1, Digest: evolution.Digest([]byte("example-skills-build-v1:relative-skill-directories-no-root-writes"))}
-var BuildCorrections = evolution.Revision{ID: "example-corrections-build", Revision: 1, Digest: evolution.Digest([]byte("example-corrections-build-v1:evidence-backed-relative-lessons"))}
+var Verify = evolution.Revision{ID: "example-evidence-verify", Revision: 2, Digest: evolution.Digest([]byte("example-evidence-verify-v2:known-family-outcome-and-scoped-capture"))}
+var BuildSkills = evolution.Revision{ID: "example-skills-build", Revision: 2, Digest: evolution.Digest([]byte("example-skills-build-v2:known-family-relative-skill-directories-no-root-writes"))}
+var BuildCorrections = evolution.Revision{ID: "example-corrections-build", Revision: 2, Digest: evolution.Digest([]byte("example-corrections-build-v2:known-family-evidence-backed-relative-lessons"))}
 
 var corpusSchema = evolution.CorpusSchema
 var itemsSchema = json.RawMessage(`{"type":"array","maxItems":100,"items":{"type":"object","additionalProperties":false,"required":["id","title","body","evidence_ids","status"],"properties":{"id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{0,63}$"},"title":{"type":"string","minLength":1,"maxLength":200},"body":{"type":"string","minLength":1,"maxLength":16384},"evidence_ids":{"type":"array","minItems":1,"maxItems":100,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":128}},"status":{"enum":["supported","held"]}}}}`)
@@ -157,7 +157,7 @@ func verify(corpus Corpus, items []Proposal) ([]Proposal, error) {
 		ids := map[string]bool{}
 		for _, id := range item.EvidenceIDs {
 			episode, ok := episodes[id]
-			if !ok || ids[id] || episode.Outcome != "completed" || episode.Truncated {
+			if !ok || ids[id] || episode.Outcome != "completed" || episode.Truncated || (episode.FamilyKind != "local" && episode.FamilyKind != "copy" && episode.FamilyKind != "declared") {
 				valid = false
 			}
 			ids[id] = true
@@ -165,7 +165,24 @@ func verify(corpus Corpus, items []Proposal) ([]Proposal, error) {
 		if !valid {
 			item.Status = "held"
 		}
-		item.EvidenceIDs = append([]string(nil), item.EvidenceIDs...)
+		if valid {
+			families := map[string]string{}
+			for _, id := range item.EvidenceIDs {
+				family := episodes[id].FamilyID
+				if prior := families[family]; prior == "" || id < prior {
+					families[family] = id
+				}
+			}
+			item.EvidenceIDs = make([]string, 0, len(families))
+			for _, id := range families {
+				item.EvidenceIDs = append(item.EvidenceIDs, id)
+			}
+		} else {
+			item.EvidenceIDs = make([]string, 0, len(ids))
+			for id := range ids {
+				item.EvidenceIDs = append(item.EvidenceIDs, id)
+			}
+		}
 		sort.Strings(item.EvidenceIDs)
 		result = append(result, item)
 	}

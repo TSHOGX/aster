@@ -190,6 +190,14 @@ func (s *Store) collectCorpusSource(ctx context.Context, group, sourceID string)
 				continue
 			}
 			seen[e.execution.String] = true
+			var session, turn string
+			if err = tx.QueryRowContext(ctx, "SELECT session_id,prompt_id FROM execution_runs WHERE id=?", e.execution.String).Scan(&session, &turn); err != nil {
+				return err
+			}
+			if sourceExcludesEpisode(source, session, turn, e.execution.String) {
+				continue
+			}
+
 			_, err = s.captureCorpusEpisode(ctx, tx, actor, group, CorpusCaptureInput{RequestID: corpusDiscoveryRequest("capture", group, sourceID, revision, baseline, e.sequence, 0), SourceID: sourceID, SourceRevision: revision, ExecutionID: e.execution.String})
 			if err != nil {
 				return err

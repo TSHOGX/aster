@@ -267,7 +267,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	if output, err = provision.CombinedOutput(); err != nil {
 		t.Fatalf("service: %v %s", err, output)
 	}
-	corpusBytes := []byte(`{"episodes":[{"id":"episode","family_id":"family","outcome":"completed","truncated":false,"text":"The task completed with verified output."}]}`)
+	corpusBytes := []byte(`{"episodes":[{"id":"episode","family_id":"family","family_kind":"declared","outcome":"completed","truncated":false,"text":"The task completed with verified output."}]}`)
 	corpusFile := filepath.Join(t.TempDir(), "corpus.json")
 	must(t, os.WriteFile(corpusFile, corpusBytes, 0600))
 	artifact := evolution.ArtifactRef{ID: "corpus", GroupID: product.StandardUsersGroup, SchemaDigest: packages[0].Template.Inputs["corpus"], Digest: evolution.Digest(corpusBytes), Size: int64(len(corpusBytes)), MediaType: "application/json", GrantID: "corpus-use", PolicyRevision: 1}

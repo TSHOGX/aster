@@ -75,6 +75,8 @@ test('patched RPC preserves exact native input identity and settlement with real
     assert.equal(outputs.some(e => e.type === 'prompt_end'), false);
     firstResponse.resolve();
     await until(() => outputs.some(e => e.type === 'prompt_end'));
+    const boundaries=session.sessionManager.getEntries().filter(e=>e.type==='custom'&&e.customType==='aster.execution');
+    assert.deepEqual(boundaries.map(e=>JSON.parse(JSON.stringify(e.data))),[{run_id:'run',phase:'start'},{run_id:'run',phase:'end'}]);
     const consumed = outputs.filter(e => e.type === 'input_consumed');
     assert.deepEqual(consumed.map(e => e.input_token), ['normal', 'A', 'B']);
     assert(consumed.every(e => e.run_id === 'run' && e.run_elapsed_ms >= 0));

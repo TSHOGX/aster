@@ -1787,6 +1787,7 @@ CREATE TABLE bundle_messages (
 CREATE TABLE bundle_turns (
  bundle_id TEXT NOT NULL REFERENCES conversation_bundles(id) ON DELETE CASCADE,
  id TEXT NOT NULL, sequence INTEGER NOT NULL, content TEXT NOT NULL, data TEXT NOT NULL,
+ family_id TEXT NOT NULL,
  PRIMARY KEY(bundle_id,id)
 );
 CREATE TABLE session_imports (
@@ -2183,3 +2184,13 @@ CREATE TABLE generation_dependency_artifacts (
 );
 CREATE TRIGGER immutable_generation_dependency_artifact BEFORE UPDATE ON generation_dependency_artifacts
 BEGIN SELECT RAISE(ABORT,'immutable dependency output'); END;
+
+CREATE TABLE turn_evidence_families (
+ turn_id TEXT PRIMARY KEY REFERENCES turns(id) ON DELETE CASCADE,
+ family_id TEXT NOT NULL,
+ origin_bundle TEXT NOT NULL
+);
+CREATE TRIGGER immutable_turn_evidence_family BEFORE UPDATE ON turn_evidence_families
+BEGIN SELECT RAISE(ABORT,'immutable evidence family'); END;
+
+CREATE INDEX corpus_message_execution ON agent_records(command_id,incarnation_id,sequence);

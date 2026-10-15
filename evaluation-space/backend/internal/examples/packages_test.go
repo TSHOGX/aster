@@ -116,7 +116,7 @@ func TestExamplePackagesExecuteDistinctGraphsAndPreserveHeldEvidence(t *testing.
 			}
 			runtime := &exampleRuntime{t: t, catalog: catalog}
 			engine := workflow.Engine{Catalog: catalog, Runtime: runtime, Journal: projections.WorkflowJournal{Store: store, Lease: lease}}
-			corpus := Corpus{Episodes: []Episode{{ID: "episode", FamilyID: "incident", Outcome: "completed", Text: "Verified operation completed."}, {ID: "failed", FamilyID: "incident", Outcome: "failed", Text: "The retry failed."}}}
+			corpus := Corpus{Episodes: []Episode{{ID: "episode", FamilyID: "incident", FamilyKind: "declared", Outcome: "completed", Text: "Verified operation completed."}, {ID: "failed", FamilyID: "incident", FamilyKind: "declared", Outcome: "failed", Text: "The retry failed."}}}
 			input, _ := json.Marshal(corpus)
 			values, err := engine.Execute(ctx, pkg.Template.Workflows[0], workflow.Values{"corpus": input})
 			if err != nil {
@@ -144,7 +144,7 @@ func TestExamplePackagesExecuteDistinctGraphsAndPreserveHeldEvidence(t *testing.
 	}
 }
 func TestBuildersRejectForgedEvidenceAndUnsafeNames(t *testing.T) {
-	corpus := Corpus{Episodes: []Episode{{ID: "episode", FamilyID: "family", Outcome: "completed", Text: "original"}}}
+	corpus := Corpus{Episodes: []Episode{{ID: "episode", FamilyID: "family", FamilyKind: "declared", Outcome: "completed", Text: "original"}}}
 	items := []Proposal{{ID: "safe", Title: "Title", Body: "Body", EvidenceIDs: []string{"episode"}, Status: "supported"}}
 	corpusRaw, _ := json.Marshal(corpus)
 	state := State{Corpus: corpus, Items: items, Valid: true}
@@ -165,5 +165,17 @@ func TestBuildersRejectForgedEvidenceAndUnsafeNames(t *testing.T) {
 	verified, err := verify(corpus, items)
 	if err != nil || verified[0].Status != "held" {
 		t.Fatal("truncated evidence promoted", verified, err)
+	}
+}
+
+func TestEvidenceCopiesCannotInflateSupportAndUnknownFamiliesAreHeld(t *testing.T) {
+	corpus := Corpus{Episodes: []Episode{{ID: "a", FamilyID: "origin", FamilyKind: "local", Outcome: "completed"}, {ID: "b", FamilyID: "origin", FamilyKind: "copy", Outcome: "completed"}, {ID: "unknown", FamilyID: "unknown", FamilyKind: "unknown", Outcome: "completed"}}}
+	items := []Proposal{{ID: "known", Title: "Known", Body: "Verified", EvidenceIDs: []string{"b", "a"}, Status: "supported"}, {ID: "unknown", Title: "Unknown", Body: "Unverified origin", EvidenceIDs: []string{"unknown"}, Status: "supported"}}
+	result, err := verify(corpus, items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result[0].EvidenceIDs) != 1 || result[0].EvidenceIDs[0] != "a" || result[1].Status != "held" {
+		t.Fatal("family evidence inflated", result)
 	}
 }
