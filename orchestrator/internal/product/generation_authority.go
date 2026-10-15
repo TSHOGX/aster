@@ -62,7 +62,13 @@ func (s *Store) SetGenerationInputGrant(ctx context.Context, token, group string
 			if err != nil {
 				return err
 			}
-			if !source.DerivativePublication {
+			audience := false
+			for _, id := range source.AudienceGroups {
+				if id == group {
+					audience = true
+				}
+			}
+			if !source.DerivativePublication || !audience {
 				return ErrForbidden
 			}
 			if err = authorizeEvolutionSourceIssuer(ctx, tx, actor.ID, source); err != nil {
@@ -419,6 +425,63 @@ func (s *Store) SettleGeneration(ctx context.Context, input GenerationSettlement
 		if _, err = tx.ExecContext(ctx, "UPDATE generation_authorizations SET settlement=?,used_tokens=?,used_cost=? WHERE id=?", raw, input.Tokens, input.CostMicros, input.Grant.ID); err != nil {
 			return err
 		}
+		if state == "completed" {
+			for _, input := range assignment.Pins.Inputs {
+				var exists int
+				if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM corpus_snapshots WHERE group_id=? AND id=? AND digest=?", assignment.GroupID, input.ID, input.Digest).Scan(&exists); err != nil {
+					return err
+				}
+				if exists == 1 {
+					if err = consumeCorpusSnapshot(ctx, tx, assignment, input.ID); err != nil {
+						return err
+					}
+				}
+			}
+		}
 		return s.auditEvent(ctx, tx, "evaluation-space", "generation.settle", "run", assignment.RunID, input.Grant.ID, fence, input)
+	})
+}
+
+// AuthorizeGenerationInput permits transfer only for an exact currently enabled
+// corpus grant. Sensitive transport access is audited before returning authority.
+func (s *Store) AuthorizeGenerationInput(ctx context.Context, artifact evolution.ArtifactRef) error {
+	if artifact.Validate() != nil {
+		return ErrInvalid
+	}
+	return s.write(ctx, func(tx *sql.Tx) error {
+		var stored, sourcesRaw []byte
+		var enabled bool
+		if err := tx.QueryRowContext(ctx, "SELECT artifact,sources,enabled FROM generation_input_grants WHERE group_id=? AND artifact_id=?", artifact.GroupID, artifact.ID).Scan(&stored, &sourcesRaw, &enabled); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrForbidden
+			}
+			return err
+		}
+		expected, _ := json.Marshal(artifact)
+		if !enabled || !bytes.Equal(expected, stored) {
+			return ErrForbidden
+		}
+		sources, err := evolution.Decode[[]evolution.SourceBinding](bytes.NewReader(sourcesRaw))
+		if err != nil {
+			return err
+		}
+		if len(sources) == 0 {
+			return ErrForbidden
+		}
+		for _, source := range sources {
+			audience := false
+			for _, id := range source.AudienceGroups {
+				if id == artifact.GroupID {
+					audience = true
+				}
+			}
+			if !source.DerivativePublication || !audience {
+				return ErrForbidden
+			}
+		}
+		if err = authorizeEvolutionSources(ctx, tx, evolution.Configuration{GroupID: artifact.GroupID, Sources: sources}); err != nil {
+			return err
+		}
+		return s.auditEvent(ctx, tx, "evaluation-space", "generation.input.transfer", "artifact", artifact.ID, artifact.GrantID, artifact.PolicyRevision, map[string]string{"group_id": artifact.GroupID, "digest": artifact.Digest})
 	})
 }

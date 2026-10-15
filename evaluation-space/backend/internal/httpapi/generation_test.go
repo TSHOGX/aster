@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
@@ -124,9 +125,40 @@ func TestPrivateGenerationAdmissionReplayAndScope(t *testing.T) {
 	if w := call("read", "central", secret, "", scope); w.Code != 404 {
 		t.Fatal("cross-group run visible", w.Code)
 	}
+	transfer := []byte(`{"episodes":[]}`)
+	transferred := input
+	transferred.ID = "transferred"
+	reference, _ := json.Marshal(transferred)
+	seal := func(data []byte) *httptest.ResponseRecorder {
+		request := httptest.NewRequest("POST", "/evaluation-space/internal/v1/generation/seal-input", bytes.NewReader(data))
+		request.SetBasicAuth("central", secret)
+		request.Header.Set("Content-Type", "application/octet-stream")
+		request.Header.Set("X-Corpus-Artifact", base64.RawURLEncoding.EncodeToString(reference))
+		response := httptest.NewRecorder()
+		api.Handler().ServeHTTP(response, request)
+		return response
+	}
+	if w := seal(transfer); w.Code != 200 {
+		t.Fatal("online corpus transfer", w.Code, w.Body.String())
+	}
+	got, err := store.Artifact(ctx, transferred)
+	if err != nil || !bytes.Equal(got, transfer) {
+		t.Fatal("corpus changed", err)
+	}
+	if w := seal([]byte("wrong")); w.Code != 422 {
+		t.Fatal("corrupt transfer accepted", w.Code)
+	}
 	central.denied = true
 	scope["group_id"] = "group"
 	if w := call("read", "central", secret, "", scope); w.Code != 403 {
 		t.Fatal("revoked read", w.Code)
 	}
+}
+
+func (c *generationCentral) AuthorizeGenerationInput(context.Context, evolution.ArtifactRef) error {
+	c.calls++
+	if c.denied {
+		return errors.New("denied")
+	}
+	return nil
 }

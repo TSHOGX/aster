@@ -222,3 +222,35 @@ fail current authority checks; cleanup and accounting for already dispatched wor
 remain available. Generation and evaluation reservations share the group's concurrent
 token/cost ceiling, and uncertain work retains its hold until terminal settlement.
 This grant provisions input authority; it does not schedule or execute a workflow.
+
+### Capture and seal authorized corpus episodes
+
+Group configuration managers need an explicit `source.read` group grant to read
+raw corpus evidence, including when they are administrators. The source must have a
+current reuse policy, include this group in its audience, and permit derivative
+publication. Capture currently supports explicitly selected Project/session execution
+IDs with no source exclusions; policies with exclusions are rejected until a compatible
+collector can enforce them. Volume corpora can still be provisioned as explicit
+sealed inputs.
+
+Use `POST /api/admin/groups/{group}/corpus/capture` with `request_id`, `source_id`,
+`source_revision` and `execution_id`. Running tasks are rejected. Completed/failed/
+unknown outcomes remain distinct. Stored conversation text is bounded and accompanied
+by available verified native text/tool observations; missing, partial or truncated
+captures are labelled and are not treated as complete evidence. Hidden reasoning
+blocks are omitted. Local prompt IDs group retries into an evidence family; imported
+copy provenance remains explicitly unknown.
+
+A late exported capture creates a new immutable episode revision. Seal a bounded
+snapshot with `POST /api/admin/groups/{group}/corpus/snapshots`, supplying `request_id`,
+`source_id`, `source_revision`, `after_sequence` and `limit` (1–100). Sealing chooses
+the latest revisions, freezes content and records its exact input-use grant atomically.
+It does not consume any goal's frontier. Download the sealed bytes from
+`GET /api/admin/groups/{group}/corpus/snapshots/{snapshot}/content`; current evidence
+and source authority are rechecked and audited before content is returned.
+
+`GET /api/admin/groups/{group}/corpus/bindings/{binding}/sources/{source}/frontier`
+shows that binding's successful consumption. Terminal generation settlement advances
+only the successful binding that pinned the snapshot; a failed sibling retains its
+prior frontier. Capture and sealing are explicit operations, not automatic collection
+of every group member's work or an implicit historical backfill.

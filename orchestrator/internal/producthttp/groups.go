@@ -6,6 +6,10 @@ import (
 )
 
 func (a *Authentication) groupRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/admin/groups/{group}/corpus/capture", a.corpusCapture)
+	mux.HandleFunc("POST /api/admin/groups/{group}/corpus/snapshots", a.corpusSeal)
+	mux.HandleFunc("GET /api/admin/groups/{group}/corpus/snapshots/{snapshot}/content", a.corpusContent)
+	mux.HandleFunc("GET /api/admin/groups/{group}/corpus/bindings/{binding}/sources/{source}/frontier", a.corpusFrontier)
 	mux.HandleFunc("POST /api/admin/groups/{group}/evaluation-dataset-grants", a.evaluationDatasetGrant)
 	mux.HandleFunc("POST /api/admin/groups/{group}/generation-input-grants", a.generationInputGrant)
 	mux.HandleFunc("GET /api/me/capabilities", a.capabilities)

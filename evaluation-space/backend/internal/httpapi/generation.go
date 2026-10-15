@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"mime"
@@ -14,6 +16,7 @@ import (
 )
 
 type GenerationCentral interface {
+	AuthorizeGenerationInput(context.Context, evolution.ArtifactRef) error
 	AdmitGeneration(context.Context, evolution.GenerationAssignment) (evolution.GenerationGrant, error)
 	ResolveGeneration(context.Context, evolution.GenerationGrantScope) (evolution.GenerationAssignment, error)
 }
@@ -31,7 +34,7 @@ func NewGenerationAPI(store *projections.Store, central GenerationCentral, secre
 }
 func (a *GenerationAPI) Handler() http.Handler {
 	mux := http.NewServeMux()
-	for _, action := range []string{"admit", "read", "control"} {
+	for _, action := range []string{"admit", "read", "control", "seal-input"} {
 		action := action
 		mux.HandleFunc("POST /evaluation-space/internal/v1/generation/"+action, func(w http.ResponseWriter, r *http.Request) { a.serve(w, r, action) })
 	}
@@ -43,6 +46,34 @@ func (a *GenerationAPI) serve(w http.ResponseWriter, r *http.Request, action str
 	actual := sha256.Sum256([]byte(password))
 	if !ok || user != "central" || subtle.ConstantTimeCompare(actual[:], a.secret[:]) != 1 || r.Header.Get("Cookie") != "" || r.Header.Get("Origin") != "" {
 		write(w, 403, map[string]string{"error": "service_identity_required"})
+		return
+	}
+	if action == "seal-input" {
+		if r.Header.Get("Content-Type") != "application/octet-stream" {
+			write(w, 415, map[string]string{"error": "binary_required"})
+			return
+		}
+		encoded := r.Header.Get("X-Corpus-Artifact")
+		if len(encoded) > 16384 {
+			write(w, 400, map[string]string{"error": "invalid_input_reference"})
+			return
+		}
+		raw, err := base64.RawURLEncoding.DecodeString(encoded)
+		if err != nil {
+			write(w, 400, map[string]string{"error": "invalid_input_reference"})
+			return
+		}
+		artifact, err := evolution.Decode[evolution.ArtifactRef](bytes.NewReader(raw))
+		if err != nil || artifact.Validate() != nil {
+			write(w, 400, map[string]string{"error": "invalid_input_reference"})
+			return
+		}
+		if err = a.Central.AuthorizeGenerationInput(r.Context(), artifact); err != nil {
+			write(w, 403, map[string]string{"error": "input_authority_required"})
+			return
+		}
+		err = a.Store.SealArtifact(r.Context(), artifact, http.MaxBytesReader(w, r.Body, projections.MaxStoredArtifactBytes))
+		a.reply(w, artifact, err)
 		return
 	}
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))

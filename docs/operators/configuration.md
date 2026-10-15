@@ -456,3 +456,12 @@ states. Successful generation is not a merge or publication. The worker retries
 uncertain model calls by their original key and looks up Studio acceptance before
 submitting a result again. Generated branches retain the captured base and require
 normal human review; disjoint goal outputs remain separate branches until merged.
+
+A trusted central collector can transfer a sealed corpus while Evaluation Space is
+running with `POST /evaluation-space/internal/v1/generation/seal-input`. Authenticate
+as `central`, send raw bytes as `application/octet-stream`, and set
+`X-Corpus-Artifact` to unpadded base64url of the complete artifact-reference JSON.
+Evaluation Space obtains fresh central input-use authority before reading the body,
+then verifies digest/size and seals it under the immutable reference. Changed bytes,
+revoked policies and ungranted references are rejected. The endpoint has the artifact
+store's 64 MiB per-artifact bound and requires native configuration to be enabled.

@@ -30,6 +30,17 @@ func (a *Authentication) identityGeneration(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	switch action {
+	case "input-authority":
+		artifact, err := evolution.Decode[evolution.ArtifactRef](http.MaxBytesReader(w, r.Body, 1<<16))
+		if err != nil {
+			writeError(w, 400, "invalid input artifact")
+			return
+		}
+		if err = a.Store.AuthorizeGenerationInput(r.Context(), artifact); err != nil {
+			fail(w, err)
+			return
+		}
+		w.WriteHeader(204)
 	case "admit":
 		input, err := evolution.Decode[evolution.GenerationAssignment](http.MaxBytesReader(w, r.Body, evolution.MaxDocumentBytes))
 		if err != nil || input.Requester.Issuer != a.Config.Identity.Issuer {

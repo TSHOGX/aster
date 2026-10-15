@@ -17,16 +17,8 @@ import (
 	"aster/evaluation-space/internal/workflow"
 )
 
-type Episode struct {
-	ID        string `json:"id"`
-	FamilyID  string `json:"family_id"`
-	Outcome   string `json:"outcome"`
-	Truncated bool   `json:"truncated"`
-	Text      string `json:"text"`
-}
-type Corpus struct {
-	Episodes []Episode `json:"episodes"`
-}
+type Episode = evolution.CorpusEpisode
+type Corpus = evolution.Corpus
 type Proposal struct {
 	ID          string   `json:"id"`
 	Title       string   `json:"title"`
@@ -61,7 +53,7 @@ var Verify = evolution.Revision{ID: "example-evidence-verify", Revision: 1, Dige
 var BuildSkills = evolution.Revision{ID: "example-skills-build", Revision: 1, Digest: evolution.Digest([]byte("example-skills-build-v1:relative-skill-directories-no-root-writes"))}
 var BuildCorrections = evolution.Revision{ID: "example-corrections-build", Revision: 1, Digest: evolution.Digest([]byte("example-corrections-build-v1:evidence-backed-relative-lessons"))}
 
-var corpusSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["episodes"],"properties":{"episodes":{"type":"array","maxItems":1000,"items":{"type":"object","additionalProperties":false,"required":["id","family_id","outcome","truncated","text"],"properties":{"id":{"type":"string","minLength":1,"maxLength":128},"family_id":{"type":"string","minLength":1,"maxLength":128},"outcome":{"enum":["completed","failed","unknown"]},"truncated":{"type":"boolean"},"text":{"type":"string","maxLength":65536}}}}}}`)
+var corpusSchema = evolution.CorpusSchema
 var itemsSchema = json.RawMessage(`{"type":"array","maxItems":100,"items":{"type":"object","additionalProperties":false,"required":["id","title","body","evidence_ids","status"],"properties":{"id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{0,63}$"},"title":{"type":"string","minLength":1,"maxLength":200},"body":{"type":"string","minLength":1,"maxLength":16384},"evidence_ids":{"type":"array","minItems":1,"maxItems":100,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":128}},"status":{"enum":["supported","held"]}}}}`)
 var candidateSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["files","held"],"properties":{"files":{"type":"array","maxItems":100,"items":{"type":"object","additionalProperties":false,"required":["path","text"],"properties":{"path":{"type":"string","minLength":1,"maxLength":256},"text":{"type":"string","maxLength":32768}}}},"held":{"type":"array","maxItems":100}}}`)
 

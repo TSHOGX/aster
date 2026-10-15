@@ -17,7 +17,7 @@ type EvolutionGroupGrantInput struct {
 
 func (s *Store) SetEvolutionGroupGrant(ctx context.Context, token, group string, input EvolutionGroupGrantInput) (int64, error) {
 	var result int64
-	if !validID(group) || !validID(input.AccountID) || (input.Action != "config.read" && input.Action != "config.manage" && input.Action != "run.start") || (input.Effect != "allow" && input.Effect != "deny") || input.ExpectedRevision < 0 {
+	if !validID(group) || !validID(input.AccountID) || (input.Action != "config.read" && input.Action != "config.manage" && input.Action != "run.start" && input.Action != "source.read") || (input.Effect != "allow" && input.Effect != "deny") || input.ExpectedRevision < 0 {
 		return 0, ErrInvalid
 	}
 	request, err := mutationRequest(input.RequestID, "evolution.group.grant", group, input)
@@ -90,6 +90,35 @@ func authorizeEvolutionGroup(ctx context.Context, q queryer, account Account, gr
 		return err
 	}
 	if member != 1 || effect != "allow" {
+		return ErrForbidden
+	}
+	return nil
+}
+
+// Raw corpus evidence is an explicit permission, including for administrators.
+// Group configuration authority does not imply sensitive source-content access.
+func authorizeCorpusEvidence(ctx context.Context, q queryer, actor Account, group string) error {
+	if err := activeAccount(ctx, q, actor.ID); err != nil {
+		return err
+	}
+	var effect string
+	if err := q.QueryRowContext(ctx, "SELECT effect FROM evolution_group_grants WHERE group_id=? AND account_id=? AND action='source.read'", group, actor.ID).Scan(&effect); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrForbidden
+		}
+		return err
+	}
+	if effect != "allow" {
+		return ErrForbidden
+	}
+	if actor.Role == "admin" {
+		return nil
+	}
+	var member int
+	if err := q.QueryRowContext(ctx, "SELECT count(*) FROM account_memberships WHERE group_id=? AND account_id=?", group, actor.ID).Scan(&member); err != nil {
+		return err
+	}
+	if member != 1 {
 		return ErrForbidden
 	}
 	return nil

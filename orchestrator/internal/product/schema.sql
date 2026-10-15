@@ -1897,7 +1897,7 @@ CREATE TABLE evolution_source_policies (
 CREATE TABLE evolution_group_grants (
  group_id TEXT NOT NULL REFERENCES account_groups(id),
  account_id TEXT NOT NULL REFERENCES accounts(id),
- action TEXT NOT NULL CHECK(action IN ('config.read','config.manage','run.start')),
+ action TEXT NOT NULL CHECK(action IN ('config.read','config.manage','run.start','source.read')),
  effect TEXT NOT NULL CHECK(effect IN ('allow','deny')),
  revision INTEGER NOT NULL CHECK(revision>0),
  PRIMARY KEY(group_id,account_id,action)
@@ -2030,3 +2030,22 @@ CREATE TRIGGER immutable_generation_patch BEFORE UPDATE OF patch_digest ON gener
 CREATE TRIGGER retained_generation_authorization BEFORE DELETE ON generation_authorizations BEGIN SELECT RAISE(ABORT,'retain generation provenance'); END;
 
 CREATE TRIGGER immutable_generation_settlement BEFORE UPDATE OF settlement,used_tokens,used_cost ON generation_authorizations WHEN OLD.settlement IS NOT NULL BEGIN SELECT RAISE(ABORT,'immutable generation settlement'); END;
+
+CREATE TABLE corpus_episodes(
+ group_id TEXT NOT NULL REFERENCES account_groups(id),source_id TEXT NOT NULL,episode_id TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),source_revision INTEGER NOT NULL,body BLOB NOT NULL,digest TEXT NOT NULL,
+ created_at TEXT NOT NULL,PRIMARY KEY(group_id,source_id,episode_id,revision),UNIQUE(group_id,source_id,episode_id,digest)
+);
+CREATE TRIGGER immutable_corpus_episode BEFORE UPDATE ON corpus_episodes BEGIN SELECT RAISE(ABORT,'immutable corpus episode'); END;
+CREATE TRIGGER retained_corpus_episode BEFORE DELETE ON corpus_episodes BEGIN SELECT RAISE(ABORT,'retain corpus provenance'); END;
+CREATE TABLE corpus_snapshots(
+ id TEXT PRIMARY KEY,group_id TEXT NOT NULL REFERENCES account_groups(id),source_id TEXT NOT NULL,source_revision INTEGER NOT NULL,
+ body BLOB NOT NULL,members BLOB NOT NULL,digest TEXT NOT NULL,sealed_through INTEGER NOT NULL,created_at TEXT NOT NULL
+);
+CREATE TRIGGER immutable_corpus_snapshot BEFORE UPDATE ON corpus_snapshots BEGIN SELECT RAISE(ABORT,'immutable corpus snapshot'); END;
+CREATE TRIGGER retained_corpus_snapshot BEFORE DELETE ON corpus_snapshots BEGIN SELECT RAISE(ABORT,'retain corpus snapshot'); END;
+CREATE TABLE corpus_consumption(
+ group_id TEXT NOT NULL REFERENCES account_groups(id),binding_id TEXT NOT NULL,source_id TEXT NOT NULL,
+ through_sequence INTEGER NOT NULL CHECK(through_sequence>=0),snapshot_id TEXT NOT NULL REFERENCES corpus_snapshots(id),run_id TEXT NOT NULL,
+ PRIMARY KEY(group_id,binding_id,source_id)
+);

@@ -93,3 +93,8 @@ func (a *ProjectionAuthority) SettleGeneration(ctx context.Context, grant evolut
 	}{grant, fence, tokens, cost})
 	return err
 }
+
+func (a *ProjectionAuthority) AuthorizeGenerationInput(ctx context.Context, artifact evolution.ArtifactRef) error {
+	_, err := a.generationCall(ctx, "input-authority", artifact)
+	return err
+}
