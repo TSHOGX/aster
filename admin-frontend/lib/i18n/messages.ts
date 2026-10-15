@@ -97,6 +97,7 @@ export const ZH: Record<string, string> = {
   "Evaluation mode": "评估模式",
   "Evaluation policy": "评估策略",
   "Evaluation profile": "评估配置",
+  "Redacted or unavailable": "已脱敏或不可用",
   "Dataset": "数据集",
   "Scorer": "评分器",
   "Runtime": "运行时",
