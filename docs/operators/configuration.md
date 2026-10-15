@@ -292,6 +292,10 @@ thresholds and minimum sample/coverage requirements; publishing creates the next
 immutable profile revision. Existing runs and reports retain their earlier profile
 identity. Dataset scope is checked against the selected group and profile bytes are
 never exposed to generation-only readers.
+Run inspectors can request a source-authorized debugger projection for bounded
+budget usage and retained provider observations. Providers that expose only opaque
+job evidence are labeled as such; the UI does not infer tool or internal model
+details from a terminal status.
 Frontend credentials and cookies are stripped before proxying. Application sessions
 persist in Evaluation Space's state database; Studio owns a separate session store
 and cookie path. Central identity outages reject session authorization immediately.
