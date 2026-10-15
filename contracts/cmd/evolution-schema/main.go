@@ -33,6 +33,7 @@ func main() {
 	write[evolution.OutputCatalogScope](directory, "output-catalog-scope-v1")
 	write[evolution.OutputCatalogPage](directory, "output-catalog-page-v1")
 	write[evolution.OutputLibraryDetail](directory, "output-library-detail-v1")
+	write[evolution.DraftSettings](directory, "draft-settings-v1")
 	write[evolution.Configuration](directory, "configuration-v1")
 	write[evolution.Activation](directory, "activation-v1")
 	write[evolution.Run](directory, "run-v1")

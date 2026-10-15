@@ -30,6 +30,7 @@ func TestPublishedSchemaMatchesContracts(t *testing.T) {
 	checkSchema[OutputCatalogScope](t, "output-catalog-scope-v1")
 	checkSchema[OutputCatalogPage](t, "output-catalog-page-v1")
 	checkSchema[OutputLibraryDetail](t, "output-library-detail-v1")
+	checkSchema[DraftSettings](t, "draft-settings-v1")
 	checkSchema[Configuration](t, "configuration-v1")
 	checkSchema[Activation](t, "activation-v1")
 	checkSchema[Run](t, "run-v1")

@@ -8,7 +8,10 @@ export type ServiceDefinition = { ref: Revision; kind: string; enabled: boolean;
 export type WorkflowDefinition = { id: string; schema_version: number; inputs: Record<string, string>; outputs: Record<string, string>; parameters_schema: Record<string, unknown>; nodes: { kind: string }[] };
 export type CatalogEntry<T = unknown> = { ref: Revision; definition: T; status?: { id: string; revision: number; enabled: boolean } };
 export type CatalogPage = { revisions: Revision[]; next_id: string; next_revision: number; has_more: boolean };
-export type Draft = { revision: number; configuration: EditableConfiguration };
+export type BindingInheritance = { service: boolean; evaluation: boolean };
+export type DraftSettings = { service?: Revision; evaluation?: EvaluationPolicy; bindings: Record<string, BindingInheritance> };
+export const initialSettings = (): DraftSettings => ({ evaluation: { ...offPolicy }, bindings: {} });
+export type Draft = { revision: number; configuration: EditableConfiguration; settings?: DraftSettings };
 export type Preview = { catalog_valid?: boolean; catalog_error?: string; draft_revision: number; configuration_revision: number; active_revision: number; admitted_runs: number; central_valid: boolean; digest?: string; issues: string[]; validation_error?: string; required_participants: string[]; configuration: EditableConfiguration; changes: { binding_id: string; kind: string; before?: ConfigBinding; after?: ConfigBinding }[] };
 export type Operation = { operation_id: string; revision: number; state: string; current: boolean; participants: { participant: string; state: string; error?: string }[] };
 export const emptyRef: Revision = { id: "", revision: 0, digest: "" };
@@ -29,7 +32,8 @@ export function selectSource(config: EditableConfiguration, source: Source, sele
 }
 // Contract integers must round-trip exactly. Arbitrary workflow parameters are
 // independently validated by their published JSON schema.
-export function configurationIntegersAreSafe(config: EditableConfiguration): boolean {
+export function configurationIntegersAreSafe(config: EditableConfiguration, settings?: DraftSettings): boolean {
+  const safePolicy = (policy?: EvaluationPolicy) => [policy?.profile?.revision, policy?.service?.revision].every(value => value === undefined || Number.isSafeInteger(value));
   const safeBudget = (budget: Budget) => Object.values(budget).every(Number.isSafeInteger);
-  return Number.isSafeInteger(config.revision) && safeBudget(config.budget) && config.sources.every(source => Number.isSafeInteger(source.policy_revision)) && config.bindings.every(binding => safeBudget(binding.budget) && [binding.template.revision, binding.workflow.revision, binding.service.revision, binding.output.reservation_generation].every(Number.isSafeInteger) && Object.values(binding.inputs || {}).every(input => !input.artifact || [input.artifact.size, input.artifact.policy_revision].every(Number.isSafeInteger)));
+  return (settings?.service === undefined || Number.isSafeInteger(settings.service.revision)) && safePolicy(settings?.evaluation) && Number.isSafeInteger(config.revision) && safeBudget(config.budget) && config.sources.every(source => Number.isSafeInteger(source.policy_revision)) && config.bindings.every(binding => safePolicy(binding.evaluation) && safeBudget(binding.budget) && [binding.template.revision, binding.workflow.revision, binding.service.revision, binding.output.reservation_generation].every(Number.isSafeInteger) && Object.values(binding.inputs || {}).every(input => !input.artifact || [input.artifact.size, input.artifact.policy_revision].every(Number.isSafeInteger)));
 }

@@ -9,7 +9,7 @@ func TestEvolutionPreviewDoesNotActivateAndPinsDraft(t *testing.T) {
 	s, admin := accountStore(t)
 	token := adminTestToken(t, s, admin)
 	config := evolution.Configuration{GroupID: StandardUsersGroup}
-	_, err := s.SaveEvolutionDraft(ctx, token, StandardUsersGroup, EvolutionDraftInput{"save", 0, config})
+	_, err := s.SaveEvolutionDraft(ctx, token, StandardUsersGroup, EvolutionDraftInput{RequestID: "save", ExpectedRevision: 0, Configuration: config})
 	must(t, err)
 	request := EvolutionPreviewInput{ExpectedDraftRevision: 1, AutoEnabled: true}
 	preview, err := s.PreviewEvolutionDraft(ctx, token, StandardUsersGroup, request)
@@ -18,7 +18,7 @@ func TestEvolutionPreviewDoesNotActivateAndPinsDraft(t *testing.T) {
 		t.Fatal(preview)
 	}
 	config.Budget = activationConfigFixture(1, false).Budget
-	_, err = s.SaveEvolutionDraft(ctx, token, StandardUsersGroup, EvolutionDraftInput{"complete", 1, config})
+	_, err = s.SaveEvolutionDraft(ctx, token, StandardUsersGroup, EvolutionDraftInput{RequestID: "complete", ExpectedRevision: 1, Configuration: config})
 	must(t, err)
 	if _, err = s.PreviewEvolutionDraft(ctx, token, StandardUsersGroup, request); err != ErrConflict {
 		t.Fatal("stale preview", err)

@@ -1,0 +1,115 @@
+{
+  "$defs": {
+    "BindingInheritance": {
+      "additionalProperties": false,
+      "properties": {
+        "evaluation": {
+          "type": "boolean"
+        },
+        "service": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "service",
+        "evaluation"
+      ],
+      "type": "object"
+    },
+    "DraftSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "bindings": {
+          "additionalProperties": {
+            "$ref": "#/$defs/BindingInheritance"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "evaluation": {
+          "$ref": "#/$defs/EvaluationPolicy"
+        },
+        "service": {
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "required": [
+        "bindings"
+      ],
+      "type": "object"
+    },
+    "EvaluationPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/Revision"
+        },
+        "reference_release": {
+          "$ref": "#/$defs/ReleaseRef"
+        },
+        "reference_strategy": {
+          "type": "string"
+        },
+        "service": {
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "required": [
+        "mode",
+        "reference_strategy"
+      ],
+      "type": "object"
+    },
+    "ReleaseRef": {
+      "additionalProperties": false,
+      "properties": {
+        "descriptor_digest": {
+          "type": "string"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "publisher_id": {
+          "type": "string"
+        },
+        "version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "publisher_id",
+        "library_id",
+        "version_id",
+        "descriptor_digest"
+      ],
+      "type": "object"
+    },
+    "Revision": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/DraftSettings",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

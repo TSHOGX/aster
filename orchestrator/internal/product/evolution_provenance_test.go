@@ -9,7 +9,7 @@ import (
 func TestEvolutionConfigurationAndDraftProvenanceImmutable(t *testing.T) {
 	s, admin := accountStore(t)
 	token := adminTestToken(t, s, admin)
-	draft := EvolutionDraftInput{"draft", 0, evolution.Configuration{GroupID: StandardUsersGroup}}
+	draft := EvolutionDraftInput{RequestID: "draft", ExpectedRevision: 0, Configuration: evolution.Configuration{GroupID: StandardUsersGroup}}
 	_, err := s.SaveEvolutionDraft(ctx, token, StandardUsersGroup, draft)
 	must(t, err)
 	config := EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)}

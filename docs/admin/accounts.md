@@ -77,7 +77,11 @@ group. An explicit deny takes precedence, including for administrators.
 
 Use `GET /api/admin/groups/{group}/optimization/draft` to read the latest draft
 and `PUT` at the same path to save it. Saving requires `request_id`,
-`expected_revision` (the draft revision), and `configuration`. The configuration's
+`expected_revision` (the draft revision), and `configuration`. Optional `settings`
+contains `service`, `evaluation`, and a `bindings` map keyed by binding ID, with
+boolean `service` and `evaluation` inheritance flags. Omitting a binding flag keeps
+its configuration value explicit. Omitting the group evaluation choice uses the
+pinned template policy for inheriting bindings. The configuration's
 `group_id` must match the path, `revision` must be zero, and `auto_enabled` must
 be false. Incomplete drafts are allowed. A save does not activate configuration
 or change running work. On a revision conflict, read the latest draft before
@@ -237,8 +241,14 @@ publication, and exact exclusions. Configuration-manager or administrator status
 does not authorize someone else's source. Selecting a newer policy revision is explicit;
 existing draft references are not silently upgraded.
 
-Choose a default evolution service and evaluation policy, then apply them explicitly
-to each binding. These editor defaults are copied values, not server-side inheritance.
+Choose a default evolution service and evaluation policy. Defaults and per-binding
+inheritance choices are saved centrally with the draft and are available in a new tab
+or another authorized administrator's session. New bindings inherit both group defaults.
+Each binding labels an inherited value or an explicit override. Choosing a service or
+editing a binding's evaluation policy creates an override; **Use group service default**
+and **Reset evaluation to group default** restore inheritance. **Use template evaluation
+defaults** removes the group evaluation choice, so inheriting bindings use their exact
+pinned template's suggestion. Explicit **Off** remains off when defaults change.
 Each binding retains its exact template/workflow/service revisions, selected sources,
 typed inputs, budget, output library ID, owned directory and reservation generation.
 The library must already exist with the template's required profile; configure it in
@@ -257,8 +267,10 @@ schema validation occurs in the compatibility preview.
 Evaluation **Off** stores a resolved disabled policy. **Informational** and
 **Required for merge** reveal profile, evaluator and comparison-reference controls.
 Turning evaluation off hides local choices; turning it on can restore those choices
-while editing. **Reset evaluation to group default** explicitly copies the chosen
-default. Review the resolved binding policy before activation.
+while editing. **Reset evaluation to group default** restores inheritance. Saving resolves inherited
+values from the chosen group defaults or verified immutable template revision. Review
+the saved effective policy before activation. Later draft/default edits do not change
+an active configuration, existing runs or another group's pinned settings.
 
 Choose **Save configuration draft**, then **Preview activation**. The preview shows
 added, removed and changed bindings, output/evaluation changes, admitted-run count,

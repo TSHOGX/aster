@@ -66,13 +66,36 @@ test("published catalog drives recoverable draft and two-participant activation"
   expect(revision.configuration.bindings).toHaveLength(2); expect(revision.configuration.bindings[0].inputs.corpus.sources).toEqual(["source"]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   await page.screenshot({ path: info.outputPath("configuration-active.png"), fullPage: true });
+  // Defaults are durable authoring intent. An explicit Off override survives
+  // group changes, and template reset uses each exact published template.
+  const defaults = page.locator("section.panel").filter({ has: page.getByRole("heading", { name: tr("Group defaults"), exact: true }) });
+  const skills = page.locator("article.evolution-binding").filter({ has: page.getByRole("heading", { name: "example-skills", exact: true }) });
+  const corrections = page.locator("article.evolution-binding").filter({ has: page.getByRole("heading", { name: "example-corrections", exact: true }) });
+  await chooseValue(defaults.getByRole("combobox", { name: tr("Evaluation mode"), exact: true }), "required");
+  await chooseValue(corrections.getByRole("combobox", { name: tr("Evaluation mode"), exact: true }), "disabled");
+  await page.getByRole("button", { name: tr("Save configuration draft"), exact: true }).click();
+  await expect(page.getByText(tr("Request confirmed."), { exact: true })).toBeVisible();
+  await page.evaluate(() => sessionStorage.clear()); await page.reload();
+  await expect(defaults.getByRole("combobox", { name: tr("Default evolution service"), exact: true })).toContainText("native-service");
+  await expect(skills.getByText(tr("Evaluation inherited from group"), { exact: true })).toBeVisible();
+  await expect(corrections.getByText(tr("Explicit evaluation override"), { exact: true })).toBeVisible();
+  const inherited = await (await page.request.get("/api/admin/groups/standard-users/optimization/draft")).json();
+  expect(inherited.configuration.bindings.map((item: { evaluation: { mode: string } }) => item.evaluation.mode)).toEqual(["required", "disabled"]);
+  await defaults.getByRole("checkbox", { name: tr("Use template evaluation defaults"), exact: true }).check();
+  await page.getByRole("button", { name: tr("Save configuration draft"), exact: true }).click();
+  await expect(page.getByText(tr("Request confirmed."), { exact: true })).toBeVisible();
+  const reset = await (await page.request.get("/api/admin/groups/standard-users/optimization/draft")).json();
+  expect(reset.settings.evaluation).toBeUndefined();
+  expect(reset.configuration.bindings.map((item: { evaluation: { mode: string } }) => item.evaluation.mode)).toEqual(["disabled", "disabled"]);
+  const pinned = await (await page.request.get(`/api/admin/groups/standard-users/optimization/revisions/${state.active_revision}`)).json();
+  expect(pinned.configuration).toEqual(revision.configuration);
   // A concurrent saved revision must not overwrite local edits or silently win
   // a stale save. The user explicitly chooses the new server draft afterwards.
   const first = page.locator("article.evolution-binding").filter({ has: page.getByRole("heading", { name: "example-skills", exact: true }) });
   await first.getByLabel(tr("Owned directory"), { exact: true }).fill("skills-local");
   const draft = await (await page.request.get("/api/admin/groups/standard-users/optimization/draft")).json();
   draft.configuration.budget.max_tokens = 1900;
-  const concurrent = await page.request.put("/api/admin/groups/standard-users/optimization/draft", { data: { request_id: crypto.randomUUID(), expected_revision: draft.revision, configuration: draft.configuration } });
+  const concurrent = await page.request.put("/api/admin/groups/standard-users/optimization/draft", { data: { request_id: crypto.randomUUID(), expected_revision: draft.revision, configuration: draft.configuration, settings: draft.settings } });
   expect(concurrent.status()).toBe(200);
   await page.getByRole("button", { name: tr("Save configuration draft"), exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: tr("The server revision changed. Local edits are retained; review the latest saved draft before replacing it.") })).toBeVisible();

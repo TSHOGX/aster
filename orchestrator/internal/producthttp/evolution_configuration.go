@@ -25,6 +25,51 @@ func (a *Authentication) evolutionDraft(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 400, "invalid configuration draft")
 		return
 	}
+	if input.Settings != nil && input.Settings.Evaluation == nil {
+		replay, found, err := a.Store.EvolutionDraftReplay(r.Context(), requestToken(r), group, input)
+		if err != nil {
+			adminFailure(w, err)
+			return
+		}
+		if found {
+			writeJSON(w, 200, replay)
+			return
+		}
+		permissions, err := a.Store.EvolutionPermissions(r.Context(), requestToken(r), group)
+		if err != nil {
+			adminFailure(w, err)
+			return
+		}
+		if !permissions.CanManage {
+			adminFailure(w, product.ErrForbidden)
+			return
+		}
+		input.TemplatePolicies = map[evolution.Revision]evolution.EvaluationPolicy{}
+		for _, binding := range input.Configuration.Bindings {
+			if !input.Settings.Bindings[binding.ID].Evaluation {
+				continue
+			}
+			if _, ok := input.TemplatePolicies[binding.Template]; ok {
+				continue
+			}
+			if a.EvolutionCatalog == nil {
+				writeError(w, 503, "Evaluation Space catalog connection is not configured.")
+				return
+			}
+			entry, err := a.EvolutionCatalog.CatalogDefinition(r.Context(), "template", binding.Template)
+			if err != nil {
+				writeError(w, 503, "Pinned template defaults are unavailable. Retry without changing the selected revision.")
+				return
+			}
+			template, ok := entry.Definition.(evolution.Template)
+			digest, digestErr := evolution.DefinitionDigest(template)
+			if !ok || template.Ref != binding.Template || entry.Ref != binding.Template || digestErr != nil || digest != binding.Template.Digest || template.Validate() != nil {
+				writeError(w, 503, "Pinned template defaults could not be verified.")
+				return
+			}
+			input.TemplatePolicies[binding.Template] = template.Evaluation
+		}
+	}
 	value, err := a.Store.SaveEvolutionDraft(r.Context(), requestToken(r), group, input)
 	if err != nil {
 		adminFailure(w, err)

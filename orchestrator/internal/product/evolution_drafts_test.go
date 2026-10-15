@@ -13,7 +13,7 @@ func TestEvolutionDraftIncompleteReplayAndIsolation(t *testing.T) {
 	token := adminTestToken(t, s, admin)
 	active, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
 	must(t, err)
-	input := EvolutionDraftInput{"draft", 0, evolution.Configuration{GroupID: StandardUsersGroup}}
+	input := EvolutionDraftInput{RequestID: "draft", ExpectedRevision: 0, Configuration: evolution.Configuration{GroupID: StandardUsersGroup}}
 	first, err := s.SaveEvolutionDraft(ctx, token, StandardUsersGroup, input)
 	must(t, err)
 	again, err := s.SaveEvolutionDraft(ctx, token, StandardUsersGroup, input)
@@ -57,20 +57,20 @@ func TestEvolutionDraftActivationAndReplayAfterEdit(t *testing.T) {
 	s, admin := accountStore(t)
 	token := adminTestToken(t, s, admin)
 	config := evolution.Configuration{GroupID: StandardUsersGroup}
-	_, err := s.SaveEvolutionDraft(ctx, token, StandardUsersGroup, EvolutionDraftInput{"draft", 0, config})
+	_, err := s.SaveEvolutionDraft(ctx, token, StandardUsersGroup, EvolutionDraftInput{RequestID: "draft", ExpectedRevision: 0, Configuration: config})
 	must(t, err)
 	request := EvolutionDraftActivationInput{"activate", 0, 1, true}
 	if _, err = s.ActivateEvolutionDraft(ctx, token, StandardUsersGroup, request); err != ErrInvalid {
 		t.Fatal("incomplete activation", err)
 	}
 	config.Budget = activationConfigFixture(1, false).Budget
-	_, err = s.SaveEvolutionDraft(ctx, token, StandardUsersGroup, EvolutionDraftInput{"complete", 1, config})
+	_, err = s.SaveEvolutionDraft(ctx, token, StandardUsersGroup, EvolutionDraftInput{RequestID: "complete", ExpectedRevision: 1, Configuration: config})
 	must(t, err)
 	request.ExpectedDraftRevision = 2
 	active, err := s.ActivateEvolutionDraft(ctx, token, StandardUsersGroup, request)
 	must(t, err)
 	config.Budget.MaxTokens++
-	_, err = s.SaveEvolutionDraft(ctx, token, StandardUsersGroup, EvolutionDraftInput{"edit", 2, config})
+	_, err = s.SaveEvolutionDraft(ctx, token, StandardUsersGroup, EvolutionDraftInput{RequestID: "edit", ExpectedRevision: 2, Configuration: config})
 	must(t, err)
 	replay, err := s.ActivateEvolutionDraft(ctx, token, StandardUsersGroup, request)
 	must(t, err)

@@ -15,7 +15,7 @@ func TestEvolutionGroupConfigurationGrants(t *testing.T) {
 	must(t, err)
 	_, member, err := s.ChangePassword(ctx, temporary, "", "permanent-editor-password", true)
 	must(t, err)
-	input := EvolutionDraftInput{"save", 0, evolution.Configuration{GroupID: StandardUsersGroup}}
+	input := EvolutionDraftInput{RequestID: "save", ExpectedRevision: 0, Configuration: evolution.Configuration{GroupID: StandardUsersGroup}}
 	if _, err = s.SaveEvolutionDraft(ctx, member, StandardUsersGroup, input); err != ErrForbidden {
 		t.Fatal("ungranted member edited", err)
 	}
