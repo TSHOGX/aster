@@ -265,3 +265,22 @@ func TestMapFailureAndAttemptLimitNeverFabricateResults(t *testing.T) {
 		})
 	}
 }
+
+func TestRuntimeCannotMutateFrozenGraphOrAttemptInputs(t *testing.T) {
+	engine, c, j, schema := setup()
+	ref := add(c, base("graph", schema, []evolution.Node{transform("work", schema)}, []evolution.Edge{{From: "$input.value", To: "work.value"}, {From: "work.value", To: "$output.value"}}))
+	engine.Runtime = runtimeFunc(func(_ context.Context, call Call) (Values, error) {
+		call.Inputs["value"] = json.RawMessage(`"changed"`)
+		delete(call.Node.OutputPorts, "value")
+		return Values{"value": json.RawMessage(`"output"`)}, nil
+	})
+	out, err := engine.Execute(context.Background(), ref, Values{"value": json.RawMessage(`"original"`)})
+	if err != nil || string(out["value"]) != `"output"` {
+		t.Fatal(out, err)
+	}
+	for _, record := range j.records {
+		if string(record.Call.Inputs["value"]) != `"original"` || record.Call.Node.OutputPorts["value"] != schema {
+			t.Fatal("adapter mutated provenance", record)
+		}
+	}
+}

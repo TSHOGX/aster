@@ -263,8 +263,29 @@ func (x *execution) evaluate(ctx context.Context, call Call, depth int) (Values,
 			return nil, nil, ctx.Err()
 		}
 		defer func() { <-x.slots }()
-		out, err := x.engine.Runtime.Execute(ctx, call)
-		return out, nil, err
+		// Registered adapters receive a detached request. A transform must not
+		// mutate the journaled call or the compiled graph through shared map slices.
+		raw, err := json.Marshal(call)
+		if err != nil {
+			return nil, nil, err
+		}
+		detached, err := evolution.Decode[Call](bytes.NewReader(raw))
+		if err != nil {
+			return nil, nil, err
+		}
+		out, err := x.engine.Runtime.Execute(ctx, detached)
+		if err != nil {
+			return nil, nil, err
+		}
+		output, err := json.Marshal(out)
+		if err != nil {
+			return nil, nil, Failure{Code: "invalid_node_output"}
+		}
+		copied, err := evolution.Decode[Values](bytes.NewReader(output))
+		if err != nil {
+			return nil, nil, Failure{Code: "invalid_node_output"}
+		}
+		return copied, nil, nil
 	case "router":
 		raw := call.Inputs[keys(call.Inputs)[0]]
 		selected := node.DefaultRoute
