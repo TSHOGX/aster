@@ -150,13 +150,24 @@ type CheckRequirement struct {
 	Reference         *ContentRef `json:"reference,omitempty"`
 }
 type PreparedIdentity struct {
-	LibraryID      string             `json:"library_id"`
-	Main           ContentRef         `json:"main"`
-	Sources        []ContentRef       `json:"sources"`
-	Result         ContentRef         `json:"result"`
-	PolicyRevision int64              `json:"policy_revision"`
-	PolicyDigest   string             `json:"policy_digest"`
-	Checks         []CheckRequirement `json:"checks"`
+	LibraryID      string              `json:"library_id"`
+	Main           ContentRef          `json:"main"`
+	Sources        []ContentRef        `json:"sources"`
+	Result         ContentRef          `json:"result"`
+	Selections     []PreparedSelection `json:"selections,omitempty"`
+	PolicyRevision int64               `json:"policy_revision"`
+	PolicyDigest   string              `json:"policy_digest"`
+	Checks         []CheckRequirement  `json:"checks"`
+}
+
+// PreparedSelection records the exact branch changes included in a composed
+// integration. Deferred changes remain linked to their source branch instead
+// of being silently represented as part of the integrated result.
+type PreparedSelection struct {
+	BranchID      string   `json:"branch_id"`
+	Head          string   `json:"head"`
+	SelectedPaths []string `json:"selected_paths"`
+	DeferredPaths []string `json:"deferred_paths,omitempty"`
 }
 type Branch struct {
 	ID            string     `json:"id"`

@@ -61,14 +61,51 @@ func (p PreparedIdentity) ApprovalDigest() (string, error) {
 		}
 	}
 	seen := map[string]bool{p.Main.CommitID: true}
+	sourceHeads := map[string]bool{}
 	for _, source := range p.Sources {
 		if seen[source.CommitID] {
 			return "", fmt.Errorf("duplicate integration parent")
 		}
 		seen[source.CommitID] = true
+		sourceHeads[source.CommitID] = true
+	}
+	if len(p.Selections) != 0 && len(p.Selections) != len(p.Sources) {
+		return "", fmt.Errorf("prepared selections do not cover sources")
+	}
+	selections := map[string]bool{}
+	for i := range p.Selections {
+		selection := &p.Selections[i]
+		if !manifest.ValidID(selection.BranchID) || !ObjectID(selection.Head) || !sourceHeads[selection.Head] || len(selection.SelectedPaths) == 0 {
+			return "", fmt.Errorf("invalid prepared selection")
+		}
+		if selections[selection.BranchID] {
+			return "", fmt.Errorf("duplicate prepared selection")
+		}
+		selections[selection.BranchID] = true
+		seenPaths := map[string]bool{}
+		for _, path := range selection.SelectedPaths {
+			if manifest.ValidPath(path, true) != nil || seenPaths[path] {
+				return "", fmt.Errorf("invalid selected path")
+			}
+			seenPaths[path] = true
+		}
+		for _, path := range selection.DeferredPaths {
+			if manifest.ValidPath(path, true) != nil || seenPaths[path] {
+				return "", fmt.Errorf("invalid deferred path")
+			}
+			seenPaths[path] = true
+		}
 	}
 	copy := p
 	copy.Checks = append([]CheckRequirement{}, p.Checks...)
+	copy.Selections = append([]PreparedSelection{}, p.Selections...)
+	for i := range copy.Selections {
+		copy.Selections[i].SelectedPaths = append([]string{}, copy.Selections[i].SelectedPaths...)
+		copy.Selections[i].DeferredPaths = append([]string{}, copy.Selections[i].DeferredPaths...)
+		sort.Strings(copy.Selections[i].SelectedPaths)
+		sort.Strings(copy.Selections[i].DeferredPaths)
+	}
+	sort.Slice(copy.Selections, func(i, j int) bool { return copy.Selections[i].BranchID < copy.Selections[j].BranchID })
 	checks := map[string]bool{}
 	for _, check := range copy.Checks {
 		if err := check.Validate(); err != nil {

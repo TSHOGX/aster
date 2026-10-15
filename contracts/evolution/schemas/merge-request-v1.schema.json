@@ -136,6 +136,15 @@
         "result": {
           "$ref": "#/$defs/ContentRef"
         },
+        "selections": {
+          "items": {
+            "$ref": "#/$defs/PreparedSelection"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "sources": {
           "items": {
             "$ref": "#/$defs/ContentRef"
@@ -154,6 +163,41 @@
         "policy_revision",
         "policy_digest",
         "checks"
+      ],
+      "type": "object"
+    },
+    "PreparedSelection": {
+      "additionalProperties": false,
+      "properties": {
+        "branch_id": {
+          "type": "string"
+        },
+        "deferred_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "head": {
+          "type": "string"
+        },
+        "selected_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "branch_id",
+        "head",
+        "selected_paths"
       ],
       "type": "object"
     },

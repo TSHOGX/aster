@@ -68,6 +68,14 @@ func (a *AuthoringAPI) registerReviews() {
 		value, err := a.Store.PrepareMerge(r.Context(), actor(r), r.PathValue("library"), input)
 		respond(w, 200, value, err)
 	})
+	a.mux.HandleFunc("POST "+root+"/integrations/compose", func(w http.ResponseWriter, r *http.Request) {
+		var input authoring.ComposeInput
+		if !decodeBody(w, r, &input) {
+			return
+		}
+		value, err := a.Store.ComposeMerge(r.Context(), actor(r), r.PathValue("library"), input)
+		respond(w, 200, value, err)
+	})
 	a.mux.HandleFunc("POST "+root+"/integrations/reviews", func(w http.ResponseWriter, r *http.Request) {
 		var input authoring.ReviewInput
 		if !decodeBody(w, r, &input) {
