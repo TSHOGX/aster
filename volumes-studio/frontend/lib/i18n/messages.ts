@@ -1,7 +1,17 @@
 export const ZH: Record<string, string> = {
+ "Evaluation evidence passed for this exact integrated result.":"此精确集成结果的评估证据已通过。",
+ "Evaluation token limit":"评估令牌上限",
+ "Evaluation cost limit (micros)":"评估费用上限（微单位）",
+ "Evaluation timeout (seconds)":"评估超时（秒）",
+ "Retry evaluation admission":"重试评估受理",
+ "Refresh evaluation":"刷新评估",
+ "Request evaluation":"请求评估",
+ "admitted":"已受理",
+ "inconclusive":"无法得出结论",
+
  "Evaluation checks":"评估检查",
  "Evaluation is off. No benchmark result was requested.":"评估已关闭，未请求基准测试结果。",
- "Evaluation evidence is pending. Required checks block approval and merge.":"评估证据尚未完成，必需的检查会阻止批准和合并。",
+ "Required checks need passing evidence for this exact integrated result.":"必需的检查需要此精确集成结果的通过证据。",
  "Required evaluation":"必需评估",
  "Informational evaluation":"参考评估",
  "Evaluation profile":"评估配置",

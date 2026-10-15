@@ -2,12 +2,15 @@ package evolution
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
 
 	manifest "aster/contracts/volumemanifest"
 )
+
+var ErrEvaluationPending = errors.New("evaluation_pending")
 
 func (s EvaluationSubject) Validate() error {
 	if err := s.Candidate.Validate(); err != nil {

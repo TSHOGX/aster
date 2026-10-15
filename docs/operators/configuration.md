@@ -352,3 +352,11 @@ central authorization binds the exact prepared check, requester, dataset, evalua
 revision and budget. Grant revocation stops new execution while cleanup can reconcile
 previous spending. Required checks remain pending until Studio receives matching
 results; configuring a provider alone does not create a passing merge check.
+
+Connect Studio to the same private Evaluation Space origin with
+`-evaluation-endpoint` and provide its credential through
+`EVALUATION_SPACE_STUDIO_SECRET` (or `-evaluation-secret-env`). Studio journals a
+reviewer's request before central authorization and remote admission. Restart/retry
+retains the same job and budget reservation. Result refresh verifies subject and
+profile measurements before recording immutable evidence; approval and merge recheck
+current central grant and evaluator availability.

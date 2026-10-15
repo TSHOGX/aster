@@ -7,7 +7,8 @@ import { useT } from "../lib/i18n";
 import { ConflictEditor } from "./conflict-workspace";
 import { useStudio } from "./studio-provider";
 
-type View = { evaluation: string; digest: string; identity: NonNullable<PreparedIntegration["identity"]>; readiness: string; acceptance: string; accepted_commit?: string; reviews: ReviewDecision[] };
+type Evaluation = {id:string;requirement_digest:string;state:string;outcome:string};
+type View = { evaluations: Evaluation[]; evaluation: string; digest: string; identity: NonNullable<PreparedIntegration["identity"]>; readiness: string; acceptance: string; accepted_commit?: string; reviews: ReviewDecision[] };
 type Change = { path: string; change: string };
 type FilePreview = { commit_id: string; text?: string; preview: string };
 export function IntegrationReview({ branch }: { branch: Branch }) {
@@ -24,6 +25,7 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
   const [busy, setBusy] = useState(false);
   const [label, setLabel] = useState("");
   const [note, setNote] = useState("");
+  const [tokens,setTokens]=useState("10000"),[cost,setCost]=useState("1000000"),[timeout,setTimeoutSeconds]=useState("60");
   const [release, setRelease] = useState<Version>();
   const root = `/libraries/${encodeURIComponent(branch.library_id)}`;
   const pending = useRef<{ key: string; request: string } | null>(null);
@@ -102,6 +104,18 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     await mutate(JSON.stringify(["merge",view.digest,view.identity.main.commit_id]), request => branchAPI.merge(branch.library_id, view.digest, view.identity.main.commit_id, request, csrf));
     await load(view.digest); studio.changed();
   };
+  const requestEvaluation=async(requirement:string)=>{
+   if(!view||!studio.session)return;
+   const budget={max_tokens:Number(tokens),max_cost_micros:Number(cost),max_attempts:1,timeout_seconds:Number(timeout),max_artifact_bytes:1048576};
+   const csrf=studio.session.csrf;
+   await mutate(JSON.stringify(["evaluation",view.digest,requirement,budget]),request=>api(`${root}/integrations/${encodeURIComponent(view.digest)}/evaluations`,{method:"POST",body:JSON.stringify({request_id:request,requirement_digest:requirement,budget,seed:0})},csrf));
+   await load(view.digest);
+  };
+  const reconcileEvaluation=async(job:Evaluation)=>{
+   if(!studio.session||!view)return;
+   await api(`${root}/evaluations/${encodeURIComponent(job.id)}/${job.state==="pending"?"retry":"refresh"}`,{method:"POST",body:"{}"},studio.session.csrf);
+   await load(view.digest);
+  };
   return <section className="notice" aria-label={tr("Integration review")}>
     <h2>{tr("Integration review")}</h2>
     <p>{tr("Prepare committed changes against main. Saved but uncommitted edits are excluded.")}</p>
@@ -113,13 +127,20 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
       <section aria-label={tr("Evaluation checks")}>
        <h3>{tr("Evaluation checks")}</h3>
        {view.evaluation === "not_requested" ? <p>{tr("Evaluation is off. No benchmark result was requested.")}</p> : <>
-        <p>{tr("Evaluation evidence is pending. Required checks block approval and merge.")}</p>
+        <p>{tr(view.evaluation==="pass"?"Evaluation evidence passed for this exact integrated result.":"Required checks need passing evidence for this exact integrated result.")}</p>
+        <div className="evaluation-budget">
+         <label>{tr("Evaluation token limit")} <input type="number" min="1" value={tokens} onChange={event=>setTokens(event.target.value)} disabled={busy}/></label>
+         <label>{tr("Evaluation cost limit (micros)")} <input type="number" min="0" value={cost} onChange={event=>setCost(event.target.value)} disabled={busy}/></label>
+         <label>{tr("Evaluation timeout (seconds)")} <input type="number" min="1" value={timeout} onChange={event=>setTimeoutSeconds(event.target.value)} disabled={busy}/></label>
+        </div>
         <ul>{view.identity.checks.map(check => <li key={check.digest}>
          <strong>{tr(check.mode === "required" ? "Required evaluation" : "Informational evaluation")}</strong> · <code>{check.path}</code>
          <p>{tr("Evaluation profile")}: {check.profile.id} · {check.profile.revision}</p>
          <p>{tr("Evaluation service")}: {check.service.id} · {check.service.revision}</p>
          <p>{tr("Reference strategy")}: {tr(check.reference_strategy)} {check.reference && <code>{check.reference.commit_id}</code>}</p>
          <p>{tr("Policy")}: <code>{check.policy_id}</code> · {check.policy_revision}</p>
+         {view.evaluations.filter(job=>job.requirement_digest===check.digest).map(job=><div key={job.id}><p><code>{job.id}</code> · {tr(job.state)} · {tr(job.outcome)}</p>{(job.state==="pending"||job.state==="admitted")&&<button disabled={busy} onClick={()=>void run(()=>reconcileEvaluation(job))}>{tr(job.state==="pending"?"Retry evaluation admission":"Refresh evaluation")}</button>}</div>)}
+         <button disabled={busy||view.evaluations.some(job=>job.requirement_digest===check.digest&&(job.state==="pending"||job.state==="admitted"))} onClick={()=>void run(()=>requestEvaluation(check.digest))}>{tr("Request evaluation")}</button>
         </li>)}</ul>
        </>}
       </section>

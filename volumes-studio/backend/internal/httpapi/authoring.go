@@ -28,6 +28,7 @@ func NewAuthoringAPI(store *authoring.Store) *AuthoringAPI {
 	a := &AuthoringAPI{Store: store, mux: http.NewServeMux(), mutations: make(chan struct{}, 4)}
 	a.registerBranches()
 	a.registerHistory()
+	a.registerEvaluations()
 	a.registerReviews()
 	m := a.mux
 	m.HandleFunc("GET "+apiPrefix+"capabilities", func(w http.ResponseWriter, r *http.Request) {

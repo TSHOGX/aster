@@ -292,3 +292,28 @@ func (s *Store) SettleEvaluationGrant(ctx context.Context, input EvaluationSettl
 		return s.auditEvent(ctx, tx, "evaluation-space", "evaluation.settle", "evaluation", input.Grant.JobID, input.Grant.ID, 0, input)
 	})
 }
+
+func (s *Store) AuthorizeEvaluationProfile(ctx context.Context, scope evolution.EvaluationProfileScope) error {
+	if !validID(scope.GroupID) || !validID(scope.LibraryID) || !validID(scope.Requester.Subject) || scope.Requester.Kind != "human" || scope.Profile.Validate() != nil {
+		return ErrInvalid
+	}
+	return s.write(ctx, func(tx *sql.Tx) error {
+		var account Account
+		if err := tx.QueryRowContext(ctx, "SELECT id,role FROM accounts WHERE id=?", scope.Requester.Subject).Scan(&account.ID, &account.Role); err != nil {
+			return err
+		}
+		if err := authorizeEvolutionGroup(ctx, tx, account, scope.GroupID, "run.start"); err != nil {
+			return err
+		}
+		for _, action := range []string{"volume.read", "volume.review"} {
+			decision, err := studioAccess(ctx, tx, evolution.AccessRequest{Principal: scope.Requester, LibraryID: scope.LibraryID, Action: action})
+			if err != nil {
+				return err
+			}
+			if !decision.Allowed {
+				return ErrForbidden
+			}
+		}
+		return nil
+	})
+}

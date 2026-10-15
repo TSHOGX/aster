@@ -52,6 +52,15 @@ func TestMountedEvaluationAdmissionAuthorityAndExecution(t *testing.T) {
 			w.WriteHeader(503)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/evaluation-profile-authority") {
+			scope, err := evolution.Decode[evolution.EvaluationProfileScope](r.Body)
+			if err != nil || scope.GroupID != "group" || scope.Profile != assignment.Profile.Ref {
+				w.WriteHeader(403)
+				return
+			}
+			w.WriteHeader(204)
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/evaluation-settlements") {
 			settlements++
 			w.WriteHeader(204)
@@ -97,6 +106,15 @@ func TestMountedEvaluationAdmissionAuthorityAndExecution(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatal("anonymous caller borrowed central identity")
+	}
+	profileRaw, _ := json.Marshal(evolution.EvaluationProfileScope{GroupID: "group", Requester: assignment.Requester, LibraryID: "library", Profile: assignment.Profile.Ref})
+	profileRequest := httptest.NewRequest("POST", "/evaluation-space/api/v1/evaluations/profile", bytes.NewReader(profileRaw))
+	profileRequest.SetBasicAuth("studio", studioSecret)
+	profileRequest.Header.Set("Content-Type", "application/json")
+	profileResponse := httptest.NewRecorder()
+	handler.ServeHTTP(profileResponse, profileRequest)
+	if profileResponse.Code != 200 {
+		t.Fatal("scoped profile denied", profileResponse.Code, profileResponse.Body.String())
 	}
 	response := call("admit", "studio", studioSecret, "", "")
 	if response.Code != 200 || strings.Contains(response.Body.String(), "dataset") {

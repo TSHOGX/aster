@@ -35,6 +35,7 @@ func (a *Authentication) IdentityServiceHandler() http.Handler {
 	mux.HandleFunc("POST /api/identity/v1/evaluation-authorizations", a.identityEvaluationAdmission)
 	mux.HandleFunc("POST /api/identity/v1/evaluation-authority", a.identityEvaluationAuthority)
 	mux.HandleFunc("POST /api/identity/v1/evaluation-settlements", a.identityEvaluationSettlement)
+	mux.HandleFunc("POST /api/identity/v1/evaluation-profile-authority", a.identityEvaluationProfile)
 	mux.HandleFunc("POST /api/identity/v1/run-admission-authority", a.identityRunAdmissionAuthority)
 	mux.HandleFunc("POST /api/identity/v1/studio-participant-authority", a.identityStudioParticipantAuthority)
 	return mux

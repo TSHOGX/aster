@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -19,6 +20,7 @@ var ErrEvaluationDenied = errors.New("evaluation_authority_denied")
 
 type EvaluationResolver interface {
 	ResolveEvaluation(context.Context, evolution.EvaluationGrantScope) (evolution.EvaluationAssignment, error)
+	AuthorizeEvaluationProfile(context.Context, evolution.EvaluationProfileScope) error
 }
 type EvaluationAPI struct {
 	Store    *projections.Store
@@ -34,7 +36,7 @@ func NewEvaluationAPI(store *projections.Store, resolver EvaluationResolver, stu
 }
 func (a *EvaluationAPI) Handler() http.Handler {
 	mux := http.NewServeMux()
-	for _, action := range []string{"admit", "read", "result", "cancel"} {
+	for _, action := range []string{"admit", "read", "result", "cancel", "profile", "verify"} {
 		action := action
 		mux.HandleFunc("POST /evaluation-space/api/v1/evaluations/"+action, func(w http.ResponseWriter, r *http.Request) { a.serve(w, r, action) })
 	}
@@ -53,15 +55,36 @@ func (a *EvaluationAPI) serve(w http.ResponseWriter, r *http.Request, action str
 		write(w, 415, map[string]string{"error": "json_required"})
 		return
 	}
+	if action == "profile" {
+		scope, err := evolution.Decode[evolution.EvaluationProfileScope](http.MaxBytesReader(w, r.Body, 1<<16))
+		if err != nil {
+			write(w, 400, map[string]string{"error": "invalid_profile_scope"})
+			return
+		}
+		if err = a.Resolver.AuthorizeEvaluationProfile(r.Context(), scope); err != nil {
+			write(w, 403, map[string]string{"error": "profile_authority_required"})
+			return
+		}
+		raw, err := a.Store.CatalogDefinition(r.Context(), "profile", scope.Profile)
+		if err != nil {
+			a.reply(w, nil, err)
+			return
+		}
+		profile, err := evolution.Decode[evolution.EvaluationProfile](bytes.NewReader(raw))
+		if err != nil || profile.Dataset.GroupID != scope.GroupID {
+			write(w, 403, map[string]string{"error": "profile_scope_mismatch"})
+			return
+		}
+		a.reply(w, profile, nil)
+		return
+	}
 	grant, err := evolution.Decode[evolution.EvaluationGrant](http.MaxBytesReader(w, r.Body, 1<<16))
 	if err != nil || grant.Validate() != nil {
 		write(w, 400, map[string]string{"error": "invalid_evaluation_grant"})
 		return
 	}
 	scopeAction := "read"
-	if action == "admit" {
-		scopeAction = "execute"
-	}
+
 	assignment, err := a.Resolver.ResolveEvaluation(r.Context(), evolution.EvaluationGrantScope{Grant: grant, Action: scopeAction})
 	if err != nil {
 		if errors.Is(err, ErrEvaluationDenied) {
@@ -72,6 +95,24 @@ func (a *EvaluationAPI) serve(w http.ResponseWriter, r *http.Request, action str
 		return
 	}
 	if action == "admit" {
+		existing, lookupErr := a.Store.Evaluation(r.Context(), grant.GroupID, grant.JobID)
+		if lookupErr == nil {
+			if existing.Grant == nil || *existing.Grant != grant {
+				write(w, 409, map[string]string{"error": "evaluation_grant_mismatch"})
+				return
+			}
+			a.reply(w, map[string]string{"id": existing.ID, "state": existing.State}, nil)
+			return
+		}
+		if !errors.Is(lookupErr, projections.ErrNotFound) {
+			a.reply(w, nil, lookupErr)
+			return
+		}
+		assignment, err = a.Resolver.ResolveEvaluation(r.Context(), evolution.EvaluationGrantScope{Grant: grant, Action: "execute"})
+		if err != nil {
+			write(w, 403, map[string]string{"error": "evaluation_authority_required"})
+			return
+		}
 		job, err := a.Store.AdmitAuthorizedEvaluation(r.Context(), grant, assignment)
 		a.reply(w, map[string]string{"id": job.ID, "state": job.State}, err)
 		return
@@ -86,6 +127,13 @@ func (a *EvaluationAPI) serve(w http.ResponseWriter, r *http.Request, action str
 		return
 	}
 	switch action {
+	case "verify":
+		state, err := a.Store.ServiceState(r.Context(), job.Service.ID)
+		if err != nil || !state.Enabled {
+			write(w, 403, map[string]string{"error": "evaluator_revoked"})
+			return
+		}
+		a.reply(w, map[string]bool{"allowed": true}, nil)
 	case "read":
 		// No profile, dataset or report artifacts escape the metadata endpoint.
 		budget, err := a.Store.EvaluationBudget(r.Context(), grant.GroupID, grant.JobID)

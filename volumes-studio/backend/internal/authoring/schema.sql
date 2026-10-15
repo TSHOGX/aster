@@ -193,3 +193,14 @@ CREATE TRIGGER terminal_evolution_reservation_operation
 BEFORE UPDATE OF state ON evolution_reservation_operations
 WHEN OLD.state<>NEW.state AND OLD.state<>'reserved'
 BEGIN SELECT RAISE(ABORT,'terminal reservation operation'); END;
+
+CREATE TABLE evaluation_requests(
+ id TEXT PRIMARY KEY,library_id TEXT NOT NULL REFERENCES libraries(id),prepared_digest TEXT NOT NULL REFERENCES prepared_merges(digest),
+ requirement_digest TEXT NOT NULL,issuer TEXT NOT NULL,subject TEXT NOT NULL,request_id TEXT NOT NULL,request_digest TEXT NOT NULL,
+ assignment BLOB NOT NULL,grant BLOB,state TEXT NOT NULL CHECK(state IN('pending','admitted','completed','error','canceled')),
+ result BLOB,created_at INTEGER NOT NULL,UNIQUE(issuer,subject,request_id)
+);
+CREATE TRIGGER immutable_evaluation_request BEFORE UPDATE OF id,library_id,prepared_digest,requirement_digest,issuer,subject,request_id,request_digest,assignment,created_at ON evaluation_requests BEGIN SELECT RAISE(ABORT,'immutable evaluation request'); END;
+CREATE TRIGGER immutable_evaluation_request_grant BEFORE UPDATE OF grant ON evaluation_requests WHEN OLD.grant IS NOT NULL BEGIN SELECT RAISE(ABORT,'immutable evaluation grant'); END;
+CREATE TRIGGER immutable_evaluation_request_result BEFORE UPDATE ON evaluation_requests WHEN OLD.result IS NOT NULL BEGIN SELECT RAISE(ABORT,'immutable evaluation evidence'); END;
+CREATE TRIGGER retained_evaluation_request BEFORE DELETE ON evaluation_requests BEGIN SELECT RAISE(ABORT,'retain evaluation lineage'); END;

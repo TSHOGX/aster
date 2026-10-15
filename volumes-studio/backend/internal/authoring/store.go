@@ -50,6 +50,7 @@ func (a Actor) valid() bool {
 }
 
 type Config struct {
+	Evaluator        Evaluator
 	Authority        evolution.Authority
 	SeedSharedAssets bool
 	Directory        string

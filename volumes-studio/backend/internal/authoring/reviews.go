@@ -150,8 +150,14 @@ func (s *Store) checkPrepared(ctx context.Context, library, digest string, prepa
 	}
 	for _, check := range prepared.Checks {
 		if check.Mode == "required" {
-			return ErrBusy
+			passed, err := s.evaluationCheckPassed(ctx, library, digest, check.Digest)
+			if err != nil {
+				return err
+			}
+			if !passed {
+				return ErrBusy
+			}
 		}
-	} // S5 supplies exact-subject results.
+	}
 	return s.validatePreparedContent(ctx, library, prepared)
 }

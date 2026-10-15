@@ -97,8 +97,14 @@ requested. Informational evaluation does not block expert approval; required che
 without evidence block approval and merge. Adopted group output policies also apply
 to manual changes, deletes and renames in those paths. Tightening a policy requires
 repreparing; changing a binding to off does not erase checks already captured by an
-open branch's preparation. Required evaluator execution is not yet available through
-Studio, so such checks remain pending.
+open branch's preparation. When your operator has connected Evaluation Space, set the evaluation token, cost
+and time limits and choose **Request evaluation**. The group ceiling and exact
+dataset/evaluator grant must permit the request. **Retry evaluation admission**
+resumes an uncertain request with the same job identity; **Refresh evaluation**
+retrieves its result. Passing evidence enables approval only for the exact prepared
+result. Missing, failed, canceled, inconclusive or revoked evidence leaves required
+checks blocked. Detailed held-out reports remain in Evaluation Space; Studio shows
+check status without exposing dataset contents.
 
 Main advances only after acceptance. Reviewers can also request changes or reject
 an integration. Saved conflict choices remain accessible through the workspace URL.

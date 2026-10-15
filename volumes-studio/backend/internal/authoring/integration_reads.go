@@ -12,6 +12,7 @@ import (
 )
 
 type IntegrationView struct {
+	Evaluations      []EvaluationSummary        `json:"evaluations"`
 	Evaluation       string                     `json:"evaluation"`
 	Acceptance       string                     `json:"acceptance"`
 	AcceptedCommit   string                     `json:"accepted_commit,omitempty"`
@@ -75,6 +76,25 @@ func (s *Store) Integration(ctx context.Context, a Actor, library, digest string
 			default:
 				return view, err
 			}
+		}
+	}
+	view.Evaluations, err = s.evaluationSummaries(ctx, library, digest)
+	if err != nil {
+		return view, err
+	}
+	if len(view.Identity.Checks) > 0 {
+		allPassed := true
+		for _, check := range view.Identity.Checks {
+			passed, err := s.evaluationCheckPassed(ctx, library, digest, check.Digest)
+			if err != nil {
+				return view, err
+			}
+			if !passed {
+				allPassed = false
+			}
+		}
+		if allPassed {
+			view.Evaluation = "pass"
 		}
 	}
 	rows, err := s.db.QueryContext(ctx, "SELECT id,issuer,subject,verdict,rationale,created_at FROM merge_reviews WHERE prepared_digest=? ORDER BY rowid", digest)

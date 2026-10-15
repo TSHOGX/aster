@@ -82,3 +82,10 @@ func (g EvaluationGrant) Validate() error {
 	}
 	return nil
 }
+
+type EvaluationProfileScope struct {
+	GroupID   string    `json:"group_id"`
+	Requester Principal `json:"requester"`
+	LibraryID string    `json:"library_id"`
+	Profile   Revision  `json:"profile"`
+}

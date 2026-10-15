@@ -85,3 +85,24 @@ func (a *Authentication) identityEvaluationSettlement(w http.ResponseWriter, r *
 	}
 	w.WriteHeader(204)
 }
+
+func (a *Authentication) identityEvaluationProfile(w http.ResponseWriter, r *http.Request) {
+	client, ok := a.identityService(w, r)
+	if !ok {
+		return
+	}
+	if client.ID != "evaluation-space" {
+		writeError(w, 403, "evaluation service required")
+		return
+	}
+	input, err := evolution.Decode[evolution.EvaluationProfileScope](http.MaxBytesReader(w, r.Body, 1<<16))
+	if err != nil || input.Requester.Issuer != a.Config.Identity.Issuer {
+		writeError(w, 400, "invalid profile scope")
+		return
+	}
+	if err = a.Store.AuthorizeEvaluationProfile(r.Context(), input); err != nil {
+		fail(w, err)
+		return
+	}
+	w.WriteHeader(204)
+}

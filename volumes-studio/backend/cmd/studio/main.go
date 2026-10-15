@@ -18,6 +18,7 @@ import (
 
 	"volume-studio/backend/internal/authoring"
 	"volume-studio/backend/internal/distribution"
+	"volume-studio/backend/internal/evaluationclient"
 	"volume-studio/backend/internal/httpapi"
 	"volume-studio/backend/internal/identity"
 )
@@ -36,6 +37,8 @@ func main() {
 	distributionListen := flag.String("distribution-listen", "127.0.0.1:8084", "private distribution listener")
 	participantListen := flag.String("participant-listen", "", "optional private loopback evolution participant listener")
 	participantSecretEnv := flag.String("participant-secret-env", "STUDIO_CENTRAL_SECRET", "environment containing the central participant credential")
+	evaluationEndpoint := flag.String("evaluation-endpoint", "", "Optional private Evaluation Space origin")
+	evaluationSecretEnv := flag.String("evaluation-secret-env", "EVALUATION_SPACE_STUDIO_SECRET", "Environment containing Studio evaluation credential")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*listen)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
@@ -55,7 +58,14 @@ func main() {
 		log.Fatal(err)
 	}
 	defer sessions.Close()
-	store, err := authoring.Open(ctx, authoring.Config{Authority: client, SeedSharedAssets: true, Directory: *directory, PublisherID: *publisher, QuotaBytes: *quota})
+	var evaluator authoring.Evaluator
+	if *evaluationEndpoint != "" {
+		evaluator, err = evaluationclient.New(*evaluationEndpoint, os.Getenv(*evaluationSecretEnv), client)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	store, err := authoring.Open(ctx, authoring.Config{Evaluator: evaluator, Authority: client, SeedSharedAssets: true, Directory: *directory, PublisherID: *publisher, QuotaBytes: *quota})
 	if err != nil {
 		log.Fatal(err)
 	}

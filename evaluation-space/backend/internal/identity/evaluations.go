@@ -91,3 +91,28 @@ func (a *ProjectionAuthority) SettleEvaluation(ctx context.Context, grant evolut
 	}
 	return nil
 }
+
+func (a *ProjectionAuthority) AuthorizeEvaluationProfile(ctx context.Context, scope evolution.EvaluationProfileScope) error {
+	raw, err := json.Marshal(scope)
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, "POST", a.config.Endpoint+"/api/identity/v1/evaluation-profile-authority", bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.SetBasicAuth(a.config.ClientID, a.config.ClientSecret)
+	response, err := a.client.Do(request)
+	if err != nil {
+		return ErrUnavailable
+	}
+	defer response.Body.Close()
+	if response.StatusCode == 401 || response.StatusCode == 403 {
+		return errors.Join(ErrUnauthorized, httpapi.ErrEvaluationDenied)
+	}
+	if response.StatusCode != 204 {
+		return ErrUnavailable
+	}
+	return nil
+}
