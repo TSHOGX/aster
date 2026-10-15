@@ -29,6 +29,7 @@ const MaxArtifactStoreBytes int64 = 256 << 20
 type Store struct {
 	db        *sql.DB
 	lock      *os.File
+	path      string
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -164,7 +165,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, err
 	}
 	opened = true
-	return &Store{db: db, lock: lock}, nil
+	return &Store{db: db, lock: lock, path: path}, nil
 }
 func (s *Store) Close() error {
 	s.closeOnce.Do(func() { s.closeErr = errors.Join(s.db.Close(), s.lock.Close()) })

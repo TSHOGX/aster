@@ -316,6 +316,38 @@ Publish nested workflows before their parents and workflows before templates.
 Revisions start at one and increase sequentially; an identical publication can be
 retried. Existing revisions cannot be replaced or deleted.
 
+### Back up and restore Evaluation Space
+
+Stop Evaluation Space before taking a backup. Build the maintenance commands from
+`evaluation-space/backend` and choose a new destination outside the state directory:
+
+```sh
+go build -o evaluation-space-backup ./cmd/evaluation-space-backup
+./evaluation-space-backup \
+  -state-directory /absolute/evaluation-state \
+  -output /absolute/backups/evaluation-space-snapshot
+```
+
+The snapshot contains the projection database, including immutable catalog
+revisions, run and evaluator journals, sealed artifact metadata and bytes. Keep
+`backup.json` with the database; its digest is checked during restore. An
+interrupted backup retains `backup.incomplete` and cannot be restored.
+
+Restore into a new state directory and let the command validate the current schema
+before starting the service:
+
+```sh
+go build -o evaluation-space-restore ./cmd/evaluation-space-restore
+./evaluation-space-restore \
+  -input /absolute/backups/evaluation-space-snapshot \
+  -output /absolute/evaluation-state-restored
+```
+
+Restore does not copy browser sessions or credentials. Start the restored service
+with reviewed identity and evaluator settings, then verify `/evaluation-space/healthz`,
+`/evaluation-space/readyz`, catalog identity, run ancestry and artifact digests
+before allowing new work. Never restore over a live state directory.
+
 Workflow digests hash the shared contract's canonical workflow JSON. Service,
 template, and profile digests use `evolution.DefinitionDigest`, which clears only
 the definition's own `ref.digest` when hashing. Their envelope reference must match
