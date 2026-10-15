@@ -48,6 +48,16 @@ func (s *Store) SealArtifact(ctx context.Context, ref evolution.ArtifactRef, inp
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	var used int64
+	if err = tx.QueryRowContext(ctx, "SELECT used_bytes FROM artifact_store_quota WHERE id=1").Scan(&used); err != nil {
+		return err
+	}
+	if ref.Size > MaxArtifactStoreBytes-used {
+		return fmt.Errorf("artifact store quota exceeded")
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE artifact_store_quota SET used_bytes=used_bytes+? WHERE id=1", ref.Size); err != nil {
+		return err
+	}
 	if _, err = tx.ExecContext(ctx, "INSERT INTO artifacts(group_id,id,metadata,body) VALUES(?,?,?,?)", ref.GroupID, ref.ID, metadata, raw); err != nil {
 		return err
 	}

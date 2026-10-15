@@ -42,6 +42,16 @@ func TestSealedArtifactsIdentityIntegrityAndRestart(t *testing.T) {
 	if _, err = s.Artifact(ctx, changed); err != ErrNotFound {
 		t.Fatal("cross-group read", err)
 	}
+	if _, err = s.db.ExecContext(ctx, "UPDATE artifact_store_quota SET used_bytes=? WHERE id=1", MaxArtifactStoreBytes); err != nil {
+		t.Fatal(err)
+	}
+	extra := ref
+	extra.ID = "extra"
+	extra.Size = 1
+	extra.Digest = evolution.Digest([]byte("x"))
+	if err = s.SealArtifact(ctx, extra, bytes.NewReader([]byte("x"))); err == nil {
+		t.Fatal("quota bypassed")
+	}
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}
