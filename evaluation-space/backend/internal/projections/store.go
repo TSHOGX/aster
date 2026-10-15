@@ -72,7 +72,10 @@ CREATE TRIGGER terminal_budget_reservation BEFORE UPDATE ON run_budget_reservati
 CREATE TRIGGER retained_budget_reservation BEFORE DELETE ON run_budget_reservations BEGIN SELECT RAISE(ABORT,'retain budget reservation'); END;
 CREATE TABLE provider_calls(run_id TEXT NOT NULL,id TEXT NOT NULL,body BLOB NOT NULL,PRIMARY KEY(run_id,id),FOREIGN KEY(run_id,id) REFERENCES run_budget_reservations(run_id,id));
 CREATE TRIGGER immutable_provider_call BEFORE UPDATE ON provider_calls BEGIN SELECT RAISE(ABORT,'immutable provider request'); END;
-CREATE TRIGGER retained_provider_call BEFORE DELETE ON provider_calls BEGIN SELECT RAISE(ABORT,'retain provider request'); END;`
+CREATE TRIGGER retained_provider_call BEFORE DELETE ON provider_calls BEGIN SELECT RAISE(ABORT,'retain provider request'); END;
+CREATE TABLE provider_outcomes(run_id TEXT NOT NULL,call_id TEXT NOT NULL,body BLOB NOT NULL,PRIMARY KEY(run_id,call_id),FOREIGN KEY(run_id,call_id) REFERENCES provider_calls(run_id,id));
+CREATE TRIGGER immutable_provider_outcome BEFORE UPDATE ON provider_outcomes BEGIN SELECT RAISE(ABORT,'immutable provider outcome'); END;
+CREATE TRIGGER retained_provider_outcome BEFORE DELETE ON provider_outcomes BEGIN SELECT RAISE(ABORT,'retain provider outcome'); END;`
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	if !filepath.IsAbs(path) {

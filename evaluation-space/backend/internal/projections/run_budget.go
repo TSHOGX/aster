@@ -63,6 +63,19 @@ func (s *Store) SettleRunBudget(ctx context.Context, lease RunLease, id string, 
 		return err
 	}
 	defer tx.Rollback()
+	var prepared int
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM provider_calls WHERE run_id=? AND id=?", lease.RunID, id).Scan(&prepared); err != nil {
+		return err
+	}
+	if prepared != 0 {
+		return ErrConflict
+	}
+	if err = settleRunBudget(ctx, tx, lease, id, actual); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func settleRunBudget(ctx context.Context, tx *sql.Tx, lease RunLease, id string, actual RunUsage) error {
 	_, used, err := liveRunBudget(ctx, tx, lease, true)
 	if err != nil {
 		return err
@@ -87,8 +100,9 @@ func (s *Store) SettleRunBudget(ctx context.Context, lease RunLease, id string, 
 	if _, err = tx.ExecContext(ctx, "UPDATE run_budget_reservations SET state='settled',actual_tokens=?,actual_cost_micros=? WHERE run_id=? AND id=?", actual.Tokens, actual.CostMicros, lease.RunID, id); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
+
 func liveRunBudget(ctx context.Context, tx *sql.Tx, lease RunLease, reconciliation bool) (evolution.Run, RunUsage, error) {
 	var run evolution.Run
 	var usage RunUsage

@@ -73,4 +73,28 @@ func TestProviderCallIdentitySurvivesTakeover(t *testing.T) {
 	if _, err = s.ProviderCall(ctx, lease, "call"); err != ErrConflict {
 		t.Fatal("stale worker recovered request", err)
 	}
+	if err = s.SettleRunBudget(ctx, replacement, "call", RunUsage{4, 7}); err != ErrConflict {
+		t.Fatal("prepared call settled without outcome", err)
+	}
+	outcome := ProviderOutcome{CallID: "call", ProviderRequestID: "provider-request", State: "completed", Usage: RunUsage{4, 7}, Output: &call.Request}
+	if err = s.RecordProviderOutcome(ctx, replacement, outcome); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.RecordProviderOutcome(ctx, replacement, outcome); err != nil {
+		t.Fatal("outcome retry", err)
+	}
+	changed := outcome
+	changed.Usage.Tokens++
+	if err = s.RecordProviderOutcome(ctx, replacement, changed); err != ErrConflict {
+		t.Fatal("provider outcome rewritten", err)
+	}
+	holds, err := s.PendingRunBudgets(ctx, replacement, "", 10)
+	if err != nil || len(holds.Reservations) != 0 {
+		t.Fatal("outcome did not settle hold", holds, err)
+	}
+	var tokens, cost int64
+	if err = s.db.QueryRowContext(ctx, "SELECT tokens,cost_micros FROM runs WHERE id='run'").Scan(&tokens, &cost); err != nil || tokens != 4 || cost != 7 {
+		t.Fatal("usage double charged", tokens, cost, err)
+	}
+
 }
