@@ -62,6 +62,9 @@ func (s *Store) SaveWorkflowDraft(ctx context.Context, input WorkflowDraftInput)
 	}
 	result = WorkflowDraft{ID: input.ID, Revision: revision + 1, Workflow: input.Workflow, Layout: input.Layout, LayoutRevision: layoutRevision + 1}
 	body := raw
+	if _, err = tx.ExecContext(ctx, "INSERT INTO workflow_draft_revisions(id,revision,body,layout_revision,layout) VALUES(?,?,?,?,?)", input.ID, result.Revision, body, result.LayoutRevision, input.Layout); err != nil {
+		return result, err
+	}
 	if _, err = tx.ExecContext(ctx, "INSERT INTO workflow_drafts(id,revision,body,layout_revision,layout) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,body=excluded.body,layout_revision=excluded.layout_revision,layout=excluded.layout", input.ID, result.Revision, body, result.LayoutRevision, input.Layout); err != nil {
 		return result, err
 	}

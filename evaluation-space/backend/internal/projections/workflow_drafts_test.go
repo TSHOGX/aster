@@ -112,4 +112,8 @@ func TestWorkflowLayoutStrictBoundedObject(t *testing.T) {
 			t.Fatal("invalid layout accepted")
 		}
 	}
+	if _, err = s.db.ExecContext(ctx, "DELETE FROM workflow_draft_revisions WHERE id=?", workflow.ID); err == nil {
+		t.Fatal("draft history deleted")
+	}
+
 }
