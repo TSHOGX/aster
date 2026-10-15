@@ -91,8 +91,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	studioAddress, participantAddress, spaceAddress := address(), address(), address()
 	spaceOrigin := "http://" + spaceAddress
 	browserBackfill := mode == "backfill" && os.Getenv("ADMIN_EVOLUTION_BROWSER_TEST") == "1"
+	browserConfig := mode == "backfill" && os.Getenv("ADMIN_EVOLUTION_CONFIG_TEST") == "1"
 	var adminProxy http.Handler
-	if browserBackfill {
+	if browserBackfill || browserConfig {
 		adminAddress := address()
 		adminURL, _ := url.Parse("http://" + adminAddress)
 		adminProxy = &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(adminURL) }}
@@ -395,13 +396,49 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	if dependent {
 		configuration.Bindings = append(configuration.Bindings, evolution.Binding{ID: dependentTemplate.Ref.ID, Enabled: true, Template: dependentTemplate.Ref, Workflow: dependentTemplate.Workflows[0], Service: service.Ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: "reviewed", Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: dependentTemplate.Evaluation, Budget: budget, Trigger: "schedule", Schedule: "@every 1m", Timezone: "Asia/Shanghai", DependsOn: []string{"example-skills"}, Inputs: map[string]evolution.BindingInput{"upstream": {Dependency: &evolution.BindingDependency{BindingID: "example-skills", OutputPort: "candidate"}}}})
 	}
-	pending, err := store.ActivateEvolutionConfig(ctx, token, configuration.GroupID, product.EvolutionActivationInput{RequestID: "activate", Configuration: configuration})
-	must(t, err)
 	evalClient, err := evaluationclient.New(spaceOrigin, secret)
 	must(t, err)
 	studioClient, err := studioclient.New("http://"+participantAddress, secret)
 	must(t, err)
-	must(t, (&product.EvolutionWorker{Store: store, Evaluation: evalClient, Studio: studioClient}).Step(ctx))
+	authentication.EvolutionCatalog = evalClient
+	var pending product.EvolutionGroupConfig
+	if browserConfig {
+		workerCtx, stop := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			worker := &product.EvolutionWorker{Store: store, Evaluation: evalClient, Studio: studioClient}
+			for {
+				if err := worker.Step(workerCtx); err != nil && !errors.Is(err, context.Canceled) {
+					t.Log("activation pending", err)
+				}
+				select {
+				case <-workerCtx.Done():
+					return
+				case <-time.After(50 * time.Millisecond):
+				}
+			}
+		}()
+		resultPath := filepath.Join(t.TempDir(), "configured.json")
+		cmd := exec.CommandContext(ctx, "node", "node_modules/@playwright/test/cli.js", "test", "--config", "playwright.evolution.config.ts")
+		cmd.Dir = filepath.Join(root, "admin-frontend")
+		cmd.Env = append(os.Environ(), "ADMIN_EVOLUTION_URL="+issuer, "ADMIN_EVOLUTION_TOKEN="+token, "ADMIN_EVOLUTION_RESULT="+resultPath)
+		output, browserErr := cmd.CombinedOutput()
+		stop()
+		<-done
+		if browserErr != nil {
+			t.Fatalf("configuration browser: %v\n%s", browserErr, output)
+		}
+		pending, err = store.EvolutionConfig(ctx, token, configuration.GroupID)
+		must(t, err)
+		revision, err := store.EvolutionConfigurationRevision(ctx, token, configuration.GroupID, pending.ActiveRevision)
+		must(t, err)
+		configuration = revision.Configuration
+	} else {
+		pending, err = store.ActivateEvolutionConfig(ctx, token, configuration.GroupID, product.EvolutionActivationInput{RequestID: "activate", Configuration: configuration})
+		must(t, err)
+		must(t, (&product.EvolutionWorker{Store: store, Evaluation: evalClient, Studio: studioClient}).Step(ctx))
+	}
 	active, err := store.EvolutionConfig(ctx, token, configuration.GroupID)
 	must(t, err)
 	if active.State != "active" {

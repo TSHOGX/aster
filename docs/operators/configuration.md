@@ -505,3 +505,14 @@ input bytes; the dispatcher checks current authority again before transferring t
 The native admission contract carries the explicit requested budget and never widens
 it to the binding's maximum. Keep model per-call reservation ceilings within the
 budgets selected for those runs.
+
+
+The central `evaluation_space` participant connection also supplies group configuration
+catalog selectors and compatibility previews in Administration. Browser requests use
+central sessions; the server authenticates to Evaluation Space as `central`, validates
+exact definition identities and rechecks the user's current group authority before
+returning results. Remote catalog errors appear as unavailable, not an empty list.
+Service connection and credential metadata is omitted from the browser response.
+Immutable definitions remain distinct from current service enablement. The configuration
+preview checks current catalogs without adopting a projection; activation repeats those
+checks and coordinates Studio reservations through the existing participant worker.

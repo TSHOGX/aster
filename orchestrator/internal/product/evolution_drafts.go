@@ -88,7 +88,7 @@ func (s *Store) evolutionDraftRevision(ctx context.Context, token, group string,
 		}
 		var body string
 		if err := tx.QueryRowContext(ctx, "SELECT revision,body FROM evolution_configuration_drafts WHERE group_id=? AND (?=0 OR revision=?) ORDER BY revision DESC LIMIT 1", group, revision, revision).Scan(&result.Revision, &body); err != nil {
-			return err
+			return missing(err)
 		}
 		config, err := evolution.Decode[evolution.Configuration](bytes.NewBufferString(body))
 		if err != nil || config.GroupID != group || config.Revision != 0 || config.AutoEnabled {

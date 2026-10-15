@@ -28,8 +28,10 @@ type CatalogAPI struct {
 
 func (a CatalogAPI) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /evaluation-space/api/v1/catalog/validate", a.validateConfiguration)
 	mux.HandleFunc("GET /evaluation-space/api/v1/catalog/{kind}", a.list)
 	mux.HandleFunc("GET /evaluation-space/api/v1/catalog/{kind}/{id}/{revision}", a.definition)
+	mux.HandleFunc("GET /evaluation-space/api/v1/catalog/service/{id}/{revision}/status", a.serviceStatus)
 	return mux
 }
 func (a CatalogAPI) list(w http.ResponseWriter, r *http.Request) {
@@ -115,4 +117,57 @@ func (a CatalogAPI) authorize(w http.ResponseWriter, r *http.Request, scope Cata
 		return false
 	}
 	return true
+}
+
+func (a CatalogAPI) serviceStatus(w http.ResponseWriter, r *http.Request) {
+	rev, err := strconv.ParseInt(r.PathValue("revision"), 10, 64)
+	ref := evolution.Revision{ID: r.PathValue("id"), Revision: rev, Digest: r.URL.Query().Get("digest")}
+	if err != nil || ref.Validate() != nil {
+		write(w, 400, map[string]string{"error": "invalid_definition_identity"})
+		return
+	}
+	if !a.authorize(w, r, CatalogScope{Kind: "service", Action: "read", Ref: &ref}) {
+		return
+	}
+	if _, err = a.Store.CatalogDefinition(r.Context(), "service", ref); err != nil {
+		write(w, 404, map[string]string{"error": "definition_not_found"})
+		return
+	}
+	state, err := a.Store.ServiceState(r.Context(), ref.ID)
+	if err != nil {
+		write(w, 503, map[string]string{"error": "service_status_unavailable"})
+		return
+	}
+	write(w, 200, struct {
+		ID       string `json:"id"`
+		Revision int64  `json:"revision"`
+		Enabled  bool   `json:"enabled"`
+	}{ref.ID, state.Revision, state.Enabled})
+}
+
+func (a CatalogAPI) validateConfiguration(w http.ResponseWriter, r *http.Request) {
+	if !a.authorize(w, r, CatalogScope{Kind: "workflow", Action: "list"}) {
+		return
+	}
+	if r.Header.Get("Content-Type") != "application/json" {
+		write(w, 415, map[string]string{"error": "json_required"})
+		return
+	}
+	config, err := evolution.Decode[evolution.Configuration](http.MaxBytesReader(w, r.Body, evolution.MaxDocumentBytes))
+	if err != nil {
+		write(w, 400, map[string]string{"error": "invalid_configuration"})
+		return
+	}
+	raw, _ := json.Marshal(config)
+	result := struct {
+		Digest string `json:"digest"`
+		Valid  bool   `json:"valid"`
+		Error  string `json:"error,omitempty"`
+	}{Digest: evolution.Digest(raw)}
+	if err = a.Store.ValidateConfiguration(r.Context(), config); err != nil {
+		result.Error = err.Error()
+	} else {
+		result.Valid = true
+	}
+	write(w, 200, result)
 }

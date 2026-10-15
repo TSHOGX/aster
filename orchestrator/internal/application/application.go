@@ -154,6 +154,9 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 		}
 	}
 	app.Auth = producthttp.NewAuthentication(store, transportConfig)
+	if app.Workers.Evolution != nil && app.Workers.Evolution.Evaluation != nil {
+		app.Auth.EvolutionCatalog = app.Workers.Evolution.Evaluation
+	}
 	app.Auth.RuntimeInspector = app.Backend
 	app.Auth.ProjectInspector = app.Backend
 	app.Auth.VolumeImports = app.volumeImportHandler()

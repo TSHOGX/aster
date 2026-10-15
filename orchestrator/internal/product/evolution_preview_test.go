@@ -54,3 +54,33 @@ func TestEvolutionPreviewDoesNotActivateAndPinsDraft(t *testing.T) {
 	}
 
 }
+
+func TestEvolutionPreviewReportsExactBindingChangesAndRejectsBadSchedule(t *testing.T) {
+	s, _, _, _, token, source := corpusFixture(t)
+	activateCorpusCollector(t, s, token, source, 1, false)
+	current, err := s.EvolutionConfig(ctx, token, "fixture-users")
+	must(t, err)
+	p, err := s.EvolutionProjection(ctx, token, current.OperationID)
+	must(t, err)
+	config := p.Configuration
+	config.Revision = 0
+	config.AutoEnabled = false
+	config.Bindings[0].Output.Prefix = "revised"
+	_, err = s.SaveEvolutionDraft(ctx, token, "fixture-users", EvolutionDraftInput{RequestID: "save", Configuration: config})
+	must(t, err)
+	preview, err := s.PreviewEvolutionDraft(ctx, token, "fixture-users", EvolutionPreviewInput{ExpectedRevision: 1, ExpectedDraftRevision: 1})
+	must(t, err)
+	if !preview.CentralValid || preview.ActiveRevision != 1 || len(preview.Changes) != 1 || preview.Changes[0].Kind != "changed" || preview.Changes[0].Before.Output.Prefix != "skills" || preview.Changes[0].After.Output.Prefix != "revised" {
+		t.Fatal(preview)
+	}
+	config.Bindings[0].Trigger = "schedule"
+	config.Bindings[0].Schedule = "bad recurrence"
+	config.Bindings[0].Timezone = "UTC"
+	_, err = s.SaveEvolutionDraft(ctx, token, "fixture-users", EvolutionDraftInput{RequestID: "bad-schedule", ExpectedRevision: 1, Configuration: config})
+	must(t, err)
+	preview, err = s.PreviewEvolutionDraft(ctx, token, "fixture-users", EvolutionPreviewInput{ExpectedRevision: 1, ExpectedDraftRevision: 2})
+	must(t, err)
+	if preview.CentralValid || len(preview.Issues) != 1 || preview.Issues[0] != "invalid_schedule" {
+		t.Fatal("invalid recurrence previewed valid", preview)
+	}
+}

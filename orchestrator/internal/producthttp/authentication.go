@@ -14,6 +14,7 @@ import (
 const loginCookie = "project_login"
 
 type Authentication struct {
+	EvolutionCatalog EvolutionCatalog
 	VolumeImports    http.Handler
 	ProjectInspector product.ProjectInspector
 	RuntimeInspector product.RuntimeInspector

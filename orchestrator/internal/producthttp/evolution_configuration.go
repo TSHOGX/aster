@@ -2,6 +2,8 @@ package producthttp
 
 import (
 	"aster/contracts/evolution"
+	"context"
+	"harness-platform/orchestrator/internal/evaluationclient"
 	"harness-platform/orchestrator/internal/product"
 	"net/http"
 	"strconv"
@@ -62,6 +64,36 @@ func (a *Authentication) previewEvolution(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		adminFailure(w, err)
 		return
+	}
+	if value.CentralValid && value.Configuration != nil {
+		validator, ok := a.EvolutionCatalog.(interface {
+			ValidateConfiguration(context.Context, evolution.Configuration) (evaluationclient.ConfigurationValidation, error)
+		})
+		if ok {
+			validation, checkErr := validator.ValidateConfiguration(r.Context(), *value.Configuration)
+			// Recheck current draft and authority after the participant read.
+			current, currentErr := a.Store.PreviewEvolutionDraft(r.Context(), requestToken(r), r.PathValue("group"), input)
+			if currentErr != nil {
+				adminFailure(w, currentErr)
+				return
+			}
+			if current.Digest != value.Digest {
+				writeError(w, 409, "configuration preview changed")
+				return
+			}
+			value = current
+			valid := checkErr == nil && validation.Valid
+			value.CatalogValid = &valid
+			if checkErr != nil {
+				value.CatalogError = "Evaluation Space catalog is unavailable. Retry without changing the selected revision."
+			} else {
+				value.CatalogError = validation.Error
+			}
+		} else {
+			valid := false
+			value.CatalogValid = &valid
+			value.CatalogError = "Evaluation Space catalog connection is not configured."
+		}
 	}
 	writeJSON(w, 200, value)
 }
@@ -124,7 +156,12 @@ func (a *Authentication) discardEvolutionOperation(w http.ResponseWriter, r *htt
 		adminFailure(w, err)
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	value, err := a.Store.EvolutionOperation(r.Context(), requestToken(r), r.PathValue("group"), r.PathValue("operation"))
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, value)
 }
 
 func (a *Authentication) evolutionOperationEvents(w http.ResponseWriter, r *http.Request) {

@@ -223,6 +223,56 @@ remain available. Generation and evaluation reservations share the group's concu
 token/cost ceiling, and uncertain work retains its hold until terminal settlement.
 This grant provisions input authority; it does not schedule or execute a workflow.
 
+### Edit and activate group optimization
+
+Open **Groups → select a group → Automatic optimization**. A configuration draft
+is editable and does not enable execution. Select approved source policies, choose
+published templates and services, and add goal bindings. The catalog distinguishes
+an empty catalog from an unavailable connection or denied access. Service selectors
+check current availability and do not expose operator connection or credential fields.
+
+A resource owner can use **Authorize a source I own** or **Edit source policy** to
+issue a reuse policy. Select the owning group in its audience, permitted derivative
+publication, and exact exclusions. Configuration-manager or administrator status alone
+does not authorize someone else's source. Selecting a newer policy revision is explicit;
+existing draft references are not silently upgraded.
+
+Choose a default evolution service and evaluation policy, then apply them explicitly
+to each binding. These editor defaults are copied values, not server-side inheritance.
+Each binding retains its exact template/workflow/service revisions, selected sources,
+typed inputs, budget, output library ID, owned directory and reservation generation.
+The library must already exist with the template's required profile; configure it in
+Volume Studio first. The form currently accepts its ID rather than browsing Studio's
+library catalog. No profile conversion is performed. Expand **Workflow, inputs and
+execution limits** for parameters, source/dependency/artifact input ports, triggers,
+schedule/timezone and budget overrides. JSON parameters must be an object; published
+schema validation occurs in the compatibility preview.
+
+Evaluation **Off** stores a resolved disabled policy. **Informational** and
+**Required for merge** reveal profile, evaluator and comparison-reference controls.
+Turning evaluation off hides local choices; turning it on can restore those choices
+while editing. **Reset evaluation to group default** explicitly copies the chosen
+default. Review the resolved binding policy before activation.
+
+Choose **Save configuration draft**, then **Preview activation**. The preview shows
+added, removed and changed bindings, output/evaluation changes, admitted-run count,
+and the exact resolved configuration. Central source/schedule checks and Evaluation
+Space compatibility must pass. Studio validates and reserves output paths during
+activation; preview alone makes no reservation. Check the review acknowledgement and
+choose **Activate reviewed configuration**. Follow both participant states until the
+active revision advances. Failed activation offers **Retry activation** and
+**Discard failed activation**; the prior active revision remains visible.
+
+Local drafts and original mutation requests are retained in account/group-scoped tab
+storage. After a lost response or reload, choose **Check original request**. Concurrent
+server edits retain your local fields and report a conflict; **Reload server status**
+shows the latest saved revision without replacing local content. **Use latest saved
+draft** explicitly replaces local edits after confirmation. Configurations with integers
+outside the browser's exact range are read-only to prevent rounding on save.
+**Disable and drain** stops new automatic admission while allowing already admitted
+work to finish under current authority. Manual runs remain available. Canceling active
+runs is handled separately from this disable action.
+
 ### Capture and seal authorized corpus episodes
 
 Open **Groups → select a group → Corpus and historical backfill** to inspect the active

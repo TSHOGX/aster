@@ -164,8 +164,14 @@ func TestEvolutionRecoveryHTTPScopedManagerAndOrigin(t *testing.T) {
 	if w := call("POST", config.GroupID, "/discard", "https://foreign", manager, discard); w.Code != 403 {
 		t.Fatal("cross origin discard", w.Code)
 	}
-	if w := call("POST", config.GroupID, "/discard", "https://app", manager, discard); w.Code != 202 {
-		t.Fatal("manager discard", w.Code, w.Body.String())
+	response := call("POST", config.GroupID, "/discard", "https://app", manager, discard)
+	if response.Code != 202 {
+		t.Fatal("manager discard", response.Code, response.Body.String())
+	}
+	var discarded product.EvolutionOperationStatus
+	must(t, json.Unmarshal(response.Body.Bytes(), &discarded))
+	if discarded.OperationID != pending.OperationID || discarded.State != "discarding" {
+		t.Fatal("discard response cannot reconcile browser request", discarded)
 	}
 	_, err = store.SetEvolutionGroupGrant(ctx, admin, config.GroupID, product.EvolutionGroupGrantInput{RequestID: "deny", AccountID: user.User.ID, Action: "config.manage", Effect: "deny", ExpectedRevision: 1})
 	must(t, err)

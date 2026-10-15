@@ -2,6 +2,7 @@ package producthttp
 
 import (
 	"aster/contracts/evolution"
+	"errors"
 	"harness-platform/orchestrator/internal/product"
 	"net/http"
 	"strconv"
@@ -14,6 +15,11 @@ func (a *Authentication) setEvolutionSource(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	value, err := a.Store.SetEvolutionSourcePolicy(r.Context(), requestToken(r), r.PathValue("group"), input)
+	if errors.Is(err, product.ErrForbidden) {
+		writeJSON(w, 403, map[string]string{"code": "source_owner_required", "error": "Only the resource owner or authorized Volume configurator can issue this policy. Administrator status alone is insufficient."})
+		return
+	}
+
 	if err != nil {
 		adminFailure(w, err)
 		return
