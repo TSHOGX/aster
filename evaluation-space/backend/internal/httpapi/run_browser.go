@@ -137,6 +137,50 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 		}
 		write(w, 200, map[string]any{"items": items})
 	}
+	experimentPreview := func(w http.ResponseWriter, r *http.Request) {
+		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
+		if err := authorize(r, session, "run.start"); err != nil {
+			workflowAuthError(w, err)
+			return
+		}
+		preview, err := store.PreviewRunExperiment(r.Context(), r.PathValue("group"), r.PathValue("run"), r.URL.Query().Get("checkpoint"))
+		if errors.Is(err, projections.ErrNotFound) {
+			write(w, 404, map[string]string{"error": "run_not_found"})
+			return
+		}
+		if err != nil {
+			write(w, 422, map[string]string{"error": "experiment_preview_unavailable"})
+			return
+		}
+		write(w, 200, preview)
+	}
+	experiment := func(w http.ResponseWriter, r *http.Request) {
+		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
+		if err := authorize(r, session, "run.start"); err != nil {
+			workflowAuthError(w, err)
+			return
+		}
+		value, err := evolution.Decode[projections.RunExperimentRequest](http.MaxBytesReader(w, r.Body, evolution.MaxDocumentBytes))
+		if err != nil || value.SourceRunID != r.PathValue("run") || value.GroupID != "" && value.GroupID != r.PathValue("group") {
+			write(w, 400, map[string]string{"error": "invalid_experiment_request"})
+			return
+		}
+		value.GroupID = r.PathValue("group")
+		result, err := store.CreateRunExperiment(r.Context(), value)
+		if errors.Is(err, projections.ErrConflict) {
+			write(w, 409, map[string]string{"error": "experiment_conflict"})
+			return
+		}
+		if errors.Is(err, projections.ErrNotFound) {
+			write(w, 404, map[string]string{"error": "checkpoint_not_found"})
+			return
+		}
+		if err != nil {
+			write(w, 422, map[string]string{"error": "experiment_rejected", "detail": err.Error()})
+			return
+		}
+		write(w, 201, result)
+	}
 	control := func(w http.ResponseWriter, r *http.Request) {
 		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
 		if err := authorize(r, session, "run.start"); err != nil {
@@ -165,6 +209,8 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/events", events)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/attempts", attempts)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/artifacts", artifacts)
+	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/experiment-preview", experimentPreview)
+	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/runs/{run}/experiment", experiment)
 	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/runs/{run}/control", control)
 	return func(session appidentity.Session, w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(w, contextWithBrowserSession(r, session))
