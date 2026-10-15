@@ -80,7 +80,7 @@ function GroupDetails({ group, refresh }: { group: Group; refresh: () => void })
   const tr = useT();
   const runs = useRead<RunPage>(`/groups/${encodeURIComponent(group.id)}/runs?limit=5`);
   const evaluations = useRead<EvaluationPage>(`/groups/${encodeURIComponent(group.id)}/evaluations?limit=5`);
-  return <><div className="section-heading"><h1>{group.name}</h1><button onClick={refresh}>{tr("Refresh")}</button></div><p>{group.description}</p>
+  return <><div className="section-heading"><h1>{group.name}</h1><div className="editor-actions"><button onClick={refresh}>{tr("Refresh")}</button>{group.can_manage && <a className="button" href={`/admin/groups/${encodeURIComponent(group.id)}/optimization`}>{tr("Open configuration")}</a>}</div></div><p>{group.description}</p>
     <section className="card"><h2>{tr("Configuration")}</h2><p className="status">{tr(states[group.state] || group.state)}</p>
       <dl><div><dt>{tr("Desired revision")}</dt><dd>{group.desired_revision || "—"}</dd></div><div><dt>{tr("Active revision")}</dt><dd>{group.active_revision || "—"}</dd></div><div><dt>{tr("Automatic optimization")}</dt><dd>{tr(group.auto_enabled ? "On" : "Off")}</dd></div></dl>
       {!group.active_revision && <p>{tr("No active configuration. Ask a configuration manager to complete setup.")}</p>}
