@@ -165,6 +165,48 @@ func TestNativeRunExecutesPinnedGraphAndRecordsBudgetedResult(t *testing.T) {
 		t.Fatal("terminal model rerun", err)
 	}
 }
+
+func TestNativeTerminalRetryCreatesIndependentRunAndExecutes(t *testing.T) {
+	store, _, source, executor, provider := nativeFixture(t)
+	ctx := context.Background()
+	worker := Worker{Store: store, ID: "source-worker", Authority: executor.Authority, Executor: executor}
+	if err := worker.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.Run(ctx, source.GroupID, source.ID)
+	if err != nil || before.State != "completed" {
+		t.Fatal(before, err)
+	}
+	created, err := store.RetryRun(ctx, projections.RunRetry{GroupID: source.GroupID, RequestID: "native-retry", SourceRunID: source.ID, NewRunID: "native-retry-run"})
+	if err != nil || created.State != "queued" || created.RetryOf != source.ID {
+		t.Fatal(created, err)
+	}
+	if !bytes.Equal(mustJSON(t, created.Pins), mustJSON(t, before.Pins)) {
+		t.Fatal("retry changed frozen pins")
+	}
+	provider.outcome = nil
+	retryWorker := Worker{Store: store, ID: "retry-worker", Authority: executor.Authority, Executor: executor}
+	if err = retryWorker.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.Run(ctx, source.GroupID, created.ID)
+	if err != nil || after.State != "completed" || provider.calls != 2 {
+		t.Fatal(after, err, provider.calls)
+	}
+	unchanged, err := store.Run(ctx, source.GroupID, source.ID)
+	if err != nil || unchanged.State != "completed" || unchanged.RetryOf != "" {
+		t.Fatal(unchanged, err)
+	}
+}
+
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
 func TestNativeRecoveryUsesOriginalModelCallAndCheckpoint(t *testing.T) {
 	store, path, run, executor, provider := nativeFixture(t)
 	ctx := context.Background()
