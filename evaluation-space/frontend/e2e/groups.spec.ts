@@ -55,6 +55,11 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       await expect(overview.getByText(text("Manage configuration", "管理配置"), { exact: true }).locator("..")).toContainText(text("Allowed", "允许"));
       await expect(overview.getByText(text("Edit and publish workflows", "编辑和发布工作流"), { exact: true }).locator("..")).toContainText(text("Allowed", "允许"));
       await expect(overview.getByText(text("Read source evidence", "读取源证据"), { exact: true }).locator("..")).toContainText(text("Not granted", "未授权"));
+      await page.goto(`/evaluation-space/groups/${beta.id}/workflows/skills/`);
+      await expect(page.getByRole("heading", { name: text("Workflow editor", "工作流编辑器"), exact: true })).toBeVisible();
+      await expect(page.getByRole("alert").filter({ hasText: text("Workflow draft is unavailable", "工作流草稿不可用") })).toBeVisible();
+      await page.goto(`/evaluation-space/groups/${beta.id}/`);
+      await expect(overview.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
       await page.screenshot({ path: info.outputPath("group-overview.png"), fullPage: true });
       await page.getByLabel(text("Search groups", "搜索团队"), { exact: true }).fill("Secret Team");
       await page.getByRole("button", { name: text("Search", "搜索"), exact: true }).click();

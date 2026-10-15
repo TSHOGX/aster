@@ -1,7 +1,7 @@
 "use client";
 import { useTranslator } from "../../../web/i18n";
 const zh = {
-  "Evaluation Space": "评估空间", "Groups": "团队", "Central application": "主应用", "Volume Studio": "卷工作室",
+  "Workflow editor": "工作流编辑器", "Workflow draft is unavailable. Retry or ask a workflow editor.": "工作流草稿不可用。请重试或联系工作流编辑者。", "Back to group": "返回团队", "Save draft": "保存草稿", "Publish revision": "发布版本", "Executable workflow JSON": "可执行工作流 JSON", "Canvas layout JSON": "画布布局 JSON", "Draft revision": "草稿版本", "Layout revision": "布局版本", "Draft saved.": "草稿已保存。", "The draft changed elsewhere. Reload before saving.": "草稿已在其他位置更改，请重新加载后保存。", "Workflow and layout must be valid JSON.": "工作流和布局必须是有效 JSON。", "Workflow validation failed. Check the field errors and graph connections.": "工作流验证失败，请检查字段错误和图连接。", "Published immutable workflow revision.": "已发布不可变工作流版本。", "Publishing requires workflow-edit permission and a valid saved draft.": "发布需要工作流编辑权限和有效的已保存草稿。", "Executable JSON and layout use separate revisions. Saving validates the same graph used for execution.": "可执行 JSON 和布局使用独立版本。保存时会验证实际执行使用的同一图结构。", "Evaluation Space": "评估空间", "Groups": "团队", "Central application": "主应用", "Volume Studio": "卷工作室",
   "Checking your session…": "正在检查会话…", "Sign in": "登录", "Sign in to Evaluation Space": "登录评估空间",
   "Use your central account to continue.": "使用主应用账户继续。", "Identity is unavailable. Retry when the service is restored.": "身份服务不可用。服务恢复后请重试。",
   "Retry": "重试", "Refresh": "刷新", "Sign out of this central session": "退出此主应用会话", "Signing out…": "正在退出…",

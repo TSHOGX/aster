@@ -1,6 +1,7 @@
 package product
 
 import (
+	"aster/contracts/appidentity"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -241,4 +242,42 @@ func (s *Store) RevokeIdentity(ctx context.Context, client, grant string) error 
 		}
 		return s.auditEvent(ctx, tx, subject, "identity.logout", "identity_client", client, "", revision, nil)
 	})
+}
+
+// EvaluationSpaceWorkflowAccess checks the current group read/editor grant for a
+// browser request carrying an opaque Evaluation Space application grant.
+func (s *Store) EvaluationSpaceWorkflowAccess(ctx context.Context, input appidentity.EvaluationWorkflowAccessRequest) (appidentity.EvaluationWorkflowAccess, error) {
+	result := appidentity.EvaluationWorkflowAccess{GroupID: input.GroupID}
+	if !validID(input.GroupID) || (input.Action != "workflow.read" && input.Action != "workflow.edit") {
+		return result, ErrInvalid
+	}
+	tx, err := s.reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
+	session, err := identityGrantSession(ctx, tx, "evaluation-space", input.Grant)
+	if err != nil {
+		return result, err
+	}
+	a, err := s.identitySession(ctx, tx, session, "evaluation-space")
+	if err != nil {
+		return result, err
+	}
+	var role string
+	if err = tx.QueryRowContext(ctx, "SELECT role FROM accounts WHERE id=?", a.Subject).Scan(&role); err != nil {
+		return result, err
+	}
+	actor := Account{ID: a.Subject, Role: role}
+	if err = authorizeEvolutionGroup(ctx, tx, actor, input.GroupID, "config.read"); err != nil {
+		return result, err
+	}
+	if input.Action == "workflow.edit" {
+		if err = authorizeEvolutionGroup(ctx, tx, actor, input.GroupID, "workflow.edit"); err != nil {
+			return result, err
+		}
+	}
+	result.Subject, result.Allowed = a.Subject, true
+	result.ExpiresAt, err = time.Parse(time.RFC3339Nano, a.ExpiresAt)
+	return result, err
 }

@@ -32,6 +32,7 @@ func (a *Authentication) IdentityServiceHandler() http.Handler {
 	mux.HandleFunc("POST /api/identity/v1/revoke", a.identityRevoke)
 	mux.HandleFunc("POST /api/identity/v1/studio-access", a.identityStudioAccess)
 	mux.HandleFunc("POST /api/identity/v1/evaluation-space-access", a.identityEvaluationSpaceAccess)
+	mux.HandleFunc("POST /api/identity/v1/evaluation-space-workflow-access", a.identityEvaluationSpaceWorkflowAccess)
 	mux.HandleFunc("POST /api/identity/v1/projection-authority", a.identityProjectionAuthority)
 	mux.HandleFunc("POST /api/identity/v1/catalog-authority", a.identityCatalogAuthority)
 	mux.HandleFunc("POST /api/identity/v1/studio-output-reader", a.identityOutputReader)
@@ -58,6 +59,26 @@ func (a *Authentication) identityEvaluationSpaceAccess(w http.ResponseWriter, r 
 		return
 	}
 	result, err := a.Store.EvaluationSpaceAccess(r.Context(), input)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, result)
+}
+func (a *Authentication) identityEvaluationSpaceWorkflowAccess(w http.ResponseWriter, r *http.Request) {
+	client, ok := a.identityService(w, r)
+	if !ok {
+		return
+	}
+	if client.ID != "evaluation-space" {
+		writeError(w, 403, "evaluation service required")
+		return
+	}
+	var input appidentity.EvaluationWorkflowAccessRequest
+	if !decode(w, r, 4096, &input) {
+		return
+	}
+	result, err := a.Store.EvaluationSpaceWorkflowAccess(r.Context(), input)
 	if err != nil {
 		fail(w, err)
 		return

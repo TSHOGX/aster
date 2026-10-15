@@ -2,18 +2,20 @@ package httpapi
 
 import (
 	"aster/contracts/appidentity"
+	"aster/evaluation-space/internal/projections"
 	"context"
 	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 type browserSessionKey struct{}
 
 // BrowserAPI exposes explicitly selected human APIs. Private participant handlers
 // are never mounted here, and the grant is carried only in server-owned context.
-func BrowserAPI(client *appidentity.Client) func(appidentity.Session, http.ResponseWriter, *http.Request) {
+func BrowserAPI(client *appidentity.Client, store *projections.Store) func(appidentity.Session, http.ResponseWriter, *http.Request) {
 	mux := http.NewServeMux()
 	groups := func(w http.ResponseWriter, r *http.Request) {
 		query, err := url.ParseQuery(r.URL.RawQuery)
@@ -60,7 +62,13 @@ func BrowserAPI(client *appidentity.Client) func(appidentity.Session, http.Respo
 	}
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups", groups)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}", groups)
+	workflow := BrowserWorkflowAPI(client, store)
 	return func(session appidentity.Session, w http.ResponseWriter, r *http.Request) {
-		mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), browserSessionKey{}, session)))
+		request := r.WithContext(context.WithValue(r.Context(), browserSessionKey{}, session))
+		if strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/groups/") && strings.Contains(r.URL.Path, "/workflows/") {
+			workflow(session, w, r)
+			return
+		}
+		mux.ServeHTTP(w, request)
 	}
 }

@@ -261,6 +261,12 @@ Group lists filter current grants and membership before pagination. They expose
 configuration revision/status and separate management, execution and evidence
 permissions. Source evidence still requires an explicit grant for administrators.
 It does not expose the private catalog or worker APIs.
+Workflow editor routes under `/evaluation-space/groups/{group}/workflows/{workflow}`
+use the same client-bound central grant. Draft saves validate executable graph JSON
+and a separate layout object with independent revisions; conflicts retain the
+current draft until the editor reloads. Publication records an immutable workflow
+revision and does not activate it for a group. `workflow.edit` is explicit and
+separate from `config.manage`, `run.start` and `source.read`.
 Frontend credentials and cookies are stripped before proxying. Application sessions
 persist in Evaluation Space's state database; Studio owns a separate session store
 and cookie path. Central identity outages reject session authorization immediately.

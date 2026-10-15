@@ -19,7 +19,7 @@ func browserServer(store *projections.Store, listen, origin, frontend, endpoint,
 	if err != nil {
 		return nil, nil, err
 	}
-	gateway, err := (appidentity.Gateway{ApplicationID: "evaluation-space", Sessions: store.BrowserSessions(client), PublicOrigin: origin, Frontend: frontend, API: httpapi.BrowserAPI(client)}).Handler()
+	gateway, err := (appidentity.Gateway{ApplicationID: "evaluation-space", Sessions: store.BrowserSessions(client), PublicOrigin: origin, Frontend: frontend, API: httpapi.BrowserAPI(client, store)}).Handler()
 	if err != nil {
 		return nil, nil, err
 	}

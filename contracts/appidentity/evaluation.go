@@ -109,3 +109,57 @@ func (c *Client) EvaluationGroups(ctx context.Context, session Session, input Ev
 	}
 	return result, nil
 }
+
+type EvaluationWorkflowAccessRequest struct {
+	Grant   string `json:"grant"`
+	GroupID string `json:"group_id"`
+	Action  string `json:"action"`
+}
+type EvaluationWorkflowAccess struct {
+	Subject   string    `json:"subject"`
+	GroupID   string    `json:"group_id"`
+	Allowed   bool      `json:"allowed"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func (c *Client) EvaluationWorkflowAccess(ctx context.Context, session Session, input EvaluationWorkflowAccessRequest) (EvaluationWorkflowAccess, error) {
+	if c.config.ClientID != "evaluation-space" || session.Issuer != c.config.Issuer || len(session.Grant) != 43 || !groupIDPattern.MatchString(input.GroupID) {
+		return EvaluationWorkflowAccess{}, ErrUnauthorized
+	}
+	input.Grant = session.Grant
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return EvaluationWorkflowAccess{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.config.Endpoint+"/api/identity/v1/evaluation-space-workflow-access", bytes.NewReader(raw))
+	if err != nil {
+		return EvaluationWorkflowAccess{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(c.config.ClientID, c.config.ClientSecret)
+	response, err := c.http.Do(req)
+	if err != nil {
+		return EvaluationWorkflowAccess{}, ErrUnavailable
+	}
+	defer response.Body.Close()
+	if response.StatusCode == 401 || response.StatusCode == 403 {
+		return EvaluationWorkflowAccess{}, ErrUnauthorized
+	}
+	if response.StatusCode != 200 {
+		return EvaluationWorkflowAccess{}, ErrUnavailable
+	}
+	raw, err = io.ReadAll(io.LimitReader(response.Body, (32<<10)+1))
+	if err != nil || len(raw) > 32<<10 {
+		return EvaluationWorkflowAccess{}, ErrUnavailable
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var result EvaluationWorkflowAccess
+	if decoder.Decode(&result) != nil || decoder.Decode(new(any)) != io.EOF {
+		return EvaluationWorkflowAccess{}, ErrUnavailable
+	}
+	if result.Subject != session.Subject || result.GroupID != input.GroupID || !result.ExpiresAt.After(time.Now()) {
+		return EvaluationWorkflowAccess{}, ErrUnauthorized
+	}
+	return result, nil
+}

@@ -266,6 +266,13 @@ metadata. Language preferences are shared with the central application.
 its derived application sessions. Configuration editing and activation are available
 through the group administration page described below.
 
+Workflow editors use group-scoped links under
+`/evaluation-space/groups/{group}/workflows/{workflow}`. The editor keeps executable
+JSON and canvas layout revisions separate, validates the same typed graph used by
+the runner, uses compare-and-swap draft saves, and publishes immutable revisions
+without activating a group. Publishing requires the explicit `workflow.edit` grant;
+it does not grant configuration activation or run admission.
+
 ### Edit and activate group optimization
 
 Open **Groups → select a group → Automatic optimization**. A configuration draft
