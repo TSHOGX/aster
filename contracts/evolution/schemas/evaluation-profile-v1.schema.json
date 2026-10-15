@@ -95,6 +95,9 @@
     "MetricThreshold": {
       "additionalProperties": false,
       "properties": {
+        "minimum_coverage": {
+          "type": "number"
+        },
         "minimum_samples": {
           "type": "integer"
         },
@@ -116,7 +119,8 @@
         "unit",
         "operator",
         "value",
-        "minimum_samples"
+        "minimum_samples",
+        "minimum_coverage"
       ],
       "type": "object"
     },

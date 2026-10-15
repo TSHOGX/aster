@@ -174,11 +174,12 @@ func (p EvaluationPolicy) Validate() error {
 }
 
 type MetricThreshold struct {
-	Name           string  `json:"name"`
-	Unit           string  `json:"unit"`
-	Operator       string  `json:"operator"`
-	Value          float64 `json:"value"`
-	MinimumSamples int64   `json:"minimum_samples"`
+	Name            string  `json:"name"`
+	Unit            string  `json:"unit"`
+	Operator        string  `json:"operator"`
+	Value           float64 `json:"value"`
+	MinimumSamples  int64   `json:"minimum_samples"`
+	MinimumCoverage float64 `json:"minimum_coverage"`
 }
 type EvaluationProfile struct {
 	Ref                Revision          `json:"ref"`

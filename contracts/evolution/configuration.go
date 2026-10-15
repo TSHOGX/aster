@@ -28,7 +28,7 @@ func (p EvaluationProfile) Validate() error {
 	}
 	seen := map[string]bool{}
 	for _, m := range p.Thresholds {
-		if !manifest.ValidID(m.Name) || seen[m.Name] || m.Unit == "" || m.MinimumSamples < 1 || math.IsNaN(m.Value) || math.IsInf(m.Value, 0) {
+		if !manifest.ValidID(m.Name) || seen[m.Name] || m.Unit == "" || m.MinimumSamples < 1 || math.IsNaN(m.MinimumCoverage) || math.IsInf(m.MinimumCoverage, 0) || m.MinimumCoverage < 0 || m.MinimumCoverage > 1 || math.IsNaN(m.Value) || math.IsInf(m.Value, 0) {
 			return fmt.Errorf("invalid metric threshold")
 		}
 		seen[m.Name] = true
