@@ -71,11 +71,11 @@ func BrowserAPI(client *appidentity.Client, store *projections.Store) func(appid
 			workflow(session, w, r)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/groups/") && strings.Contains(r.URL.Path, "/runs/") {
+		if strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/runs/") || strings.HasSuffix(r.URL.Path, "/runs")) {
 			runs(session, w, r)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/groups/") && strings.Contains(r.URL.Path, "/evaluations/") {
+		if strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/evaluations/") || strings.HasSuffix(r.URL.Path, "/evaluations")) {
 			evaluations(session, w, r)
 			return
 		}

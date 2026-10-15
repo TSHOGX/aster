@@ -41,6 +41,27 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 		}
 		write(w, 200, run)
 	}
+	list := func(w http.ResponseWriter, r *http.Request) {
+		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
+		if err := authorize(r, session, "config.read"); err != nil {
+			workflowAuthError(w, err)
+			return
+		}
+		limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+		if r.URL.Query().Get("limit") == "" {
+			limit = 25
+		}
+		if err != nil || limit < 1 || limit > 50 {
+			write(w, 400, map[string]string{"error": "invalid_limit"})
+			return
+		}
+		page, err := store.Runs(r.Context(), r.PathValue("group"), r.URL.Query().Get("after"), limit)
+		if err != nil {
+			write(w, 422, map[string]string{"error": "runs_unavailable"})
+			return
+		}
+		write(w, 200, page)
+	}
 	events := func(w http.ResponseWriter, r *http.Request) {
 		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
 		if err := authorize(r, session, "config.read"); err != nil {
@@ -122,6 +143,7 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 		}
 		write(w, 200, result)
 	}
+	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs", list)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}", read)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/events", events)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/attempts", attempts)

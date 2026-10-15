@@ -66,6 +66,10 @@ function GroupList({ selected }: { selected: string }) {
   </aside>;
 }
 const states: Record<string, string> = { unconfigured: "Not configured", draft: "Draft", activating: "Activating", active: "Active", failed: "Activation failed", discarding: "Discarding", discarded: "Discarded" };
+type RunSummary = { id: string; state: string; evaluation_state: string; pins: { workflow?: { id?: string; revision?: number } } };
+type RunPage = { items: RunSummary[]; next_after: string; has_more: boolean };
+type EvaluationSummary = { id: string; state: string; profile: { ref?: { id?: string; revision?: number } } };
+type EvaluationPage = { items: EvaluationSummary[]; next_after: string; has_more: boolean };
 function GroupOverview({ id }: { id: string }) {
   const tr = useT(); const read = useRead<GroupPage>(`/groups/${encodeURIComponent(id)}`);
   if (read.loading) return <p role="status">{tr("Loading group…")}</p>;
@@ -74,12 +78,15 @@ function GroupOverview({ id }: { id: string }) {
 }
 function GroupDetails({ group, refresh }: { group: Group; refresh: () => void }) {
   const tr = useT();
+  const runs = useRead<RunPage>(`/groups/${encodeURIComponent(group.id)}/runs?limit=5`);
+  const evaluations = useRead<EvaluationPage>(`/groups/${encodeURIComponent(group.id)}/evaluations?limit=5`);
   return <><div className="section-heading"><h1>{group.name}</h1><button onClick={refresh}>{tr("Refresh")}</button></div><p>{group.description}</p>
     <section className="card"><h2>{tr("Configuration")}</h2><p className="status">{tr(states[group.state] || group.state)}</p>
       <dl><div><dt>{tr("Desired revision")}</dt><dd>{group.desired_revision || "—"}</dd></div><div><dt>{tr("Active revision")}</dt><dd>{group.active_revision || "—"}</dd></div><div><dt>{tr("Automatic optimization")}</dt><dd>{tr(group.auto_enabled ? "On" : "Off")}</dd></div></dl>
       {!group.active_revision && <p>{tr("No active configuration. Ask a configuration manager to complete setup.")}</p>}
       {group.desired_revision !== group.active_revision && <p>{tr("A configuration change is pending. The active revision remains separate.")}</p>}
     </section>
+    <div className="workbench-grid overview-grid"><section className="card"><h2>{tr("Recent runs")}</h2>{runs.status && <p role="alert">{tr("Runs are unavailable. Retry when the service is restored.")}</p>}{!runs.loading && !runs.data?.items.length && <p>{tr("No runs yet.")}</p>}<ul>{runs.data?.items.map(run => <li key={run.id}><Link href={`/groups/${encodeURIComponent(group.id)}/runs/${encodeURIComponent(run.id)}`}>{run.id}</Link> · {tr(run.state)} · {tr(run.evaluation_state)}</li>)}</ul></section><section className="card"><h2>{tr("Recent evaluations")}</h2>{evaluations.status && <p role="alert">{tr("Evaluations are unavailable. Retry when the service is restored.")}</p>}{!evaluations.loading && !evaluations.data?.items.length && <p>{tr("No evaluations yet.")}</p>}<ul>{evaluations.data?.items.map(job => <li key={job.id}><Link href={`/groups/${encodeURIComponent(group.id)}/evaluations/${encodeURIComponent(job.id)}`}>{job.id}</Link> · {tr(job.state)} · {job.profile.ref?.id ?? "—"}</li>)}</ul></section></div>
     <section className="card"><h2>{tr("Your permissions")}</h2><dl>{[["Read configuration", true], ["Manage configuration", group.can_manage], ["Edit and publish workflows", group.can_edit_workflows], ["Operate runs", group.can_run], ["Read source evidence", group.can_read_evidence]].map(([label, allowed]) => <div key={String(label)}><dt>{tr(String(label))}</dt><dd>{tr(allowed ? "Allowed" : "Not granted")}</dd></div>)}</dl><p>{tr("Configuration access does not grant source evidence access.")}</p></section>
   </>;
 }

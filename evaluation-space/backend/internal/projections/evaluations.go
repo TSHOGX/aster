@@ -174,6 +174,43 @@ func (s *Store) Evaluation(ctx context.Context, group, id string) (EvaluationJob
 	}
 	return decodeEvaluationJob(body, state, fence)
 }
+
+type EvaluationPage struct {
+	Items     []EvaluationJob `json:"items"`
+	NextAfter string          `json:"next_after"`
+	HasMore   bool            `json:"has_more"`
+}
+
+// Evaluations returns bounded immutable job metadata for one authorized group.
+func (s *Store) Evaluations(ctx context.Context, group, after string, limit int) (EvaluationPage, error) {
+	result := EvaluationPage{Items: []EvaluationJob{}, NextAfter: after}
+	if !manifest.ValidID(group) || after != "" && !manifest.ValidID(after) || limit < 1 || limit > 50 {
+		return result, fmt.Errorf("invalid evaluation page")
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT id FROM evaluation_jobs WHERE group_id=? AND id>? ORDER BY id LIMIT ?", group, after, limit+1)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			return result, err
+		}
+		if len(result.Items) == limit {
+			result.HasMore = true
+			break
+		}
+		value, readErr := s.Evaluation(ctx, group, id)
+		if readErr != nil {
+			return result, readErr
+		}
+		value.Grant = nil
+		result.Items = append(result.Items, value)
+		result.NextAfter = id
+	}
+	return result, rows.Err()
+}
 func (s *Store) ClaimEvaluation(ctx context.Context, group, id, worker string, duration time.Duration) (EvaluationLease, error) {
 	lease := EvaluationLease{GroupID: group, JobID: id, WorkerID: worker}
 	if !manifest.ValidID(group) || !manifest.ValidID(id) || !manifest.ValidID(worker) || duration < time.Second || duration > 5*time.Minute {
