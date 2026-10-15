@@ -182,3 +182,30 @@ test("workflow workbench edits, validates, publishes and preserves layout identi
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   } finally { await context.close(); }
 });
+
+test("terminal run inspector retries into a linked immutable run", async ({ page: admin, browser }) => {
+  const { beta, user } = await provision(admin);
+  const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: "en-US", viewport: { width: 390, height: 900 } });
+  const page = await context.newPage();
+  try {
+    await login(page, user);
+    await page.goto(`/evaluation-space/groups/${beta.id}/`);
+    await page.getByRole("link", { name: "Sign in", exact: true }).click();
+    const root = `/evaluation-space/api/v1/groups/${beta.id}/runs`;
+    const run = { id: "terminal-run", state: "completed", fence: 2, handoff: "submitted", evaluation_state: "not_requested", pins: { workflow: { id: "skills", revision: 1 }, service: { id: "native", revision: 1 }, configuration_revision: 1 }, created_at: new Date().toISOString() };
+    const retry = { ...run, id: "retry-run", state: "queued", retry_of: "terminal-run" };
+    await page.route(`${origin}${root}/terminal-run`, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(run) }));
+    await page.route(`${origin}${root}/retry-run`, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(retry) }));
+    for (const suffix of ["events?after=0&limit=100", "attempts?limit=100", "artifacts", "debugger"]) {
+      await page.route(`${origin}${root}/terminal-run/${suffix}`, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(suffix === "events?after=0&limit=100" ? { events: [], next_after: 0 } : suffix === "attempts?limit=100" || suffix === "artifacts" ? { items: [] } : { budget: { spent: { tokens: 0, cost_micros: 0 }, held: { tokens: 0, cost_micros: 0 }, available: { tokens: 0, cost_micros: 0 } }, attempts: [], events: [], provider_observations: [], opaque: [] }) }));
+    }
+    await page.route(`${origin}${root}/terminal-run/retry`, route => route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(retry) }));
+    await page.goto(`/evaluation-space/groups/${beta.id}/runs/terminal-run`);
+    await expect(page.getByRole("heading", { name: /Run inspector: terminal-run/, exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry as new run", exact: true })).toBeEnabled();
+    await page.getByRole("button", { name: "Retry as new run", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/evaluation-space/groups/${beta.id}/runs/retry-run/?$`));
+    await expect(page.getByText("Retry source", { exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "terminal-run", exact: true })).toBeVisible();
+  } finally { await context.close(); }
+});
