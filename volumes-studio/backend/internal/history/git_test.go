@@ -274,3 +274,40 @@ func TestBinaryConflictAndDirectoryToFile(t *testing.T) {
 		t.Fatalf("directory to file: %v %v", conflicts, err)
 	}
 }
+
+func TestRepeatedBlobIdentityStillVerifiesEachSource(t *testing.T) {
+	ctx := context.Background()
+	repo, err := Open(ctx, filepath.Join(t.TempDir(), "history.git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string][]byte{"first": []byte("same"), "second": []byte("same")}
+	snapshot := fixture(files)
+	for _, corrupt := range []bool{false, true} {
+		opened := 0
+		commit, err := repo.Commit(ctx, snapshot, nil, "repeated blobs", func(path string) (io.ReadCloser, error) {
+			opened++
+			data := files[path]
+			if corrupt && opened == 2 {
+				data = []byte("fake")
+			}
+			return io.NopCloser(bytes.NewReader(data)), nil
+		})
+		if opened != 2 {
+			t.Fatalf("source skipped: %d", opened)
+		}
+		if corrupt {
+			if err == nil {
+				t.Fatal("declared duplicate digest bypassed byte verification")
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		restored, err := repo.Snapshot(ctx, commit)
+		if err != nil || restored.TreeDigest() != snapshot.TreeDigest() {
+			t.Fatal(restored, err)
+		}
+	}
+}

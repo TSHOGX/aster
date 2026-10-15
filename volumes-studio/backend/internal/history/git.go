@@ -174,6 +174,9 @@ func (r *Repository) Commit(ctx context.Context, s Snapshot, parents []string, m
 		}
 	}
 	payload := newTree()
+	// Reuse Git objects only within this verified commit. Each path's source is
+	// still read and hashed: matching declared digests do not establish integrity.
+	blobs := map[string]string{}
 	meta := metadata{Version: 1, Profile: s.Profile, Directories: []string{}, TreeDigest: s.TreeDigest()}
 	for _, e := range s.Entries {
 		if e.Kind == "directory" {
@@ -187,7 +190,12 @@ func (r *Repository) Commit(ctx context.Context, s Snapshot, parents []string, m
 		n, _ := manifest.ParseSize(e.Size)
 		h := sha256.New()
 		reader := &countReader{r: io.TeeReader(io.LimitReader(f, n+1), h)}
-		oid, err := r.blob(ctx, reader)
+		oid, reused := blobs[e.Digest]
+		if reused {
+			_, err = io.Copy(io.Discard, reader)
+		} else {
+			oid, err = r.blob(ctx, reader)
+		}
 		closeErr := f.Close()
 		if err != nil {
 			return "", err
@@ -198,6 +206,7 @@ func (r *Repository) Commit(ctx context.Context, s Snapshot, parents []string, m
 		if reader.n != n || fmt.Sprintf("sha256:%x", h.Sum(nil)) != e.Digest {
 			return "", fmt.Errorf("blob integrity mismatch: %s", e.Path)
 		}
+		blobs[e.Digest] = oid
 		payload.add(e.Path, oid)
 	}
 	sort.Strings(meta.Directories)
@@ -273,6 +282,9 @@ func (r *Repository) Snapshot(ctx context.Context, commit string) (Snapshot, err
 	if err != nil {
 		return s, err
 	}
+	// A Git blob has one immutable byte sequence even when many paths reference
+	// it. Verify once per snapshot, retaining only bounded metadata per object.
+	verified := map[string]manifest.Entry{}
 	for _, row := range bytes.Split(rows, []byte{0}) {
 		if len(row) == 0 {
 			continue
@@ -282,12 +294,23 @@ func (r *Repository) Snapshot(ctx context.Context, commit string) (Snapshot, err
 			return s, fmt.Errorf("unsupported payload object")
 		}
 		p := string(fields[1])
+		oid := strings.TrimPrefix(string(fields[0]), "100644 blob ")
+		if !validOID(oid) {
+			return s, fmt.Errorf("invalid payload object")
+		}
+		if entry, ok := verified[oid]; ok {
+			entry.Path = p
+			s.Entries = append(s.Entries, entry)
+			continue
+		}
 		h := sha256.New()
 		counter := &boundedWriter{w: h, limit: manifest.MaxFileBytes}
 		if err := r.ExportFile(ctx, commit, p, counter); err != nil {
 			return s, err
 		}
-		s.Entries = append(s.Entries, manifest.Entry{Kind: "file", Path: p, Size: strconv.FormatInt(counter.n, 10), Digest: fmt.Sprintf("sha256:%x", h.Sum(nil))})
+		entry := manifest.Entry{Kind: "file", Path: p, Size: strconv.FormatInt(counter.n, 10), Digest: fmt.Sprintf("sha256:%x", h.Sum(nil))}
+		verified[oid] = entry
+		s.Entries = append(s.Entries, entry)
 	}
 	sort.Slice(s.Entries, func(i, j int) bool { return s.Entries[i].Path < s.Entries[j].Path })
 	if s.TreeDigest() != meta.TreeDigest {
