@@ -3,7 +3,7 @@ import { adminFixture } from "./fixture";
 import { chooseValue } from "./picker";
 for (const width of [390, 1440]) test(`scoped grant review retains original request across reload and resolves conflicts at ${width}px`, async ({ page }) => {
  await adminFixture(page); await page.setViewportSize({ width, height: 1000 });
- const actions = ["config.read", "config.manage", "run.start", "source.read"];
+ const actions = ["config.read", "config.manage", "run.start", "source.read", "workflow.edit"];
  let grants = actions.map(action => ({ action, effect: "unset", revision: 0, allowed: false }));
  let lose = true, conflict = false;
  const requests: Record<string, unknown>[] = [], receipts = new Map<string, number>();
@@ -42,5 +42,10 @@ for (const width of [390, 1440]) test(`scoped grant review retains original requ
  await expect(page.getByRole("status").filter({ hasText: "Permission change confirmed." })).toBeVisible();
  expect(requests.at(-1)!.expected_revision).toBe(1);
  expect(requests.at(-1)!.request_id).not.toBe(requests.at(-2)!.request_id);
+ const workflow = page.getByRole("row").filter({ hasText: "Edit and publish group workflows" });
+ await workflow.getByRole("button", { name: "Allow", exact: true }).click();
+ await page.getByRole("button", { name: "Apply reviewed permission", exact: true }).click();
+ await expect(workflow.getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
+ expect(requests.at(-1)!.action).toBe("workflow.edit");
  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
 });

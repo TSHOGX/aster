@@ -6,7 +6,7 @@ import (
 	"errors"
 )
 
-var evolutionGroupActions = []string{"config.read", "config.manage", "run.start", "source.read"}
+var evolutionGroupActions = []string{"config.read", "config.manage", "run.start", "source.read", "workflow.edit"}
 
 type EvolutionGrantState struct {
 	Action   string `json:"action"`

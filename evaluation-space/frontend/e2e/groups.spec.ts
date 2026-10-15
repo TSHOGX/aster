@@ -16,6 +16,7 @@ async function provision(admin: Page) {
   };
   await grant(alpha.id, "config.read"); await grant(beta.id, "config.read");
   await grant(beta.id, "config.manage"); await grant(beta.id, "run.start");
+  await grant(beta.id, "workflow.edit");
   // An allow without membership must not reveal even group metadata.
   await grant(secret.id, "config.read");
   return { alpha, beta, secret, user, grant };
@@ -40,6 +41,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       const overview = page.getByRole("region", { name: text("Group overview", "团队概览"), exact: true });
       await expect(overview.getByRole("heading", { name: "Team Alpha", exact: true })).toBeVisible();
       await expect(overview.getByText(text("Manage configuration", "管理配置"), { exact: true }).locator("..")).toContainText(text("Not granted", "未授权"));
+      await expect(overview.getByText(text("Edit and publish workflows", "编辑和发布工作流"), { exact: true }).locator("..")).toContainText(text("Not granted", "未授权"));
       await expect(page.getByRole("link", { name: "Secret Team", exact: true })).toHaveCount(0);
       const groups = await (await page.request.get("/evaluation-space/api/v1/groups?limit=1")).json();
       expect(groups.items).toHaveLength(1); expect(groups.has_more).toBe(true);
@@ -51,6 +53,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       await page.getByRole("link", { name: "Team Beta", exact: true }).click();
       await expect(overview.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
       await expect(overview.getByText(text("Manage configuration", "管理配置"), { exact: true }).locator("..")).toContainText(text("Allowed", "允许"));
+      await expect(overview.getByText(text("Edit and publish workflows", "编辑和发布工作流"), { exact: true }).locator("..")).toContainText(text("Allowed", "允许"));
       await expect(overview.getByText(text("Read source evidence", "读取源证据"), { exact: true }).locator("..")).toContainText(text("Not granted", "未授权"));
       await page.screenshot({ path: info.outputPath("group-overview.png"), fullPage: true });
       await page.getByLabel(text("Search groups", "搜索团队"), { exact: true }).fill("Secret Team");

@@ -284,6 +284,7 @@ export const ZH: Record<string, string> = {
   "Preview up to 32 terminal episodes in a range of at most 90 days. Oversized selections are rejected, never truncated.": "预览最多 90 天内的 32 条终结记录。超过上限的选择会被拒绝，不会被静默截断。",
   "Processed event": "已处理事件",
   "Queued and dispatched work": "排队与已调度工作",
+  "Edit and publish group workflows": "编辑和发布团队工作流",
   "Reading corpus evidence requires an explicit source-read grant, including for administrators.": "读取语料证据需要显式来源读取授权，管理员也不例外。",
   "Refresh backfill": "刷新回填",
   "Refresh work": "刷新工作状态",

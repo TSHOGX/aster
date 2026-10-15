@@ -83,6 +83,9 @@ func (s *Store) EvaluationSpaceAccess(ctx context.Context, input appidentity.Eva
 			}
 			return err == nil, err
 		}
+		if group.CanEditWorkflows, err = check("workflow.edit"); err != nil {
+			return result, err
+		}
 		if group.CanManage, err = check("config.manage"); err != nil {
 			return result, err
 		}

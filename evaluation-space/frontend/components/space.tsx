@@ -80,6 +80,6 @@ function GroupDetails({ group, refresh }: { group: Group; refresh: () => void })
       {!group.active_revision && <p>{tr("No active configuration. Ask a configuration manager to complete setup.")}</p>}
       {group.desired_revision !== group.active_revision && <p>{tr("A configuration change is pending. The active revision remains separate.")}</p>}
     </section>
-    <section className="card"><h2>{tr("Your permissions")}</h2><dl>{[["Read configuration", true], ["Manage configuration", group.can_manage], ["Operate runs", group.can_run], ["Read source evidence", group.can_read_evidence]].map(([label, allowed]) => <div key={String(label)}><dt>{tr(String(label))}</dt><dd>{tr(allowed ? "Allowed" : "Not granted")}</dd></div>)}</dl><p>{tr("Configuration access does not grant source evidence access.")}</p></section>
+    <section className="card"><h2>{tr("Your permissions")}</h2><dl>{[["Read configuration", true], ["Manage configuration", group.can_manage], ["Edit and publish workflows", group.can_edit_workflows], ["Operate runs", group.can_run], ["Read source evidence", group.can_read_evidence]].map(([label, allowed]) => <div key={String(label)}><dt>{tr(String(label))}</dt><dd>{tr(allowed ? "Allowed" : "Not granted")}</dd></div>)}</dl><p>{tr("Configuration access does not grant source evidence access.")}</p></section>
   </>;
 }

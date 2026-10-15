@@ -14,6 +14,7 @@ type EvolutionSourceStatus struct {
 type EvolutionPermissions struct {
 	Sources               []EvolutionSourceStatus `json:"sources"`
 	AccountID             string                  `json:"account_id"`
+	CanEditWorkflows      bool                    `json:"can_edit_workflows"`
 	CanManage             bool                    `json:"can_manage"`
 	CanRun                bool                    `json:"can_run"`
 	CanReadEvidence       bool                    `json:"can_read_evidence"`
@@ -43,6 +44,9 @@ func (s *Store) EvolutionPermissions(ctx context.Context, token, group string) (
 			return err == nil, err
 		}
 		if result.CanManage, err = check(authorizeEvolutionGroup(ctx, tx, actor, group, "config.manage")); err != nil {
+			return err
+		}
+		if result.CanEditWorkflows, err = check(authorizeEvolutionGroup(ctx, tx, actor, group, "workflow.edit")); err != nil {
 			return err
 		}
 		if result.CanRun, err = check(authorizeEvolutionGroup(ctx, tx, actor, group, "run.start")); err != nil {

@@ -69,6 +69,18 @@ func TestEvaluationSpaceGroupsFilterBeforePagingAndRecheckAuthority(t *testing.T
 	if !page.Items[0].CanManage || page.Items[0].CanRun || page.Items[0].CanReadEvidence {
 		t.Fatal("capabilities merged", page)
 	}
+	exact.Action = "workflow.edit"
+	if _, err = s.EvaluationSpaceAccess(ctx, exact); !errors.Is(err, ErrForbidden) {
+		t.Fatal("manager gained workflow editing", err)
+	}
+	_, err = s.SetEvolutionGroupGrant(ctx, adminToken, "space-c", EvolutionGroupGrantInput{RequestID: "editor-c", AccountID: created.User.ID, Action: "workflow.edit", Effect: "allow"})
+	must(t, err)
+	editor := appidentity.EvaluationAccessRequest{Grant: grant, GroupID: "space-c", Action: "workflow.edit", Limit: 1}
+	edited, err := s.EvaluationSpaceAccess(ctx, editor)
+	must(t, err)
+	if !edited.Items[0].CanEditWorkflows || edited.Items[0].CanManage || edited.Items[0].CanRun || edited.Items[0].CanReadEvidence {
+		t.Fatal("editor gained other capabilities", edited)
+	}
 	exact.Action = "source.read"
 	if _, err = s.EvaluationSpaceAccess(ctx, exact); !errors.Is(err, ErrForbidden) {
 		t.Fatal("manager gained evidence", err)
@@ -76,6 +88,9 @@ func TestEvaluationSpaceGroupsFilterBeforePagingAndRecheckAuthority(t *testing.T
 	// A previously returned cursor grants no continuing access to the next group.
 	_, err = s.db.Exec("DELETE FROM account_memberships WHERE account_id=? AND group_id='space-c'", created.User.ID)
 	must(t, err)
+	if _, err = s.EvaluationSpaceAccess(ctx, editor); !errors.Is(err, ErrForbidden) {
+		t.Fatal("editor retained removed membership", err)
+	}
 	page, err = s.EvaluationSpaceAccess(ctx, input)
 	must(t, err)
 	if len(page.Items) != 0 || page.HasMore || page.NextAfter != "" {
@@ -103,8 +118,21 @@ func TestEvaluationSpaceAdministratorStillNeedsExplicitEvidenceAndRespectsDeny(t
 	input := appidentity.EvaluationAccessRequest{Grant: grant, GroupID: StandardUsersGroup, Action: "config.read", Limit: 1}
 	result, err := s.EvaluationSpaceAccess(ctx, input)
 	must(t, err)
-	if !result.Items[0].CanManage || !result.Items[0].CanRun || result.Items[0].CanReadEvidence {
+	if !result.Items[0].CanManage || !result.Items[0].CanRun || result.Items[0].CanReadEvidence || result.Items[0].CanEditWorkflows {
 		t.Fatal(result)
+	}
+	input.Action = "workflow.edit"
+	if _, err = s.EvaluationSpaceAccess(ctx, input); !errors.Is(err, ErrForbidden) {
+		t.Fatal("admin edited workflows implicitly", err)
+	}
+	_, err = s.SetEvolutionGroupGrant(ctx, token, StandardUsersGroup, EvolutionGroupGrantInput{RequestID: "editor", AccountID: admin.ID, Action: "workflow.edit", Effect: "allow"})
+	must(t, err)
+	_, err = s.EvaluationSpaceAccess(ctx, input)
+	must(t, err)
+	_, err = s.SetEvolutionGroupGrant(ctx, token, StandardUsersGroup, EvolutionGroupGrantInput{RequestID: "deny-editor", AccountID: admin.ID, Action: "workflow.edit", Effect: "deny", ExpectedRevision: 1})
+	must(t, err)
+	if _, err = s.EvaluationSpaceAccess(ctx, input); !errors.Is(err, ErrForbidden) {
+		t.Fatal("admin bypassed editor denial", err)
 	}
 	input.Action = "source.read"
 	if _, err = s.EvaluationSpaceAccess(ctx, input); !errors.Is(err, ErrForbidden) {

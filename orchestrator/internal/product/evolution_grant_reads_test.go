@@ -23,7 +23,7 @@ func TestEvolutionGrantInspectionUsesEffectiveAuthorityAndAdminBoundary(t *testi
 		t.Fatal("non-admin inspected grant", err)
 	}
 	initial := inspect(admin.ID)
-	if len(initial.Grants) != 4 || !initial.Grants[0].Allowed || initial.Grants[3].Allowed {
+	if len(initial.Grants) != 5 || !initial.Grants[0].Allowed || initial.Grants[3].Allowed || initial.Grants[4].Allowed {
 		t.Fatal(initial)
 	}
 	grant := EvolutionGroupGrantInput{RequestID: "read", AccountID: user.User.ID, Action: "config.read", Effect: "allow"}

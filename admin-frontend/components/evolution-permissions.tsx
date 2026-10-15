@@ -5,7 +5,7 @@ import { api, APIError, mutate } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import type { UserPage } from "@/lib/models";
 import { Select } from "@web/select";
-const actionLabels: Record<string, string> = { "config.read": "Read group configuration", "config.manage": "Manage group configuration", "run.start": "Start group runs", "source.read": "Read source evidence" };
+const actionLabels: Record<string, string> = { "config.read": "Read group configuration", "config.manage": "Manage group configuration", "run.start": "Start group runs", "source.read": "Read source evidence", "workflow.edit": "Edit and publish group workflows" };
 type Grant = { action: string; effect: string; revision: number; allowed: boolean };
 type AccountGrants = { account_id: string; display_name: string; role: string; status: string; member: boolean; grants: Grant[] };
 type Command = { request_id: string; account_id: string; action: string; effect: string; expected_revision: number };

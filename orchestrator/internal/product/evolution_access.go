@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 )
 
 type EvolutionGroupGrantInput struct {
@@ -17,7 +18,7 @@ type EvolutionGroupGrantInput struct {
 
 func (s *Store) SetEvolutionGroupGrant(ctx context.Context, token, group string, input EvolutionGroupGrantInput) (int64, error) {
 	var result int64
-	if !validID(group) || !validID(input.AccountID) || (input.Action != "config.read" && input.Action != "config.manage" && input.Action != "run.start" && input.Action != "source.read") || (input.Effect != "allow" && input.Effect != "deny") || input.ExpectedRevision < 0 {
+	if !validID(group) || !validID(input.AccountID) || !slices.Contains(evolutionGroupActions, input.Action) || (input.Effect != "allow" && input.Effect != "deny") || input.ExpectedRevision < 0 {
 		return 0, ErrInvalid
 	}
 	request, err := mutationRequest(input.RequestID, "evolution.group.grant", group, input)
@@ -79,7 +80,9 @@ func authorizeEvolutionGroup(ctx context.Context, q queryer, account Account, gr
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if effect == "deny" {
+	// Authoring executable definitions requires a deliberately provisioned role;
+	// platform configuration administration alone does not confer it.
+	if effect == "deny" || (action == "workflow.edit" && effect != "allow") {
 		return ErrForbidden
 	}
 	if account.Role == "admin" {

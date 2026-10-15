@@ -69,12 +69,12 @@ workspace, terminal or host-file access. See [Security](../reference/security.md
 ## Group configuration drafts
 
 Open **Groups → select a group → Evolution permissions** to manage scoped
-configuration, run-start and source-evidence permissions. Search for an account,
+configuration, workflow-authoring, run-start and source-evidence permissions. Search for an account,
 inspect its explicit grants and effective access, then choose **Allow** or **Deny**.
 Review the exact account/capability change before applying it. Ordinary accounts
 also need current group membership. Explicit denial applies to administrators;
-evidence access always requires explicit allow. Studio author/review/publish and
-workflow-editor permissions are separate.
+evidence and workflow-authoring access always require explicit allow. Studio
+author/review/publish grants are managed separately.
 
 **Refresh permissions** reloads current grants. If another administrator changes a
 grant, refresh and review a new change. After a lost response or reload, use
@@ -207,7 +207,10 @@ prefix or the library is archived. Inspect the selected output and current owner
 before retrying. A different output requires corrected configuration and, where
 applicable, the explicit transfer workflow; retry does not change the saved payload.
 
-The group grant API also accepts `run.start` for run-admission authority. This is
+The group grant API also accepts `workflow.edit` for workflow authoring and
+publication, and `run.start` for run-admission authority. Workflow authoring requires
+an explicit allow, including for administrators. It does not grant configuration
+activation, model/tool execution, or source evidence access. This is
 separate from configuration editing. Central service admission requires the exact
 active configuration and an enabled binding with current source authority. Automatic
 admission additionally requires automation enabled, no pending configuration update,

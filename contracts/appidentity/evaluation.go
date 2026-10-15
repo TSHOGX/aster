@@ -31,23 +31,24 @@ func (r EvaluationAccessRequest) ValidScope() bool {
 		return false
 	}
 	switch r.Action {
-	case "config.read", "config.manage", "run.start", "source.read":
+	case "config.read", "config.manage", "run.start", "source.read", "workflow.edit":
 		return true
 	}
 	return false
 }
 
 type EvaluationGroup struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Description     string `json:"description"`
-	CanManage       bool   `json:"can_manage"`
-	CanRun          bool   `json:"can_run"`
-	CanReadEvidence bool   `json:"can_read_evidence"`
-	DesiredRevision int64  `json:"desired_revision"`
-	ActiveRevision  int64  `json:"active_revision"`
-	AutoEnabled     bool   `json:"auto_enabled"`
-	State           string `json:"state"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	CanEditWorkflows bool   `json:"can_edit_workflows"`
+	CanManage        bool   `json:"can_manage"`
+	CanRun           bool   `json:"can_run"`
+	CanReadEvidence  bool   `json:"can_read_evidence"`
+	DesiredRevision  int64  `json:"desired_revision"`
+	ActiveRevision   int64  `json:"active_revision"`
+	AutoEnabled      bool   `json:"auto_enabled"`
+	State            string `json:"state"`
 }
 
 type EvaluationAccess struct {
