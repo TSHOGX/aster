@@ -59,4 +59,7 @@ func TestBrowserWorkflowDraftBoundaryRejectsAmbientCredentials(t *testing.T) {
 	if w := call("POST", "/evaluation-space/api/v1/groups/team/workflows/skills/draft/publish", "", "", map[string]any{"revision": 1}); w.Code != 404 && w.Code != 409 && w.Code != 422 {
 		t.Fatal(w.Code)
 	}
+	if w := call("POST", "/evaluation-space/api/v1/groups/team/workflows/skills/draft/test", "", "", map[string]any{"workflow": map[string]any{}}); w.Code != 422 {
+		t.Fatalf("invalid draft test accepted: %d", w.Code)
+	}
 }

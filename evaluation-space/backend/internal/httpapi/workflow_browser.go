@@ -113,10 +113,36 @@ func BrowserWorkflowAPI(client *appidentity.Client, store *projections.Store) fu
 		}
 		write(w, 201, ref)
 	}
+	validate := func(w http.ResponseWriter, r *http.Request) {
+		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
+		if err := authorize(r, session, "workflow.edit"); err != nil {
+			workflowAuthError(w, err)
+			return
+		}
+		value, err := evolution.Decode[struct {
+			Workflow evolution.Workflow `json:"workflow"`
+		}](http.MaxBytesReader(w, r.Body, evolution.MaxDocumentBytes))
+		if err != nil {
+			write(w, 400, map[string]string{"error": "invalid_workflow_test"})
+			return
+		}
+		if err = value.Workflow.Validate(); err != nil {
+			write(w, 422, map[string]string{"error": "workflow_validation_failed", "detail": err.Error()})
+			return
+		}
+		canonical, err := value.Workflow.Canonical()
+		if err != nil {
+			write(w, 422, map[string]string{"error": "workflow_validation_failed"})
+			return
+		}
+		write(w, 200, map[string]any{"valid": true, "digest": evolution.Digest(canonical), "paid_execution": false})
+	}
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft", read)
 	mux.HandleFunc("PUT /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft", writeDraft)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft/revisions/{revision}", revision)
 	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft/publish", publish)
+	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft/validate", validate)
+	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft/test", validate)
 	return func(session appidentity.Session, w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(w, contextWithBrowserSession(r, session))
 	}
