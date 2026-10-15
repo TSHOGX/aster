@@ -191,16 +191,22 @@ func (s *Store) Evaluations(ctx context.Context, group, after string, limit int)
 	if err != nil {
 		return result, err
 	}
-	defer rows.Close()
+	ids := []string{}
 	for rows.Next() {
 		var id string
 		if err = rows.Scan(&id); err != nil {
 			return result, err
 		}
-		if len(result.Items) == limit {
-			result.HasMore = true
-			break
-		}
+		ids = append(ids, id)
+	}
+	if err = rows.Close(); err != nil {
+		return result, err
+	}
+	if len(ids) > limit {
+		ids = ids[:limit]
+		result.HasMore = true
+	}
+	for _, id := range ids {
 		value, readErr := s.Evaluation(ctx, group, id)
 		if readErr != nil {
 			return result, readErr
