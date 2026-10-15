@@ -105,3 +105,48 @@ func liveRunBudget(ctx context.Context, tx *sql.Tx, lease RunLease, reconciliati
 	run, err = evolution.Decode[evolution.Run](bytes.NewReader(body))
 	return run, usage, err
 }
+
+type PendingRunBudget struct {
+	ID      string   `json:"id"`
+	Ceiling RunUsage `json:"ceiling"`
+}
+type PendingRunBudgetPage struct {
+	Reservations []PendingRunBudget `json:"reservations"`
+	NextAfter    string             `json:"next_after"`
+	HasMore      bool               `json:"has_more"`
+}
+
+// PendingRunBudgets returns unresolved call identities only to the current live
+// execution or cleanup lease, including after process restart or cancellation.
+func (s *Store) PendingRunBudgets(ctx context.Context, lease RunLease, after string, limit int) (PendingRunBudgetPage, error) {
+	result := PendingRunBudgetPage{Reservations: []PendingRunBudget{}, NextAfter: after}
+	if (after != "" && !manifest.ValidID(after)) || limit < 1 || limit > 100 {
+		return result, fmt.Errorf("invalid budget page")
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
+	if _, _, err = liveRunBudget(ctx, tx, lease, true); err != nil {
+		return result, err
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT id,tokens,cost_micros FROM run_budget_reservations WHERE run_id=? AND state='held' AND id>? ORDER BY id LIMIT ?", lease.RunID, after, limit+1)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var value PendingRunBudget
+		if err = rows.Scan(&value.ID, &value.Ceiling.Tokens, &value.Ceiling.CostMicros); err != nil {
+			return result, err
+		}
+		if len(result.Reservations) == limit {
+			result.HasMore = true
+			break
+		}
+		result.Reservations = append(result.Reservations, value)
+		result.NextAfter = value.ID
+	}
+	return result, rows.Err()
+}

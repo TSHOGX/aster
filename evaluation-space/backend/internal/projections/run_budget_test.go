@@ -58,6 +58,13 @@ func TestBudgetReservationsHoldAcrossWorkerTakeover(t *testing.T) {
 	if err = s.ReserveRunBudget(ctx, next, "competing", RunUsage{3, 1}); err != ErrRunBudget {
 		t.Fatal("restart released uncertain hold", err)
 	}
+	if _, err = s.PendingRunBudgets(ctx, lease, "", 10); err != ErrConflict {
+		t.Fatal("stale worker inspected recovery holds", err)
+	}
+	pending, err := s.PendingRunBudgets(ctx, next, "", 1)
+	if err != nil || len(pending.Reservations) != 1 || pending.Reservations[0].ID != "call" || pending.Reservations[0].Ceiling != (RunUsage{8, 15}) {
+		t.Fatal("takeover lost hold identity", pending, err)
+	}
 	if err = s.SettleRunBudget(ctx, lease, "call", RunUsage{4, 7}); err != ErrConflict {
 		t.Fatal("stale worker settled spending", err)
 	}
@@ -72,6 +79,10 @@ func TestBudgetReservationsHoldAcrossWorkerTakeover(t *testing.T) {
 	}
 	if err = s.ReserveRunBudget(ctx, next, "call", RunUsage{8, 15}); err != ErrConflict {
 		t.Fatal("settled provider call reserved again", err)
+	}
+	pending, err = s.PendingRunBudgets(ctx, next, "", 10)
+	if err != nil || len(pending.Reservations) != 0 {
+		t.Fatal("settled hold still pending", pending, err)
 	}
 	if err = s.ReserveRunBudget(ctx, next, "remaining", RunUsage{6, 13}); err != nil {
 		t.Fatal("unused ceiling not released", err)
@@ -111,6 +122,10 @@ func TestCancellationRetainsUnsettledBudgetAndBindingSlot(t *testing.T) {
 	cleanup, err := s.ClaimRun(ctx, "run", "cleanup", time.Minute)
 	if err != nil {
 		t.Fatal(err)
+	}
+	pending, err := s.PendingRunBudgets(ctx, cleanup, "", 10)
+	if err != nil || len(pending.Reservations) != 1 {
+		t.Fatal("cleanup cannot discover holds", pending, err)
 	}
 	if err = s.ReserveRunBudget(ctx, cleanup, "new-call", RunUsage{1, 1}); err != ErrConflict {
 		t.Fatal("cleanup dispatched new work", err)
