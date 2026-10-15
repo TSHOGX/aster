@@ -33,7 +33,7 @@ configuration under `private/` or outside the repository.
 | `titles` | Optional host-side title model: `base_url`, `model`, `api_key_env` |
 | `tls_cert`, `tls_key` | Optional browser TLS certificate/key pair |
 | `front_door` | Optional independent TLS front door. `public_origin` is the exact HTTPS origin and `peer_ip` is the only trusted proxy peer; forwarded identity/client-address headers from other peers are rejected. |
-| `identity` | Optional shared-identity adapter: HTTPS `issuer`, private loopback `listen`, and registered `clients` with `id`, exact Studio `callback`, and one or two `secret_envs` for credential rotation. Uses central accounts with scoped Studio access; no additional account store. |
+| `identity` | Optional shared-identity adapter: HTTPS `issuer`, private loopback `listen`, and registered `clients` with `id`, exact application `callback`, and one or two `secret_envs` for credential rotation. Uses central accounts with scoped Studio access; no additional account store. |
 
 The example is a bootstrap starting point, not a working production configuration.
 Set the exact engine store ID and trusted runtime manifest digest. Template,
@@ -238,8 +238,16 @@ Studio discard cleanup can run with only `studio_participant` configured.
 Register Evaluation Space in central `identity.clients` with ID `evaluation-space`
 and the exact callback `${identity.issuer}/evaluation-space/auth/callback`.
 Studio's callback remains `${identity.issuer}/volumes-studio/auth/callback`.
-The two services cannot exchange callback paths. Each registration references its
-own identity credential environment variable; participant credentials are separate.
+Only `studio` and `evaluation-space` are supported identity applications. They cannot
+exchange callback paths, grants or entitlements. Evaluation Space admission requires
+platform administration or current group membership with explicit `config.read` allow.
+Studio admission separately requires administrator status or an effective library-read
+grant. Admission confers no source evidence, execution or content authority. Both
+code exchange and introspection recheck current application eligibility; membership
+loss or denial can revoke entrance. Logout through either application's own grant
+revokes the originating central login and its derived grants, including after that
+application's content access has been revoked. Each registration references its own
+identity credential environment variable; participant credentials are separate.
 
 ### Provision Evaluation Space catalog revisions
 

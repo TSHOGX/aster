@@ -51,3 +51,10 @@ func TestEvaluationSpaceCallbackIsServiceSpecific(t *testing.T) {
 		t.Fatal("Studio accepted Evaluation Space callback")
 	}
 }
+
+func TestUnknownApplicationCannotBorrowStudioCallback(t *testing.T) {
+	c := &Config{Issuer: "https://example.com", Listen: "127.0.0.1:8083", Clients: []Client{{ID: "unknown", Callback: "https://example.com/volumes-studio/auth/callback", SecretEnvs: []string{"IDENTITY_SECRET"}}}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("unknown client treated as Studio")
+	}
+}

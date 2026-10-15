@@ -47,9 +47,14 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("invalid or duplicate identity client")
 		}
 		seen[client.ID] = true
-		expectedCallback := "/volumes-studio/auth/callback"
-		if client.ID == "evaluation-space" {
+		var expectedCallback string
+		switch client.ID {
+		case "studio":
+			expectedCallback = "/volumes-studio/auth/callback"
+		case "evaluation-space":
 			expectedCallback = "/evaluation-space/auth/callback"
+		default:
+			return fmt.Errorf("unsupported identity application %s", client.ID)
 		}
 		callback, err := url.Parse(client.Callback)
 		if err != nil || callback.Scheme != "https" || callback.Host != issuer.Host || callback.User != nil || callback.Path != expectedCallback || callback.RawPath != "" || callback.RawQuery != "" || callback.ForceQuery || callback.Fragment != "" {

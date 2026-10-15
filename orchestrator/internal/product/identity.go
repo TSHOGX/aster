@@ -14,6 +14,7 @@ import (
 
 const StudioAccessEntitlement = "volumes_studio.access"
 const StudioCreateEntitlement = "volumes_studio.create"
+const EvaluationSpaceAccessEntitlement = "evaluation_space.access"
 const IdentityEvidenceTTL = 60 * time.Second
 
 // IdentityAssertion contains central authority evidence for a registered client.
@@ -55,7 +56,7 @@ func (s *Store) AdmitIdentityCode(ctx context.Context, token, client, callback, 
 		return "", err
 	}
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		a, err := s.identitySession(ctx, tx, tokenDigest(token))
+		a, err := s.identitySession(ctx, tx, tokenDigest(token), client)
 		if err != nil {
 			return err
 		}
@@ -83,7 +84,7 @@ func (s *Store) AdmitIdentityCode(ctx context.Context, token, client, callback, 
 
 // identitySession is called inside a transaction so session, account and grant
 // checks share one snapshot. It returns bounded evidence, not a credential.
-func (s *Store) identitySession(ctx context.Context, q queryer, session string) (IdentityAssertion, error) {
+func (s *Store) identitySession(ctx context.Context, q queryer, session, client string) (IdentityAssertion, error) {
 	var a IdentityAssertion
 	var expires, role string
 	err := q.QueryRowContext(ctx, `SELECT a.id,a.session_revision,s.expires_at,a.role
@@ -98,24 +99,47 @@ func (s *Store) identitySession(ctx context.Context, q queryer, session string) 
 		return a, err
 	}
 	a.CentralSession = session
-	a.Entitlements = []string{StudioAccessEntitlement}
-	if role == "admin" {
-		a.Entitlements = append(a.Entitlements, StudioCreateEntitlement)
-	} else {
-		// Entrance grants no content authority; it requires at least one effective
-		// read grant and all subsequent resource actions remain separately checked.
-		var visible int
-		err = q.QueryRowContext(ctx, `WITH grants AS (
+	switch client {
+	case "evaluation-space":
+		// Entrance carries no group, content or execution authority. A scoped user
+		// must have current read access to at least one group; each API rechecks its
+		// exact group and capability independently.
+		if role != "admin" {
+			var visible int
+			err = q.QueryRowContext(ctx, `SELECT count(*) FROM evolution_group_grants g
+ JOIN account_memberships m ON m.group_id=g.group_id AND m.account_id=g.account_id
+ JOIN account_groups a ON a.id=g.group_id
+ WHERE g.account_id=? AND g.action='config.read' AND g.effect='allow'`, a.Subject).Scan(&visible)
+			if err != nil {
+				return IdentityAssertion{}, err
+			}
+			if visible == 0 {
+				return IdentityAssertion{}, ErrForbidden
+			}
+		}
+		a.Entitlements = []string{EvaluationSpaceAccessEntitlement}
+	case "studio":
+		a.Entitlements = []string{StudioAccessEntitlement}
+		if role == "admin" {
+			a.Entitlements = append(a.Entitlements, StudioCreateEntitlement)
+		} else {
+			// Entrance grants no content authority; it requires at least one effective
+			// read grant and all subsequent resource actions remain separately checked.
+			var visible int
+			err = q.QueryRowContext(ctx, `WITH grants AS (
    SELECT library_id,effect FROM studio_library_grants WHERE account_id=? AND action='volume.read'
    UNION ALL
    SELECT g.library_id,g.effect FROM studio_group_grants g JOIN account_memberships m ON m.group_id=g.group_id WHERE m.account_id=? AND g.action='volume.read'
   ) SELECT count(*) FROM (SELECT library_id FROM grants GROUP BY library_id HAVING sum(effect='allow')>0 AND sum(effect='deny')=0)`, a.Subject, a.Subject).Scan(&visible)
-		if err != nil {
-			return IdentityAssertion{}, err
+			if err != nil {
+				return IdentityAssertion{}, err
+			}
+			if visible == 0 {
+				return IdentityAssertion{}, ErrForbidden
+			}
 		}
-		if visible == 0 {
-			return IdentityAssertion{}, ErrForbidden
-		}
+	default:
+		return IdentityAssertion{}, ErrForbidden
 	}
 	a.ExpiresAt = sqlitex.FormatTime(s.now().Add(IdentityEvidenceTTL))
 	if expires < a.ExpiresAt {
@@ -146,7 +170,7 @@ func (s *Store) ExchangeIdentityCode(ctx context.Context, client, callback, code
 		if boundClient != client || boundCallback != callback || subtle.ConstantTimeCompare([]byte(challenge), []byte(boundChallenge)) != 1 {
 			return ErrUnauthorized
 		}
-		assertion, err = s.identitySession(ctx, tx, session)
+		assertion, err = s.identitySession(ctx, tx, session, client)
 		if err != nil {
 			return err
 		}
@@ -193,7 +217,7 @@ func (s *Store) IntrospectIdentity(ctx context.Context, client, grant string) (I
 	if err != nil {
 		return IdentityAssertion{}, err
 	}
-	return s.identitySession(ctx, tx, session)
+	return s.identitySession(ctx, tx, session, client)
 }
 
 // RevokeIdentity logs out the originating central session and all derived grants.
