@@ -47,6 +47,13 @@ func (s *Store) activateEvolutionConfig(ctx context.Context, token, group string
 	if !validID(group) || input.ExpectedRevision < 0 || input.Configuration.GroupID != group || input.Configuration.Revision != input.ExpectedRevision+1 || input.Configuration.Validate() != nil {
 		return result, ErrInvalid
 	}
+	for _, binding := range input.Configuration.Bindings {
+		if binding.Trigger == "schedule" {
+			if schedule, _, err := parseRecurrence(binding.Schedule, binding.Timezone); err != nil || schedule.Next(s.now()).IsZero() {
+				return result, ErrInvalid
+			}
+		}
+	}
 	body, err := json.Marshal(input.Configuration)
 	if err != nil || len(body) > evolution.MaxDocumentBytes {
 		return result, ErrInvalid
@@ -207,6 +214,9 @@ func (s *Store) settleEvolutionActivation(ctx context.Context, tx *sql.Tx, actor
 		return result, err
 	}
 	if err = resetCorpusCollectors(ctx, tx, projection.Configuration, result.AutoEnabled); err != nil {
+		return result, err
+	}
+	if err = s.resetEvolutionTriggers(ctx, tx, projection.Configuration, result.AutoEnabled); err != nil {
 		return result, err
 	}
 	return result, s.auditEvent(ctx, tx, actor, "evolution.config.activate", "group", result.GroupID, operation, result.ActiveRevision, result)

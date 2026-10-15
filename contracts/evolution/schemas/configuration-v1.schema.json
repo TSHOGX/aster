@@ -46,6 +46,9 @@
         "template": {
           "$ref": "#/$defs/Revision"
         },
+        "timezone": {
+          "type": "string"
+        },
         "trigger": {
           "type": "string"
         },

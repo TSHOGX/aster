@@ -11,12 +11,15 @@ import (
 	"harness-platform/orchestrator/internal/agentwire"
 )
 
-func activateCorpusCollector(t *testing.T, s *Store, token string, source evolution.SourceBinding, revision int64, enabled bool) {
+func activateCorpusCollector(t *testing.T, s *Store, token string, source evolution.SourceBinding, revision int64, enabled bool, mutations ...func(*evolution.Configuration)) {
 	t.Helper()
 	ref := evolution.Revision{ID: "ref", Revision: 1, Digest: evolution.Digest([]byte("ref"))}
 	budget := evolution.Budget{MaxTokens: 100, MaxCostMicros: 100, MaxAttempts: 1, TimeoutSeconds: 60, MaxArtifactBytes: 1 << 20}
 	config := evolution.Configuration{GroupID: "fixture-users", Revision: revision, AutoEnabled: enabled, Sources: []evolution.SourceBinding{source}, Budget: budget,
 		Bindings: []evolution.Binding{{ID: "skills", Enabled: true, Template: ref, Workflow: ref, Service: ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{source.ID}, Output: evolution.OutputBinding{LibraryID: "library", Prefix: "skills", Profile: "authored-v1", ReservationGeneration: 1}, Evaluation: evolution.EvaluationPolicy{Mode: "disabled", ReferenceStrategy: "none"}, Budget: budget, Trigger: "event"}}}
+	for _, mutate := range mutations {
+		mutate(&config)
+	}
 	pending, err := s.ActivateEvolutionConfig(ctx, token, config.GroupID, EvolutionActivationInput{RequestID: fmt.Sprintf("activate-%d", revision), ExpectedRevision: revision - 1, Configuration: config})
 	must(t, err)
 	for _, participant := range []string{"studio", "evaluation-space"} {

@@ -2097,3 +2097,41 @@ CREATE TABLE corpus_collectors (
  snapshot_id TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(group_id,source_id)
 );
+
+CREATE TABLE evolution_trigger_clocks (
+ group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
+ binding_id TEXT NOT NULL,
+ configuration_revision INTEGER NOT NULL,
+ next_at TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(group_id,binding_id)
+);
+CREATE TABLE evolution_trigger_sources (
+ group_id TEXT NOT NULL,
+ binding_id TEXT NOT NULL,
+ source_id TEXT NOT NULL,
+ source_revision INTEGER NOT NULL,
+ baseline INTEGER NOT NULL CHECK(baseline>=0),
+ observed_through INTEGER NOT NULL CHECK(observed_through>=baseline),
+ PRIMARY KEY(group_id,binding_id,source_id),
+ FOREIGN KEY(group_id,binding_id) REFERENCES evolution_trigger_clocks(group_id,binding_id) ON DELETE CASCADE
+);
+CREATE TABLE evolution_trigger_occurrences (
+ id TEXT PRIMARY KEY,
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ binding_id TEXT NOT NULL,
+ configuration_revision INTEGER NOT NULL,
+ trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('event','schedule')),
+ state TEXT NOT NULL CHECK(state IN ('pending','frozen','superseded')),
+ first_at TEXT NOT NULL,
+ latest_at TEXT NOT NULL,
+ ranges BLOB NOT NULL CHECK(json_valid(ranges)),
+ run_id TEXT NOT NULL DEFAULT '',
+ UNIQUE(group_id,binding_id,configuration_revision,id)
+);
+CREATE UNIQUE INDEX one_pending_evolution_occurrence ON evolution_trigger_occurrences(group_id,binding_id) WHERE state='pending';
+CREATE TRIGGER frozen_evolution_occurrence BEFORE UPDATE ON evolution_trigger_occurrences WHEN OLD.state<>'pending'
+BEGIN SELECT RAISE(ABORT,'immutable trigger occurrence'); END;
+
+CREATE INDEX execution_corpus_prompt ON execution_runs(prompt_id,id);
+CREATE INDEX corpus_snapshot_source_frontier ON corpus_snapshots(group_id,source_id,source_revision,sealed_through);
+CREATE INDEX evolution_occurrence_group ON evolution_trigger_occurrences(group_id);

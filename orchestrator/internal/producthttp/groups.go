@@ -7,6 +7,7 @@ import (
 
 func (a *Authentication) groupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/groups/{group}/corpus/collectors", a.corpusCollectors)
+	mux.HandleFunc("GET /api/admin/groups/{group}/evolution/triggers", a.evolutionTriggers)
 	mux.HandleFunc("POST /api/admin/groups/{group}/corpus/capture", a.corpusCapture)
 	mux.HandleFunc("POST /api/admin/groups/{group}/corpus/snapshots", a.corpusSeal)
 	mux.HandleFunc("GET /api/admin/groups/{group}/corpus/snapshots/{snapshot}/content", a.corpusContent)

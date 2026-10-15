@@ -4,6 +4,7 @@ import (
 	"aster/contracts/evolution"
 	"harness-platform/orchestrator/internal/product"
 	"net/http"
+	"strconv"
 )
 
 func (a *Authentication) corpusCapture(w http.ResponseWriter, r *http.Request) {
@@ -61,4 +62,22 @@ func (a *Authentication) corpusCollectors(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, 200, value)
+}
+
+func (a *Authentication) evolutionTriggers(w http.ResponseWriter, r *http.Request) {
+	var after int64
+	if value := r.URL.Query().Get("after"); value != "" {
+		var err error
+		after, err = strconv.ParseInt(value, 10, 64)
+		if err != nil || after < 0 {
+			writeError(w, 400, "invalid trigger cursor")
+			return
+		}
+	}
+	result, err := a.Store.EvolutionTriggers(r.Context(), requestToken(r), r.PathValue("group"), after)
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, 200, result)
 }

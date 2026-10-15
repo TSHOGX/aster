@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
+	"time"
 
 	manifest "aster/contracts/volumemanifest"
 )
@@ -105,12 +107,15 @@ func (c Configuration) Validate() error {
 		}
 		switch b.Trigger {
 		case "manual", "event":
-			if b.Schedule != "" {
+			if b.Schedule != "" || b.Timezone != "" {
 				return fmt.Errorf("unexpected schedule")
 			}
 		case "schedule":
-			if b.Schedule == "" {
-				return fmt.Errorf("schedule required")
+			if b.Schedule == "" || len(b.Schedule) > 128 || b.Timezone == "" || b.Timezone == "Local" || len(b.Timezone) > 128 || strings.ContainsAny(b.Timezone, " \t\n") {
+				return fmt.Errorf("schedule and timezone required")
+			}
+			if _, err := time.LoadLocation(b.Timezone); err != nil {
+				return fmt.Errorf("invalid schedule timezone")
 			}
 		default:
 			return fmt.Errorf("unsupported trigger")

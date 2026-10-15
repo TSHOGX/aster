@@ -68,6 +68,8 @@ func (w *Workers) Run(ctx context.Context) {
 	}
 	collector := &CorpusCollector{Store: w.Store}
 	loop("corpus discovery", time.Second, collector.Step)
+	triggers := &EvolutionTriggerWorker{Store: w.Store}
+	loop("evolution triggers", time.Second, triggers.Step)
 	loop("runtime", interval, w.Step)
 	loop("shared volumes", time.Second, func(ctx context.Context) error {
 		if w.Lifecycle == nil {

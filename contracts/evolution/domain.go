@@ -230,6 +230,7 @@ type Binding struct {
 	Budget     Budget           `json:"budget"`
 	Trigger    string           `json:"trigger"`
 	Schedule   string           `json:"schedule,omitempty"`
+	Timezone   string           `json:"timezone,omitempty"`
 	DependsOn  []string         `json:"depends_on"`
 }
 type Configuration struct {

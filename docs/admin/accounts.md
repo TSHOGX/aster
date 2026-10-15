@@ -274,3 +274,20 @@ latest snapshot ID. A snapshot failure leaves the capture cursor unchanged, and
 restart resumes from durable state. Collection and sealing do not themselves dispatch
 a generation run; submit an authorized native assignment with the selected sealed
 inputs to run it.
+
+
+Automatic binding schedules require an explicit IANA `timezone` and either a
+five-field cron expression or `@every Nm` with 1–10080 minutes. For example,
+`schedule: "0 9 * * 1-5"` with `timezone: "Asia/Shanghai"` selects weekday mornings.
+Cron follows the selected zone's daylight-saving rules; intervals measure elapsed
+time and retain their phase after delays.
+
+The trigger worker records one pending occurrence per binding. Missed schedule ticks
+coalesce into that occurrence, and newly sealed input updates its selected source
+ranges. Event bindings queue when a new snapshot is sealed. Use
+`GET /api/admin/groups/{group}/evolution/triggers?after=0` with `config.read` to inspect
+up to 50 occurrences and their ranges; use the response's `next` cursor for subsequent
+pages. Reload from zero to refresh pending state. These are queue records; automatic
+generation dispatch is not yet available. Disabling automation or activating a new
+configuration supersedes pending occurrences. Re-enabling starts a new schedule and
+input baseline without historical replay.

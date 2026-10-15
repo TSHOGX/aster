@@ -62,3 +62,29 @@ func TestBindingCannotSelectAliasedResourceTwice(t *testing.T) {
 		t.Fatal("different resource kinds conflated", err)
 	}
 }
+
+func TestScheduleRequiresExplicitTimezone(t *testing.T) {
+	for _, zone := range []string{"UTC", "Asia/Shanghai", "America/New_York"} {
+		c := configFixture()
+		c.Bindings[0].Trigger = "schedule"
+		c.Bindings[0].Schedule = "0 9 * * *"
+		c.Bindings[0].Timezone = zone
+		if err := c.Validate(); err != nil {
+			t.Fatal(zone, err)
+		}
+	}
+	for _, zone := range []string{"", "Local", "invalid/zone", "UTC TZ=other"} {
+		c := configFixture()
+		c.Bindings[0].Trigger = "schedule"
+		c.Bindings[0].Schedule = "0 9 * * *"
+		c.Bindings[0].Timezone = zone
+		if err := c.Validate(); err == nil {
+			t.Fatal("invalid timezone accepted", zone)
+		}
+	}
+	c := configFixture()
+	c.Bindings[0].Timezone = "UTC"
+	if c.Validate() == nil {
+		t.Fatal("timezone accepted for manual trigger")
+	}
+}
