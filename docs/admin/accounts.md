@@ -185,3 +185,9 @@ reservation or its adoption, for example because another binding owns an overlap
 prefix or the library is archived. Inspect the selected output and current ownership
 before retrying. A different output requires corrected configuration and, where
 applicable, the explicit transfer workflow; retry does not change the saved payload.
+
+The group grant API also accepts `run.start` for run-admission authority. This is
+separate from configuration editing. Central service admission requires the exact
+active configuration and an enabled binding with current source authority. Automatic
+admission additionally requires automation enabled, no pending configuration update,
+and a non-manual trigger. These checks do not yet expose a user-facing run endpoint.

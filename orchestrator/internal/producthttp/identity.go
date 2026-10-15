@@ -32,6 +32,7 @@ func (a *Authentication) IdentityServiceHandler() http.Handler {
 	mux.HandleFunc("POST /api/identity/v1/principal", a.identityPrincipal)
 	mux.HandleFunc("POST /api/identity/v1/studio-access", a.identityStudioAccess)
 	mux.HandleFunc("POST /api/identity/v1/projection-authority", a.identityProjectionAuthority)
+	mux.HandleFunc("POST /api/identity/v1/run-admission-authority", a.identityRunAdmissionAuthority)
 	mux.HandleFunc("POST /api/identity/v1/studio-participant-authority", a.identityStudioParticipantAuthority)
 	return mux
 }
@@ -251,4 +252,25 @@ func (a *Authentication) identityStudioParticipantAuthority(w http.ResponseWrite
 		return
 	}
 	writeJSON(w, 200, map[string]string{"issuer": a.Config.Identity.Issuer, "subject": subject})
+}
+
+func (a *Authentication) identityRunAdmissionAuthority(w http.ResponseWriter, r *http.Request) {
+	client, ok := a.identityService(w, r)
+	if !ok {
+		return
+	}
+	if client.ID != "evaluation-space" {
+		writeError(w, 403, "evaluation service required")
+		return
+	}
+	var scope product.EvolutionRunAdmissionScope
+	if !decode(w, r, 4096, &scope) {
+		return
+	}
+	allowed, err := a.Store.AuthorizeEvolutionRunAdmission(r.Context(), scope)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"allowed": allowed})
 }

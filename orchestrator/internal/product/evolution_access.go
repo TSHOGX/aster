@@ -17,7 +17,7 @@ type EvolutionGroupGrantInput struct {
 
 func (s *Store) SetEvolutionGroupGrant(ctx context.Context, token, group string, input EvolutionGroupGrantInput) (int64, error) {
 	var result int64
-	if !validID(group) || !validID(input.AccountID) || (input.Action != "config.read" && input.Action != "config.manage") || (input.Effect != "allow" && input.Effect != "deny") || input.ExpectedRevision < 0 {
+	if !validID(group) || !validID(input.AccountID) || (input.Action != "config.read" && input.Action != "config.manage" && input.Action != "run.start") || (input.Effect != "allow" && input.Effect != "deny") || input.ExpectedRevision < 0 {
 		return 0, ErrInvalid
 	}
 	request, err := mutationRequest(input.RequestID, "evolution.group.grant", group, input)
