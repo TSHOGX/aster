@@ -72,6 +72,9 @@ func (w *Worker) Step(ctx context.Context, group, id string) error {
 	}
 	cleanup := job.State == "cancelling"
 	if err = w.Authority.Check(ctx, job, cleanup); err != nil {
+		if errors.Is(err, ErrExecutionRevoked) {
+			return w.Store.CancelEvaluation(ctx, group, id)
+		}
 		return err
 	}
 	lease, err := w.Store.ClaimEvaluation(ctx, group, id, w.ID, duration)

@@ -1987,3 +1987,21 @@ WHEN OLD.state<>NEW.state AND NOT (
  (OLD.state='discarding' AND NEW.state='discarded')
 )
 BEGIN SELECT RAISE(ABORT,'invalid activation state transition'); END;
+
+CREATE TABLE evaluation_dataset_grants(
+ group_id TEXT NOT NULL REFERENCES account_groups(id),artifact_id TEXT NOT NULL,service_id TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),
+ artifact BLOB NOT NULL,service BLOB NOT NULL,
+ PRIMARY KEY(group_id,artifact_id,service_id)
+);
+CREATE TABLE evaluation_authorizations(
+ id TEXT PRIMARY KEY,job_id TEXT NOT NULL UNIQUE,group_id TEXT NOT NULL REFERENCES account_groups(id),
+ actor_id TEXT NOT NULL REFERENCES accounts(id),assignment BLOB NOT NULL,assignment_digest TEXT NOT NULL,
+ grant BLOB NOT NULL,state TEXT NOT NULL CHECK(state IN('admitted','settled')),
+ reserved_tokens INTEGER NOT NULL CHECK(reserved_tokens>=0),reserved_cost INTEGER NOT NULL CHECK(reserved_cost>=0),
+ used_tokens INTEGER NOT NULL DEFAULT 0 CHECK(used_tokens>=0),used_cost INTEGER NOT NULL DEFAULT 0 CHECK(used_cost>=0),
+ settlement BLOB,created_at TEXT NOT NULL
+);
+CREATE TRIGGER immutable_evaluation_authorization BEFORE UPDATE OF id,job_id,group_id,actor_id,assignment,assignment_digest,grant,reserved_tokens,reserved_cost,created_at ON evaluation_authorizations BEGIN SELECT RAISE(ABORT,'immutable evaluation authorization'); END;
+CREATE TRIGGER retained_evaluation_authorization BEFORE DELETE ON evaluation_authorizations BEGIN SELECT RAISE(ABORT,'retain evaluation authorization'); END;
+CREATE TRIGGER settled_evaluation_authorization BEFORE UPDATE ON evaluation_authorizations WHEN OLD.state='settled' BEGIN SELECT RAISE(ABORT,'settled evaluation authorization'); END;

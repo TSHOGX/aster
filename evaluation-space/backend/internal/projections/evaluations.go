@@ -15,6 +15,9 @@ import (
 )
 
 const evaluationSchema = `
+CREATE TABLE evaluation_settlements(job_id TEXT PRIMARY KEY REFERENCES evaluation_jobs(id));
+CREATE TRIGGER immutable_evaluation_settlement BEFORE UPDATE ON evaluation_settlements BEGIN SELECT RAISE(ABORT,'immutable evaluation settlement'); END;
+CREATE TRIGGER retained_evaluation_settlement BEFORE DELETE ON evaluation_settlements BEGIN SELECT RAISE(ABORT,'retain evaluation settlement'); END;
 CREATE TABLE evaluation_jobs(
  id TEXT PRIMARY KEY,group_id TEXT NOT NULL,request BLOB NOT NULL,body BLOB NOT NULL,
  state TEXT NOT NULL CHECK(state IN('queued','running','cancelling','completed','error','canceled')),
@@ -34,6 +37,7 @@ CREATE TRIGGER evaluation_transition BEFORE UPDATE OF state ON evaluation_jobs W
 `
 
 type EvaluationAdmission struct {
+	Grant             *evolution.EvaluationGrant `json:"grant,omitempty"`
 	ID                string                     `json:"id"`
 	GroupID           string                     `json:"group_id"`
 	Prepared          evolution.PreparedIdentity `json:"prepared"`
@@ -42,6 +46,7 @@ type EvaluationAdmission struct {
 	Seed              int64                      `json:"seed"`
 }
 type EvaluationJob struct {
+	Grant     *evolution.EvaluationGrant  `json:"grant,omitempty"`
 	ID        string                      `json:"id"`
 	GroupID   string                      `json:"group_id"`
 	Service   evolution.Revision          `json:"service"`
@@ -125,10 +130,16 @@ func (s *Store) AdmitEvaluation(ctx context.Context, input EvaluationAdmission) 
 		return job, err
 	}
 	subject := evolution.EvaluationSubject{Candidate: input.Prepared.Result, PreparedDigest: preparedDigest, RequirementDigest: requirement.Digest, Reference: requirement.Reference, Profile: profile.Ref, Dataset: profile.Dataset, Scorer: profile.Scorer, Runtime: profile.Runtime, Model: profile.Model, Tools: profile.Tools, Seed: input.Seed}
+	if input.Grant != nil {
+		digest, err := subject.Digest()
+		if err != nil || input.Grant.SubjectDigest != digest || input.Grant.Service != service.Ref || input.Grant.JobID != input.ID || input.Grant.GroupID != input.GroupID {
+			return job, ErrConflict
+		}
+	}
 	if err = subject.MatchesProfile(profile); err != nil {
 		return job, err
 	}
-	job = EvaluationJob{ID: input.ID, GroupID: input.GroupID, Service: service.Ref, Profile: profile, Subject: subject, Budget: input.Budget, CreatedAt: time.Now().UTC(), State: "queued"}
+	job = EvaluationJob{Grant: input.Grant, ID: input.ID, GroupID: input.GroupID, Service: service.Ref, Profile: profile, Subject: subject, Budget: input.Budget, CreatedAt: time.Now().UTC(), State: "queued"}
 	body, err = json.Marshal(job)
 	if err != nil {
 		return job, err
@@ -450,4 +461,73 @@ func assessedJobResult(job EvaluationJob, observed evolution.EvaluationResult) (
 		result.Outcome = "inconclusive"
 	}
 	return result, nil
+}
+
+// AdmitAuthorizedEvaluation derives the local admission solely from a central
+// assignment resolved by the authenticated service boundary.
+func (s *Store) AdmitAuthorizedEvaluation(ctx context.Context, grant evolution.EvaluationGrant, assignment evolution.EvaluationAssignment) (EvaluationJob, error) {
+	digest, err := assignment.Digest()
+	if grant.Validate() != nil || err != nil || digest != grant.AssignmentDigest || assignment.JobID != grant.JobID || assignment.GroupID != grant.GroupID {
+		return EvaluationJob{}, ErrConflict
+	}
+	subject, check, err := assignment.Subject()
+	if err != nil {
+		return EvaluationJob{}, err
+	}
+	subjectDigest, _ := subject.Digest()
+	if subjectDigest != grant.SubjectDigest || check.Service != grant.Service {
+		return EvaluationJob{}, ErrConflict
+	}
+	return s.AdmitEvaluation(ctx, EvaluationAdmission{ID: assignment.JobID, GroupID: assignment.GroupID, Prepared: assignment.Prepared, RequirementDigest: assignment.RequirementDigest, Budget: assignment.Budget, Seed: assignment.Seed, Grant: &grant})
+}
+
+type EvaluationWork struct {
+	GroupID string `json:"group_id"`
+	JobID   string `json:"job_id"`
+}
+
+func (s *Store) RunnableEvaluations(ctx context.Context, after string, limit int) ([]EvaluationWork, error) {
+	if after != "" && !manifest.ValidID(after) || limit < 1 || limit > 100 {
+		return nil, fmt.Errorf("invalid evaluation work page")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT group_id,id FROM evaluation_jobs WHERE id>? AND (state='queued' OR (state IN('running','cancelling') AND lease_until<=?)) ORDER BY id LIMIT ?`, after, time.Now().UnixNano(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []EvaluationWork{}
+	for rows.Next() {
+		var item EvaluationWork
+		if err = rows.Scan(&item.GroupID, &item.JobID); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+// Terminal work remains discoverable until its central spending receipt is
+// acknowledged; a lost settlement response is retried with identical contents.
+func (s *Store) UnsettledEvaluations(ctx context.Context, limit int) ([]EvaluationWork, error) {
+	if limit < 1 || limit > 100 {
+		return nil, fmt.Errorf("invalid settlement page")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT group_id,id FROM evaluation_jobs j WHERE state IN('completed','error','canceled') AND NOT EXISTS(SELECT 1 FROM evaluation_settlements s WHERE s.job_id=j.id) ORDER BY id LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []EvaluationWork{}
+	for rows.Next() {
+		var item EvaluationWork
+		if err = rows.Scan(&item.GroupID, &item.JobID); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+func (s *Store) AcknowledgeEvaluationSettlement(ctx context.Context, group, id string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO evaluation_settlements(job_id) SELECT id FROM evaluation_jobs WHERE group_id=? AND id=? AND state IN('completed','error','canceled') ON CONFLICT DO NOTHING`, group, id)
+	return err
 }

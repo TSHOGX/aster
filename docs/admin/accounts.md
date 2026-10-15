@@ -191,3 +191,18 @@ separate from configuration editing. Central service admission requires the exac
 active configuration and an enabled binding with current source authority. Automatic
 admission additionally requires automation enabled, no pending configuration update,
 and a non-manual trigger. These checks do not yet expose a user-facing run endpoint.
+
+### Authorize evaluator dataset use
+
+An administrator can grant an evaluator access to one exact sealed dataset artifact
+for a group through `POST /api/admin/groups/{group}/evaluation-dataset-grants`.
+Send `request_id`, `expected_revision` (zero for a new grant), `artifact`, `service`
+and `enabled`. The artifact is its complete immutable scoped reference; the service
+is an exact `{id, revision, digest}` evaluator reference. The response contains the
+new grant revision. Reusing a request ID with different content is rejected.
+
+This grant is separate from group membership and library access. The requester must
+also retain permission to start group work and read/review the output library.
+Set `enabled` to false with the current expected revision to revoke future evaluator
+use. Already dispatched jobs retain uncertain spending until cancellation and provider
+reconciliation finish; revocation does not fabricate a zero-cost result.

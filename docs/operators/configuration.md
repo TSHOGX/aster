@@ -316,3 +316,39 @@ requires the `read` catalog authority decision. This privileged central-service 
 returns the complete definition, including connection and credential *references*
 (no credential values). It is not a user-facing redacted catalog API. Offline provisioning remains available when the service
 is stopped.
+
+### Run assigned evaluators
+
+Evaluation Space can run registered HTTP evaluators with
+`-evaluation-connections /absolute/path/evaluators.json`. The file contains connection
+IDs used by immutable evaluator service definitions, origins, client IDs and secret
+environment references:
+
+```json
+{
+  "connections": [
+    {
+      "id": "team-evaluator",
+      "endpoint": "https://evaluator.example.com",
+      "client_id": "evaluation-space",
+      "secret_env": "TEAM_EVALUATOR_SECRET"
+    }
+  ]
+}
+```
+
+Set each referenced secret to a credential accepted by that evaluator. Remote
+origins require HTTPS; loopback HTTP is allowed. Redirects are refused. Connections
+cannot be supplied by workflow inputs. The provider implements the versioned
+`/evaluation/v1/jobs/{id}` submit/status/result/cancel protocol and retains request
+identity across retries. Uncertain provider responses retain their spending hold.
+
+Also set `EVALUATION_SPACE_STUDIO_SECRET` (or select its variable with
+`-studio-secret-env`) for private Studio-to-Evaluation Space requests. This differs
+from the central participant credential and outbound central identity credential.
+The evaluation endpoints are available only when evaluator connections are configured;
+keep the listener private. A service credential alone does not grant dataset use:
+central authorization binds the exact prepared check, requester, dataset, evaluator
+revision and budget. Grant revocation stops new execution while cleanup can reconcile
+previous spending. Required checks remain pending until Studio receives matching
+results; configuring a provider alone does not create a passing merge check.

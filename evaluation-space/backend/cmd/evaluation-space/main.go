@@ -32,6 +32,8 @@ func run() error {
 	endpoint := flag.String("identity-endpoint", "", "Central private identity origin")
 	clientSecretEnv := flag.String("identity-secret-env", "EVALUATION_SPACE_IDENTITY_SECRET", "Environment variable containing registered service credential")
 	centralSecretEnv := flag.String("central-secret-env", "EVALUATION_SPACE_CENTRAL_SECRET", "Environment variable containing inbound central credential")
+	evaluationConfigPath := flag.String("evaluation-connections", "", "Optional private JSON evaluator connections with credential environment references")
+	studioSecretEnv := flag.String("studio-secret-env", "EVALUATION_SPACE_STUDIO_SECRET", "Environment variable containing inbound Studio evaluation credential")
 	flag.Parse()
 	if !filepath.IsAbs(*directory) || *directory == "/" {
 		return fmt.Errorf("absolute state directory required")
@@ -55,6 +57,23 @@ func run() error {
 		return err
 	}
 	defer store.Close()
+	var evaluationHandler http.Handler
+	var evaluationDone chan struct{}
+	if *evaluationConfigPath != "" {
+		connections, err := readEvaluationConnections(*evaluationConfigPath)
+		if err != nil {
+			return err
+		}
+		api, err := httpapi.NewEvaluationAPI(store, authority, os.Getenv(*studioSecretEnv))
+		if err != nil {
+			return err
+		}
+		evaluationHandler = api.Handler()
+		workerCtx, cancel := context.WithCancel(ctx)
+		evaluationDone = make(chan struct{})
+		go func() { defer close(evaluationDone); runEvaluations(workerCtx, store, authority, connections) }()
+		defer func() { cancel(); <-evaluationDone }()
+	}
 	listener, err := net.Listen("tcp", *listen)
 	if err != nil {
 		return err
@@ -63,6 +82,10 @@ func run() error {
 	projectionHandler := (httpapi.ProjectionAPI{Store: store, Authority: authority}).Handler()
 	catalogHandler := (httpapi.CatalogAPI{Store: store, Authority: authority}).Handler()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if evaluationHandler != nil && strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/evaluations/") {
+			evaluationHandler.ServeHTTP(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/catalog/") {
 			catalogHandler.ServeHTTP(w, r)
 			return

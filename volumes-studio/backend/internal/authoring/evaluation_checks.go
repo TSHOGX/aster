@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"strings"
 
 	"aster/contracts/evolution"
 	"volume-studio/backend/internal/history"
@@ -74,7 +73,7 @@ func (s *Store) currentBindingChecks(ctx context.Context, library string, branch
 			if policy.Mode == "disabled" {
 				break
 			}
-			policyID := "binding-" + strings.TrimPrefix(evolution.Digest([]byte(config.GroupID+"\x00"+binding.ID)), "sha256:")
+			policyID := evolution.BindingPolicyID(config.GroupID, binding.ID)
 			check := evolution.CheckRequirement{PolicyID: policyID, PolicyRevision: config.Revision, Path: p.prefix, Mode: policy.Mode, Profile: *policy.Profile, Service: *policy.Service, ReferenceStrategy: policy.ReferenceStrategy}
 			switch policy.ReferenceStrategy {
 			case "target_main":
