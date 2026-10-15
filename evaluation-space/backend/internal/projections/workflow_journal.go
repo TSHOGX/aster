@@ -1,0 +1,161 @@
+package projections
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"aster/contracts/evolution"
+	manifest "aster/contracts/volumemanifest"
+	"aster/evaluation-space/internal/workflow"
+)
+
+const workflowExecutionSchema = `
+CREATE TABLE workflow_attempts(
+ run_id TEXT NOT NULL REFERENCES runs(id),id TEXT NOT NULL,request BLOB NOT NULL,record BLOB NOT NULL,
+ state TEXT NOT NULL CHECK(state IN('running','succeeded','failed','skipped')),
+ PRIMARY KEY(run_id,id)
+);
+CREATE TRIGGER immutable_workflow_attempt BEFORE UPDATE OF run_id,id,request ON workflow_attempts BEGIN SELECT RAISE(ABORT,'immutable workflow attempt'); END;
+CREATE TRIGGER terminal_workflow_attempt BEFORE UPDATE ON workflow_attempts WHEN OLD.state<>'running' BEGIN SELECT RAISE(ABORT,'terminal workflow attempt'); END;
+CREATE TRIGGER retained_workflow_attempt BEFORE DELETE ON workflow_attempts BEGIN SELECT RAISE(ABORT,'retain workflow attempt'); END;
+`
+
+type WorkflowJournal struct {
+	Store *Store
+	Lease RunLease
+}
+
+func (j WorkflowJournal) Begin(ctx context.Context, call workflow.Call, maximum int) (workflow.Record, error) {
+	var record workflow.Record
+	if j.Store == nil || !manifest.ValidID(call.ID) || call.Workflow.Validate() != nil || call.Number < 1 || len(call.Instance) > 4096 || len(call.Parent) > 4096 || maximum < 1 {
+		return record, fmt.Errorf("invalid workflow attempt")
+	}
+	raw, err := json.Marshal(call)
+	if err != nil || len(raw) > evolution.MaxDocumentBytes {
+		return record, fmt.Errorf("invalid workflow call size")
+	}
+	tx, err := j.Store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return record, err
+	}
+	defer tx.Rollback()
+	run, _, err := liveRunBudget(ctx, tx, j.Lease, false)
+	if err != nil {
+		return record, err
+	}
+	var prior, retained []byte
+	err = tx.QueryRowContext(ctx, "SELECT request,record FROM workflow_attempts WHERE run_id=? AND id=?", j.Lease.RunID, call.ID).Scan(&prior, &retained)
+	if err == nil {
+		if !bytes.Equal(raw, prior) {
+			return record, ErrConflict
+		}
+		return evolution.Decode[workflow.Record](bytes.NewReader(retained))
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return record, err
+	}
+	var count int
+	var used int64
+	if err = tx.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(length(request)+length(record)),0) FROM workflow_attempts WHERE run_id=?", j.Lease.RunID).Scan(&count, &used); err != nil {
+		return record, err
+	}
+	if count >= maximum || count >= run.Budget.MaxAttempts {
+		return record, workflow.ErrAttemptLimit
+	}
+	record = workflow.Record{Call: call, State: "running", Outputs: workflow.Values{}, Inactive: []string{}}
+	body, _ := json.Marshal(record)
+	if int64(len(body)+len(raw)) > run.Budget.MaxArtifactBytes-used {
+		return record, ErrRunBudget
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO workflow_attempts(run_id,id,request,record,state) VALUES(?,?,?,?,'running')", j.Lease.RunID, call.ID, raw, body); err != nil {
+		return record, err
+	}
+	if err = j.event(ctx, tx, call.ID, "attempt-started"); err != nil {
+		return record, err
+	}
+	return record, tx.Commit()
+}
+func (j WorkflowJournal) Complete(ctx context.Context, record workflow.Record) error {
+	if j.Store == nil || record.State != "succeeded" && record.State != "failed" && record.State != "skipped" {
+		return fmt.Errorf("invalid workflow terminal state")
+	}
+	raw, err := json.Marshal(record)
+	if err != nil || len(raw) > evolution.MaxDocumentBytes {
+		return fmt.Errorf("invalid workflow output size")
+	}
+	tx, err := j.Store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	run, _, err := liveRunBudget(ctx, tx, j.Lease, false)
+	if err != nil {
+		return err
+	}
+	var request, prior []byte
+	var state string
+	if err = tx.QueryRowContext(ctx, "SELECT request,record,state FROM workflow_attempts WHERE run_id=? AND id=?", j.Lease.RunID, record.Call.ID).Scan(&request, &prior, &state); err != nil {
+		return err
+	}
+	call, _ := json.Marshal(record.Call)
+	if !bytes.Equal(call, request) {
+		return ErrConflict
+	}
+	if state != "running" {
+		if !bytes.Equal(raw, prior) {
+			return ErrConflict
+		}
+		return nil
+	}
+	var used int64
+	if err = tx.QueryRowContext(ctx, "SELECT coalesce(sum(length(request)+length(record)),0) FROM workflow_attempts WHERE run_id=?", j.Lease.RunID).Scan(&used); err != nil {
+		return err
+	}
+	if int64(len(raw)-len(prior)) > run.Budget.MaxArtifactBytes-used {
+		return ErrRunBudget
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE workflow_attempts SET record=?,state=? WHERE run_id=? AND id=?", raw, record.State, j.Lease.RunID, record.Call.ID); err != nil {
+		return err
+	}
+	if err = j.event(ctx, tx, record.Call.ID, "attempt-"+record.State); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func (j WorkflowJournal) event(ctx context.Context, tx *sql.Tx, attempt, kind string) error {
+	event := evolution.Event{ID: attempt + "-" + kind, RunID: j.Lease.RunID, AttemptID: attempt, ProducerID: j.Lease.WorkerID, Fence: j.Lease.Fence, Timestamp: time.Now().UTC(), Kind: kind, Artifacts: []evolution.ArtifactRef{}}
+	raw, _ := json.Marshal(event)
+	_, err := tx.ExecContext(ctx, "INSERT INTO run_events(run_id,event_id,sequence,request) SELECT ?,?,coalesce(max(sequence),0)+1,? FROM run_events WHERE run_id=?", j.Lease.RunID, event.ID, raw, j.Lease.RunID)
+	return err
+}
+
+// WorkflowAttempts contains sensitive inputs/prompts. Callers must authorize
+// trace access; it is not a public metadata projection.
+func (s *Store) WorkflowAttempts(ctx context.Context, group, run, after string, limit int) ([]workflow.Record, error) {
+	if limit < 1 || limit > 100 || after != "" && !manifest.ValidID(after) {
+		return nil, fmt.Errorf("invalid workflow attempt page")
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT a.record FROM workflow_attempts a JOIN runs r ON r.id=a.run_id WHERE r.group_id=? AND r.id=? AND a.id>? ORDER BY a.id LIMIT ?", group, run, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := []workflow.Record{}
+	for rows.Next() {
+		var raw []byte
+		if err = rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		record, err := evolution.Decode[workflow.Record](bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
