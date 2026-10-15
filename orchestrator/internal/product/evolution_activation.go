@@ -34,7 +34,7 @@ func (s *Store) EvolutionConfig(ctx context.Context, token, group string) (Evolu
 		if _, err := s.evolutionGroupSession(ctx, tx, token, group, "config.read"); err != nil {
 			return err
 		}
-		return tx.QueryRowContext(ctx, "SELECT group_id,desired_revision,active_revision,desired_digest,active_digest,auto_enabled,state,operation_id FROM evolution_group_configs WHERE group_id=?", group).Scan(&c.GroupID, &c.DesiredRevision, &c.ActiveRevision, &c.DesiredDigest, &c.ActiveDigest, &c.AutoEnabled, &c.State, &c.OperationID)
+		return missing(tx.QueryRowContext(ctx, "SELECT group_id,desired_revision,active_revision,desired_digest,active_digest,auto_enabled,state,operation_id FROM evolution_group_configs WHERE group_id=?", group).Scan(&c.GroupID, &c.DesiredRevision, &c.ActiveRevision, &c.DesiredDigest, &c.ActiveDigest, &c.AutoEnabled, &c.State, &c.OperationID))
 	})
 	return c, err
 }

@@ -21,6 +21,10 @@ case "${1:-all}" in
     npm --prefix volumes-studio/frontend run build
     npm --prefix volumes-studio/frontend run typecheck
     ;;
+  evolution-browser)
+    npm --prefix admin-frontend run build
+    ADMIN_EVOLUTION_BROWSER_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses/backfill$' -count=1
+    ;;
   studio-browser)
     npm --prefix volumes-studio/frontend run test:browser
     go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses$' -count=1
@@ -89,8 +93,9 @@ case "${1:-all}" in
     "$0" studio
     "$0" studio-frontend
     "$0" studio-browser
+    "$0" evolution-browser
     "$0" backend
     "$0" frontend
     ;;
-  *) echo 'Usage: scripts/check.sh [source|evaluation-space|studio|studio-frontend|studio-browser|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|frontend-edge|all]' >&2; exit 2 ;;
+  *) echo 'Usage: scripts/check.sh [source|evaluation-space|evolution-browser|studio|studio-frontend|studio-browser|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|frontend-edge|all]' >&2; exit 2 ;;
 esac

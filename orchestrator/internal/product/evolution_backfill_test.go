@@ -205,6 +205,11 @@ func TestBackfillPreviewAuditFailureAndCurrentAuthority(t *testing.T) {
 	if _, raw, err := s.BackfillInputContent(ctx, token, "fixture-users", preview.ID, "skills", "corpus"); !errors.Is(err, ErrForbidden) || raw != nil {
 		t.Fatal("revoked preview bytes returned")
 	}
+	status, err := s.EvolutionBackfillStatus(ctx, token, "fixture-users", preview.ID)
+	must(t, err)
+	if status.ID != preview.ID || status.Digest != preview.Digest || status.RequestedBy != scope.Actor || len(status.Episodes) != 0 || len(status.Budgets) != 0 || len(status.DownloadInputs) != 0 {
+		t.Fatal("cleanup status exposed evidence", status)
+	}
 	cancelled, err := s.CommandEvolutionBackfill(ctx, token, "fixture-users", preview.ID, "cancel", BackfillCommand{RequestID: "cancel-after-revoke", Digest: preview.Digest})
 	must(t, err)
 	if cancelled.State != "cancelled" || len(cancelled.Episodes) != 0 || len(cancelled.Budgets) != 0 {

@@ -2202,7 +2202,7 @@ CREATE TABLE evolution_backfills (
  configuration_revision INTEGER NOT NULL,
  operation_id TEXT NOT NULL,
  digest TEXT NOT NULL,
- preview BLOB NOT NULL CHECK(json_valid(preview)),
+ preview BLOB NOT NULL CHECK(json_valid(preview) AND coalesce(json_type(preview,'$.requested_by'),'')='text' AND json_extract(preview,'$.requested_by')=actor_id AND coalesce(json_type(preview,'$.download_inputs'),'')='object'),
  assignments BLOB NOT NULL CHECK(json_valid(assignments)),
  state TEXT NOT NULL CHECK(state IN ('preview','queued','prepared','cancelled','stale')),
  last_error TEXT NOT NULL DEFAULT '',

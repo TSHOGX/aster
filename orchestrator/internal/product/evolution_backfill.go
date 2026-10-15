@@ -35,6 +35,8 @@ type BackfillEpisode struct {
 	Truncated    bool   `json:"truncated"`
 }
 type EvolutionBackfill struct {
+	DownloadInputs        map[string][]string         `json:"download_inputs"`
+	RequestedBy           string                      `json:"requested_by"`
 	MaximumTokens         int64                       `json:"maximum_tokens"`
 	MaximumCostMicros     int64                       `json:"maximum_cost_micros"`
 	ID                    string                      `json:"id"`
@@ -143,7 +145,7 @@ func (s *Store) PreviewEvolutionBackfill(ctx context.Context, token, group strin
 		if len(needed) == 0 {
 			return ErrInvalid
 		}
-		result = EvolutionBackfill{ID: uuid.NewString(), ConfigurationRevision: p.Configuration.Revision, From: input.From, Until: input.Until, Episodes: []BackfillEpisode{}, Budgets: input.Budgets, Runs: map[string]string{}, State: "preview"}
+		result = EvolutionBackfill{ID: uuid.NewString(), RequestedBy: actor.ID, DownloadInputs: map[string][]string{}, ConfigurationRevision: p.Configuration.Revision, From: input.From, Until: input.Until, Episodes: []BackfillEpisode{}, Budgets: input.Budgets, Runs: map[string]string{}, State: "preview"}
 		for _, budget := range input.Budgets {
 			if budget.MaxTokens > math.MaxInt64-result.MaximumTokens || budget.MaxCostMicros > math.MaxInt64-result.MaximumCostMicros {
 				return ErrInvalid
@@ -261,6 +263,14 @@ func (s *Store) PreviewEvolutionBackfill(ctx context.Context, token, group strin
 					}
 				}
 				a.Pins.InputPorts[name] = ref
+				var local int
+				if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM generation_input_payloads WHERE artifact_id=?", ref.ID).Scan(&local); err != nil {
+					return err
+				}
+				if local == 1 {
+					result.DownloadInputs[binding.ID] = append(result.DownloadInputs[binding.ID], name)
+				}
+
 				seen := false
 				for _, prior := range a.Pins.Inputs {
 					if prior == ref {
@@ -513,5 +523,26 @@ func decodeBackfillPreview(raw []byte, digest string) (EvolutionBackfill, error)
 		return EvolutionBackfill{}, ErrConflict
 	}
 	result.Digest = digest
+	return result, nil
+}
+
+// EvolutionBackfillStatus exposes only the owner's cleanup identity, not selected
+// evidence. It remains available after evidence/use permission is revoked.
+func (s *Store) EvolutionBackfillStatus(ctx context.Context, token, group, id string) (EvolutionBackfill, error) {
+	var result EvolutionBackfill
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		actor, err := s.adminSession(ctx, tx, token)
+		if err != nil {
+			return err
+		}
+		err = tx.QueryRowContext(ctx, "SELECT id,actor_id,configuration_revision,digest,state,last_error FROM evolution_backfills WHERE id=? AND group_id=? AND actor_id=?", id, group, actor.ID).Scan(&result.ID, &result.RequestedBy, &result.ConfigurationRevision, &result.Digest, &result.State, &result.LastError)
+		if err != nil {
+			return missing(err)
+		}
+		return s.auditEvent(ctx, tx, actor.ID, "evolution.backfill.status", "group", group, id, result.ConfigurationRevision, nil)
+	})
+	if err != nil {
+		return EvolutionBackfill{}, err
+	}
 	return result, nil
 }

@@ -225,6 +225,18 @@ This grant provisions input authority; it does not schedule or execute a workflo
 
 ### Capture and seal authorized corpus episodes
 
+Open **Groups → select a group → Corpus and historical backfill** to inspect the active
+configuration, source policies, collector progress and queued work. The page refreshes
+current permissions and shows changed or unavailable source policies separately from
+empty sources. Administrators can explicitly grant themselves evidence access from the
+page; this audited action does not replace the source owner's reuse policy.
+
+Expand **Capture an execution or seal a snapshot** to select an approved source,
+capture a known terminal execution, seal after a chosen sequence, download a snapshot,
+or inspect a binding's successful consumption frontier. Errors retain their distinction
+from an empty successful result. These operations require current server-side authority.
+
+
 Group configuration managers need an explicit `source.read` group grant to read
 raw corpus evidence, including when they are administrators. The source must have a
 current reuse policy, include this group in its audience, and permit derivative
@@ -350,6 +362,23 @@ artifact budget within the group ceiling. Restore revoked permissions before ret
 an authority-denied assignment; its original pins remain unchanged.
 
 ### Preview and execute bounded historical backfill
+
+On the group's **Corpus and historical backfill** page, select local start/end times,
+an episode limit and bindings. Required prerequisites are included automatically. Review
+each binding's token/cost budget; expand **Advanced budget limits** for attempts, timeout
+and artifact size. Choose **Preview historical backfill** to freeze the exact selection.
+The review shows source/execution identity, family provenance, capture completeness,
+outcome and aggregate spending ceilings. Download the frozen inputs before checking
+**I reviewed the selected evidence and spending ceilings** and executing.
+
+The page retains uncertain requests in account/group-scoped tab storage. After a lost
+response or reload, choose **Check original request** to reconcile the same ID. Another
+mutation stays blocked until that result is known. The backfill ID in the URL restores
+the review after reload; **Load backfill** opens another known ID. Changed configurations
+require a fresh preview. Only the preview's original account can execute or cancel it.
+If evidence access is revoked, owners can still load the non-content status and cancel
+unprepared work; evidence details and downloads remain denied.
+
 
 An administrator with current `config.manage`, `run.start`, and explicit `source.read`
 permission can preview historical Project/session evidence without enabling automation.

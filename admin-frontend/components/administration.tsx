@@ -11,6 +11,7 @@ import { ACTIVE_APPEARANCE_KEY, clearAppearanceBinding } from "@web/appearance";
 import { useAccountPreferences } from "@web/account-preferences";
 import { PolicyList } from "./policy-list";
 import { PolicyEditor } from "./policy-editor";
+import { EvolutionCapture } from "./evolution-capture";
 import { GroupEditor } from "./group-editor";
 import { ProjectList, ProjectView } from "./project-views";
 import { UserList } from "./user-list";
@@ -85,6 +86,7 @@ export function Administration() {
         {(!route.length || route[0] === "users" && route.length === 1) ? <UserList />
           : route[0] === "users" && route.length === 2 ? <UserEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : (route[0] === "groups" || route[0] === "policies") && route.length === 1 ? <PolicyList key={route[0]} kind={route[0]} />
+          : route[0] === "groups" && route.length === 3 && route[2] === "corpus" ? <EvolutionCapture key={route[1]} group={route[1]} onDirty={setEditorDirty} />
           : route[0] === "groups" && route.length === 2 ? <GroupEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : route[0] === "policies" && route.length === 2 ? <PolicyEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : route[0] === "users" && route.length === 3 && route[2] === "configuration" ? <UserConfiguration key={route[1]} id={route[1]} onDirty={setEditorDirty} />

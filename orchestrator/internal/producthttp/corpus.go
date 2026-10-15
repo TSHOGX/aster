@@ -138,3 +138,13 @@ func (a *Authentication) backfillContent(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("ETag", `"`+ref.Digest+`"`)
 	_, _ = w.Write(raw)
 }
+
+func (a *Authentication) backfillStatus(w http.ResponseWriter, r *http.Request) {
+	value, err := a.Store.EvolutionBackfillStatus(r.Context(), requestToken(r), r.PathValue("group"), r.PathValue("backfill"))
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, 200, value)
+}

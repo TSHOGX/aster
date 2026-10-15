@@ -167,3 +167,12 @@ func (a *Authentication) evolutionConfigurationRevision(w http.ResponseWriter, r
 	}
 	writeJSON(w, 200, value)
 }
+
+func (a *Authentication) evolutionPermissions(w http.ResponseWriter, r *http.Request) {
+	value, err := a.Store.EvolutionPermissions(r.Context(), requestToken(r), r.PathValue("group"))
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, 200, value)
+}

@@ -90,10 +90,49 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	}
 	studioAddress, participantAddress, spaceAddress := address(), address(), address()
 	spaceOrigin := "http://" + spaceAddress
+	browserBackfill := mode == "backfill" && os.Getenv("ADMIN_EVOLUTION_BROWSER_TEST") == "1"
+	var adminProxy http.Handler
+	if browserBackfill {
+		adminAddress := address()
+		adminURL, _ := url.Parse("http://" + adminAddress)
+		adminProxy = &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(adminURL) }}
+		frontend := exec.CommandContext(ctx, "node", filepath.Join(root, "web/serve-standalone.mjs"), "admin-frontend", strings.Split(adminAddress, ":")[1])
+		frontend.Stdout = io.Discard
+		frontend.Stderr = os.Stderr
+		must(t, frontend.Start())
+		done := make(chan error, 1)
+		go func() { done <- frontend.Wait() }()
+		t.Cleanup(func() {
+			_ = frontend.Process.Signal(os.Interrupt)
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				_ = frontend.Process.Kill()
+				<-done
+			}
+		})
+		ready := false
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+			response, err := http.Get(adminURL.String() + "/admin")
+			if err == nil {
+				response.Body.Close()
+				ready = true
+				break
+			}
+			time.Sleep(30 * time.Millisecond)
+		}
+		if !ready {
+			t.Fatal("admin frontend unavailable")
+		}
+	}
 	var publicHandler http.Handler
 	studioURL, _ := url.Parse("http://" + studioAddress)
 	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { host := r.In.Host; r.SetURL(studioURL); r.Out.Host = host }}
 	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if adminProxy != nil && strings.HasPrefix(r.URL.Path, "/admin") {
+			adminProxy.ServeHTTP(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/volumes-studio/") {
 			proxy.ServeHTTP(w, r)
 			return
@@ -491,22 +530,40 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		must(t, err)
 		must(t, tx.Commit())
 		must(t, db.Close())
-		_, err = store.SetEvolutionGroupGrant(ctx, token, configuration.GroupID, product.EvolutionGroupGrantInput{RequestID: "backfill-source-read", AccountID: admin.ID, Action: "source.read", Effect: "allow"})
-		must(t, err)
-		budgets := map[string]evolution.Budget{}
-		for _, b := range configuration.Bindings {
-			limited := b.Budget
-			limited.MaxTokens = 200
-			limited.MaxCostMicros = 2000
-			budgets[b.ID] = limited
+		if browserBackfill {
+			resultPath := filepath.Join(t.TempDir(), "backfill-preview.json")
+			cmd := exec.CommandContext(ctx, "node", "node_modules/@playwright/test/cli.js", "test", "--config", "playwright.evolution.config.ts")
+			cmd.Dir = filepath.Join(root, "admin-frontend")
+			cmd.Env = append(os.Environ(), "ADMIN_EVOLUTION_URL="+issuer, "ADMIN_EVOLUTION_TOKEN="+token, "ADMIN_EVOLUTION_RESULT="+resultPath)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("backfill browser: %v\n%s", err, output)
+			}
+			raw, err := os.ReadFile(resultPath)
+			must(t, err)
+			var preview product.EvolutionBackfill
+			must(t, json.Unmarshal(raw, &preview))
+			if preview.State != "queued" || len(preview.Runs) != 2 {
+				t.Fatal("browser did not queue exact preview", preview)
+			}
+		} else {
+			_, err = store.SetEvolutionGroupGrant(ctx, token, configuration.GroupID, product.EvolutionGroupGrantInput{RequestID: "backfill-source-read", AccountID: admin.ID, Action: "source.read", Effect: "allow"})
+			must(t, err)
+			budgets := map[string]evolution.Budget{}
+			for _, b := range configuration.Bindings {
+				limited := b.Budget
+				limited.MaxTokens = 200
+				limited.MaxCostMicros = 2000
+				budgets[b.ID] = limited
+			}
+			preview, err := store.PreviewEvolutionBackfill(ctx, token, configuration.GroupID, product.EvolutionBackfillInput{RequestID: "preview", ConfigurationRevision: 1, From: time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339Nano), Until: time.Now().UTC().Format(time.RFC3339Nano), MaxEpisodes: 1, Budgets: budgets})
+			must(t, err)
+			if len(preview.Episodes) != 1 || preview.Episodes[0].Truncated {
+				t.Fatal("backfill fixture did not capture complete evidence", preview)
+			}
+			_, err = store.CommandEvolutionBackfill(ctx, token, configuration.GroupID, preview.ID, "execute", product.BackfillCommand{RequestID: "execute", Digest: preview.Digest})
+			must(t, err)
+
 		}
-		preview, err := store.PreviewEvolutionBackfill(ctx, token, configuration.GroupID, product.EvolutionBackfillInput{RequestID: "preview", ConfigurationRevision: 1, From: time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339Nano), Until: time.Now().UTC().Format(time.RFC3339Nano), MaxEpisodes: 1, Budgets: budgets})
-		must(t, err)
-		if len(preview.Episodes) != 1 || preview.Episodes[0].Truncated {
-			t.Fatal("backfill fixture did not capture complete evidence", preview)
-		}
-		_, err = store.CommandEvolutionBackfill(ctx, token, configuration.GroupID, preview.ID, "execute", product.BackfillCommand{RequestID: "execute", Digest: preview.Digest})
-		must(t, err)
 		transport := &lostNativeAdmission{client: evalClient}
 		dispatcher := &product.EvolutionDispatcher{Store: store, Evaluation: transport, Studio: studioClient, Issuer: issuer}
 		for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); {
