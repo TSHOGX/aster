@@ -61,3 +61,33 @@ type GenerationObservation struct {
 	Fence int64           `json:"fence"`
 	State string          `json:"state"`
 }
+
+// GenerationDependency retains the exact successful upstream output selected for
+// one input port. Batch/configuration and current authority are checked centrally.
+type GenerationDependency struct {
+	InputPort  string      `json:"input_port"`
+	BindingID  string      `json:"binding_id"`
+	RunID      string      `json:"run_id"`
+	OutputPort string      `json:"output_port"`
+	Fence      int64       `json:"fence"`
+	Artifact   ArtifactRef `json:"artifact"`
+}
+type GenerationOutputScope struct {
+	GroupID string `json:"group_id"`
+	RunID   string `json:"run_id"`
+	Port    string `json:"port"`
+	Fence   int64  `json:"fence"`
+}
+
+func (s GenerationOutputScope) Validate() error {
+	if !manifest.ValidID(s.GroupID) || !manifest.ValidID(s.RunID) || !manifest.ValidID(s.Port) || s.Fence < 1 {
+		return fmt.Errorf("invalid output scope")
+	}
+	return nil
+}
+
+type GenerationOutput struct {
+	Scope    GenerationOutputScope `json:"scope"`
+	Workflow Revision              `json:"workflow"`
+	Artifact ArtifactRef           `json:"artifact"`
+}

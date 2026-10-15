@@ -98,6 +98,9 @@ func (s *Store) SetGenerationInputGrant(ctx context.Context, token, group string
 	return revision, err
 }
 func (s *Store) checkGeneration(ctx context.Context, q queryer, input evolution.GenerationAssignment, admission bool) (evolution.Configuration, error) {
+	return s.checkGenerationTree(ctx, q, input, admission, map[string]bool{})
+}
+func (s *Store) checkGenerationTree(ctx context.Context, q queryer, input evolution.GenerationAssignment, admission bool, checked map[string]bool) (evolution.Configuration, error) {
 	var config evolution.Configuration
 	if _, err := input.Digest(); err != nil {
 		return config, ErrInvalid
@@ -159,7 +162,21 @@ func (s *Store) checkGeneration(ctx context.Context, q queryer, input evolution.
 			}
 		}
 	}
+	if err := s.checkGenerationDependencies(ctx, q, input, checked); err != nil {
+		return config, err
+	}
 	for _, artifact := range input.Pins.Inputs {
+		derived := false
+		for _, dep := range input.Pins.Dependencies {
+			if dep.Artifact == artifact {
+				derived = true
+				break
+			}
+		}
+		if derived {
+			continue
+		}
+
 		var artifactRaw, sourcesRaw []byte
 		var enabled bool
 		if err = q.QueryRowContext(ctx, "SELECT artifact,sources,enabled FROM generation_input_grants WHERE group_id=? AND artifact_id=?", input.GroupID, artifact.ID).Scan(&artifactRaw, &sourcesRaw, &enabled); err != nil {

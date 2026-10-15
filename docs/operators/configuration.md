@@ -468,7 +468,7 @@ store's 64 MiB per-artifact bound and requires native configuration to be enable
 
 
 With both central participant connections and identity configured, the central
-service also runs automatic generation dispatch for independent bindings. Declare
+service also runs automatic generation dispatch. Declare
 workflow input ports in the active binding and enable its schedule or event trigger.
 The dispatcher reads Studio output bases through the authenticated
 `/volumes-studio/internal/v1/evolution/bases` route, freezes a batch, reserves central
@@ -481,6 +481,10 @@ Inspect the group's trigger metadata for pending reasons and dispatch errors. On
 uncertain admission response, the dispatcher reuses the stored run ID and assignment;
 restart does not select a new base or input range. Disabling automation supersedes
 unadmitted assignments and lets admitted work drain under current authority. Do not
-remove pending assignment or authorization records to force a retry. Bindings with
-typed cross-binding dependencies remain pending until their dependency input mapping
-is available.
+remove pending assignment or authorization records to force a retry. For typed cross-binding dependencies, the dispatcher retains waiting consumer plans
+and reads exact successful output references from
+`POST /evaluation-space/internal/v1/generation/output`. This private route requires
+the producer's exact group, run, output port and winning fence plus current central
+read authority. It exposes only declared output ports from the completed workflow
+checkpoint. Failed prerequisites mark consumers skipped; output-transport outages
+remain retryable without changing the batch's original pins.

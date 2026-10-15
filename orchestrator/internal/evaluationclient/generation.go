@@ -77,3 +77,29 @@ func (c *Client) generationResponse(request *http.Request) ([]byte, error) {
 	}
 	return raw, nil
 }
+
+func (c *Client) GenerationOutput(ctx context.Context, scope evolution.GenerationOutputScope) (evolution.GenerationOutput, error) {
+	var output evolution.GenerationOutput
+	if scope.Validate() != nil {
+		return output, fmt.Errorf("invalid generation output scope")
+	}
+	raw, _ := json.Marshal(scope)
+	request, err := http.NewRequestWithContext(ctx, "POST", c.endpoint+"/evaluation-space/internal/v1/generation/output", bytes.NewReader(raw))
+	if err != nil {
+		return output, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.SetBasicAuth("central", c.secret)
+	raw, err = c.generationResponse(request)
+	if err != nil {
+		return output, err
+	}
+	output, err = evolution.Decode[evolution.GenerationOutput](bytes.NewReader(raw))
+	if err != nil {
+		return output, err
+	}
+	if output.Scope != scope || output.Workflow.Validate() != nil || output.Artifact.Validate() != nil || output.Artifact.GroupID != scope.GroupID {
+		return evolution.GenerationOutput{}, fmt.Errorf("generation output receipt mismatch")
+	}
+	return output, nil
+}

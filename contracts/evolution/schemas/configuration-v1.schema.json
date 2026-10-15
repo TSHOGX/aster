@@ -121,11 +121,30 @@
       ],
       "type": "object"
     },
+    "BindingDependency": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_id": {
+          "type": "string"
+        },
+        "output_port": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_id",
+        "output_port"
+      ],
+      "type": "object"
+    },
     "BindingInput": {
       "additionalProperties": false,
       "properties": {
         "artifact": {
           "$ref": "#/$defs/ArtifactRef"
+        },
+        "dependency": {
+          "$ref": "#/$defs/BindingDependency"
         },
         "sources": {
           "items": {

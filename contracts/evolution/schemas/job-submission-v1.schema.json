@@ -117,6 +117,38 @@
       ],
       "type": "object"
     },
+    "GenerationDependency": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "binding_id": {
+          "type": "string"
+        },
+        "fence": {
+          "type": "integer"
+        },
+        "input_port": {
+          "type": "string"
+        },
+        "output_port": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "input_port",
+        "binding_id",
+        "run_id",
+        "output_port",
+        "fence",
+        "artifact"
+      ],
+      "type": "object"
+    },
     "JobSubmission": {
       "additionalProperties": false,
       "properties": {
@@ -233,6 +265,15 @@
         },
         "configuration_revision": {
           "type": "integer"
+        },
+        "dependencies": {
+          "items": {
+            "$ref": "#/$defs/GenerationDependency"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "evaluation": {
           "$ref": "#/$defs/EvaluationPolicy"

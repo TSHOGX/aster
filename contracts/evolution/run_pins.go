@@ -57,9 +57,22 @@ func (p RunPins) ValidateFor(config Configuration, bindingID string) error {
 		}
 		for name, spec := range selected.Inputs {
 			ref, ok := p.InputPorts[name]
-			if !ok || spec.Artifact != nil && ref != *spec.Artifact || spec.Artifact == nil && ref.SchemaDigest != Digest(CorpusSchema) {
+			if !ok || spec.Artifact != nil && ref != *spec.Artifact || spec.Artifact == nil && spec.Dependency == nil && ref.SchemaDigest != Digest(CorpusSchema) {
 				return fmt.Errorf("run input differs from binding")
 			}
+		}
+	}
+	deps := map[string]bool{}
+	for _, d := range p.Dependencies {
+		spec, ok := selected.Inputs[d.InputPort]
+		if !ok || spec.Dependency == nil || deps[d.InputPort] || d.BindingID != spec.Dependency.BindingID || d.OutputPort != spec.Dependency.OutputPort || !manifest.ValidID(d.RunID) || d.Fence < 1 || d.Artifact.Validate() != nil || p.InputPorts[d.InputPort] != d.Artifact {
+			return fmt.Errorf("invalid dependency pin")
+		}
+		deps[d.InputPort] = true
+	}
+	for name, spec := range selected.Inputs {
+		if spec.Dependency != nil && !deps[name] {
+			return fmt.Errorf("dependency pin required")
 		}
 	}
 	for name, artifact := range p.InputPorts {

@@ -27,6 +27,7 @@ type EvolutionDispatcher struct {
 	Studio                        EvolutionBaseTransport
 	Issuer                        string
 	prepareCursor, dispatchCursor string
+	dependencyCursor              string
 }
 
 func (w *EvolutionDispatcher) Step(ctx context.Context) error {
@@ -34,7 +35,7 @@ func (w *EvolutionDispatcher) Step(ctx context.Context) error {
 		return nil
 	}
 	// Preparation and replay each get a bounded opportunity on every tick.
-	return errors.Join(w.prepare(ctx), w.dispatch(ctx))
+	return errors.Join(w.prepare(ctx), w.resolveDependencies(ctx), w.dispatch(ctx))
 }
 func (w *EvolutionDispatcher) prepare(ctx context.Context) error {
 	var group, operation string
@@ -42,6 +43,7 @@ func (w *EvolutionDispatcher) prepare(ctx context.Context) error {
  WHERE g.state='active' AND g.auto_enabled=1 AND g.group_id>? AND EXISTS(SELECT 1 FROM evolution_trigger_occurrences o
  WHERE o.group_id=g.group_id AND o.configuration_revision=g.active_revision AND o.state='pending'
  AND NOT EXISTS(SELECT 1 FROM generation_dispatches d LEFT JOIN generation_authorizations a ON a.run_id=d.run_id WHERE d.group_id=o.group_id AND d.binding_id=o.binding_id AND (d.state='pending' OR (d.state='dispatched' AND a.settlement IS NULL)))
+ AND NOT EXISTS(SELECT 1 FROM generation_preparations p WHERE p.group_id=o.group_id AND p.binding_id=o.binding_id AND p.state='waiting')
  AND NOT EXISTS(SELECT 1 FROM generation_authorizations a WHERE a.group_id=o.group_id AND a.binding_id=o.binding_id AND a.settlement IS NULL)) ORDER BY g.group_id LIMIT 1`, w.prepareCursor).Scan(&group, &operation)
 	if errors.Is(err, sql.ErrNoRows) {
 		w.prepareCursor = ""
@@ -85,7 +87,8 @@ func (s *Store) freezeEvolutionBatch(ctx context.Context, p evaluationclient.Pro
 			return err
 		}
 		batch := uuid.NewString()
-		for _, binding := range p.Configuration.Bindings {
+		planned := map[string]string{}
+		for _, binding := range dependencyOrder(p.Configuration) {
 			if !binding.Enabled || binding.Trigger == "manual" {
 				continue
 			}
@@ -93,17 +96,29 @@ func (s *Store) freezeEvolutionBatch(ctx context.Context, p evaluationclient.Pro
 			var rangesRaw []byte
 			err = tx.QueryRowContext(ctx, `SELECT id,ranges FROM evolution_trigger_occurrences o WHERE group_id=? AND binding_id=? AND configuration_revision=? AND state='pending'
     AND NOT EXISTS(SELECT 1 FROM generation_dispatches d LEFT JOIN generation_authorizations a ON a.run_id=d.run_id WHERE d.group_id=o.group_id AND d.binding_id=o.binding_id AND (d.state='pending' OR (d.state='dispatched' AND a.settlement IS NULL)))
-    AND NOT EXISTS(SELECT 1 FROM generation_authorizations a WHERE a.group_id=o.group_id AND a.binding_id=o.binding_id AND a.settlement IS NULL)`, p.Configuration.GroupID, binding.ID, p.Configuration.Revision).Scan(&occurrence, &rangesRaw)
+    AND NOT EXISTS(SELECT 1 FROM generation_preparations p WHERE p.group_id=o.group_id AND p.binding_id=o.binding_id AND p.state='waiting')
+ AND NOT EXISTS(SELECT 1 FROM generation_authorizations a WHERE a.group_id=o.group_id AND a.binding_id=o.binding_id AND a.settlement IS NULL)`, p.Configuration.GroupID, binding.ID, p.Configuration.Revision).Scan(&occurrence, &rangesRaw)
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
 			if err != nil {
 				return err
 			}
-			// Dependency artifacts require a typed dependency input mapping. Until one
-			// exists, retaining pending work is safer than running it without its inputs.
-			if len(binding.DependsOn) > 0 {
-				if _, err = tx.ExecContext(ctx, "UPDATE evolution_trigger_occurrences SET last_error='dependency_input_required' WHERE id=?", occurrence); err != nil {
+			dependencies := map[string]generationDependencyPlan{}
+			available := true
+			for name, input := range binding.Inputs {
+				if input.Dependency == nil {
+					continue
+				}
+				run, ok := planned[input.Dependency.BindingID]
+				if !ok {
+					available = false
+					break
+				}
+				dependencies[name] = generationDependencyPlan{BindingID: input.Dependency.BindingID, RunID: run, OutputPort: input.Dependency.OutputPort}
+			}
+			if !available {
+				if _, err = tx.ExecContext(ctx, "UPDATE evolution_trigger_occurrences SET last_error='dependency_occurrence_pending' WHERE id=?", occurrence); err != nil {
 					return err
 				}
 				continue
@@ -147,13 +162,21 @@ func (s *Store) freezeEvolutionBatch(ctx context.Context, p evaluationclient.Pro
 			}
 			assignment := evolution.GenerationAssignment{RunID: uuid.NewString(), BatchID: batch, GroupID: p.Configuration.GroupID, BindingID: binding.ID, OccurrenceID: occurrence, Requester: evolution.Principal{Issuer: issuer, Subject: actor.ID, Kind: "human"}, Automatic: true, Budget: binding.Budget,
 				Pins: evolution.RunPins{ConfigurationRevision: p.Configuration.Revision, ConfigurationDigest: p.Digest, SourcePolicyRevision: revision, Template: binding.Template, Workflow: binding.Workflow, Service: binding.Service, Inputs: inputs, InputPorts: ports, Base: base, Output: binding.Output, Evaluation: binding.Evaluation}}
-			if _, err = s.checkGeneration(ctx, tx, assignment, true); err != nil {
-				return err
-			}
 			raw, _ := json.Marshal(assignment)
-			if _, err = tx.ExecContext(ctx, "INSERT INTO generation_dispatches(run_id,batch_id,group_id,binding_id,occurrence_id,assignment,state,created_at) VALUES(?,?,?,?,?,?,'pending',?)", assignment.RunID, batch, assignment.GroupID, binding.ID, occurrence, raw, s.timestamp()); err != nil {
-				return err
+			if len(dependencies) == 0 {
+				if _, err = s.checkGeneration(ctx, tx, assignment, true); err != nil {
+					return err
+				}
+				if _, err = tx.ExecContext(ctx, "INSERT INTO generation_dispatches(run_id,batch_id,group_id,binding_id,occurrence_id,assignment,state,created_at) VALUES(?,?,?,?,?,?,'pending',?)", assignment.RunID, batch, assignment.GroupID, binding.ID, occurrence, raw, s.timestamp()); err != nil {
+					return err
+				}
+			} else {
+				refs, _ := json.Marshal(dependencies)
+				if _, err = tx.ExecContext(ctx, "INSERT INTO generation_preparations VALUES(?,?,?,?,?,?,?,'waiting','dependency_pending',?)", assignment.RunID, batch, assignment.GroupID, binding.ID, occurrence, raw, refs, s.timestamp()); err != nil {
+					return err
+				}
 			}
+			planned[binding.ID] = assignment.RunID
 			if _, err = tx.ExecContext(ctx, "UPDATE evolution_trigger_occurrences SET state='frozen',last_error='',run_id=? WHERE id=? AND state='pending'", assignment.RunID, occurrence); err != nil {
 				return err
 			}

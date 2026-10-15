@@ -34,7 +34,7 @@ func NewGenerationAPI(store *projections.Store, central GenerationCentral, secre
 }
 func (a *GenerationAPI) Handler() http.Handler {
 	mux := http.NewServeMux()
-	for _, action := range []string{"admit", "read", "control", "seal-input"} {
+	for _, action := range []string{"admit", "read", "control", "seal-input", "output"} {
 		action := action
 		mux.HandleFunc("POST /evaluation-space/internal/v1/generation/"+action, func(w http.ResponseWriter, r *http.Request) { a.serve(w, r, action) })
 	}
@@ -79,6 +79,24 @@ func (a *GenerationAPI) serve(w http.ResponseWriter, r *http.Request, action str
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "application/json" {
 		write(w, 415, map[string]string{"error": "json_required"})
+		return
+	}
+	if action == "output" {
+		scope, err := evolution.Decode[evolution.GenerationOutputScope](http.MaxBytesReader(w, r.Body, 1<<16))
+		if err != nil || scope.Validate() != nil {
+			write(w, 400, map[string]string{"error": "invalid_output_scope"})
+			return
+		}
+		_, grant, err := a.Store.GenerationGrant(r.Context(), scope.GroupID, scope.RunID)
+		if err == nil {
+			_, err = a.Central.ResolveGeneration(r.Context(), evolution.GenerationGrantScope{Grant: grant, Action: "read", Fence: scope.Fence})
+		}
+		if err != nil {
+			write(w, 403, map[string]string{"error": "generation_authority_required"})
+			return
+		}
+		result, err := a.Store.GenerationOutput(r.Context(), scope)
+		a.reply(w, result, err)
 		return
 	}
 	if action == "admit" {

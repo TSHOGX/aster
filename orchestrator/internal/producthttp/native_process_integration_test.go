@@ -50,12 +50,18 @@ func (l *lostNativeAdmission) AdmitGeneration(ctx context.Context, a evolution.G
 	return result, nil
 }
 
+func (l *lostNativeAdmission) GenerationOutput(ctx context.Context, scope evolution.GenerationOutputScope) (evolution.GenerationOutput, error) {
+	return l.client.GenerationOutput(ctx, scope)
+}
+
 func TestNativeGenerationRealProcesses(t *testing.T) {
-	for _, mode := range []string{"success", "sibling-failure", "lost-model-reply", "automatic"} {
+	for _, mode := range []string{"success", "sibling-failure", "lost-model-reply", "automatic", "dependencies", "dependency-failure"} {
 		t.Run(mode, func(t *testing.T) { nativeGenerationProcesses(t, mode) })
 	}
 }
 func nativeGenerationProcesses(t *testing.T, mode string) {
+	dependent := mode == "dependencies" || mode == "dependency-failure"
+	automatic := mode == "automatic" || dependent
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	root, err := filepath.Abs("../../..")
@@ -175,6 +181,11 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		proposal := map[string]any{"id": "verified", "title": "Verified task", "body": "Perform the task and verify the output.", "evidence_ids": []string{"episode"}, "status": "supported"}
 		var outputs any
 		switch submission.Call.Node.ID {
+		case "integrate":
+			if !bytes.Contains(submission.Call.Inputs["upstream"], []byte("Evidence IDs: episode")) {
+				t.Error("dependent workflow did not receive actual upstream artifact")
+			}
+			outputs = map[string]any{"candidate": map[string]any{"files": []any{map[string]any{"path": "verified.md", "text": "Reviewed upstream skill. Evidence IDs: episode"}}, "held": []any{}}}
 		case "extract":
 			outputs = map[string]any{"items": []any{proposal}}
 		case "draft":
@@ -192,7 +203,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			return
 		}
 		raw, _ := json.Marshal(map[string]any{"run_id": submission.RunID, "call_id": submission.CallID, "idempotency_key": submission.Key, "request_digest": submission.Digest, "model": modelRef, "provider_request_id": key, "state": "completed", "usage": map[string]int{"tokens": 4, "cost_micros": 7}, "outputs": outputs, "response_model": "native-fixture-v1", "tool_trace_state": "complete", "tools": []any{}})
-		if mode == "sibling-failure" && runID == "example-corrections" {
+		if mode == "sibling-failure" && runID == "example-corrections" || mode == "dependency-failure" && submission.Call.Node.ID == "draft" {
 			var value map[string]any
 			must(t, json.Unmarshal(raw, &value))
 			value["state"] = "failed"
@@ -225,6 +236,28 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		Schemas map[string]json.RawMessage `json:"schemas"`
 	}
 	must(t, json.Unmarshal(output, &packages))
+	var dependentTemplate evolution.Template
+	if dependent {
+		schema := packages[0].Template.Outputs["candidate"]
+		prompt := "Review this successful upstream candidate: {{upstream}}"
+		graph := evolution.Workflow{SchemaVersion: 1, ID: "dependent-review", ParametersSchema: json.RawMessage(`{"type":"object","additionalProperties":false}`), Inputs: map[string]string{"upstream": schema}, Outputs: map[string]string{"candidate": schema}, Nodes: []evolution.Node{{ID: "integrate", Kind: "agent", InputPorts: map[string]string{"upstream": schema}, OutputPorts: map[string]string{"candidate": schema}, ModelRef: &modelRef, Prompt: &evolution.Prompt{Text: prompt, Variables: []string{"upstream"}, Digest: evolution.Digest([]byte(prompt))}, MaxAttempts: 1, TimeoutSeconds: 30}}, Edges: []evolution.Edge{{From: "$input.upstream", To: "integrate.upstream"}, {From: "integrate.candidate", To: "$output.candidate"}}, Limits: evolution.Limits{MaxParallelNodes: 1, MaxTotalAttempts: 2, TimeoutSeconds: 60}}
+		graphRaw, err := graph.Canonical()
+		must(t, err)
+		ref := evolution.Revision{ID: graph.ID, Revision: 1, Digest: evolution.Digest(graphRaw)}
+		publish := func(kind string, ref evolution.Revision, body any) {
+			raw, _ := json.Marshal(map[string]any{"kind": kind, "ref": ref, "body": body})
+			cmd := exec.CommandContext(ctx, catalog, "--state-directory", spaceDirectory)
+			cmd.Stdin = bytes.NewReader(raw)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("dependency publication: %v %s", err, output)
+			}
+		}
+		publish("workflow", ref, graph)
+		dependentTemplate = evolution.Template{Ref: evolution.Revision{ID: "dependent-review", Revision: 1}, Goal: "Review upstream skill", ParametersSchema: graph.ParametersSchema, Inputs: graph.Inputs, Outputs: graph.Outputs, Profile: "shared-assets-v1", Workflows: []evolution.Revision{ref}, SuggestedPrefix: "reviewed", Evaluation: evolution.EvaluationPolicy{Mode: "disabled", ReferenceStrategy: "none"}}
+		dependentTemplate.Ref.Digest, err = evolution.DefinitionDigest(dependentTemplate)
+		must(t, err)
+		publish("template", dependentTemplate.Ref, dependentTemplate)
+	}
 	service := evolution.Service{Ref: evolution.Revision{ID: "native-service", Revision: 1}, Kind: "evolution", ConnectionID: "native", RunnerDigest: evolution.Digest([]byte("native-runner")), Enabled: true, Capabilities: evolution.Capabilities{ProtocolVersion: 1, WorkflowVersions: []int{1}, NodeKinds: []string{"agent", "validator", "transform", "loop"}}}
 	service.Ref.Digest, err = evolution.DefinitionDigest(service)
 	must(t, err)
@@ -304,7 +337,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	for _, pkg := range packages {
 		configuration.Bindings = append(configuration.Bindings, evolution.Binding{ID: pkg.Template.Ref.ID, Enabled: true, Template: pkg.Template.Ref, Workflow: pkg.Template.Workflows[0], Service: service.Ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: pkg.Template.SuggestedPrefix, Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: pkg.Template.Evaluation, Budget: budget, Trigger: "manual"})
 	}
-	if mode == "automatic" {
+	if automatic {
 		configuration.AutoEnabled = true
 		for i := range configuration.Bindings {
 			configuration.Bindings[i].Trigger = "schedule"
@@ -312,6 +345,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			configuration.Bindings[i].Timezone = "Asia/Shanghai"
 			configuration.Bindings[i].Inputs = map[string]evolution.BindingInput{"corpus": {Artifact: &artifact}}
 		}
+	}
+	if dependent {
+		configuration.Bindings = append(configuration.Bindings, evolution.Binding{ID: dependentTemplate.Ref.ID, Enabled: true, Template: dependentTemplate.Ref, Workflow: dependentTemplate.Workflows[0], Service: service.Ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: "reviewed", Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: dependentTemplate.Evaluation, Budget: budget, Trigger: "schedule", Schedule: "@every 1m", Timezone: "Asia/Shanghai", DependsOn: []string{"example-skills"}, Inputs: map[string]evolution.BindingInput{"upstream": {Dependency: &evolution.BindingDependency{BindingID: "example-skills", OutputPort: "candidate"}}}})
 	}
 	pending, err := store.ActivateEvolutionConfig(ctx, token, configuration.GroupID, product.EvolutionActivationInput{RequestID: "activate", Configuration: configuration})
 	must(t, err)
@@ -421,7 +457,8 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		return response.StatusCode, raw
 	}
 	runIDs := map[string]string{}
-	if mode == "automatic" {
+	skipped := map[string]bool{}
+	if automatic {
 		triggers := &product.EvolutionTriggerWorker{Store: store}
 		transport := &lostNativeAdmission{client: evalClient}
 		dispatcher := &product.EvolutionDispatcher{Store: store, Evaluation: transport, Studio: studioClient, Issuer: issuer}
@@ -435,6 +472,10 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			page, err := store.EvolutionTriggers(ctx, token, configuration.GroupID, 0)
 			must(t, err)
 			for _, item := range page.Items {
+				if item.DispatchState == "skipped" {
+					skipped[item.BindingID] = true
+					runIDs[item.BindingID] = item.RunID
+				}
 				if item.DispatchState == "dispatched" {
 					runIDs[item.BindingID] = item.RunID
 				}
@@ -444,10 +485,10 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
-		if transport.calls != 3 {
+		if transport.calls != len(configuration.Bindings)-len(skipped)+1 {
 			t.Fatal("admission response loss did not replay exactly", transport.calls)
 		}
-		if len(runIDs) != 2 {
+		if len(runIDs) != len(configuration.Bindings) {
 			t.Fatal("automatic schedule not dispatched", runIDs)
 		}
 	} else {
@@ -463,7 +504,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 
 	}
 	branches := map[string]string{}
-	failed := map[string]bool{}
+	failed := skipped
 	for deadline := time.Now().Add(35 * time.Second); time.Now().Before(deadline); {
 		for _, binding := range configuration.Bindings {
 			if branches[binding.ID] != "" || failed[binding.ID] {
@@ -480,7 +521,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			}
 			must(t, json.Unmarshal(raw, &state))
 			if state.State == "failed" {
-				if mode == "sibling-failure" && binding.ID == "example-corrections" {
+				if mode == "sibling-failure" && binding.ID == "example-corrections" || mode == "dependency-failure" && binding.ID == "example-skills" {
 					failed[binding.ID] = true
 					continue
 				}
@@ -495,7 +536,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if len(branches)+len(failed) != 2 {
+	if len(branches)+len(failed) != len(configuration.Bindings) {
 		t.Fatal("native handoff not settled", branches)
 	}
 	var unchanged evolution.ContentRef
@@ -516,7 +557,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		if branch.Initial != main.CommitID {
 			t.Fatal("different generation base")
 		}
-		path := "lessons/verified.md"
+		path := binding.Output.Prefix + "/verified.md"
 		if binding.Output.Prefix == "skills" {
 			path = "skills/verified/SKILL.md"
 		}
@@ -534,8 +575,22 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	}
 	modelMu.Lock()
 	skillCalls, correctionCalls := calls[runIDs["example-skills"]], calls[runIDs["example-corrections"]]
+	dependentCalls := calls[runIDs["dependent-review"]]
 	modelMu.Unlock()
-	if skillCalls != 2 || correctionCalls != 1 {
+	expectedSkills := 2
+	if mode == "dependency-failure" {
+		expectedSkills = 1
+	}
+	if dependent {
+		expected := 1
+		if mode == "dependency-failure" {
+			expected = 0
+		}
+		if dependentCalls != expected {
+			t.Fatal("dependent model calls", dependentCalls)
+		}
+	}
+	if skillCalls != expectedSkills || correctionCalls != 1 {
 		t.Fatal("independent graph model calls", skillCalls, correctionCalls)
 	}
 }

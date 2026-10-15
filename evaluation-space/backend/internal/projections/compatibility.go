@@ -27,6 +27,24 @@ func validateConfigurationCatalog(ctx context.Context, tx *sql.Tx, config evolut
 		if err != nil {
 			return fmt.Errorf("binding %s workflow: %w", binding.ID, err)
 		}
+		for name, input := range binding.Inputs {
+			if input.Dependency == nil {
+				continue
+			}
+			for _, upstream := range config.Bindings {
+				if upstream.ID != input.Dependency.BindingID {
+					continue
+				}
+				graph, err := resolver.ResolveWorkflow(ctx, upstream.Workflow)
+				if err != nil {
+					return err
+				}
+				schema, ok := graph.Outputs[input.Dependency.OutputPort]
+				if !ok || schema != workflow.Inputs[name] {
+					return fmt.Errorf("binding dependency schema mismatch")
+				}
+			}
+		}
 		if err = binding.ValidateInputPorts(workflow); err != nil {
 			return err
 		}

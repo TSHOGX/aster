@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "GenerationOutputScope": {
+      "additionalProperties": false,
+      "properties": {
+        "fence": {
+          "type": "integer"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "port": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "group_id",
+        "run_id",
+        "port",
+        "fence"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/GenerationOutputScope",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

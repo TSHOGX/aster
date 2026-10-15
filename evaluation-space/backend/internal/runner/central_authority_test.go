@@ -1,8 +1,13 @@
 package runner
 
 import (
+	"aster/evaluation-space/internal/httpapi"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,6 +145,53 @@ func TestCentralNativeWorkerCompletesAndSettlesExactGrant(t *testing.T) {
 	if err != nil || checkpoint.Artifact.GrantID != grant.ID {
 		t.Fatal("output grant not bound", checkpoint, err)
 	}
+	scope := evolution.GenerationOutputScope{GroupID: run.GroupID, RunID: run.ID, Port: "value", Fence: completed.Fence}
+	output, err := store.GenerationOutput(ctx, scope)
+	if err != nil || output.Artifact.GrantID != grant.ID || output.Artifact.SchemaDigest != run.Pins.InputPorts["value"].SchemaDigest {
+		t.Fatal("typed output absent", output, err)
+	}
+	raw, err := store.Artifact(ctx, output.Artifact)
+	if err != nil || string(raw) != `"MODEL OUTPUT"` {
+		t.Fatal("typed output value", string(raw), err)
+	}
+	replay, err := store.GenerationOutput(ctx, scope)
+	if err != nil || replay != output {
+		t.Fatal("typed output replay changed", replay, err)
+	}
+	api, err := httpapi.NewGenerationAPI(store, central, strings.Repeat("s", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := func(scope evolution.GenerationOutputScope, user string) int {
+		raw, _ := json.Marshal(scope)
+		request := httptest.NewRequest("POST", "/evaluation-space/internal/v1/generation/output", bytes.NewReader(raw))
+		request.SetBasicAuth(user, strings.Repeat("s", 32))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		api.Handler().ServeHTTP(response, request)
+		return response.Code
+	}
+	if status := call(scope, "central"); status != 200 {
+		t.Fatal("output route", status)
+	}
+	if status := call(scope, "producer"); status != 403 {
+		t.Fatal("producer borrowed output read", status)
+	}
+	wrong := scope
+	wrong.Port = "unknown"
+	if status := call(wrong, "central"); status != 404 {
+		t.Fatal("undeclared output port", status)
+	}
+	wrong = scope
+	wrong.Fence++
+	if status := call(wrong, "central"); status == 200 {
+		t.Fatal("wrong output fence accepted")
+	}
+	central.deny = true
+	if status := call(scope, "central"); status != 403 {
+		t.Fatal("revoked output read", status)
+	}
+	central.deny = false
 	// A foreign artifact with an otherwise plausible output grant is still denied.
 	artifact := checkpoint.Artifact
 	artifact.GroupID = "other"
@@ -172,4 +224,18 @@ func TestCentralAuthorityRejectsSubstitutedRunPinsAndOutputGrant(t *testing.T) {
 	if err = authority.AuthorizeArtifact(ctx, run, artifact); !errors.Is(err, projections.ErrConflict) {
 		t.Fatal("foreign output grant", err)
 	}
+}
+
+func (c *centralGeneration) AuthorizeGenerationInput(context.Context, evolution.ArtifactRef) error {
+	if c.deny {
+		return errors.New("denied")
+	}
+	return nil
+}
+func (c *centralGeneration) AdmitGeneration(_ context.Context, a evolution.GenerationAssignment) (evolution.GenerationGrant, error) {
+	digest, err := a.Digest()
+	if err != nil || digest != c.grant.AssignmentDigest {
+		return evolution.GenerationGrant{}, errors.New("denied")
+	}
+	return c.grant, nil
 }

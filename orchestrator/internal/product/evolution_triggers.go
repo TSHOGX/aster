@@ -80,6 +80,10 @@ func (s *Store) resetEvolutionTriggers(ctx context.Context, tx *sql.Tx, config e
 	return nil
 }
 func clearEvolutionTriggers(ctx context.Context, tx *sql.Tx, group string) error {
+	if _, err := tx.ExecContext(ctx, "UPDATE generation_preparations SET state='superseded',last_error='' WHERE group_id=? AND state='waiting'", group); err != nil {
+		return err
+	}
+
 	// No remote effect can exist without the central admission retained first.
 	// Supersede only unadmitted assignments; admitted work keeps exact replay rights.
 	if _, err := tx.ExecContext(ctx, "UPDATE generation_dispatches SET state='superseded',last_error='' WHERE group_id=? AND state='pending' AND NOT EXISTS(SELECT 1 FROM generation_authorizations a WHERE a.run_id=generation_dispatches.run_id)", group); err != nil {
@@ -109,7 +113,7 @@ func (s *Store) EvolutionTriggers(ctx context.Context, token, group string, afte
 		if _, err := s.evolutionGroupSession(ctx, tx, token, group, "config.read"); err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, "SELECT o.rowid,o.id,o.binding_id,o.configuration_revision,o.trigger_kind,o.state,o.first_at,o.latest_at,o.ranges,o.run_id,o.last_error,coalesce(d.state,''),coalesce(d.last_error,'') FROM evolution_trigger_occurrences o LEFT JOIN generation_dispatches d ON d.occurrence_id=o.id WHERE o.group_id=? AND o.rowid>? ORDER BY o.rowid LIMIT 50", group, after)
+		rows, err := tx.QueryContext(ctx, "SELECT o.rowid,o.id,o.binding_id,o.configuration_revision,o.trigger_kind,o.state,o.first_at,o.latest_at,o.ranges,o.run_id,o.last_error,coalesce(d.state,p.state,''),coalesce(d.last_error,p.last_error,'') FROM evolution_trigger_occurrences o LEFT JOIN generation_dispatches d ON d.occurrence_id=o.id LEFT JOIN generation_preparations p ON p.occurrence_id=o.id WHERE o.group_id=? AND o.rowid>? ORDER BY o.rowid LIMIT 50", group, after)
 		if err != nil {
 			return err
 		}

@@ -120,3 +120,36 @@ func TestAutomaticInputDeclarationsAndWorkflowPortSchemas(t *testing.T) {
 		t.Fatal("unbound source accepted")
 	}
 }
+
+func TestTypedBindingDependencyDeclarations(t *testing.T) {
+	c := configFixture()
+	parent := c.Bindings[0]
+	child := &c.Bindings[1]
+	child.DependsOn = []string{parent.ID}
+	child.Inputs = map[string]BindingInput{"upstream": {Dependency: &BindingDependency{BindingID: parent.ID, OutputPort: "candidate"}}}
+	if err := c.Validate(); err != nil {
+		t.Fatal("valid typed dependency rejected", err)
+	}
+	child.DependsOn = nil
+	if c.Validate() == nil {
+		t.Fatal("undeclared dependency input accepted")
+	}
+	child.DependsOn = []string{parent.ID}
+	child.Inputs = nil
+	if c.Validate() == nil {
+		t.Fatal("untyped dependency accepted")
+	}
+	child.Inputs = map[string]BindingInput{"upstream": {Sources: []string{"corpus"}, Dependency: &BindingDependency{BindingID: parent.ID, OutputPort: "candidate"}}}
+	if c.Validate() == nil {
+		t.Fatal("ambiguous dependency input accepted")
+	}
+	child.Inputs = map[string]BindingInput{"upstream": {Dependency: &BindingDependency{BindingID: parent.ID, OutputPort: "candidate"}}}
+	alias := c.Sources[0]
+	alias.ID = "other"
+	alias.ResourceID = "other-resource"
+	c.Sources = append(c.Sources, alias)
+	child.SourceIDs = []string{"other"}
+	if c.Validate() == nil {
+		t.Fatal("dependency silently inherited undeclared sources")
+	}
+}

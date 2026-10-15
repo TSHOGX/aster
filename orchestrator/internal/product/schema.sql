@@ -2157,3 +2157,29 @@ CREATE TABLE generation_input_payloads (
 );
 CREATE TRIGGER immutable_generation_payload BEFORE UPDATE ON generation_input_payloads
 BEGIN SELECT RAISE(ABORT,'immutable generation input'); END;
+
+CREATE TABLE generation_preparations (
+ run_id TEXT PRIMARY KEY,
+ batch_id TEXT NOT NULL,
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ binding_id TEXT NOT NULL,
+ occurrence_id TEXT NOT NULL UNIQUE REFERENCES evolution_trigger_occurrences(id),
+ assignment BLOB NOT NULL CHECK(json_valid(assignment)),
+ dependencies BLOB NOT NULL CHECK(json_valid(dependencies)),
+ state TEXT NOT NULL CHECK(state IN ('waiting','resolved','skipped','superseded')),
+ last_error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL
+);
+CREATE INDEX generation_preparation_group ON generation_preparations(group_id,binding_id,state);
+CREATE TRIGGER immutable_generation_preparation BEFORE UPDATE OF run_id,batch_id,group_id,binding_id,occurrence_id,assignment,dependencies,created_at ON generation_preparations
+BEGIN SELECT RAISE(ABORT,'immutable dependency preparation'); END;
+CREATE TRIGGER terminal_generation_preparation BEFORE UPDATE ON generation_preparations WHEN OLD.state<>'waiting'
+BEGIN SELECT RAISE(ABORT,'terminal dependency preparation'); END;
+CREATE TABLE generation_dependency_artifacts (
+ run_id TEXT NOT NULL REFERENCES generation_dispatches(run_id),
+ port TEXT NOT NULL,
+ receipt BLOB NOT NULL CHECK(json_valid(receipt)),
+ PRIMARY KEY(run_id,port)
+);
+CREATE TRIGGER immutable_generation_dependency_artifact BEFORE UPDATE ON generation_dependency_artifacts
+BEGIN SELECT RAISE(ABORT,'immutable dependency output'); END;

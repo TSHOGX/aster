@@ -287,8 +287,9 @@ ranges. Event bindings queue when a new snapshot is sealed. Use
 `GET /api/admin/groups/{group}/evolution/triggers?after=0` with `config.read` to inspect
 up to 50 occurrences and their ranges; use the response's `next` cursor for subsequent
 pages. Reload from zero to refresh pending state. `pending_reason` explains missing
-input, an exceeded input budget, or a required dependency mapping. `dispatch_state`
-shows whether the frozen assignment is pending, dispatched, or superseded;
+input, an exceeded input budget, or a prerequisite occurrence that is not yet available. `dispatch_state`
+shows whether the frozen assignment is waiting for dependencies, pending admission,
+dispatched, skipped, or superseded.
 `dispatch_error` distinguishes authority denial, budget waiting, and admission retry.
 Disabling automation or activating a new configuration supersedes work that has not
 been admitted. Already admitted work retains exact retry and drain behavior, subject
@@ -298,8 +299,9 @@ baseline without historical replay.
 Each automatic binding requires `inputs`, keyed by the published workflow's input-port
 names. Use `{"sources":["source-id"]}` to assemble a bounded corpus delta, or
 `{"artifact":{...}}` for a complete immutable artifact reference already sealed in
-Evaluation Space and granted for generation. A port selects one of these forms.
-Source lists must select the binding's approved Project/session sources. Activation
+Evaluation Space and granted for generation. A dependency port instead uses
+`{"dependency":{"binding_id":"skills","output_port":"candidate"}}`. A port
+selects exactly one form. Source lists must select the binding's approved Project/session sources. Activation
 checks port names and schemas against the published workflow. For example:
 
 ```json
@@ -315,8 +317,23 @@ active or its spending is unsettled. Retries preserve the original run and assig
 a lost response does not create a replacement run. Node models and tools are pinned
 by the immutable workflow graph, including nested workflows.
 
-Current automatic dispatch supports independent bindings. Bindings with `depends_on`
-remain pending with `dependency_input_required` until typed dependency inputs can be
-resolved. For an input-size limit, reduce the selected sources or raise the binding's
+List upstream binding IDs in `depends_on` and map each dependency to an explicit
+published output port. Activation checks the output schema against the consumer input
+and requires the consumer to declare its upstream sources. Dependencies form an
+acyclic graph. A dependent occurrence waits until its prerequisites have occurrences
+in the same batch; it never substitutes an unrelated run's latest output.
+
+Waiting consumers retain their original base, source snapshots, and upstream run IDs
+through restart. Only successful settled generation exposes dependency output. The
+consumer pins the exact output artifact and winning fence; current upstream authority
+is checked again on admission and execution. Failed or canceled prerequisites skip
+consumers, including downstream chains, without consuming their source frontiers or
+creating result branches. Successful consumers retain original snapshot provenance
+and advance their own frontiers after settlement. `dependency_pending` means execution
+or settlement is unfinished; `dependency_output_pending` means output transport needs
+retry; `dependency_authority_denied` requires restoring current permission. Skipped
+work retains `dependency_failed` and requires a new occurrence to run again.
+
+For an input-size limit, reduce the selected sources or raise the binding's
 artifact budget within the group ceiling. Restore revoked permissions before retrying
 an authority-denied assignment; its original pins remain unchanged.

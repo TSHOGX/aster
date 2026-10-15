@@ -9,6 +9,7 @@ import (
 )
 
 type RunPins struct {
+	Dependencies          []GenerationDependency `json:"dependencies,omitempty"`
 	InputPorts            map[string]ArtifactRef `json:"input_ports,omitempty"`
 	ConfigurationRevision int64                  `json:"configuration_revision"`
 	ConfigurationDigest   string                 `json:"configuration_digest"`

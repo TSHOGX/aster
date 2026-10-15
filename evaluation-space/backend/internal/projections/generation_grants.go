@@ -33,7 +33,7 @@ func (s *Store) RetainGenerationGrant(ctx context.Context, assignment evolution.
 	}
 	expected, _ := json.Marshal(assignment.Pins)
 	actual, _ := json.Marshal(run.Pins)
-	if run.BindingID != assignment.BindingID || run.Budget != assignment.Budget || !bytes.Equal(expected, actual) {
+	if run.BatchID != assignment.BatchID || run.BindingID != assignment.BindingID || run.Budget != assignment.Budget || !bytes.Equal(expected, actual) {
 		return ErrConflict
 	}
 	raw, _ := json.Marshal(assignment)

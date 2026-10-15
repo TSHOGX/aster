@@ -72,6 +72,9 @@ func (s *Store) prepareGenerationInputs(ctx context.Context, tx *sql.Tx, actor A
 	}
 	for _, name := range names {
 		spec := binding.Inputs[name]
+		if spec.Dependency != nil {
+			continue
+		}
 		if spec.Artifact != nil {
 			ports[name] = *spec.Artifact
 			add(*spec.Artifact)
@@ -138,7 +141,7 @@ func (s *Store) prepareGenerationInputs(ctx context.Context, tx *sql.Tx, actor A
 		ports[name] = ref
 		add(ref)
 	}
-	if len(ports) == 0 {
+	if len(ports) == 0 && len(binding.DependsOn) == 0 {
 		return nil, nil, false, ErrInvalid
 	}
 	sort.Slice(inputs, func(i, j int) bool { return inputs[i].ID < inputs[j].ID })

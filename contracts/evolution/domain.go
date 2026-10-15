@@ -220,9 +220,14 @@ type SourceBinding struct {
 
 // BindingInput maps a workflow port either to a corpus assembled from explicit
 // source deltas or to one already sealed, centrally granted artifact.
+type BindingDependency struct {
+	BindingID  string `json:"binding_id"`
+	OutputPort string `json:"output_port"`
+}
 type BindingInput struct {
-	Sources  []string     `json:"sources,omitempty"`
-	Artifact *ArtifactRef `json:"artifact,omitempty"`
+	Dependency *BindingDependency `json:"dependency,omitempty"`
+	Sources    []string           `json:"sources,omitempty"`
+	Artifact   *ArtifactRef       `json:"artifact,omitempty"`
 }
 type Binding struct {
 	Inputs     map[string]BindingInput `json:"inputs,omitempty"`

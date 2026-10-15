@@ -153,9 +153,23 @@ func (c Configuration) Validate() error {
 			return fmt.Errorf("automatic binding requires explicit input ports")
 		}
 		for port, input := range b.Inputs {
-			if !manifest.ValidID(port) || (len(input.Sources) == 0) == (input.Artifact == nil) {
-				return fmt.Errorf("input requires either sources or sealed artifact")
+			choices := 0
+			if len(input.Sources) > 0 {
+				choices++
 			}
+			if input.Artifact != nil {
+				choices++
+			}
+			if input.Dependency != nil {
+				choices++
+			}
+			if !manifest.ValidID(port) || choices != 1 {
+				return fmt.Errorf("input requires exactly one source, artifact or dependency selection")
+			}
+			if input.Dependency != nil && (!manifest.ValidID(input.Dependency.BindingID) || !manifest.ValidID(input.Dependency.OutputPort)) {
+				return fmt.Errorf("invalid input dependency")
+			}
+
 			if input.Artifact != nil {
 				if input.Artifact.Validate() != nil || input.Artifact.GroupID != c.GroupID {
 					return fmt.Errorf("invalid input artifact")
@@ -198,6 +212,33 @@ func (c Configuration) Validate() error {
 				return err
 			}
 		}
+		referenced := map[string]bool{}
+		for _, input := range b.Inputs {
+			if input.Dependency == nil {
+				continue
+			}
+			dep := input.Dependency.BindingID
+			if !seen[dep] {
+				return fmt.Errorf("input dependency is not declared")
+			}
+			referenced[dep] = true
+			for _, source := range bindings[dep].SourceIDs {
+				selected := false
+				for _, own := range b.SourceIDs {
+					if own == source {
+						selected = true
+					}
+				}
+				if !selected {
+					return fmt.Errorf("dependent binding must declare upstream sources")
+				}
+			}
+		}
+		for dep := range seen {
+			if !referenced[dep] {
+				return fmt.Errorf("dependency requires an explicit output port")
+			}
+		}
 		state[id] = 2
 		return nil
 	}
@@ -219,6 +260,12 @@ func (b Binding) ValidateInputPorts(workflow Workflow) error {
 		return fmt.Errorf("binding input ports differ from workflow")
 	}
 	for name, input := range b.Inputs {
+		if input.Dependency != nil {
+			if _, ok := workflow.Inputs[name]; !ok {
+				return fmt.Errorf("unknown dependency input port")
+			}
+			continue
+		}
 		schema := Digest(CorpusSchema)
 		if input.Artifact != nil {
 			schema = input.Artifact.SchemaDigest

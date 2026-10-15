@@ -33,6 +33,9 @@ func (s *Store) AdmitRun(ctx context.Context, input RunAdmission) (evolution.Run
 			return result, fmt.Errorf("invalid run identity")
 		}
 	}
+	if input.BatchID != "" && !manifest.ValidID(input.BatchID) {
+		return result, fmt.Errorf("invalid batch identity")
+	}
 	request, err := json.Marshal(input)
 	if err != nil || len(request) > evolution.MaxDocumentBytes {
 		return result, fmt.Errorf("invalid run admission size")
