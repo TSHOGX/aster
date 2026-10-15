@@ -274,8 +274,9 @@ current draft until the editor reloads. Publication records an immutable workflo
 revision and does not activate it for a group. `workflow.edit` is explicit and
 separate from `config.manage`, `run.start` and `source.read`.
 The workbench also exposes keyboard node editing, typed connection controls with
-duplicate and removal handling, ordered node inspection, executable digest
-feedback, undo/redo and bounded account-local recovery. Publishing
+duplicate and removal handling, ordered node inspection, prompt variables, model,
+tools and port documents, executable digest feedback, undo/redo and bounded
+account-local recovery. Publishing
 offers an explicit handoff to group configuration for activation; it does not
 silently change the active revision. Run detail links use
 `/evaluation-space/groups/{group}/runs/{run}`; the browser API returns only the
