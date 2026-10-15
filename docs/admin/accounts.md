@@ -273,10 +273,13 @@ the runner, uses compare-and-swap draft saves, and publishes immutable revisions
 without activating a group. Publishing requires the explicit `workflow.edit` grant;
 it does not grant configuration activation or run admission.
 The workbench offers a keyboard node palette, typed connection list, node inspector,
-undo/redo and local recovery. Run and evaluation deep links retain the group scope;
-their browser views show frozen pins, deduplicated event cursors, authorized node
-attempts, evaluator metrics and explicit stale or redacted states. They never expose
-dataset bytes or service credentials.
+undo/redo and local recovery. Use **Activate from configuration** after publishing
+when the group should adopt the immutable workflow revision; publication alone
+never changes the active group configuration. Run and evaluation deep links retain
+the group scope; their browser views show frozen pins, deduplicated event cursors,
+authorized node attempts, effective prompts, inputs, outputs, evaluator metrics and
+explicit stale or redacted states. They never expose dataset bytes or service
+credentials.
 
 ### Edit and activate group optimization
 

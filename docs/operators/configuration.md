@@ -268,11 +268,14 @@ current draft until the editor reloads. Publication records an immutable workflo
 revision and does not activate it for a group. `workflow.edit` is explicit and
 separate from `config.manage`, `run.start` and `source.read`.
 The workbench also exposes keyboard node editing, typed connection controls,
-ordered node inspection, undo/redo and bounded account-local recovery. Run detail
-links use `/evaluation-space/groups/{group}/runs/{run}`; the browser API returns
-only the current group's frozen run metadata, deduplicated event cursor and
-authorized attempt records. Pause, resume and cancel are compare-and-swap
-controls and retain `run.start` authority. Evaluation reports use
+ordered node inspection, undo/redo and bounded account-local recovery. Publishing
+offers an explicit handoff to group configuration for activation; it does not
+silently change the active revision. Run detail links use
+`/evaluation-space/groups/{group}/runs/{run}`; the browser API returns only the
+current group's frozen run metadata, deduplicated event cursor and authorized
+attempt records, including effective prompts and node inputs/outputs when the
+current `source.read` grant permits them. Pause, resume and cancel are
+compare-and-swap controls and retain `run.start` authority. Evaluation reports use
 `/evaluation-space/groups/{group}/evaluations/{job}` and expose the frozen subject,
 observed metrics, coverage and outcome; dataset bytes and evaluator credentials
 remain private. A report can be canceled while it is queued or running.
