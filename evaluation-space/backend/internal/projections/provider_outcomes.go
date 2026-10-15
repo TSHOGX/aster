@@ -12,11 +12,12 @@ import (
 )
 
 type ProviderOutcome struct {
-	CallID            string                 `json:"call_id"`
-	ProviderRequestID string                 `json:"provider_request_id"`
-	State             string                 `json:"state"`
-	Usage             RunUsage               `json:"usage"`
-	Output            *evolution.ArtifactRef `json:"output,omitempty"`
+	Evidence          []evolution.ArtifactRef `json:"evidence,omitempty"`
+	CallID            string                  `json:"call_id"`
+	ProviderRequestID string                  `json:"provider_request_id"`
+	State             string                  `json:"state"`
+	Usage             RunUsage                `json:"usage"`
+	Output            *evolution.ArtifactRef  `json:"output,omitempty"`
 }
 
 // RecordProviderOutcome atomically retains a verified provider result and settles
@@ -53,6 +54,27 @@ func (s *Store) RecordProviderOutcome(ctx context.Context, lease RunLease, value
 			return fmt.Errorf("invalid provider output scope")
 		}
 		if err = requireSealedArtifact(ctx, tx, *value.Output); err != nil {
+			return err
+		}
+	}
+	var total int64
+	if value.Output != nil {
+		total = value.Output.Size
+	}
+	seen := map[string]bool{}
+	if len(value.Evidence) > 1000 {
+		return fmt.Errorf("too many provider evidence artifacts")
+	}
+	for _, artifact := range value.Evidence {
+		if artifact.Validate() != nil || artifact.GroupID != run.GroupID || seen[artifact.ID] {
+			return fmt.Errorf("invalid provider evidence")
+		}
+		seen[artifact.ID] = true
+		if artifact.Size > run.Budget.MaxArtifactBytes-total {
+			return ErrRunBudget
+		}
+		total += artifact.Size
+		if err = requireSealedArtifact(ctx, tx, artifact); err != nil {
 			return err
 		}
 	}
@@ -102,6 +124,57 @@ func (s *Store) ProviderOutcome(ctx context.Context, lease RunLease, id string) 
 	result, err = evolution.Decode[ProviderOutcome](bytes.NewReader(raw))
 	if err != nil || result.CallID != id || result.Output != nil && result.Output.GroupID != run.GroupID {
 		return ProviderOutcome{}, fmt.Errorf("invalid retained provider outcome")
+	}
+	return result, nil
+}
+
+// RunProviderObservation is sensitive trace access. Its caller must authorize
+// run evidence reads; the group/run join cannot be substituted by an artifact ID.
+type RunProviderObservation struct {
+	Call    ProviderCall    `json:"call"`
+	Outcome ProviderOutcome `json:"outcome"`
+}
+
+func (s *Store) RunProviderObservation(ctx context.Context, group, run, id string) (RunProviderObservation, error) {
+	var result RunProviderObservation
+	if !manifest.ValidID(group) || !manifest.ValidID(run) || !manifest.ValidID(id) {
+		return result, fmt.Errorf("invalid provider observation scope")
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
+	var request, outcome []byte
+	err = tx.QueryRowContext(ctx, `SELECT c.body,o.body FROM provider_calls c JOIN provider_outcomes o ON o.run_id=c.run_id AND o.call_id=c.id JOIN runs r ON r.id=c.run_id WHERE r.group_id=? AND r.id=? AND c.id=?`, group, run, id).Scan(&request, &outcome)
+	if errors.Is(err, sql.ErrNoRows) {
+		return result, ErrNotFound
+	}
+	if err != nil {
+		return result, err
+	}
+	result.Call, err = evolution.Decode[ProviderCall](bytes.NewReader(request))
+	if err != nil {
+		return result, err
+	}
+	result.Outcome, err = evolution.Decode[ProviderOutcome](bytes.NewReader(outcome))
+	if err != nil {
+		return result, err
+	}
+	if result.Call.RunID != run || result.Call.ID != id || result.Call.Request.GroupID != group || result.Outcome.CallID != id {
+		return RunProviderObservation{}, ErrConflict
+	}
+	artifacts := append([]evolution.ArtifactRef{result.Call.Request}, result.Outcome.Evidence...)
+	if result.Outcome.Output != nil {
+		artifacts = append(artifacts, *result.Outcome.Output)
+	}
+	for _, artifact := range artifacts {
+		if artifact.GroupID != group {
+			return RunProviderObservation{}, ErrConflict
+		}
+		if err = requireSealedArtifact(ctx, tx, artifact); err != nil {
+			return RunProviderObservation{}, err
+		}
 	}
 	return result, nil
 }
