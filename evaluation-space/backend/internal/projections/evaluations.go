@@ -52,6 +52,7 @@ type EvaluationJob struct {
 	Service   evolution.Revision          `json:"service"`
 	Profile   evolution.EvaluationProfile `json:"profile"`
 	Subject   evolution.EvaluationSubject `json:"subject"`
+	PolicyMode string                     `json:"policy_mode"`
 	Budget    evolution.Budget            `json:"budget"`
 	CreatedAt time.Time                   `json:"created_at"`
 	State     string                      `json:"state"`
@@ -139,7 +140,7 @@ func (s *Store) AdmitEvaluation(ctx context.Context, input EvaluationAdmission) 
 	if err = subject.MatchesProfile(profile); err != nil {
 		return job, err
 	}
-	job = EvaluationJob{Grant: input.Grant, ID: input.ID, GroupID: input.GroupID, Service: service.Ref, Profile: profile, Subject: subject, Budget: input.Budget, CreatedAt: time.Now().UTC(), State: "queued"}
+	job = EvaluationJob{Grant: input.Grant, ID: input.ID, GroupID: input.GroupID, Service: service.Ref, Profile: profile, Subject: subject, PolicyMode: requirement.Mode, Budget: input.Budget, CreatedAt: time.Now().UTC(), State: "queued"}
 	body, err = json.Marshal(job)
 	if err != nil {
 		return job, err
@@ -154,7 +155,7 @@ func decodeEvaluationJob(body []byte, state string, fence int64) (EvaluationJob,
 	if err != nil {
 		return job, err
 	}
-	if job.Subject.MatchesProfile(job.Profile) != nil || job.Service.Validate() != nil || job.Budget.Validate() != nil {
+	if job.Subject.MatchesProfile(job.Profile) != nil || job.Service.Validate() != nil || job.Budget.Validate() != nil || (job.PolicyMode != "report_only" && job.PolicyMode != "required") {
 		return EvaluationJob{}, fmt.Errorf("invalid stored evaluation")
 	}
 	job.State = state
