@@ -3,7 +3,6 @@ package httpapi
 import (
 	"aster/evaluation-space/internal/projections"
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -50,5 +49,19 @@ func TestRunAPIRequiresPrivateAuthorityAndExactControlScope(t *testing.T) {
 	if w := call("GET", "/evaluation-space/api/v1/groups/group/runs/run", "", "", ""); w.Code != 403 {
 		t.Fatal(w.Code)
 	}
-	_ = json.Valid
+}
+
+func TestRunAPIRegistersEventsAndInjectsGroupScope(t *testing.T) {
+	s, err := projections.Open(context.Background(), filepath.Join(t.TempDir(), "space.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	api := RunAPI{Store: s, Authority: runAuthFixture{true}}.Handler()
+	req := httptest.NewRequest("GET", "/evaluation-space/api/v1/groups/group/runs/run/events?after=-1", nil)
+	w := httptest.NewRecorder()
+	api.ServeHTTP(w, req)
+	if w.Code != 422 {
+		t.Fatal("events route not registered", w.Code, w.Body.String())
+	}
 }

@@ -10,6 +10,7 @@ import (
 )
 
 type RunControl struct {
+	GroupID       string `json:"group_id,omitempty"`
 	RequestID     string `json:"request_id"`
 	RunID         string `json:"run_id"`
 	ExpectedFence int64  `json:"expected_fence"`
@@ -23,6 +24,12 @@ type RunControlResult struct {
 // ControlRun records an already-authorized control intent. It invalidates worker
 // authority immediately; provider-side cancellation still needs reconciliation.
 func (s *Store) ControlRun(ctx context.Context, input RunControl) (RunControlResult, error) {
+	return s.controlRun(ctx, "", input)
+}
+func (s *Store) ControlRunScoped(ctx context.Context, group string, input RunControl) (RunControlResult, error) {
+	return s.controlRun(ctx, group, input)
+}
+func (s *Store) controlRun(ctx context.Context, group string, input RunControl) (RunControlResult, error) {
 	var result RunControlResult
 	if !manifest.ValidID(input.RequestID) || !manifest.ValidID(input.RunID) || input.ExpectedFence < 0 {
 		return result, fmt.Errorf("invalid run control")
@@ -51,7 +58,7 @@ func (s *Store) ControlRun(ctx context.Context, input RunControl) (RunControlRes
 	if !errors.Is(err, sql.ErrNoRows) {
 		return result, err
 	}
-	if err = tx.QueryRowContext(ctx, "SELECT state,fence FROM runs WHERE id=?", input.RunID).Scan(&result.State, &result.Fence); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT state,fence FROM runs WHERE id=? AND (?='' OR group_id=?)", input.RunID, group, group).Scan(&result.State, &result.Fence); err != nil {
 		return result, err
 	}
 	if result.Fence != input.ExpectedFence {
@@ -89,7 +96,7 @@ func (s *Store) ControlRun(ctx context.Context, input RunControl) (RunControlRes
 	if err != nil {
 		return result, err
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO run_control_receipts(request_id,run_id,request,result) VALUES(?,?,?,?)", input.RequestID, input.RunID, raw, receipt); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO run_control_receipts(request_id,run_id,request,result) SELECT ?,?,?,? WHERE ?='' OR EXISTS(SELECT 1 FROM runs WHERE id=? AND group_id=?)", input.RequestID, input.RunID, raw, receipt, group, input.RunID, group); err != nil {
 		return result, err
 	}
 	return result, tx.Commit()

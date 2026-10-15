@@ -25,6 +25,7 @@ func (r RunAPI) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}", r.read)
 	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/runs/{run}/control", r.control)
+	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/events", r.events)
 	return mux
 }
 func (r RunAPI) read(w http.ResponseWriter, req *http.Request) {
@@ -64,7 +65,8 @@ func (r RunAPI) control(w http.ResponseWriter, req *http.Request) {
 		write(w, 409, map[string]string{"error": "run_scope_mismatch"})
 		return
 	}
-	result, err := r.Store.ControlRun(req.Context(), value)
+	value.GroupID = req.PathValue("group")
+	result, err := r.Store.ControlRunScoped(req.Context(), value.GroupID, value)
 	if errors.Is(err, projections.ErrConflict) {
 		write(w, 409, map[string]string{"error": "run_control_conflict"})
 		return

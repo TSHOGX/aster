@@ -62,3 +62,22 @@ func TestRunControlFencesWorkersAndReplaysAcrossResume(t *testing.T) {
 		t.Fatal("cancelled run revived", err)
 	}
 }
+
+func TestScopedRunControlRejectsSameIDInOtherGroup(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "space.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	_, err = s.db.ExecContext(ctx, `INSERT INTO runs(id,group_id,binding_id,configuration_revision,occurrence_id,request,body,state) VALUES('run','group-a','binding',1,'occurrence','{}','{}','queued')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ControlRunScoped(ctx, "group-b", RunControl{RunID: "run", RequestID: "wrong-group", ExpectedFence: 0, Action: "pause"}); err == nil {
+		t.Fatal("cross-group control accepted")
+	}
+	if _, err = s.ControlRunScoped(ctx, "group-a", RunControl{RunID: "run", RequestID: "right-group", ExpectedFence: 0, Action: "pause"}); err != nil {
+		t.Fatal(err)
+	}
+}
