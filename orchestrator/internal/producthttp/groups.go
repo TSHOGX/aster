@@ -7,6 +7,7 @@ import (
 
 func (a *Authentication) groupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/groups/{group}/evaluation-dataset-grants", a.evaluationDatasetGrant)
+	mux.HandleFunc("POST /api/admin/groups/{group}/generation-input-grants", a.generationInputGrant)
 	mux.HandleFunc("GET /api/me/capabilities", a.capabilities)
 	mux.HandleFunc("GET /api/admin/users/{id}/effective-access", a.effectiveAccess)
 	mux.HandleFunc("POST /api/admin/groups", a.createGroup)

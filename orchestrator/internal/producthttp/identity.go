@@ -33,6 +33,7 @@ func (a *Authentication) IdentityServiceHandler() http.Handler {
 	mux.HandleFunc("POST /api/identity/v1/projection-authority", a.identityProjectionAuthority)
 	mux.HandleFunc("POST /api/identity/v1/catalog-authority", a.identityCatalogAuthority)
 	mux.HandleFunc("POST /api/identity/v1/evaluation-authorizations", a.identityEvaluationAdmission)
+	mux.HandleFunc("POST /api/identity/v1/generation/{action}", a.identityGeneration)
 	mux.HandleFunc("POST /api/identity/v1/evaluation-authority", a.identityEvaluationAuthority)
 	mux.HandleFunc("POST /api/identity/v1/evaluation-settlements", a.identityEvaluationSettlement)
 	mux.HandleFunc("POST /api/identity/v1/evaluation-profile-authority", a.identityEvaluationProfile)

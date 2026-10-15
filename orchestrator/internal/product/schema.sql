@@ -2005,3 +2005,28 @@ CREATE TABLE evaluation_authorizations(
 CREATE TRIGGER immutable_evaluation_authorization BEFORE UPDATE OF id,job_id,group_id,actor_id,assignment,assignment_digest,grant,reserved_tokens,reserved_cost,created_at ON evaluation_authorizations BEGIN SELECT RAISE(ABORT,'immutable evaluation authorization'); END;
 CREATE TRIGGER retained_evaluation_authorization BEFORE DELETE ON evaluation_authorizations BEGIN SELECT RAISE(ABORT,'retain evaluation authorization'); END;
 CREATE TRIGGER settled_evaluation_authorization BEFORE UPDATE ON evaluation_authorizations WHEN OLD.state='settled' BEGIN SELECT RAISE(ABORT,'settled evaluation authorization'); END;
+
+CREATE TABLE generation_input_grants(
+ group_id TEXT NOT NULL REFERENCES account_groups(id),artifact_id TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),
+ artifact BLOB NOT NULL,sources BLOB NOT NULL,PRIMARY KEY(group_id,artifact_id)
+);
+CREATE TABLE generation_authorizations(
+ id TEXT PRIMARY KEY,run_id TEXT NOT NULL UNIQUE,group_id TEXT NOT NULL REFERENCES account_groups(id),
+ binding_id TEXT NOT NULL,configuration_revision INTEGER NOT NULL,occurrence_id TEXT NOT NULL,
+ actor_id TEXT NOT NULL REFERENCES accounts(id),assignment BLOB NOT NULL,assignment_digest TEXT NOT NULL,grant BLOB NOT NULL,
+ state TEXT NOT NULL CHECK(state IN('admitted','running','paused','cancelling','completed','failed','cancelled')),
+ fence INTEGER NOT NULL DEFAULT 0 CHECK(fence>=0),patch_digest TEXT NOT NULL DEFAULT '',
+ reserved_tokens INTEGER NOT NULL CHECK(reserved_tokens>=0),reserved_cost INTEGER NOT NULL CHECK(reserved_cost>=0),
+ used_tokens INTEGER NOT NULL DEFAULT 0 CHECK(used_tokens>=0),used_cost INTEGER NOT NULL DEFAULT 0 CHECK(used_cost>=0),
+ settlement BLOB,created_at TEXT NOT NULL,
+ UNIQUE(group_id,binding_id,configuration_revision,occurrence_id)
+);
+CREATE UNIQUE INDEX one_active_generation_authorization ON generation_authorizations(group_id,binding_id) WHERE state IN('admitted','running','paused','cancelling');
+CREATE TRIGGER immutable_generation_assignment BEFORE UPDATE OF id,run_id,group_id,binding_id,configuration_revision,occurrence_id,actor_id,assignment,assignment_digest,grant,reserved_tokens,reserved_cost,created_at ON generation_authorizations BEGIN SELECT RAISE(ABORT,'immutable generation assignment'); END;
+CREATE TRIGGER monotonic_generation_fence BEFORE UPDATE OF fence ON generation_authorizations WHEN NEW.fence<OLD.fence BEGIN SELECT RAISE(ABORT,'generation fence cannot decrease'); END;
+CREATE TRIGGER terminal_generation_authority BEFORE UPDATE OF state,fence ON generation_authorizations WHEN OLD.state IN('completed','failed','cancelled') AND (NEW.state<>OLD.state OR NEW.fence<>OLD.fence) BEGIN SELECT RAISE(ABORT,'terminal generation identity'); END;
+CREATE TRIGGER immutable_generation_patch BEFORE UPDATE OF patch_digest ON generation_authorizations WHEN OLD.patch_digest<>'' AND NEW.patch_digest<>OLD.patch_digest BEGIN SELECT RAISE(ABORT,'immutable generation patch'); END;
+CREATE TRIGGER retained_generation_authorization BEFORE DELETE ON generation_authorizations BEGIN SELECT RAISE(ABORT,'retain generation provenance'); END;
+
+CREATE TRIGGER immutable_generation_settlement BEFORE UPDATE OF settlement,used_tokens,used_cost ON generation_authorizations WHEN OLD.settlement IS NOT NULL BEGIN SELECT RAISE(ABORT,'immutable generation settlement'); END;

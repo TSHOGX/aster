@@ -97,7 +97,7 @@ func (s *Store) AuthorizeEvaluationAssignment(ctx context.Context, input evoluti
 			return err
 		}
 		var usedTokens, usedCost int64
-		if err = tx.QueryRowContext(ctx, `SELECT coalesce(sum(reserved_tokens),0),coalesce(sum(reserved_cost),0) FROM evaluation_authorizations WHERE group_id=? AND state='admitted'`, input.GroupID).Scan(&usedTokens, &usedCost); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT coalesce(sum(tokens),0),coalesce(sum(cost),0) FROM (SELECT reserved_tokens tokens,reserved_cost cost FROM evaluation_authorizations WHERE group_id=? AND state='admitted' UNION ALL SELECT reserved_tokens,reserved_cost FROM generation_authorizations WHERE group_id=? AND settlement IS NULL)`, input.GroupID, input.GroupID).Scan(&usedTokens, &usedCost); err != nil {
 			return err
 		}
 		if input.Budget.MaxTokens > ceiling.MaxTokens-usedTokens || input.Budget.MaxCostMicros > ceiling.MaxCostMicros-usedCost {

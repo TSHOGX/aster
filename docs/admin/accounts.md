@@ -206,3 +206,19 @@ also retain permission to start group work and read/review the output library.
 Set `enabled` to false with the current expected revision to revoke future evaluator
 use. Already dispatched jobs retain uncertain spending until cancellation and provider
 reconciliation finish; revocation does not fabricate a zero-cost result.
+
+### Authorize a sealed corpus for generation
+
+Use `POST /api/admin/groups/{group}/generation-input-grants` to approve one exact
+sealed artifact for generation. Send `request_id`, `expected_revision`, `artifact`,
+`source_ids`, and `enabled`. Each source ID must already have an explicit source-use
+policy for that group, permit derivative publication, and remain under the caller's
+source authority. The grant records those exact policy revisions. Granting group
+membership alone does not make personal work eligible for collection.
+
+The response contains the new revision. To revoke use, send `enabled: false` with
+the current expected revision. New generation effects and result submission then
+fail current authority checks; cleanup and accounting for already dispatched work
+remain available. Generation and evaluation reservations share the group's concurrent
+token/cost ceiling, and uncertain work retains its hold until terminal settlement.
+This grant provisions input authority; it does not schedule or execute a workflow.
