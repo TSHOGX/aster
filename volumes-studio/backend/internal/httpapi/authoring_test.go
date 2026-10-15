@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"aster/contracts/appidentity"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -22,7 +23,7 @@ func TestAuthoringHTTPJourneyAndActiveContentIsolation(t *testing.T) {
 	}
 	defer store.Close()
 	api := NewAuthoringAPI(store)
-	session := identity.Session{CanCreateLibrary: true, Issuer: "https://example.com", Subject: "admin"}
+	session := identity.Session{CanCreateLibrary: true, Session: appidentity.Session{Issuer: "https://example.com", Subject: "admin"}}
 	call := func(method, path string, body any) *httptest.ResponseRecorder {
 		raw, _ := json.Marshal(body)
 		r := httptest.NewRequest(method, "https://example.com"+apiPrefix+path, bytes.NewReader(raw))

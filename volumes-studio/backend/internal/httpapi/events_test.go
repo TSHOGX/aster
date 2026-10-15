@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"aster/contracts/appidentity"
 	"context"
 	"net/http/httptest"
 	"testing"
@@ -15,7 +16,7 @@ func TestEventCursorRejectsMalformedValues(t *testing.T) {
 	}
 	defer store.Close()
 	api := NewAuthoringAPI(store)
-	session := identity.Session{Issuer: "https://example.com", Subject: "expert"}
+	session := identity.Session{Session: appidentity.Session{Issuer: "https://example.com", Subject: "expert"}}
 	for _, cursor := range []string{"invalid", "-1", "01", "%2B1", "9223372036854775808"} {
 		request := httptest.NewRequest("GET", apiPrefix+"libraries/library/events?after="+cursor, nil)
 		response := httptest.NewRecorder()

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"aster/contracts/appidentity"
 	"context"
 	"encoding/json"
 	"errors"
@@ -49,7 +50,7 @@ func TestCatalogScopesMetadataCountsAndCursorContinuation(t *testing.T) {
 		t.Helper()
 		request := httptest.NewRequest("GET", "https://example.com"+apiPrefix+path, nil)
 		response := httptest.NewRecorder()
-		api.Serve(identity.Session{Issuer: "https://example.com", Subject: subject}, response, request)
+		api.Serve(identity.Session{Session: appidentity.Session{Issuer: "https://example.com", Subject: subject}}, response, request)
 		return response
 	}
 	for _, subject := range []string{"alpha", "beta", "nobody"} {

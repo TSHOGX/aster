@@ -1,4 +1,4 @@
-// Command evaluation-space serves the private configuration participant API.
+// Command evaluation-space serves private workers and an optional separate browser gateway.
 package main
 
 import (
@@ -28,6 +28,9 @@ func main() {
 	}
 }
 func run() error {
+	browserListen := flag.String("browser-listen", "", "Optional loopback browser gateway behind the shared TLS front door")
+	publicOrigin := flag.String("public-origin", "", "Canonical shared HTTPS origin for browser identity")
+	frontend := flag.String("frontend", "", "Evaluation Space frontend origin")
 	listen := flag.String("listen", "127.0.0.1:18484", "Private loopback listener; use an authenticated TLS proxy for remote access")
 	directory := flag.String("state-directory", "", "Absolute application-owned state directory")
 	endpoint := flag.String("identity-endpoint", "", "Central private identity origin")
@@ -39,6 +42,9 @@ func run() error {
 	studioInputSecretEnv := flag.String("studio-input-secret-env", "STUDIO_EVALUATION_INPUT_SECRET", "Environment with outbound Studio input credential")
 	nativePath := flag.String("native-config", "", "Optional private native model/implementation registry JSON")
 	flag.Parse()
+	if (*browserListen != "" || *publicOrigin != "" || *frontend != "") && (*browserListen == "" || *publicOrigin == "" || *frontend == "") {
+		return fmt.Errorf("browser-listen, public-origin and frontend are required together")
+	}
 	if !filepath.IsAbs(*directory) || *directory == "/" {
 		return fmt.Errorf("absolute state directory required")
 	}
@@ -153,7 +159,29 @@ func run() error {
 		projectionHandler.ServeHTTP(w, r)
 	})
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10}
-	finished := make(chan error, 1)
+	finished := make(chan error, 2)
+	var browser *http.Server
+	if *browserListen != "" {
+		var browserListener net.Listener
+		browser, browserListener, err = browserServer(store, *browserListen, *publicOrigin, *frontend, *endpoint, os.Getenv(*clientSecretEnv))
+		if err != nil {
+			return err
+		}
+		defer browserListener.Close()
+		go func() { finished <- browser.Serve(browserListener) }()
+	}
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if browser != nil {
+			if browser.Shutdown(shutdown) != nil {
+				_ = browser.Close()
+			}
+		}
+		if server.Shutdown(shutdown) != nil {
+			_ = server.Close()
+		}
+	}()
 	go func() { finished <- server.Serve(listener) }()
 	select {
 	case err := <-finished:
@@ -162,16 +190,6 @@ func run() error {
 		}
 		return err
 	case <-ctx.Done():
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdown); err != nil {
-			_ = server.Close()
-			return err
-		}
-		err := <-finished
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
+		return nil // The shared deferred shutdown drains both listeners before closing storage.
 	}
 }

@@ -22,7 +22,7 @@ func (c *Client) AuthorizeEvaluation(ctx context.Context, assignment evolution.E
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.SetBasicAuth(c.config.ClientID, c.config.ClientSecret)
-	response, err := c.http.Do(request)
+	response, err := c.Do(request)
 	if err != nil {
 		return grant, ErrUnavailable
 	}
@@ -61,7 +61,7 @@ func (c *Client) ResolveEvaluationInput(ctx context.Context, grant evolution.Eva
 	}
 	request.SetBasicAuth(c.config.ClientID, c.config.ClientSecret)
 	request.Header.Set("Content-Type", "application/json")
-	response, err := c.http.Do(request)
+	response, err := c.Do(request)
 	if err != nil {
 		return assignment, ErrUnavailable
 	}
@@ -108,7 +108,7 @@ func (c *Client) AuthorizeRunResult(ctx context.Context, scope evolution.RunResu
 	}
 	request.SetBasicAuth(c.config.ClientID, c.config.ClientSecret)
 	request.Header.Set("Content-Type", "application/json")
-	response, err := c.http.Do(request)
+	response, err := c.Do(request)
 	if err != nil {
 		return ErrUnavailable
 	}
@@ -134,7 +134,7 @@ func (c *Client) ResolveGenerationBase(ctx context.Context, scope evolution.Gene
 	}
 	request.SetBasicAuth(c.config.ClientID, c.config.ClientSecret)
 	request.Header.Set("Content-Type", "application/json")
-	response, err := c.http.Do(request)
+	response, err := c.Do(request)
 	if err != nil {
 		return assignment, ErrUnavailable
 	}

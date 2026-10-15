@@ -27,7 +27,7 @@ func (c *Client) Authorize(ctx context.Context, access evolution.AccessRequest) 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.SetBasicAuth(c.config.ClientID, c.config.ClientSecret)
-	response, err := c.http.Do(req)
+	response, err := c.Do(req)
 	if err != nil {
 		return decision, ErrUnavailable
 	}

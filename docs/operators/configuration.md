@@ -249,6 +249,18 @@ revokes the originating central login and its derived grants, including after th
 application's content access has been revoked. Each registration references its own
 identity credential environment variable; participant credentials are separate.
 
+Evaluation Space can run a separate browser gateway alongside its private worker
+listener. Set `--browser-listen 127.0.0.1:18485`, `--public-origin` to the registered
+HTTPS issuer, and `--frontend` to its frontend origin together. Plain HTTP frontend
+origins must use a literal loopback address. Keep this listener behind the shared
+TLS front door and route only `/evaluation-space/` browser traffic to it. Never
+route public traffic to the private worker listener. The browser gateway provides
+login, callback, logout and `/evaluation-space/api/v1/session`; other browser APIs
+are currently unavailable. It does not expose the private catalog or worker APIs.
+Frontend credentials and cookies are stripped before proxying. Application sessions
+persist in Evaluation Space's state database; Studio owns a separate session store
+and cookie path. Central identity outages reject session authorization immediately.
+
 ### Provision Evaluation Space catalog revisions
 
 Stop Evaluation Space before offline catalog publication. Build the provisioning

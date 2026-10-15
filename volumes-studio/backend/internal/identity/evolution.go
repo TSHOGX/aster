@@ -35,7 +35,7 @@ func (c *Client) ResolveEvolutionParticipant(ctx context.Context, group, operati
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.SetBasicAuth(c.config.ClientID, c.config.ClientSecret)
-	response, err := c.http.Do(request)
+	response, err := c.Do(request)
 	if err != nil {
 		return principal, ErrUnavailable
 	}

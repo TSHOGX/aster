@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"aster/contracts/appidentity"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -47,7 +48,7 @@ func TestBranchHTTPJourney(t *testing.T) {
 		r := httptest.NewRequest(method, apiPrefix+"libraries/"+l.ID+path, bytes.NewReader(raw))
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		api.Serve(identity.Session{Issuer: actor.Issuer, Subject: actor.Subject}, w, r)
+		api.Serve(identity.Session{Session: appidentity.Session{Issuer: actor.Issuer, Subject: actor.Subject}}, w, r)
 		return w
 	}
 	w := call("POST", "/branches", authoring.CreateBranchInput{RequestID: "branch", Name: "Work", BaseCommit: base})
@@ -127,7 +128,7 @@ func TestBranchHTTPJourney(t *testing.T) {
 		request := httptest.NewRequest(method, path, bytes.NewBufferString(`{"request_id":"revoked-retry"}`))
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
-		api.Serve(identity.Session{Issuer: actor.Issuer, Subject: actor.Subject}, response, request)
+		api.Serve(identity.Session{Session: appidentity.Session{Issuer: actor.Issuer, Subject: actor.Subject}}, response, request)
 		if response.Code != 403 {
 			t.Fatal("operation bypassed grant", method, response.Code, response.Body.String())
 		}
