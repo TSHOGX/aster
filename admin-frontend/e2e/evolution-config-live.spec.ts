@@ -20,6 +20,11 @@ test("published catalog drives recoverable draft and two-participant activation"
   const sourceSection = page.locator("section.panel").filter({ has: page.getByRole("heading", { name: tr("Approved source policies"), exact: true }) });
   await sourceSection.getByRole("button", { name: tr("Edit source policy"), exact: true }).click();
   const sourcePolicy = page.getByRole("region", { name: tr("Source reuse policy"), exact: true });
+  const policies = await (await page.request.get("/api/admin/groups/standard-users/optimization/sources?limit=50")).json();
+  const resources = await (await page.request.get("/api/admin/groups/standard-users/optimization/source-resources?kind=project&limit=25")).json();
+  expect(resources.items.some((item: { id: string }) => item.id === policies.sources[0].resource_id)).toBe(true);
+  await chooseValue(sourcePolicy.getByRole("combobox", { name: tr("Source resource"), exact: true }), policies.sources[0].resource_id);
+  await expect(sourcePolicy.getByRole("group", { name: tr("Source audience groups"), exact: true }).getByRole("checkbox").first()).toBeChecked();
   await sourcePolicy.getByLabel(tr("Excluded selectors (one per line)"), { exact: true }).fill("executions/unrelated");
   await sourcePolicy.getByRole("button", { name: tr("Save source policy"), exact: true }).click();
   await expect(sourcePolicy).toHaveCount(0);

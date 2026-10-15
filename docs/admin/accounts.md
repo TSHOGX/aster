@@ -236,8 +236,12 @@ an empty catalog from an unavailable connection or denied access. Service select
 check current availability and do not expose operator connection or credential fields.
 
 A resource owner can use **Authorize a source I own** or **Edit source policy** to
-issue a reuse policy. Select the owning group in its audience, permitted derivative
-publication, and exact exclusions. Configuration-manager or administrator status alone
+issue a reuse policy. Search and select an owned Project or session, or a Studio
+library with read and configuration permission. Project/session searches include
+only the current account's resources, even for administrators; deleting resources
+are excluded. Change the source kind to clear the old resource selection. Select
+the owning group and any other authorized audience groups with the group checkboxes,
+then choose permitted derivative publication and exact exclusions. Configuration-manager or administrator status alone
 does not authorize someone else's source. Selecting a newer policy revision is explicit;
 existing draft references are not silently upgraded.
 
