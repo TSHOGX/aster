@@ -6,6 +6,7 @@ bundle from a committed source revision:
 ```sh
 python3 evaluation-space/scripts/release.py build /srv/releases/evaluation-space-v1
 python3 evaluation-space/scripts/release.py verify /srv/releases/evaluation-space-v1
+python3 evaluation-space/scripts/release.py smoke /srv/releases/evaluation-space-v1
 ```
 
 The bundle contains `bin/evaluation-space`, the offline
@@ -13,6 +14,10 @@ The bundle contains `bin/evaluation-space`, the offline
 and the frontend under the fixed `/evaluation-space/` base path. Keep the bundle
 manifest with the release; it records the source commit, Go toolchain and every
 packaged file digest.
+
+The smoke command starts only the packaged frontend on a temporary loopback port,
+checks `/evaluation-space/`, every prefixed asset referenced by the page and a
+deep link, then terminates it. It does not require identity or a live backend.
 
 Run the backend with an application-owned state directory and loopback private
 listener. Configure the shared front door to route `/evaluation-space/` to the

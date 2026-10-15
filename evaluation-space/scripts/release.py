@@ -7,7 +7,11 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import socket
 import subprocess
+import time
+import urllib.error
+import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = "evaluation-space-release.json"
@@ -55,6 +59,62 @@ def verify(root):
     return document
 
 
+def smoke(root):
+    """Verify the packaged frontend serves prefixed assets and deep links."""
+    root = root.resolve()
+    verify(root)
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    env = dict(os.environ, HOSTNAME="127.0.0.1", PORT=str(port), NEXT_TELEMETRY_DISABLED="1")
+    process = subprocess.Popen(["node", "frontend/server.js"], cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        origin = f"http://127.0.0.1:{port}"
+        for _ in range(100):
+            if process.poll() is not None:
+                raise ValueError("packaged Evaluation Space frontend exited")
+            try:
+                with urllib.request.urlopen(origin + "/evaluation-space/", timeout=1) as response:
+                    html = response.read().decode()
+                break
+            except (OSError, urllib.error.URLError):
+                time.sleep(0.1)
+        else:
+            raise ValueError("packaged Evaluation Space frontend did not become ready")
+        assets = set()
+        for marker in ('src="', 'href="'):
+            start = 0
+            while True:
+                start = html.find(marker, start)
+                if start < 0:
+                    break
+                start += len(marker)
+                end = html.find('"', start)
+                if end < 0:
+                    break
+                value = html[start:end]
+                if value.startswith("/evaluation-space/_next/"):
+                    assets.add(value)
+        if not assets:
+            raise ValueError("packaged Evaluation Space page has no prefix-safe assets")
+        for asset in assets:
+            with urllib.request.urlopen(origin + asset, timeout=5) as response:
+                if response.status != 200 or not response.read():
+                    raise ValueError(f"packaged asset unavailable: {asset}")
+        with urllib.request.urlopen(origin + "/evaluation-space/groups/smoke/", timeout=5) as response:
+            if response.status != 200:
+                raise ValueError("packaged Evaluation Space deep link unavailable")
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+    verify(root)
+    print("Packaged Evaluation Space root, assets and deep link smoke passed.")
+
+
 def build(target, offline=False, source_ref="HEAD"):
     target = target.resolve()
     if target.exists() or target.is_relative_to(ROOT):
@@ -91,13 +151,15 @@ def build(target, offline=False, source_ref="HEAD"):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["build", "verify"])
+    parser.add_argument("action", choices=["build", "verify", "smoke"])
     parser.add_argument("directory", type=Path)
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--source-ref", default="HEAD")
     args = parser.parse_args()
     if args.action == "build":
         build(args.directory, args.offline, args.source_ref)
+    elif args.action == "smoke":
+        smoke(args.directory)
     else:
         verify(args.directory.resolve())
 
