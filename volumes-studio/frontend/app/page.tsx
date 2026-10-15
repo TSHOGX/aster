@@ -248,7 +248,7 @@ export default function Home() {
             {page?.items.map((l) => (
               <tr key={l.id}>
                 <td>
-                  <Link className="library-name" href={`/libraries/${l.id}`}>
+                  <Link prefetch={false} className="library-name" href={`/libraries/${l.id}`}>
                     {l.name}
                   </Link>
                   <p className="description">{l.description}</p>
@@ -263,6 +263,7 @@ export default function Home() {
                 <td>
                   {l.latest_published_version ? (
                     <Link
+                      prefetch={false}
                       href={`/libraries/${l.id}?version=${l.latest_published_version.id}`}
                     >
                       {l.latest_published_version.label}
