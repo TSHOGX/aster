@@ -15,14 +15,9 @@ import (
 	"aster/evaluation-space/internal/workflow"
 )
 
-var ErrNotFound = errors.New("Studio_result_not_found")
+var ErrNotFound = evolution.ErrRunResultNotFound
 
-type Receipt struct {
-	RunID       string
-	PatchDigest string
-	BranchID    string
-	CommitID    string
-}
+type Receipt = evolution.AcceptedRunResult
 type Studio interface {
 	Base(context.Context, evolution.Run) ([]manifest.Entry, error)
 	Lookup(context.Context, evolution.Run, evolution.Patch) (Receipt, error)

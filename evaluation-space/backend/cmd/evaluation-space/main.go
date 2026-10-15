@@ -37,6 +37,7 @@ func run() error {
 	studioSecretEnv := flag.String("studio-secret-env", "EVALUATION_SPACE_STUDIO_SECRET", "Environment variable containing inbound Studio evaluation credential")
 	studioInputs := flag.String("studio-input-endpoint", "", "Private Studio participant origin for assigned content reads")
 	studioInputSecretEnv := flag.String("studio-input-secret-env", "STUDIO_EVALUATION_INPUT_SECRET", "Environment with outbound Studio input credential")
+	nativePath := flag.String("native-config", "", "Optional private native model/implementation registry JSON")
 	flag.Parse()
 	if !filepath.IsAbs(*directory) || *directory == "/" {
 		return fmt.Errorf("absolute state directory required")
@@ -60,7 +61,7 @@ func run() error {
 		return err
 	}
 	defer store.Close()
-	var evaluationHandler, providerInputHandler, resultArtifactHandler http.Handler
+	var evaluationHandler, providerInputHandler, resultArtifactHandler, generationHandler http.Handler
 	var evaluationDone chan struct{}
 	if *evaluationConfigPath != "" {
 		connections, err := readEvaluationConnections(*evaluationConfigPath)
@@ -96,6 +97,31 @@ func run() error {
 		go func() { defer close(evaluationDone); runEvaluations(workerCtx, store, authority, connections) }()
 		defer func() { cancel(); <-evaluationDone }()
 	}
+	if *nativePath != "" {
+		registry, closeRegistry, err := readNativeRegistry(*nativePath, store)
+		if err != nil {
+			return err
+		}
+		defer closeRegistry()
+		studio, err := studioclient.New(*studioInputs, os.Getenv(*studioInputSecretEnv))
+		if err != nil {
+			return err
+		}
+		api, err := httpapi.NewGenerationAPI(store, authority, os.Getenv(*centralSecretEnv))
+		if err != nil {
+			return err
+		}
+		generationHandler = api.Handler()
+		resultAPI, err := httpapi.NewRunResultArtifactAPI(store, authority, os.Getenv(*studioSecretEnv))
+		if err != nil {
+			return err
+		}
+		resultArtifactHandler = resultAPI.Handler()
+		workerCtx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() { defer close(done); runNative(workerCtx, store, authority, registry, studio) }()
+		defer func() { cancel(); <-done }()
+	}
 	listener, err := net.Listen("tcp", *listen)
 	if err != nil {
 		return err
@@ -104,6 +130,10 @@ func run() error {
 	projectionHandler := (httpapi.ProjectionAPI{Store: store, Authority: authority}).Handler()
 	catalogHandler := (httpapi.CatalogAPI{Store: store, Authority: authority}).Handler()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if generationHandler != nil && strings.HasPrefix(r.URL.Path, "/evaluation-space/internal/v1/generation/") {
+			generationHandler.ServeHTTP(w, r)
+			return
+		}
 		if resultArtifactHandler != nil && r.URL.Path == "/evaluation-space/internal/v1/run-result-artifact" {
 			resultArtifactHandler.ServeHTTP(w, r)
 			return

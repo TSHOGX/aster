@@ -407,3 +407,52 @@ credential; the receiver verifies current central scope and immutable handoff me
 Neither listener accepts browser cookies or origins. A service credential by itself
 cannot authorize a generated branch. Result acceptance creates an isolated review
 branch and does not advance main or publish a version.
+
+### Configure native generation
+
+Evaluation Space accepts `-native-config /absolute/path/native.json` to enable the
+native workflow worker and private generation admission API. Configure exact model
+revisions, authenticated model-service origins, credential environment references,
+and per-call token/cost ceilings. Set `example_builders` to true to register the
+versioned skills/corrections builders and their schemas:
+
+```json
+{
+  "models": [
+    {
+      "reference": {"id": "team-model", "revision": 1, "digest": "sha256:REPLACE_WITH_REGISTERED_DIGEST"},
+      "endpoint": "https://model-service.example.com",
+      "client_id": "evaluation-space",
+      "secret_env": "TEAM_MODEL_SECRET",
+      "ceiling": {"tokens": 10000, "cost_micros": 1000000}
+    }
+  ],
+  "schemas": {},
+  "example_builders": true
+}
+```
+
+Use the same exact model reference when provisioning example definitions. Model
+services must support durable lookup/idempotent submission/cancellation; an ordinary
+untracked chat endpoint is insufficient. Native configuration does not accept inline
+secrets, executable file paths or arbitrary transform code. Additional schema entries
+map exact schema digests to self-contained JSON Schema objects.
+
+Configure `-studio-input-endpoint` and `STUDIO_EVALUATION_INPUT_SECRET` for private
+Studio base lookup and result submission. `EVALUATION_SPACE_STUDIO_SECRET` protects
+Studio's reverse artifact fetches. Native generation can run with evaluator connections
+absent and evaluation off. It still requires active central group configuration,
+explicit sealed-input reuse grants, and Studio output reservations.
+
+The private `POST /evaluation-space/internal/v1/generation/admit` route accepts a
+complete frozen generation assignment from HTTP Basic user `central` with the central
+participant credential. Central identity checks requester/configuration/input/budget
+scope; local admission validates catalog pins and sealed bytes. `read` and `control`
+use the same private boundary and exact group/run identity. Do not expose this listener
+to browsers or use provider credentials for admission.
+
+Generation completion, spending settlement and Studio handoff are separate durable
+states. Successful generation is not a merge or publication. The worker retries
+uncertain model calls by their original key and looks up Studio acceptance before
+submitting a result again. Generated branches retain the captured base and require
+normal human review; disjoint goal outputs remain separate branches until merged.

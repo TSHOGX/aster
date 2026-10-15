@@ -23,6 +23,7 @@ case "${1:-all}" in
     ;;
   studio-browser)
     npm --prefix volumes-studio/frontend run test:browser
+    go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses$' -count=1
     STUDIO_TEST_EVALUATION_BROWSER=1 STUDIO_TEST_EVALUATION_CANCEL=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestRequiredEvaluationRealProcesses$' -count=1
     ;;
   source)

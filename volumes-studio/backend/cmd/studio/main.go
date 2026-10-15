@@ -103,6 +103,7 @@ func main() {
 			if err != nil {
 				log.Fatal(err)
 			}
+			resultAPI.BaseAuthority = client
 			resultHandler := resultAPI.Handler()
 			inputHandler := inputAPI.Handler()
 			original := participantHandler

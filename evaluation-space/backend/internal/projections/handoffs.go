@@ -137,3 +137,23 @@ func (s *Store) AcceptHandoff(ctx context.Context, group string, patch evolution
 	}
 	return tx.Commit()
 }
+
+func (s *Store) PendingHandoffs(ctx context.Context, after string, limit int) ([]RunWork, error) {
+	if limit < 1 || limit > 100 {
+		return nil, fmt.Errorf("invalid handoff work page")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.group_id,r.binding_id,r.state FROM runs r JOIN generation_grants g ON g.run_id=r.id WHERE r.id>? AND r.state='completed' AND NOT EXISTS(SELECT 1 FROM run_handoffs h WHERE h.run_id=r.id AND h.state IN('submitted','no_change')) ORDER BY r.id LIMIT ?`, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []RunWork{}
+	for rows.Next() {
+		var item RunWork
+		if err = rows.Scan(&item.RunID, &item.GroupID, &item.BindingID, &item.State); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}

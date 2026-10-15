@@ -1,0 +1,475 @@
+//go:build integration
+
+package producthttp
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"aster/contracts/evolution"
+	"harness-platform/orchestrator/internal/evaluationclient"
+	"harness-platform/orchestrator/internal/identityconfig"
+	"harness-platform/orchestrator/internal/product"
+	"harness-platform/orchestrator/internal/studioclient"
+)
+
+func TestNativeGenerationRealProcesses(t *testing.T) {
+	for _, mode := range []string{"success", "sibling-failure", "lost-model-reply"} {
+		t.Run(mode, func(t *testing.T) { nativeGenerationProcesses(t, mode) })
+	}
+}
+func nativeGenerationProcesses(t *testing.T, mode string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	root, err := filepath.Abs("../../..")
+	must(t, err)
+	build := func(module, command, name string) string {
+		t.Helper()
+		binary := filepath.Join(t.TempDir(), name)
+		cmd := exec.CommandContext(ctx, "go", "build", "-o", binary, command)
+		cmd.Dir = filepath.Join(root, module)
+		if raw, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("build %s: %v\n%s", name, err, raw)
+		}
+		return binary
+	}
+	catalog := build("evaluation-space/backend", "./cmd/evaluation-catalog", "catalog")
+	studioBinary := build("volumes-studio/backend", "./cmd/studio", "studio")
+	spaceBinary := build("evaluation-space/backend", "./cmd/evaluation-space", "space")
+	address := func() string {
+		t.Helper()
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		must(t, err)
+		value := listener.Addr().String()
+		must(t, listener.Close())
+		return value
+	}
+	studioAddress, participantAddress, spaceAddress := address(), address(), address()
+	spaceOrigin := "http://" + spaceAddress
+	var publicHandler http.Handler
+	studioURL, _ := url.Parse("http://" + studioAddress)
+	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { host := r.In.Host; r.SetURL(studioURL); r.Out.Host = host }}
+	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/volumes-studio/") {
+			proxy.ServeHTTP(w, r)
+			return
+		}
+		if publicHandler != nil {
+			publicHandler.ServeHTTP(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer public.Close()
+	issuer := public.URL
+	issuerURL, _ := url.Parse(issuer)
+
+	secret := strings.Repeat("s", 32)
+	inputSecret := strings.Repeat("i", 32)
+	for _, name := range []string{"STUDIO_IDENTITY_CLIENT_SECRET", "STUDIO_CENTRAL_SECRET", "EVALUATION_SPACE_IDENTITY_SECRET", "EVALUATION_SPACE_CENTRAL_SECRET", "EVALUATION_SPACE_STUDIO_SECRET", "TEST_EVALUATOR_SECRET"} {
+		t.Setenv(name, secret)
+	}
+	t.Setenv("TEST_EVALUATOR_INPUT_SECRET", inputSecret)
+	t.Setenv("STUDIO_EVALUATION_INPUT_SECRET", inputSecret)
+	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "central.db"))
+	must(t, err)
+	defer store.Close()
+	admin, err := store.BootstrapAccount(ctx, "admin", "permanent-admin-password", identitySeed(t))
+	must(t, err)
+	_, token, err := store.Authenticate(ctx, "admin", "permanent-admin-password")
+	must(t, err)
+	config := &identityconfig.Config{Issuer: issuer, Listen: "127.0.0.1:0", Clients: []identityconfig.Client{{ID: "studio", Callback: issuer + "/volumes-studio/auth/callback", SecretEnvs: []string{"STUDIO_IDENTITY_CLIENT_SECRET"}}, {ID: "evaluation-space", Callback: issuer + "/evaluation-space/auth/callback", SecretEnvs: []string{"EVALUATION_SPACE_IDENTITY_SECRET"}}}}
+	must(t, config.CheckCredentials())
+	authentication := NewAuthentication(store, Config{Identity: config})
+	publicHandler = authentication.Handler(http.NotFoundHandler())
+	central := httptest.NewServer(authentication.IdentityServiceHandler())
+	defer central.Close()
+
+	modelRef := evolution.Revision{ID: "native-model", Revision: 1, Digest: evolution.Digest([]byte("native-model"))}
+	var modelMu sync.Mutex
+	responses := map[string]json.RawMessage{}
+	calls := map[string]int{}
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		modelMu.Lock()
+		defer modelMu.Unlock()
+		user, password, ok := r.BasicAuth()
+		if !ok || user != "space" || password != secret {
+			w.WriteHeader(403)
+			return
+		}
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) < 6 {
+			w.WriteHeader(404)
+			return
+		}
+		runID, callID := parts[3], parts[5]
+		key := runID + "/" + callID
+		if retained, ok := responses[key]; ok {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(retained)
+			return
+		}
+		if r.Method != "PUT" {
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"error":"model_call_not_found"}`))
+			return
+		}
+		var submission struct {
+			RunID  string             `json:"run_id"`
+			CallID string             `json:"call_id"`
+			Key    string             `json:"idempotency_key"`
+			Digest string             `json:"request_digest"`
+			Model  evolution.Revision `json:"model"`
+			Call   struct {
+				Node   evolution.Node             `json:"node"`
+				Inputs map[string]json.RawMessage `json:"inputs"`
+				Prompt string                     `json:"prompt"`
+			} `json:"call"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&submission); err != nil {
+			t.Error(err)
+			w.WriteHeader(400)
+			return
+		}
+		if submission.Model != modelRef || submission.Call.Prompt == "" {
+			t.Error("model pin or effective prompt missing")
+		}
+		calls[runID]++
+		proposal := map[string]any{"id": "verified", "title": "Verified task", "body": "Perform the task and verify the output.", "evidence_ids": []string{"episode"}, "status": "supported"}
+		var outputs any
+		switch submission.Call.Node.ID {
+		case "extract":
+			outputs = map[string]any{"items": []any{proposal}}
+		case "draft":
+			outputs = map[string]any{"state": map[string]any{"corpus": submission.Call.Inputs["corpus"], "items": []any{proposal}, "valid": false}}
+		case "critic":
+			var state map[string]any
+			if err := json.Unmarshal(submission.Call.Inputs["state"], &state); err != nil {
+				t.Error(err)
+			}
+			state["valid"] = true
+			outputs = map[string]any{"state": state}
+		default:
+			t.Error("unexpected node", submission.Call.Node.ID)
+			w.WriteHeader(400)
+			return
+		}
+		raw, _ := json.Marshal(map[string]any{"run_id": submission.RunID, "call_id": submission.CallID, "idempotency_key": submission.Key, "request_digest": submission.Digest, "model": modelRef, "provider_request_id": key, "state": "completed", "usage": map[string]int{"tokens": 4, "cost_micros": 7}, "outputs": outputs, "response_model": "native-fixture-v1", "tool_trace_state": "complete", "tools": []any{}})
+		if mode == "sibling-failure" && runID == "example-corrections" {
+			var value map[string]any
+			must(t, json.Unmarshal(raw, &value))
+			value["state"] = "failed"
+			value["outputs"] = map[string]any{}
+			raw, _ = json.Marshal(value)
+		}
+		responses[key] = raw
+		if mode == "lost-model-reply" && runID == "example-skills" && calls[runID] == 1 {
+			w.WriteHeader(503)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(raw)
+	}))
+	defer model.Close()
+	spaceDirectory := t.TempDir()
+	raw, _ := json.Marshal(map[string]any{"model": modelRef})
+	provision := exec.CommandContext(ctx, catalog, "--state-directory", spaceDirectory, "--action", "examples")
+	provision.Stdin = bytes.NewReader(raw)
+	output, err := provision.CombinedOutput()
+	if err != nil {
+		t.Fatalf("examples: %v %s", err, output)
+	}
+	var packages []struct {
+		Template  evolution.Template `json:"template"`
+		Workflows []struct {
+			Ref      evolution.Revision `json:"ref"`
+			Workflow evolution.Workflow `json:"workflow"`
+		} `json:"workflows"`
+		Schemas map[string]json.RawMessage `json:"schemas"`
+	}
+	must(t, json.Unmarshal(output, &packages))
+	service := evolution.Service{Ref: evolution.Revision{ID: "native-service", Revision: 1}, Kind: "evolution", ConnectionID: "native", RunnerDigest: evolution.Digest([]byte("native-runner")), Enabled: true, Capabilities: evolution.Capabilities{ProtocolVersion: 1, WorkflowVersions: []int{1}, NodeKinds: []string{"agent", "validator", "transform", "loop"}}}
+	service.Ref.Digest, err = evolution.DefinitionDigest(service)
+	must(t, err)
+	raw, _ = json.Marshal(map[string]any{"kind": "service", "ref": service.Ref, "body": service})
+	provision = exec.CommandContext(ctx, catalog, "--state-directory", spaceDirectory)
+	provision.Stdin = bytes.NewReader(raw)
+	if output, err = provision.CombinedOutput(); err != nil {
+		t.Fatalf("service: %v %s", err, output)
+	}
+	corpusBytes := []byte(`{"episodes":[{"id":"episode","family_id":"family","outcome":"completed","truncated":false,"text":"The task completed with verified output."}]}`)
+	corpusFile := filepath.Join(t.TempDir(), "corpus.json")
+	must(t, os.WriteFile(corpusFile, corpusBytes, 0600))
+	artifact := evolution.ArtifactRef{ID: "corpus", GroupID: product.StandardUsersGroup, SchemaDigest: packages[0].Template.Inputs["corpus"], Digest: evolution.Digest(corpusBytes), Size: int64(len(corpusBytes)), MediaType: "application/json", GrantID: "corpus-use", PolicyRevision: 1}
+	raw, _ = json.Marshal(artifact)
+	provision = exec.CommandContext(ctx, catalog, "--state-directory", spaceDirectory, "--action", "seal-artifact", "--artifact-file", corpusFile)
+	provision.Stdin = bytes.NewReader(raw)
+	if output, err = provision.CombinedOutput(); err != nil {
+		t.Fatalf("corpus: %v %s", err, output)
+	}
+	nativePath := filepath.Join(t.TempDir(), "native.json")
+	raw, _ = json.Marshal(map[string]any{"models": []any{map[string]any{"reference": modelRef, "endpoint": model.URL, "client_id": "space", "secret_env": "TEST_EVALUATOR_SECRET", "ceiling": map[string]int{"tokens": 100, "cost_micros": 1000}}}, "schemas": map[string]any{}, "example_builders": true})
+	must(t, os.WriteFile(nativePath, raw, 0600))
+	start := func(binary, addr string, args ...string) {
+		t.Helper()
+		logFile, err := os.Create(filepath.Join(t.TempDir(), "service.log"))
+		must(t, err)
+		cmd := exec.CommandContext(ctx, binary, args...)
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+		must(t, cmd.Start())
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		t.Cleanup(func() {
+			_ = cmd.Process.Signal(os.Interrupt)
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				_ = cmd.Process.Kill()
+				<-done
+			}
+			logFile.Close()
+		})
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+			reply, err := http.Get("http://" + addr + "/probe")
+			if err == nil {
+				reply.Body.Close()
+				return
+			}
+			select {
+			case err := <-done:
+				done <- err
+				raw, _ := os.ReadFile(logFile.Name())
+				t.Fatalf("service exit: %v %s", err, raw)
+			default:
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatal("listener unavailable")
+	}
+
+	start(studioBinary, studioAddress, "--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evaluation-endpoint", spaceOrigin)
+	start(spaceBinary, spaceAddress, "--listen", spaceAddress, "--state-directory", spaceDirectory, "--identity-endpoint", central.URL, "--native-config", nativePath, "--studio-input-endpoint", "http://"+participantAddress)
+	for _, action := range []string{"volume.read", "volume.author", "volume.review", "volume.merge", "volume.configure"} {
+		_, err = store.ApplyStudioGrant(ctx, token, product.StudioGrantCommand{RequestID: strings.ReplaceAll(action, ".", "-"), Kind: "account", SubjectID: admin.ID, LibraryID: "aster-shared-assets", Action: action, Effect: "allow"})
+		must(t, err)
+	}
+	_, err = store.CreateProject(ctx, admin.ID, "project", "Source")
+	must(t, err)
+	source := evolution.SourceBinding{ID: "source", Kind: "project", ResourceID: "project", PolicyRevision: 1, AudienceGroups: []string{product.StandardUsersGroup}, DerivativePublication: true}
+	_, err = store.SetEvolutionSourcePolicy(ctx, token, product.StandardUsersGroup, product.EvolutionSourcePolicyInput{RequestID: "source", Source: source})
+	must(t, err)
+	budget := evolution.Budget{MaxTokens: 1000, MaxCostMicros: 10000, MaxAttempts: 20, TimeoutSeconds: 120, MaxArtifactBytes: 1 << 20}
+	groupBudget := budget
+	groupBudget.MaxTokens *= 2
+	groupBudget.MaxCostMicros *= 2
+	configuration := evolution.Configuration{GroupID: product.StandardUsersGroup, Revision: 1, Budget: groupBudget, Sources: []evolution.SourceBinding{source}}
+	for _, pkg := range packages {
+		configuration.Bindings = append(configuration.Bindings, evolution.Binding{ID: pkg.Template.Ref.ID, Enabled: true, Template: pkg.Template.Ref, Workflow: pkg.Template.Workflows[0], Service: service.Ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: pkg.Template.SuggestedPrefix, Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: pkg.Template.Evaluation, Budget: budget, Trigger: "manual"})
+	}
+	pending, err := store.ActivateEvolutionConfig(ctx, token, configuration.GroupID, product.EvolutionActivationInput{RequestID: "activate", Configuration: configuration})
+	must(t, err)
+	evalClient, err := evaluationclient.New(spaceOrigin, secret)
+	must(t, err)
+	studioClient, err := studioclient.New("http://"+participantAddress, secret)
+	must(t, err)
+	must(t, (&product.EvolutionWorker{Store: store, Evaluation: evalClient, Studio: studioClient}).Step(ctx))
+	active, err := store.EvolutionConfig(ctx, token, configuration.GroupID)
+	must(t, err)
+	if active.State != "active" {
+		t.Fatal(active)
+	}
+	_, err = store.SetGenerationInputGrant(ctx, token, configuration.GroupID, product.GenerationInputGrantInput{RequestID: "input", Artifact: artifact, SourceIDs: []string{"source"}, Enabled: true})
+	must(t, err)
+	// Complete the actual Studio PKCE/session flow without a browser frontend.
+	httpClient := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	request, _ := http.NewRequestWithContext(ctx, "GET", "http://"+studioAddress+"/volumes-studio/auth/login", nil)
+	request.Host = issuerURL.Host
+	login, err := httpClient.Do(request)
+	must(t, err)
+	login.Body.Close()
+	location, err := url.Parse(login.Header.Get("Location"))
+	must(t, err)
+	code, err := store.AdmitIdentityCode(ctx, token, "studio", issuer+"/volumes-studio/auth/callback", location.Query().Get("code_challenge"))
+	must(t, err)
+	request, _ = http.NewRequestWithContext(ctx, "GET", "http://"+studioAddress+"/volumes-studio/auth/callback?"+url.Values{"state": {location.Query().Get("state")}, "code": {code}}.Encode(), nil)
+	request.Host = issuerURL.Host
+	for _, cookie := range login.Cookies() {
+		request.AddCookie(cookie)
+	}
+	callback, err := httpClient.Do(request)
+	must(t, err)
+	callback.Body.Close()
+	if callback.StatusCode != 303 {
+		t.Fatal("Studio session failed", callback.StatusCode)
+	}
+	cookies := callback.Cookies()
+	var csrf string
+	call := func(method, path string, input any) (int, []byte) {
+		t.Helper()
+		var raw []byte
+		if input != nil {
+			raw, _ = json.Marshal(input)
+		}
+		request, _ := http.NewRequestWithContext(ctx, method, "http://"+studioAddress+"/volumes-studio/api/v1/"+path, bytes.NewReader(raw))
+		request.Host = issuerURL.Host
+		for _, cookie := range cookies {
+			if cookie.MaxAge >= 0 {
+				request.AddCookie(cookie)
+			}
+		}
+		if method != "GET" {
+			request.Header.Set("Origin", issuer)
+			request.Header.Set("X-CSRF-Token", csrf)
+			request.Header.Set("Content-Type", "application/json")
+		}
+		response, err := httpClient.Do(request)
+		must(t, err)
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		must(t, err)
+		return response.StatusCode, body
+	}
+	status, raw := call("GET", "session", nil)
+	if status != 200 {
+		t.Fatal(status, string(raw))
+	}
+	var session struct {
+		CSRF string `json:"csrf"`
+	}
+	must(t, json.Unmarshal(raw, &session))
+	csrf = session.CSRF
+	libraryRoot := "libraries/aster-shared-assets"
+	get := func(path string, out any) {
+		t.Helper()
+		status, raw := call("GET", libraryRoot+path, nil)
+		if status != 200 {
+			t.Fatal(status, string(raw))
+		}
+		must(t, json.Unmarshal(raw, out))
+	}
+	post := func(path string, input any, out any) {
+		t.Helper()
+		status, raw := call("POST", libraryRoot+path, input)
+		if status < 200 || status >= 300 {
+			t.Fatal(path, status, string(raw))
+		}
+		if out != nil {
+			must(t, json.Unmarshal(raw, out))
+		}
+	}
+	var main evolution.ContentRef
+	get("/main", &main)
+
+	privateCall := func(action string, input any) (int, []byte) {
+		t.Helper()
+		raw, _ := json.Marshal(input)
+		request, _ := http.NewRequestWithContext(ctx, "POST", spaceOrigin+"/evaluation-space/internal/v1/generation/"+action, bytes.NewReader(raw))
+		request.SetBasicAuth("central", secret)
+		request.Header.Set("Content-Type", "application/json")
+		response, err := http.DefaultClient.Do(request)
+		must(t, err)
+		defer response.Body.Close()
+		raw, err = io.ReadAll(response.Body)
+		must(t, err)
+		return response.StatusCode, raw
+	}
+	for _, binding := range configuration.Bindings {
+		pins := evolution.RunPins{ConfigurationRevision: 1, ConfigurationDigest: pending.DesiredDigest, SourcePolicyRevision: 1, Template: binding.Template, Workflow: binding.Workflow, Service: binding.Service, Model: modelRef, InputPorts: map[string]evolution.ArtifactRef{"corpus": artifact}, Inputs: []evolution.ArtifactRef{artifact}, Base: main, Output: binding.Output, Evaluation: binding.Evaluation}
+		assignment := evolution.GenerationAssignment{RunID: binding.ID, GroupID: configuration.GroupID, BindingID: binding.ID, OccurrenceID: "manual", Requester: evolution.Principal{Issuer: issuer, Subject: admin.ID, Kind: "human"}, Pins: pins, Budget: budget}
+		status, raw := privateCall("admit", assignment)
+		if status != 200 {
+			t.Fatal("admission", binding.ID, status, string(raw))
+		}
+	}
+	branches := map[string]string{}
+	failed := map[string]bool{}
+	for deadline := time.Now().Add(35 * time.Second); time.Now().Before(deadline); {
+		for _, binding := range configuration.Bindings {
+			if branches[binding.ID] != "" || failed[binding.ID] {
+				continue
+			}
+			status, raw := privateCall("read", map[string]string{"group_id": configuration.GroupID, "run_id": binding.ID})
+			if status != 200 {
+				t.Fatal("status", status, string(raw))
+			}
+			var state struct {
+				State   string `json:"state"`
+				Handoff string `json:"handoff"`
+				Branch  string `json:"branch"`
+			}
+			must(t, json.Unmarshal(raw, &state))
+			if state.State == "failed" {
+				if mode == "sibling-failure" && binding.ID == "example-corrections" {
+					failed[binding.ID] = true
+					continue
+				}
+				t.Fatal("native execution failed", binding.ID, string(raw))
+			}
+			if state.Handoff == "submitted" {
+				branches[binding.ID] = state.Branch
+			}
+		}
+		if len(branches)+len(failed) == len(configuration.Bindings) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if len(branches)+len(failed) != 2 {
+		t.Fatal("native handoff not settled", branches)
+	}
+	var unchanged evolution.ContentRef
+	get("/main", &unchanged)
+	if unchanged != main {
+		t.Fatal("machine changed protected main")
+	}
+	for _, binding := range configuration.Bindings {
+		if failed[binding.ID] {
+			continue
+		}
+		var branch struct {
+			ID      string `json:"id"`
+			Head    string `json:"head"`
+			Initial string `json:"initial_base"`
+		}
+		get("/branches/"+branches[binding.ID], &branch)
+		if branch.Initial != main.CommitID {
+			t.Fatal("different generation base")
+		}
+		path := "lessons/verified.md"
+		if binding.Output.Prefix == "skills" {
+			path = "skills/verified/SKILL.md"
+		}
+		status, raw := call("GET", libraryRoot+"/branches/"+branch.ID+"/head-file?"+url.Values{"head": {branch.Head}, "path": {path}}.Encode(), nil)
+		if status != 200 || !bytes.Contains(raw, []byte("Evidence IDs: episode")) {
+			t.Fatal("generated file absent", status, string(raw))
+		}
+		var prepared struct {
+			Digest string `json:"digest"`
+		}
+		post("/integrations/prepare", map[string]any{"request_id": "prepare-" + binding.ID, "branch_id": branch.ID, "expected_head": branch.Head, "expected_main": unchanged.CommitID, "expected_policy_revision": 1}, &prepared)
+		post("/integrations/reviews", map[string]any{"request_id": "approve-" + binding.ID, "prepared_digest": prepared.Digest, "verdict": "approve", "rationale": "Verified generated files"}, nil)
+		post("/integrations/merge", map[string]any{"request_id": "merge-" + binding.ID, "prepared_digest": prepared.Digest, "expected_main": unchanged.CommitID}, nil)
+		get("/main", &unchanged)
+	}
+	modelMu.Lock()
+	skillCalls, correctionCalls := calls["example-skills"], calls["example-corrections"]
+	modelMu.Unlock()
+	if skillCalls != 2 || correctionCalls != 1 {
+		t.Fatal("independent graph model calls", skillCalls, correctionCalls)
+	}
+}

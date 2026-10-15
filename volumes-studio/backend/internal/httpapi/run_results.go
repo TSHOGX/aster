@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
@@ -11,9 +12,13 @@ import (
 	"volume-studio/backend/internal/authoring"
 )
 
+type GenerationBaseResolver interface {
+	ResolveGenerationBase(context.Context, evolution.GenerationGrantScope) (evolution.GenerationAssignment, error)
+}
 type RunResultAPI struct {
-	Store  *authoring.Store
-	secret [32]byte
+	BaseAuthority GenerationBaseResolver
+	Store         *authoring.Store
+	secret        [32]byte
 }
 
 func NewRunResultAPI(store *authoring.Store, secret string) (*RunResultAPI, error) {
@@ -24,7 +29,7 @@ func NewRunResultAPI(store *authoring.Store, secret string) (*RunResultAPI, erro
 }
 func (a *RunResultAPI) Handler() http.Handler {
 	mux := http.NewServeMux()
-	for _, action := range []string{"lookup", "submit"} {
+	for _, action := range []string{"lookup", "submit", "base"} {
 		action := action
 		mux.HandleFunc("POST /volumes-studio/internal/v1/run-results/"+action, func(w http.ResponseWriter, r *http.Request) { a.serve(w, r, action) })
 	}
@@ -42,6 +47,28 @@ func (a *RunResultAPI) serve(w http.ResponseWriter, r *http.Request, action stri
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "application/json" {
 		writeError(w, 415, "json_required")
+		return
+	}
+	if action == "base" {
+		scope, err := evolution.Decode[evolution.GenerationGrantScope](http.MaxBytesReader(w, r.Body, 1<<16))
+		if err != nil || scope.Action != "read" {
+			writeError(w, 400, "invalid_generation_scope")
+			return
+		}
+		if a.BaseAuthority == nil {
+			writeError(w, 503, "generation_authority_unavailable")
+			return
+		}
+		assignment, err := a.BaseAuthority.ResolveGenerationBase(r.Context(), scope)
+		if err != nil {
+			authoringError(w, err)
+			return
+		}
+		tree, err := a.Store.AssignedSnapshot(r.Context(), authoring.Actor{Issuer: assignment.Requester.Issuer, Subject: assignment.Requester.Subject}, assignment.Pins.Base)
+		respond(w, 200, struct {
+			Reference evolution.ContentRef `json:"reference"`
+			Entries   any                  `json:"entries"`
+		}{assignment.Pins.Base, tree.Entries}, err)
 		return
 	}
 	if action == "lookup" {

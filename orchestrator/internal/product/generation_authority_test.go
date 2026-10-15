@@ -47,6 +47,11 @@ func TestGenerationGrantPinsScopeAndMonotonicWinningFence(t *testing.T) {
 	if _, err = s.ResolveGeneration(ctx, scope); !errors.Is(err, ErrConflict) {
 		t.Fatal("stale fence accepted", err)
 	}
+	read := scope
+	read.Action = "read"
+	if _, err = s.ResolveGeneration(ctx, read); err != nil {
+		t.Fatal("metadata read raced observed fence", err)
+	}
 	scope.Fence = 1
 	_, err = s.ResolveGeneration(ctx, scope)
 	must(t, err)

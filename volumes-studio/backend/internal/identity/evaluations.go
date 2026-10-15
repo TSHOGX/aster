@@ -121,3 +121,41 @@ func (c *Client) AuthorizeRunResult(ctx context.Context, scope evolution.RunResu
 	}
 	return nil
 }
+
+func (c *Client) ResolveGenerationBase(ctx context.Context, scope evolution.GenerationGrantScope) (evolution.GenerationAssignment, error) {
+	var assignment evolution.GenerationAssignment
+	if scope.Action != "read" || scope.Grant.Validate() != nil {
+		return assignment, ErrUnauthorized
+	}
+	raw, _ := json.Marshal(scope)
+	request, err := http.NewRequestWithContext(ctx, "POST", c.config.Endpoint+"/api/identity/v1/generation/authority", bytes.NewReader(raw))
+	if err != nil {
+		return assignment, err
+	}
+	request.SetBasicAuth(c.config.ClientID, c.config.ClientSecret)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := c.http.Do(request)
+	if err != nil {
+		return assignment, ErrUnavailable
+	}
+	defer response.Body.Close()
+	if response.StatusCode == 401 || response.StatusCode == 403 || response.StatusCode == 409 {
+		return assignment, ErrUnauthorized
+	}
+	if response.StatusCode != 200 {
+		return assignment, ErrUnavailable
+	}
+	raw, err = io.ReadAll(io.LimitReader(response.Body, evolution.MaxDocumentBytes+1))
+	if err != nil || len(raw) > evolution.MaxDocumentBytes {
+		return assignment, ErrUnavailable
+	}
+	assignment, err = evolution.Decode[evolution.GenerationAssignment](bytes.NewReader(raw))
+	if err != nil {
+		return assignment, ErrUnavailable
+	}
+	digest, err := assignment.Digest()
+	if err != nil || digest != scope.Grant.AssignmentDigest || assignment.RunID != scope.Grant.RunID || assignment.GroupID != scope.Grant.GroupID {
+		return evolution.GenerationAssignment{}, ErrUnavailable
+	}
+	return assignment, nil
+}

@@ -25,7 +25,7 @@ func (a *Authentication) identityGeneration(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	action := r.PathValue("action")
-	if client.ID != "evaluation-space" && !(client.ID == "studio" && action == "result-authority") {
+	if client.ID != "evaluation-space" && !(client.ID == "studio" && (action == "result-authority" || action == "authority")) {
 		writeError(w, 403, "generation service required")
 		return
 	}
@@ -46,6 +46,10 @@ func (a *Authentication) identityGeneration(w http.ResponseWriter, r *http.Reque
 		input, err := evolution.Decode[evolution.GenerationGrantScope](http.MaxBytesReader(w, r.Body, 1<<16))
 		if err != nil {
 			writeError(w, 400, "invalid generation scope")
+			return
+		}
+		if client.ID == "studio" && input.Action != "read" {
+			writeError(w, 403, "read scope required")
 			return
 		}
 		assignment, err := a.Store.ResolveGeneration(r.Context(), input)

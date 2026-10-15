@@ -2,6 +2,7 @@ package evolution
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	manifest "aster/contracts/volumemanifest"
@@ -69,4 +70,13 @@ func (r RunResultReceipt) Validate(scope RunResultScope) error {
 		return fmt.Errorf("result acceptance incomplete")
 	}
 	return nil
+}
+
+var ErrRunResultNotFound = errors.New("Studio_result_not_found")
+
+type AcceptedRunResult struct {
+	RunID       string
+	PatchDigest string
+	BranchID    string
+	CommitID    string
 }

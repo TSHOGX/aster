@@ -103,6 +103,13 @@ func (s *Store) checkGeneration(ctx context.Context, q queryer, input evolution.
 	if err := authorizeEvolutionGroup(ctx, q, actor, input.GroupID, "run.start"); err != nil {
 		return config, err
 	}
+	decision, err := studioAccess(ctx, q, evolution.AccessRequest{Principal: input.Requester, LibraryID: input.Pins.Output.LibraryID, Action: "volume.read"})
+	if err != nil {
+		return config, err
+	}
+	if !decision.Allowed {
+		return config, ErrForbidden
+	}
 	var raw []byte
 	if err := q.QueryRowContext(ctx, `SELECT r.body FROM evolution_configuration_revisions r JOIN evolution_operation_states o ON o.operation_id=r.operation_id WHERE r.group_id=? AND r.revision=? AND r.digest=? AND o.state='active'`, input.GroupID, input.Pins.ConfigurationRevision, input.Pins.ConfigurationDigest).Scan(&raw); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -110,7 +117,6 @@ func (s *Store) checkGeneration(ctx context.Context, q queryer, input evolution.
 		}
 		return config, err
 	}
-	var err error
 	config, err = evolution.Decode[evolution.Configuration](bytes.NewReader(raw))
 	if err != nil || input.Pins.ValidateFor(config, input.BindingID) != nil {
 		return config, ErrInvalid
@@ -266,7 +272,7 @@ func (s *Store) ResolveGeneration(ctx context.Context, scope evolution.Generatio
 		if err != nil {
 			return err
 		}
-		if scope.Fence != fence {
+		if scope.Fence < 0 || scope.Action != "read" && scope.Fence != fence {
 			return ErrConflict
 		}
 		if scope.Action == "cleanup" {

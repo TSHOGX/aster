@@ -1,6 +1,8 @@
 package producthttp
 
 import (
+	"aster/contracts/evolution"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -38,7 +40,7 @@ func TestGenerationAuthorityIsServiceSpecificAndPrivate(t *testing.T) {
 				t.Fatal(action, code)
 			}
 		}
-		if action != "result-authority" {
+		if action != "result-authority" && action != "authority" {
 			if code := call(private, action, "studio", secret, "", ""); code != 403 {
 				t.Fatal("Studio escalated to producer", action, code)
 			}
@@ -47,4 +49,14 @@ func TestGenerationAuthorityIsServiceSpecificAndPrivate(t *testing.T) {
 			t.Fatal("private route exposed", code)
 		}
 	}
+	raw, _ := json.Marshal(evolution.GenerationGrantScope{Action: "execute"})
+	request := httptest.NewRequest("POST", "https://app/api/identity/v1/generation/authority", strings.NewReader(string(raw)))
+	request.SetBasicAuth("studio", secret)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	auth.IdentityServiceHandler().ServeHTTP(response, request)
+	if response.Code != 403 {
+		t.Fatal("Studio obtained execute authority", response.Code)
+	}
+
 }

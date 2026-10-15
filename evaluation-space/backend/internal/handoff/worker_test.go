@@ -76,7 +76,7 @@ func (s *studio) Submit(_ context.Context, run evolution.Run, patch evolution.Pa
 		s.beforeSubmit()
 	}
 	raw, _ := json.Marshal(patch)
-	receipt := Receipt{run.ID, evolution.Digest(raw), "result-branch", strings.Repeat("b", 64)}
+	receipt := Receipt{RunID: run.ID, PatchDigest: evolution.Digest(raw), BranchID: "result-branch", CommitID: strings.Repeat("b", 64)}
 	s.receipt = &receipt
 	if s.lost {
 		return Receipt{}, errors.New("reply lost")
