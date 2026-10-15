@@ -116,3 +116,28 @@ func (a *ProjectionAuthority) AuthorizeEvaluationProfile(ctx context.Context, sc
 	}
 	return nil
 }
+
+func (a *ProjectionAuthority) AuthorizeRunResult(ctx context.Context, scope evolution.RunResultScope) error {
+	if scope.Validate() != nil {
+		return ErrUnauthorized
+	}
+	raw, _ := json.Marshal(scope)
+	request, err := http.NewRequestWithContext(ctx, "POST", a.config.Endpoint+"/api/identity/v1/generation/result-authority", bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	request.SetBasicAuth(a.config.ClientID, a.config.ClientSecret)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := a.client.Do(request)
+	if err != nil {
+		return ErrUnavailable
+	}
+	defer response.Body.Close()
+	if response.StatusCode == 401 || response.StatusCode == 403 || response.StatusCode == 409 {
+		return errors.Join(ErrUnauthorized, httpapi.ErrRunResultDenied)
+	}
+	if response.StatusCode != 204 {
+		return ErrUnavailable
+	}
+	return nil
+}

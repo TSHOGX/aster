@@ -94,3 +94,30 @@ func (c *Client) ResolveEvaluationInput(ctx context.Context, grant evolution.Eva
 	}
 	return assignment, nil
 }
+
+// AuthorizeRunResult checks the central terminal fence and bound patch digest;
+// the incoming producer identity is independently authenticated by the listener.
+func (c *Client) AuthorizeRunResult(ctx context.Context, scope evolution.RunResultScope) error {
+	if scope.Validate() != nil {
+		return ErrUnauthorized
+	}
+	raw, _ := json.Marshal(scope)
+	request, err := http.NewRequestWithContext(ctx, "POST", c.config.Endpoint+"/api/identity/v1/generation/result-authority", bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	request.SetBasicAuth(c.config.ClientID, c.config.ClientSecret)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := c.http.Do(request)
+	if err != nil {
+		return ErrUnavailable
+	}
+	defer response.Body.Close()
+	if response.StatusCode == 401 || response.StatusCode == 403 || response.StatusCode == 409 {
+		return ErrUnauthorized
+	}
+	if response.StatusCode != 204 {
+		return ErrUnavailable
+	}
+	return nil
+}

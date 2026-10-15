@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -92,5 +94,53 @@ func TestEvaluationTransportAuthenticatesAndRejectsMismatchedResults(t *testing.
 	mode = "duplicate"
 	if err = client.Verify(context.Background(), grant); err == nil {
 		t.Fatal("duplicate decision accepted")
+	}
+}
+
+func TestRunResultArtifactTransportChecksEnvelopeAndDeniesRedirect(t *testing.T) {
+	secret := strings.Repeat("s", 32)
+	data := []byte("result bytes")
+	ref := evolution.ArtifactRef{ID: "file", GroupID: "group", Digest: evolution.Digest(data), Size: int64(len(data))}
+	mode := "ok"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, password, ok := r.BasicAuth()
+		if !ok || user != "studio" || password != secret || r.URL.Path != "/evaluation-space/internal/v1/run-result-artifact" {
+			t.Error("wrong result artifact identity")
+		}
+		switch mode {
+		case "redirect":
+			http.Redirect(w, r, "https://denied.example", 302)
+			return
+		case "denied":
+			w.WriteHeader(403)
+			return
+		}
+		w.Header().Set("X-Content-Digest", ref.Digest)
+		if mode == "wrong-digest" {
+			w.Header().Set("X-Content-Digest", evolution.Digest([]byte("wrong")))
+		}
+		w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+	client, err := New(server.URL, secret, authority{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := client.ReadRunResultArtifact(context.Background(), evolution.RunResultScope{}, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil || string(raw) != string(data) {
+		t.Fatal(string(raw), err)
+	}
+	for _, value := range []string{"redirect", "denied", "wrong-digest"} {
+		mode = value
+		if reader, err = client.ReadRunResultArtifact(context.Background(), evolution.RunResultScope{}, ref); err == nil {
+			reader.Close()
+			t.Fatal("invalid artifact transport", mode)
+		}
 	}
 }

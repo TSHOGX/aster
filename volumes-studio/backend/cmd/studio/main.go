@@ -61,13 +61,17 @@ func main() {
 	}
 	defer sessions.Close()
 	var evaluator authoring.Evaluator
+	var resultArtifacts authoring.RunResultArtifacts
 	if *evaluationEndpoint != "" {
-		evaluator, err = evaluationclient.New(*evaluationEndpoint, os.Getenv(*evaluationSecretEnv), client)
+		transport, transportErr := evaluationclient.New(*evaluationEndpoint, os.Getenv(*evaluationSecretEnv), client)
+		evaluator = transport
+		resultArtifacts = transport
+		err = transportErr
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
-	store, err := authoring.Open(ctx, authoring.Config{Evaluator: evaluator, Authority: client, SeedSharedAssets: true, Directory: *directory, PublisherID: *publisher, QuotaBytes: *quota})
+	store, err := authoring.Open(ctx, authoring.Config{RunResults: client, RunArtifacts: resultArtifacts, Evaluator: evaluator, Authority: client, SeedSharedAssets: true, Directory: *directory, PublisherID: *publisher, QuotaBytes: *quota})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -95,9 +99,18 @@ func main() {
 			if err != nil {
 				log.Fatal(err)
 			}
+			resultAPI, err := httpapi.NewRunResultAPI(store, os.Getenv(*evaluationInputSecretEnv))
+			if err != nil {
+				log.Fatal(err)
+			}
+			resultHandler := resultAPI.Handler()
 			inputHandler := inputAPI.Handler()
 			original := participantHandler
 			participantHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, "/volumes-studio/internal/v1/run-results/") {
+					resultHandler.ServeHTTP(w, r)
+					return
+				}
 				if strings.HasPrefix(r.URL.Path, "/volumes-studio/internal/v1/evaluation-input") {
 					inputHandler.ServeHTTP(w, r)
 					return

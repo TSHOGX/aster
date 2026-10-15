@@ -166,3 +166,30 @@ func (c *Client) Cancel(ctx context.Context, grant evolution.EvaluationGrant) er
 	_, err := c.call(ctx, "cancel", grant)
 	return err
 }
+
+// ReadRunResultArtifact uses a distinct private endpoint. Returned bytes are
+// independently length/digest-verified by Studio's streaming materializer.
+func (c *Client) ReadRunResultArtifact(ctx context.Context, scope evolution.RunResultScope, ref evolution.ArtifactRef) (io.ReadCloser, error) {
+	raw, err := json.Marshal(struct {
+		Scope    evolution.RunResultScope `json:"scope"`
+		Artifact evolution.ArtifactRef    `json:"artifact"`
+	}{scope, ref})
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, "POST", c.endpoint+"/evaluation-space/internal/v1/run-result-artifact", bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	request.SetBasicAuth("studio", c.secret)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := c.http.Do(request)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	if response.StatusCode != 200 || response.ContentLength != ref.Size || response.Header.Get("X-Content-Digest") != ref.Digest {
+		response.Body.Close()
+		return nil, ErrUnavailable
+	}
+	return response.Body, nil
+}

@@ -397,3 +397,13 @@ packages do not grant source access, activate a group, or write a Volume. Runnin
 them requires the native model/implementation registry and authorized run admission.
 Their suggested output prefixes are `skills` and `lessons`; final publication still
 requires Studio review and the configured checks.
+
+Studio's private participant listener also accepts generation result lookup/submission
+when its Evaluation Space connection is configured. It authenticates Evaluation Space
+with `STUDIO_EVALUATION_INPUT_SECRET`, then asks central identity to verify the exact
+successful run fence, base, output reservation and bound patch digest. Studio fetches
+only declared patch artifacts from Evaluation Space using its separate Studio service
+credential; the receiver verifies current central scope and immutable handoff membership.
+Neither listener accepts browser cookies or origins. A service credential by itself
+cannot authorize a generated branch. Result acceptance creates an isolated review
+branch and does not advance main or publish a version.

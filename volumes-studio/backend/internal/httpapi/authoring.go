@@ -96,7 +96,7 @@ func authoringError(w http.ResponseWriter, err error) {
 		return
 	}
 	switch {
-	case errors.Is(err, authoring.ErrAuthority):
+	case errors.Is(err, authoring.ErrAuthority), errors.Is(err, identity.ErrUnauthorized):
 		writeError(w, 403, "authority_required")
 	case errors.Is(err, authoring.ErrInvalid):
 		writeError(w, 422, "invalid_input")

@@ -1,11 +1,13 @@
 package handoff
 
 import (
+	"aster/evaluation-space/internal/httpapi"
 	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -186,5 +188,92 @@ func TestNoChangeAndFailedLookupDoNotSubmit(t *testing.T) {
 				t.Fatal("unexpected remote write")
 			}
 		})
+	}
+}
+
+type resultResolver struct {
+	scope  evolution.RunResultScope
+	calls  int
+	denied bool
+}
+
+func (r *resultResolver) AuthorizeRunResult(_ context.Context, scope evolution.RunResultScope) error {
+	r.calls++
+	if r.denied || scope != r.scope {
+		return httpapi.ErrRunResultDenied
+	}
+	return nil
+}
+func TestFrozenResultArtifactsCannotExposeOtherRunData(t *testing.T) {
+	worker, remote, _, _ := fixture(t, false)
+	ctx := context.Background()
+	remote.lookupErr = errors.New("offline")
+	if err := worker.Step(ctx, "group", "run"); err == nil {
+		t.Fatal("expected pending handoff")
+	}
+	retained, err := worker.Store.Handoff(ctx, "group", "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := worker.Store.Run(ctx, "group", "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(retained.Patch)
+	scope := evolution.RunResultScope{GroupID: run.GroupID, RunID: run.ID, BindingID: run.BindingID, Fence: run.Fence, Base: run.Pins.Base, Output: run.Pins.Output, PatchDigest: evolution.Digest(raw)}
+	var artifact evolution.ArtifactRef
+	for _, entry := range retained.Patch.Entries {
+		if entry.Artifact != nil {
+			artifact = *entry.Artifact
+		}
+	}
+	data, err := worker.Store.RunResultArtifact(ctx, scope, artifact)
+	if err != nil || string(data) != "# Lesson\nVerified content." {
+		t.Fatal(string(data), err)
+	}
+	checkpoint, err := worker.Store.LatestRunCheckpoint(ctx, run.GroupID, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = worker.Store.RunResultArtifact(ctx, scope, checkpoint.Artifact); !errors.Is(err, projections.ErrNotFound) {
+		t.Fatal("result grant read workflow trace", err)
+	}
+	wrong := scope
+	wrong.Fence++
+	if _, err = worker.Store.RunResultArtifact(ctx, wrong, artifact); !errors.Is(err, projections.ErrConflict) {
+		t.Fatal("stale fence read bytes", err)
+	}
+	resolver := &resultResolver{scope: scope}
+	secret := strings.Repeat("s", 32)
+	api, err := httpapi.NewRunResultArtifactAPI(worker.Store, resolver, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := func(user, password, cookie string, ref evolution.ArtifactRef) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]any{"scope": scope, "artifact": ref})
+		request := httptest.NewRequest("POST", "/evaluation-space/internal/v1/run-result-artifact", bytes.NewReader(body))
+		request.SetBasicAuth(user, password)
+		request.Header.Set("Cookie", cookie)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		api.Handler().ServeHTTP(response, request)
+		return response
+	}
+	if response := call("producer", secret, "", artifact); response.Code != 403 || resolver.calls != 0 {
+		t.Fatal("wrong caller borrowed scope", response.Code)
+	}
+	if response := call("studio", secret, "ambient=x", artifact); response.Code != 403 || resolver.calls != 0 {
+		t.Fatal("ambient credential accepted")
+	}
+	response := call("studio", secret, "", artifact)
+	if response.Code != 200 || response.Body.String() != string(data) || response.Header().Get("X-Content-Digest") != artifact.Digest {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	if response = call("studio", secret, "", checkpoint.Artifact); response.Code != 404 {
+		t.Fatal("trace escaped result transport", response.Code)
+	}
+	resolver.denied = true
+	if response = call("studio", secret, "", artifact); response.Code != 403 {
+		t.Fatal("revoked result read", response.Code)
 	}
 }

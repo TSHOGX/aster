@@ -60,7 +60,7 @@ func run() error {
 		return err
 	}
 	defer store.Close()
-	var evaluationHandler, providerInputHandler http.Handler
+	var evaluationHandler, providerInputHandler, resultArtifactHandler http.Handler
 	var evaluationDone chan struct{}
 	if *evaluationConfigPath != "" {
 		connections, err := readEvaluationConnections(*evaluationConfigPath)
@@ -72,6 +72,11 @@ func run() error {
 			return err
 		}
 		evaluationHandler = api.Handler()
+		resultAPI, err := httpapi.NewRunResultArtifactAPI(store, authority, os.Getenv(*studioSecretEnv))
+		if err != nil {
+			return err
+		}
+		resultArtifactHandler = resultAPI.Handler()
 		content, err := studioclient.New(*studioInputs, os.Getenv(*studioInputSecretEnv))
 		if err != nil {
 			return err
@@ -99,6 +104,10 @@ func run() error {
 	projectionHandler := (httpapi.ProjectionAPI{Store: store, Authority: authority}).Handler()
 	catalogHandler := (httpapi.CatalogAPI{Store: store, Authority: authority}).Handler()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if resultArtifactHandler != nil && r.URL.Path == "/evaluation-space/internal/v1/run-result-artifact" {
+			resultArtifactHandler.ServeHTTP(w, r)
+			return
+		}
 		if providerInputHandler != nil && strings.HasPrefix(r.URL.Path, "/evaluation-space/provider/v1/") {
 			providerInputHandler.ServeHTTP(w, r)
 			return
