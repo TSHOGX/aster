@@ -3,7 +3,6 @@ package httpapi
 import (
 	"aster/contracts/evolution"
 	"aster/evaluation-space/internal/projections"
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,8 +10,16 @@ import (
 	"strconv"
 )
 
+type CatalogScope struct {
+	Kind   string              `json:"kind"`
+	Action string              `json:"action"`
+	Ref    *evolution.Revision `json:"ref,omitempty"`
+}
+
+var ErrCatalogDenied = errors.New("catalog_authority_denied")
+
 type CatalogAuthority interface {
-	AuthorizeCatalog(context.Context, string) error
+	AuthorizeCatalog(*http.Request, CatalogScope) error
 }
 type CatalogAPI struct {
 	Store     *projections.Store
@@ -26,12 +33,7 @@ func (a CatalogAPI) Handler() http.Handler {
 	return mux
 }
 func (a CatalogAPI) list(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Cookie") != "" || r.Header.Get("Origin") != "" {
-		write(w, 403, map[string]string{"error": "service_identity_required"})
-		return
-	}
-	if a.Store == nil || a.Authority == nil || a.Authority.AuthorizeCatalog(r.Context(), r.PathValue("kind")) != nil {
-		write(w, 403, map[string]string{"error": "catalog_authority_denied"})
+	if !a.authorize(w, r, CatalogScope{Kind: r.PathValue("kind"), Action: "list"}) {
 		return
 	}
 	limit := 50
@@ -65,14 +67,6 @@ func (a CatalogAPI) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a CatalogAPI) definition(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Cookie") != "" || r.Header.Get("Origin") != "" {
-		write(w, 403, map[string]string{"error": "service_identity_required"})
-		return
-	}
-	if a.Store == nil || a.Authority == nil || a.Authority.AuthorizeCatalog(r.Context(), r.PathValue("kind")) != nil {
-		write(w, 403, map[string]string{"error": "catalog_authority_denied"})
-		return
-	}
 	rev, err := strconv.ParseInt(r.PathValue("revision"), 10, 64)
 	if err != nil || rev < 1 || strconv.FormatInt(rev, 10) != r.PathValue("revision") {
 		write(w, 400, map[string]string{"error": "invalid_revision"})
@@ -81,6 +75,14 @@ func (a CatalogAPI) definition(w http.ResponseWriter, r *http.Request) {
 	digest := r.URL.Query().Get("digest")
 	if len(digest) == 0 {
 		write(w, 400, map[string]string{"error": "digest_required"})
+		return
+	}
+	ref := evolution.Revision{ID: r.PathValue("id"), Revision: rev, Digest: digest}
+	if ref.Validate() != nil {
+		write(w, 400, map[string]string{"error": "invalid_definition_identity"})
+		return
+	}
+	if !a.authorize(w, r, CatalogScope{Kind: r.PathValue("kind"), Action: "read", Ref: &ref}) {
 		return
 	}
 	body, err := a.Store.CatalogDefinition(r.Context(), r.PathValue("kind"), evolution.Revision{ID: r.PathValue("id"), Revision: rev, Digest: digest})
@@ -93,4 +95,24 @@ func (a CatalogAPI) definition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, json.RawMessage(body))
+}
+
+func (a CatalogAPI) authorize(w http.ResponseWriter, r *http.Request, scope CatalogScope) bool {
+	if r.Header.Get("Cookie") != "" || r.Header.Get("Origin") != "" {
+		write(w, 403, map[string]string{"error": "service_identity_required"})
+		return false
+	}
+	if a.Store == nil || a.Authority == nil {
+		write(w, 503, map[string]string{"error": "catalog_authority_unavailable"})
+		return false
+	}
+	if err := a.Authority.AuthorizeCatalog(r, scope); err != nil {
+		if errors.Is(err, ErrCatalogDenied) {
+			write(w, 403, map[string]string{"error": "catalog_authority_denied"})
+		} else {
+			write(w, 503, map[string]string{"error": "catalog_authority_unavailable"})
+		}
+		return false
+	}
+	return true
 }

@@ -55,7 +55,7 @@ func TestCatalogDefinitionRouteFailsClosedWithoutAuthority(t *testing.T) {
 	}
 	defer s.Close()
 	api := CatalogAPI{Store: s}.Handler()
-	r := httptest.NewRequest("GET", "/evaluation-space/api/v1/catalog/service/service/1?digest=sha256:x", nil)
+	r := httptest.NewRequest("GET", "/evaluation-space/api/v1/catalog/service/service/1?digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil)
 	w := httptest.NewRecorder()
 	api.ServeHTTP(w, r)
 	if w.Code != 403 && w.Code != 503 {

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"aster/evaluation-space/internal/projections"
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
@@ -10,9 +11,9 @@ import (
 
 type catalogAuth struct{ allow bool }
 
-func (a catalogAuth) AuthorizeCatalog(context.Context, string) error {
+func (a catalogAuth) AuthorizeCatalog(*http.Request, CatalogScope) error {
 	if !a.allow {
-		return projections.ErrConflict
+		return ErrCatalogDenied
 	}
 	return nil
 }

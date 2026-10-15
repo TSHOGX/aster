@@ -2,7 +2,6 @@ package identity
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -90,41 +89,48 @@ func (a *ProjectionAuthority) AuthorizeProjection(inbound *http.Request, scope h
 	return nil
 }
 
-// AuthorizeCatalog asks central identity for current service catalog discovery
-// authority; catalog payloads remain separately scoped by the HTTP API.
-func (a *ProjectionAuthority) AuthorizeCatalog(ctx context.Context, kind string) error {
-	raw, err := json.Marshal(struct {
-		Kind string `json:"kind"`
-	}{kind})
+// AuthorizeCatalog authenticates the inbound central caller before consulting
+// central identity with this service's separate registered credential.
+func (a *ProjectionAuthority) AuthorizeCatalog(inbound *http.Request, scope httpapi.CatalogScope) error {
+	user, password, ok := inbound.BasicAuth()
+	actual := sha256.Sum256([]byte(password))
+	expected := sha256.Sum256([]byte(a.config.CentralSecret))
+	if !ok || user != "central" || subtle.ConstantTimeCompare(actual[:], expected[:]) != 1 {
+		return httpapi.ErrCatalogDenied
+	}
+	raw, err := json.Marshal(scope)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", a.config.Endpoint+"/api/identity/v1/catalog-authority", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(inbound.Context(), "POST", a.config.Endpoint+"/api/identity/v1/catalog-authority", bytes.NewReader(raw))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.SetBasicAuth(a.config.ClientID, a.config.ClientSecret)
-	resp, err := a.client.Do(req)
+	response, err := a.client.Do(req)
 	if err != nil {
 		return ErrUnavailable
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		return ErrUnauthorized
+	defer response.Body.Close()
+	if response.StatusCode == 401 || response.StatusCode == 403 {
+		return httpapi.ErrCatalogDenied
 	}
-	if resp.StatusCode != 200 {
+	if response.StatusCode != 200 {
 		return ErrUnavailable
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1025))
-	if err != nil || len(body) > 1024 {
+	raw, err = io.ReadAll(io.LimitReader(response.Body, 1025))
+	if err != nil || len(raw) > 1024 {
 		return ErrUnavailable
 	}
-	var result struct {
+	decision, err := evolution.Decode[struct {
 		Allowed bool `json:"allowed"`
+	}](bytes.NewReader(raw))
+	if err != nil {
+		return ErrUnavailable
 	}
-	if json.Unmarshal(body, &result) != nil || !result.Allowed {
-		return ErrUnauthorized
+	if !decision.Allowed {
+		return httpapi.ErrCatalogDenied
 	}
 	return nil
 }

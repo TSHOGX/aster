@@ -146,6 +146,24 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 	must(t, err)
 	provision("service", service.Ref, raw)
 	start(evaluationBinary, evaluationAddress, "--listen", evaluationAddress, "--state-directory", evaluationDirectory, "--identity-endpoint", central.URL)
+	catalogRequest, err := http.NewRequestWithContext(ctx, "GET", "http://"+evaluationAddress+"/evaluation-space/api/v1/catalog/service/service/1?digest="+service.Ref.Digest, nil)
+	must(t, err)
+	anonymous, err := http.DefaultClient.Do(catalogRequest)
+	must(t, err)
+	anonymous.Body.Close()
+	if anonymous.StatusCode != 403 {
+		t.Fatalf("catalog accepted anonymous caller: %d", anonymous.StatusCode)
+	}
+	catalogRequest.SetBasicAuth("central", secret)
+	response, err := http.DefaultClient.Do(catalogRequest)
+	must(t, err)
+	var storedService evolution.Service
+	err = json.NewDecoder(response.Body).Decode(&storedService)
+	response.Body.Close()
+	must(t, err)
+	if response.StatusCode != 200 || storedService.Ref != service.Ref {
+		t.Fatal("real catalog authority failed", response.StatusCode, storedService.Ref)
+	}
 	configuration := evolution.Configuration{GroupID: product.StandardUsersGroup, Revision: 1, Budget: evolution.Budget{MaxTokens: 1, MaxAttempts: 1, TimeoutSeconds: 1, MaxArtifactBytes: 1}}
 	_, err = store.CreateProject(ctx, admin.ID, "source-project", "Source")
 	must(t, err)
