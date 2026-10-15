@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -59,7 +60,16 @@ func run() error {
 		return err
 	}
 	defer listener.Close()
-	server := &http.Server{Handler: (httpapi.ProjectionAPI{Store: store, Authority: authority}).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10}
+	projectionHandler := (httpapi.ProjectionAPI{Store: store, Authority: authority}).Handler()
+	catalogHandler := (httpapi.CatalogAPI{Store: store, Authority: authority}).Handler()
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/catalog/") {
+			catalogHandler.ServeHTTP(w, r)
+			return
+		}
+		projectionHandler.ServeHTTP(w, r)
+	})
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10}
 	finished := make(chan error, 1)
 	go func() { finished <- server.Serve(listener) }()
 	select {

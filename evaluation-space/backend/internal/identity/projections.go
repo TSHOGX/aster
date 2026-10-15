@@ -2,6 +2,7 @@ package identity
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -15,6 +16,9 @@ import (
 	"aster/contracts/evolution"
 	"aster/evaluation-space/internal/httpapi"
 )
+
+var ErrUnavailable = fmt.Errorf("identity_unavailable")
+var ErrUnauthorized = fmt.Errorf("identity_unauthorized")
 
 type ProjectionConfig struct{ Endpoint, ClientID, ClientSecret, CentralSecret string }
 type ProjectionAuthority struct {
@@ -82,6 +86,45 @@ func (a *ProjectionAuthority) AuthorizeProjection(inbound *http.Request, scope h
 	}
 	if !decision.Allowed {
 		return httpapi.ErrAuthorityDenied
+	}
+	return nil
+}
+
+// AuthorizeCatalog asks central identity for current service catalog discovery
+// authority; catalog payloads remain separately scoped by the HTTP API.
+func (a *ProjectionAuthority) AuthorizeCatalog(ctx context.Context, kind string) error {
+	raw, err := json.Marshal(struct {
+		Kind string `json:"kind"`
+	}{kind})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", a.config.Endpoint+"/api/identity/v1/catalog-authority", bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(a.config.ClientID, a.config.ClientSecret)
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return ErrUnavailable
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+		return ErrUnauthorized
+	}
+	if resp.StatusCode != 200 {
+		return ErrUnavailable
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1025))
+	if err != nil || len(body) > 1024 {
+		return ErrUnavailable
+	}
+	var result struct {
+		Allowed bool `json:"allowed"`
+	}
+	if json.Unmarshal(body, &result) != nil || !result.Allowed {
+		return ErrUnauthorized
 	}
 	return nil
 }

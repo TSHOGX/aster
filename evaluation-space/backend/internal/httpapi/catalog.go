@@ -3,6 +3,7 @@ package httpapi
 import (
 	"aster/contracts/evolution"
 	"aster/evaluation-space/internal/projections"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,7 +11,7 @@ import (
 )
 
 type CatalogAuthority interface {
-	AuthorizeCatalog(*http.Request, string) error
+	AuthorizeCatalog(context.Context, string) error
 }
 type CatalogAPI struct {
 	Store     *projections.Store
@@ -20,6 +21,7 @@ type CatalogAPI struct {
 func (a CatalogAPI) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /evaluation-space/api/v1/catalog/{kind}", a.list)
+	mux.HandleFunc("GET /evaluation-space/api/v1/catalog/{kind}/{id}/{revision}", a.definition)
 	return mux
 }
 func (a CatalogAPI) list(w http.ResponseWriter, r *http.Request) {
@@ -27,7 +29,7 @@ func (a CatalogAPI) list(w http.ResponseWriter, r *http.Request) {
 		write(w, 403, map[string]string{"error": "service_identity_required"})
 		return
 	}
-	if a.Store == nil || a.Authority == nil || a.Authority.AuthorizeCatalog(r, r.PathValue("kind")) != nil {
+	if a.Store == nil || a.Authority == nil || a.Authority.AuthorizeCatalog(r.Context(), r.PathValue("kind")) != nil {
 		write(w, 403, map[string]string{"error": "catalog_authority_denied"})
 		return
 	}
@@ -66,7 +68,7 @@ func (a CatalogAPI) definition(w http.ResponseWriter, r *http.Request) {
 		write(w, 403, map[string]string{"error": "service_identity_required"})
 		return
 	}
-	if a.Store == nil || a.Authority == nil || a.Authority.AuthorizeCatalog(r, r.PathValue("kind")) != nil {
+	if a.Store == nil || a.Authority == nil || a.Authority.AuthorizeCatalog(r.Context(), r.PathValue("kind")) != nil {
 		write(w, 403, map[string]string{"error": "catalog_authority_denied"})
 		return
 	}

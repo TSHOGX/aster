@@ -274,3 +274,10 @@ func (a *Authentication) identityRunAdmissionAuthority(w http.ResponseWriter, r 
 	}
 	writeJSON(w, 200, map[string]bool{"allowed": allowed})
 }
+
+func(a *Authentication)identityCatalogAuthority(w http.ResponseWriter,r *http.Request){
+ client,ok:=a.identityService(w,r);if !ok{return};if client.ID!="evaluation-space"{writeError(w,403,"evaluation service required");return}
+ var value struct{Kind string `json:"kind"`};if !decode(w,r,1024,&value){return}
+ if value.Kind!="workflow"&&value.Kind!="service"&&value.Kind!="template"&&value.Kind!="profile"{writeJSON(w,200,map[string]bool{"allowed":false});return}
+ writeJSON(w,200,map[string]bool{"allowed":true})
+}
