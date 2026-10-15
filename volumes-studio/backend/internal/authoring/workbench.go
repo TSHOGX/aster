@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 
@@ -84,7 +85,7 @@ func pageOf[T any](items []T, q Query, scope string, defaultLimit int) (Page[T],
 	}
 	return p, nil
 }
-func (s *Store) summaries(ctx context.Context, library string) ([]LibrarySummary, error) {
+func (s *Store) summaries(ctx context.Context, library string, actor *Actor) ([]LibrarySummary, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+libraryColumns+`,max(created_at,coalesce((SELECT max(a.created_at) FROM audit a WHERE a.library_id=libraries.id),0)) FROM libraries WHERE (?='' OR id=?)`, library, library)
 	if err != nil {
 		return nil, err
@@ -104,6 +105,22 @@ func (s *Store) summaries(ctx context.Context, library string) ([]LibrarySummary
 	if err != nil {
 		return nil, err
 	}
+	// Filter before computing content-derived summaries or pagination totals.
+	visible := map[string]bool{}
+	allowed := out[:0]
+	for _, library := range out {
+		if actor != nil {
+			if err := s.authorizeLibrary(ctx, *actor, library.ID, "volume.read"); err != nil {
+				if errors.Is(err, ErrAuthority) {
+					continue
+				}
+				return nil, err
+			}
+		}
+		visible[library.ID] = true
+		allowed = append(allowed, library)
+	}
+	out = allowed
 	// Draft changes belong to working branches and compare against each branch's
 	// committed head, never the last published version of the library.
 	counts := map[string]int{}
@@ -127,6 +144,9 @@ func (s *Store) summaries(ctx context.Context, library string) ([]LibrarySummary
 		return nil, err
 	}
 	for _, b := range branches {
+		if !visible[b.library] {
+			continue
+		}
 		draft, err := entries(ctx, s.db, "branch_entries", "branch_id", b.id)
 		if err != nil {
 			return nil, err
@@ -172,13 +192,13 @@ func versionTime(v VersionSummary) int64 {
 	}
 	return v.CreatedAt
 }
-func (s *Store) WorkbenchCatalog(ctx context.Context, q Query) (Page[LibrarySummary], error) {
+func (s *Store) WorkbenchCatalog(ctx context.Context, a Actor, q Query) (Page[LibrarySummary], error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if q.Profile != "" && !manifest.SupportedProfile(q.Profile) || q.Status != "" && q.Status != "active" && q.Status != "archived" && q.Status != "all" || q.Changes != "" && q.Changes != "yes" && q.Changes != "no" || q.Sort != "" && q.Sort != "name" && q.Sort != "status" && q.Sort != "updated" || q.Direction != "" && q.Direction != "asc" && q.Direction != "desc" {
 		return Page[LibrarySummary]{}, ErrInvalid
 	}
-	all, err := s.summaries(ctx, "")
+	all, err := s.summaries(ctx, "", &a)
 	if err != nil {
 		return Page[LibrarySummary]{}, err
 	}
@@ -222,12 +242,12 @@ func (s *Store) WorkbenchCatalog(ctx context.Context, q Query) (Page[LibrarySumm
 		}
 		return cmp > 0
 	})
-	return pageOf(items, q, "libraries", 50)
+	return pageOf(items, q, requestDigest("libraries", "", a), 50)
 }
 func (s *Store) Summary(ctx context.Context, id string) (LibrarySummary, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	all, err := s.summaries(ctx, id)
+	all, err := s.summaries(ctx, id, nil)
 	if err != nil {
 		return LibrarySummary{}, err
 	}

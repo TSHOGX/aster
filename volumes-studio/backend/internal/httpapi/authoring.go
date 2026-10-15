@@ -122,11 +122,11 @@ func revision(r *http.Request) int64 {
 }
 func (a *AuthoringAPI) libraries(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("mode") == "workbench" {
-		p, err := a.Store.WorkbenchCatalog(r.Context(), workbenchQuery(r))
+		p, err := a.Store.WorkbenchCatalog(r.Context(), actor(r), workbenchQuery(r))
 		respond(w, 200, p, err)
 		return
 	}
-	list, err := a.Store.Libraries(r.Context(), r.URL.Query().Get("after"))
+	list, err := a.Store.Libraries(r.Context(), actor(r), r.URL.Query().Get("after"))
 	next := ""
 	if len(list) == 200 {
 		next = list[199].ID
@@ -215,9 +215,6 @@ func (a *AuthoringAPI) content(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer reader.Close()
-	if revision(r) > 0 {
-		w.Header().Set("X-Draft-Revision", strconv.FormatInt(revision(r), 10))
-	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(e.Path)}))
 	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")

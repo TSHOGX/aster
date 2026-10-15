@@ -9,6 +9,7 @@ import (
 
 func TestWorkbenchCatalogSearchAndCursor(t *testing.T) {
 	s, _ := testStore(t)
+	s.config.Authority = &branchAuthority{true}
 	ctx := context.Background()
 	for i := 0; i < 205; i++ {
 		if _, err := s.Create(ctx, testActor, CreateInput{RequestID: fmt.Sprint("create", i), Name: fmt.Sprintf("Library %03d", i), Description: "search_% literal"}); err != nil {
@@ -16,24 +17,24 @@ func TestWorkbenchCatalogSearchAndCursor(t *testing.T) {
 		}
 	}
 	q := Query{Status: "active", Sort: "name", Direction: "asc", Limit: 50}
-	p, err := s.WorkbenchCatalog(ctx, q)
+	p, err := s.WorkbenchCatalog(ctx, testActor, q)
 	if err != nil || p.Total != 205 || len(p.Items) != 50 || p.Next == "" {
 		t.Fatal(p, err)
 	}
 	q.Cursor = p.Next
-	p, err = s.WorkbenchCatalog(ctx, q)
+	p, err = s.WorkbenchCatalog(ctx, testActor, q)
 	if err != nil || p.Items[0].Name != "Library 050" {
 		t.Fatal(p, err)
 	}
 	q.Q = "changed"
-	if _, err = s.WorkbenchCatalog(ctx, q); err == nil {
+	if _, err = s.WorkbenchCatalog(ctx, testActor, q); err == nil {
 		t.Fatal("cursor accepted under a different query")
 	}
-	p, err = s.WorkbenchCatalog(ctx, Query{Q: "_%", Limit: 200})
+	p, err = s.WorkbenchCatalog(ctx, testActor, Query{Q: "_%", Limit: 200})
 	if err != nil || p.Total != 205 {
 		t.Fatal("literal substring", p.Total, err)
 	}
-	p, err = s.WorkbenchCatalog(ctx, Query{Q: "LIBRARY 204"})
+	p, err = s.WorkbenchCatalog(ctx, testActor, Query{Q: "LIBRARY 204"})
 	if err != nil || p.Total != 1 {
 		t.Fatal("global search", p.Total, err)
 	}

@@ -8,7 +8,9 @@ can use it. Studio publication and Aster availability are separate steps.
 Studio sign-in currently requires an active central administrator account. Library
 read, author, review, merge and publish permissions are separate grants; administrator
 status alone does not grant those actions. Ask your installation administrator to
-provision the required library permissions before editing.
+provision the required library permissions before editing. The catalog lists only
+libraries with a current read grant; removing that grant also removes their summaries
+and search results.
 
 Shared-assets libraries use the immutable `shared-assets-v1` profile and are
 available only to administrators. A published version must contain root

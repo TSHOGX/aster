@@ -51,7 +51,7 @@ func TestSharedAssetsDraftPublicationAndCatalog(t *testing.T) {
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("published bytes changed", err)
 	}
-	page, err := s.WorkbenchCatalog(ctx, Query{Profile: manifest.SharedAssetsProfile})
+	page, err := s.WorkbenchCatalog(ctx, testActor, Query{Profile: manifest.SharedAssetsProfile})
 	if err != nil || len(page.Items) != 1 {
 		t.Fatal(page, err)
 	}

@@ -354,8 +354,8 @@ func scanLibrary(row scanner) (Library, error) {
 func (s *Store) Library(ctx context.Context, id string) (Library, error) {
 	return scanLibrary(s.db.QueryRowContext(ctx, "SELECT "+libraryColumns+" FROM libraries WHERE id=?", id))
 }
-func (s *Store) Libraries(ctx context.Context, after string) ([]Library, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+libraryColumns+" FROM libraries WHERE id>? ORDER BY id LIMIT 200", after)
+func (s *Store) Libraries(ctx context.Context, a Actor, after string) ([]Library, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+libraryColumns+" FROM libraries WHERE id>? ORDER BY id", after)
 	if err != nil {
 		return nil, err
 	}
@@ -368,7 +368,24 @@ func (s *Store) Libraries(ctx context.Context, after string) ([]Library, error) 
 		}
 		out = append(out, l)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	visible := []Library{}
+	for _, library := range out {
+		if err := s.authorizeLibrary(ctx, a, library.ID, "volume.read"); err != nil {
+			if errors.Is(err, ErrAuthority) {
+				continue
+			}
+			return nil, err
+		}
+		visible = append(visible, library)
+		if len(visible) == 200 {
+			break
+		}
+	}
+	return visible, nil
 }
 func requestDigest(action, library string, body any) string {
 	raw, _ := json.Marshal(struct {
