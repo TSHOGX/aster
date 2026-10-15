@@ -135,6 +135,48 @@ func TestImportedAttemptRetryRetainsChargesAndFencesOldOwner(t *testing.T) {
 		t.Fatal("old capacity lost", usage)
 	}
 }
+
+func TestImportedPublicationFailureRetriesWithoutReacquiringSource(t *testing.T) {
+	s, admin := accountStore(t)
+	ctx := context.Background()
+	token := adminTestToken(t, s, admin)
+	input, raw := importFixture(t)
+	i, err := s.AdmitVolumeImport(ctx, token, input, raw, "engine", "publisher", 1<<30, 1<<30)
+	must(t, err)
+	must(t, s.AdvanceVolumeImport(ctx, i.ID, "acquiring", "source_acquired", ""))
+	must(t, s.AdvanceVolumeImport(ctx, i.ID, "source_acquired", "materializing", ""))
+	revision, err := i.Revision(nil)
+	must(t, err)
+	p, err := s.ClaimContentPublication(ctx, content.Publication{StoreID: i.StoreID, Purpose: "authored", RevisionDigest: i.TreeDigest, Capacity: i.Capacity, Entries: revision.Entries})
+	must(t, err)
+	p, err = s.RecordContentStaging(ctx, p, "failed-staging")
+	must(t, err)
+	must(t, s.FailContentPublication(ctx, p, "verification failed"))
+	must(t, s.AdvanceVolumeImport(ctx, i.ID, "materializing", "failed", "materialization_requires_fresh_attempt"))
+
+	failed, err := s.VolumeImport(ctx, i.ID)
+	must(t, err)
+	if failed.State != "failed" || failed.ResumeState != "materializing" || failed.TransferReserved == 0 {
+		t.Fatal("terminal import failure did not retain recovery state", failed)
+	}
+	must(t, s.RetryImportedPublication(ctx, failed, 1<<30))
+	retried, err := s.VolumeImportAction(ctx, token, i.ID, "retry-publication", "retry")
+	must(t, err)
+	if retried.State != "materializing" || retried.ResumeState != "" || retried.Error != "" {
+		t.Fatal("retry reacquired or lost the materialization boundary", retried)
+	}
+	publication, err := publicationWith(ctx, s.reader, i.StoreID, "authored", i.TreeDigest)
+	must(t, err)
+	if publication.Generation != 1 || publication.Stage != "preparing" || publication.StagingVolumeID != "" {
+		t.Fatal("retry reused the failed publication attempt", publication)
+	}
+	var attempts int
+	must(t, s.reader.QueryRow(`SELECT count(*) FROM content_publication_attempts WHERE store_id=? AND purpose=? AND revision_digest=? AND generation=0 AND state='quarantined'`, i.StoreID, "authored", i.TreeDigest).Scan(&attempts))
+	if attempts != 1 {
+		t.Fatal("failed publication attempt was not retained", attempts)
+	}
+}
+
 func TestImportCancelAndReauthorizationAreAtomic(t *testing.T) {
 	s, admin := accountStore(t)
 	ctx := context.Background()
