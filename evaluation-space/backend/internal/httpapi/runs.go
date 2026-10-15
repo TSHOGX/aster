@@ -6,6 +6,7 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+	"strconv"
 )
 
 type RunScope struct {
@@ -88,4 +89,37 @@ func (r RunAPI) authorize(w http.ResponseWriter, req *http.Request, action strin
 		return false
 	}
 	return true
+}
+
+func (r RunAPI) events(w http.ResponseWriter, req *http.Request) {
+	if !r.authorize(w, req, "events") {
+		return
+	}
+	after := int64(0)
+	limit := 50
+	var err error
+	if raw := req.URL.Query().Get("after"); raw != "" {
+		after, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			write(w, 400, map[string]string{"error": "invalid_cursor"})
+			return
+		}
+	}
+	if raw := req.URL.Query().Get("limit"); raw != "" {
+		limit, err = strconv.Atoi(raw)
+		if err != nil {
+			write(w, 400, map[string]string{"error": "invalid_limit"})
+			return
+		}
+	}
+	page, err := r.Store.RunEvents(req.Context(), req.PathValue("group"), req.PathValue("run"), after, limit)
+	if errors.Is(err, projections.ErrNotFound) {
+		write(w, 404, map[string]string{"error": "run_not_found"})
+		return
+	}
+	if err != nil {
+		write(w, 422, map[string]string{"error": "events_unavailable"})
+		return
+	}
+	write(w, 200, page)
 }
