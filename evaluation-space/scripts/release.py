@@ -63,8 +63,9 @@ def build(target, offline=False, source_ref="HEAD"):
     with __import__("tempfile").TemporaryDirectory(prefix="evaluation-space-release-") as temporary:
         scratch = Path(temporary)
         source = scratch / "source"
+        source.mkdir()
         subprocess.run(["git", "archive", "--format=tar", commit, "evaluation-space", "contracts", "web"], cwd=ROOT, stdout=open(scratch / "source.tar", "wb"), check=True)
-        run(["tar", "-xf", str(scratch / "source.tar"), "-C", str(scratch)], ROOT)
+        run(["tar", "-xf", str(scratch / "source.tar"), "-C", str(source)], ROOT)
         app = source / "evaluation-space"
         env = dict(os.environ, NEXT_TELEMETRY_DISABLED="1")
         run(["npm", "ci"] + (["--offline"] if offline else []), app / "frontend", env)
