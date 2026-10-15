@@ -41,6 +41,8 @@ type Projection struct {
 const schema = `CREATE TABLE IF NOT EXISTS projections(group_id TEXT NOT NULL,revision INTEGER NOT NULL,digest TEXT NOT NULL,operation_id TEXT NOT NULL UNIQUE,body BLOB NOT NULL,PRIMARY KEY(group_id,revision));
 CREATE TRIGGER IF NOT EXISTS immutable_projection BEFORE UPDATE ON projections BEGIN SELECT RAISE(ABORT,'immutable configuration projection'); END;
 CREATE TRIGGER IF NOT EXISTS retained_projection BEFORE DELETE ON projections BEGIN SELECT RAISE(ABORT,'retain configuration provenance'); END;
+CREATE TABLE workflow_drafts(id TEXT PRIMARY KEY,revision INTEGER NOT NULL CHECK(revision>0),body BLOB NOT NULL);
+CREATE TRIGGER immutable_workflow_draft_revision BEFORE UPDATE OF id,revision ON workflow_drafts BEGIN SELECT RAISE(ABORT,'immutable workflow draft identity'); END;
 CREATE TABLE workflow_revisions(id TEXT NOT NULL,revision INTEGER NOT NULL CHECK(revision>0),digest TEXT NOT NULL,body BLOB NOT NULL,PRIMARY KEY(id,revision));
 CREATE TRIGGER immutable_workflow BEFORE UPDATE ON workflow_revisions BEGIN SELECT RAISE(ABORT,'immutable workflow revision'); END;
 CREATE TRIGGER retained_workflow BEFORE DELETE ON workflow_revisions BEGIN SELECT RAISE(ABORT,'retain workflow provenance'); END;
