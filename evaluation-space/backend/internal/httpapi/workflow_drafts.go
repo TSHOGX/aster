@@ -6,6 +6,7 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+	"strconv"
 )
 
 type WorkflowDraftScope struct{ WorkflowID string }
@@ -77,4 +78,25 @@ func (a WorkflowDraftAPI) write(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, result)
+}
+
+func (a WorkflowDraftAPI) revision(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(w, r, "read") {
+		return
+	}
+	value, err := strconv.ParseInt(r.PathValue("revision"), 10, 64)
+	if err != nil || value < 1 || strconv.FormatInt(value, 10) != r.PathValue("revision") {
+		write(w, 400, map[string]string{"error": "invalid_draft_revision"})
+		return
+	}
+	draft, err := a.Store.WorkflowDraftRevision(r.Context(), r.PathValue("workflow"), value)
+	if errors.Is(err, projections.ErrNotFound) {
+		write(w, 404, map[string]string{"error": "draft_not_found"})
+		return
+	}
+	if err != nil {
+		write(w, 422, map[string]string{"error": "draft_invalid"})
+		return
+	}
+	write(w, 200, draft)
 }

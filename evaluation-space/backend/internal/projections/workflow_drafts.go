@@ -116,3 +116,22 @@ func (s *Store) PublishWorkflowDraft(ctx context.Context, id string, draftRevisi
 	}
 	return ref, nil
 }
+
+func (s *Store) WorkflowDraftRevision(ctx context.Context, id string, revision int64) (WorkflowDraft, error) {
+	var result WorkflowDraft
+	var raw []byte
+	if !manifest.ValidID(id) || revision < 1 {
+		return result, fmt.Errorf("invalid draft revision")
+	}
+	if err := s.db.QueryRowContext(ctx, "SELECT body,layout_revision,layout FROM workflow_draft_revisions WHERE id=? AND revision=?", id, revision).Scan(&raw, &result.LayoutRevision, &result.Layout); err != nil {
+		return result, err
+	}
+	workflow, err := evolution.DecodeWorkflow(bytes.NewReader(raw))
+	if err != nil {
+		return result, err
+	}
+	result.ID = id
+	result.Revision = revision
+	result.Workflow = workflow
+	return result, nil
+}
