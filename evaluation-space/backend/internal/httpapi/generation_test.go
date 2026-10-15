@@ -84,6 +84,8 @@ func TestPrivateGenerationAdmissionReplayAndScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	assignment := evolution.GenerationAssignment{RunID: "run", GroupID: "group", BindingID: binding.ID, OccurrenceID: "manual", Requester: evolution.Principal{Issuer: "https://app", Subject: "operator", Kind: "human"}, Budget: budget, Pins: evolution.RunPins{ConfigurationRevision: 1, ConfigurationDigest: digest, SourcePolicyRevision: 1, Template: binding.Template, Workflow: binding.Workflow, Service: binding.Service, InputPorts: map[string]evolution.ArtifactRef{"corpus": input}, Inputs: []evolution.ArtifactRef{input}, Base: evolution.ContentRef{LibraryID: "library", CommitID: strings.Repeat("a", 64), Profile: "shared-assets-v1", TreeDigest: evolution.Digest([]byte("base"))}, Output: binding.Output, Evaluation: binding.Evaluation}}
+	assignment.Budget.MaxTokens = 20
+	assignment.Budget.TimeoutSeconds = 30
 	central := &generationCentral{}
 	secret := strings.Repeat("s", 32)
 	api, err := httpapi.NewGenerationAPI(store, central, secret)
@@ -112,6 +114,10 @@ func TestPrivateGenerationAdmissionReplayAndScope(t *testing.T) {
 		if w := call("admit", "central", secret, "", assignment); w.Code != 200 {
 			t.Fatal(w.Code, w.Body.String())
 		}
+	}
+	admitted, err := store.Run(ctx, "group", "run")
+	if err != nil || admitted.Budget != assignment.Budget {
+		t.Fatal("admission widened requested budget", admitted.Budget, err)
 	}
 	_, grant, err := store.GenerationGrant(ctx, "group", "run")
 	if err != nil || grant != central.grant {

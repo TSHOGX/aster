@@ -37,7 +37,7 @@ type EvolutionTrigger struct {
 }
 
 func (s *Store) resetEvolutionTriggers(ctx context.Context, tx *sql.Tx, config evolution.Configuration, enabled bool) error {
-	if err := clearEvolutionTriggers(ctx, tx, config.GroupID); err != nil {
+	if err := clearEvolutionTriggers(ctx, tx, config.GroupID, false); err != nil {
 		return err
 	}
 	if !enabled {
@@ -79,14 +79,14 @@ func (s *Store) resetEvolutionTriggers(ctx context.Context, tx *sql.Tx, config e
 	}
 	return nil
 }
-func clearEvolutionTriggers(ctx context.Context, tx *sql.Tx, group string) error {
-	if _, err := tx.ExecContext(ctx, "UPDATE generation_preparations SET state='superseded',last_error='' WHERE group_id=? AND state='waiting'", group); err != nil {
+func clearEvolutionTriggers(ctx context.Context, tx *sql.Tx, group string, automaticOnly bool) error {
+	if _, err := tx.ExecContext(ctx, "UPDATE generation_preparations SET state='superseded',last_error='' WHERE group_id=? AND state='waiting' AND (?=0 OR json_extract(assignment,'$.automatic')=1)", group, automaticOnly); err != nil {
 		return err
 	}
 
 	// No remote effect can exist without the central admission retained first.
 	// Supersede only unadmitted assignments; admitted work keeps exact replay rights.
-	if _, err := tx.ExecContext(ctx, "UPDATE generation_dispatches SET state='superseded',last_error='' WHERE group_id=? AND state='pending' AND NOT EXISTS(SELECT 1 FROM generation_authorizations a WHERE a.run_id=generation_dispatches.run_id)", group); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE generation_dispatches SET state='superseded',last_error='' WHERE group_id=? AND state='pending' AND (?=0 OR json_extract(assignment,'$.automatic')=1) AND NOT EXISTS(SELECT 1 FROM generation_authorizations a WHERE a.run_id=generation_dispatches.run_id)", group, automaticOnly); err != nil {
 		return err
 	}
 

@@ -11,13 +11,19 @@ import (
 )
 
 func (c *Client) Bases(ctx context.Context, p Projection) (map[string]evolution.ContentRef, error) {
+	return c.bases(ctx, p, "bases")
+}
+func (c *Client) ManualBases(ctx context.Context, p Projection) (map[string]evolution.ContentRef, error) {
+	return c.bases(ctx, p, "manual-bases")
+}
+func (c *Client) bases(ctx context.Context, p Projection, action string) (map[string]evolution.ContentRef, error) {
 	body, _ := json.Marshal(struct {
 		GroupID     string `json:"group_id"`
 		OperationID string `json:"operation_id"`
 		Revision    int64  `json:"revision"`
 		Digest      string `json:"digest"`
 	}{p.Configuration.GroupID, p.OperationID, p.Configuration.Revision, p.Digest})
-	request, err := http.NewRequestWithContext(ctx, "POST", c.endpoint+"/volumes-studio/internal/v1/evolution/bases", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, "POST", c.endpoint+"/volumes-studio/internal/v1/evolution/"+action, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

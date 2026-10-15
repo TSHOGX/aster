@@ -31,7 +31,7 @@ type EvolutionParticipantAPI struct {
 
 func (a EvolutionParticipantAPI) Handler() http.Handler {
 	mux := http.NewServeMux()
-	for _, action := range []string{"reserve", "lookup", "adopt", "cancel", "bases"} {
+	for _, action := range []string{"reserve", "lookup", "adopt", "cancel", "bases", "manual-bases"} {
 		mux.HandleFunc("POST /volumes-studio/internal/v1/evolution/"+action, func(w http.ResponseWriter, r *http.Request) { a.call(w, r, action) })
 	}
 	return mux
@@ -72,7 +72,7 @@ func (a EvolutionParticipantAPI) call(w http.ResponseWriter, r *http.Request, ac
 		}
 		return
 	}
-	if action == "bases" {
+	if action == "bases" || action == "manual-bases" {
 		bases, err := a.Store.EvolutionBases(r.Context(), actor, scope.GroupID, scope.OperationID, scope.Digest, scope.Revision)
 		if err != nil {
 			authoringError(w, err)

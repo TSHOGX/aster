@@ -28,6 +28,7 @@ type EvolutionDispatcher struct {
 	Issuer                        string
 	prepareCursor, dispatchCursor string
 	dependencyCursor              string
+	backfillCursor                string
 }
 
 func (w *EvolutionDispatcher) Step(ctx context.Context) error {
@@ -35,7 +36,7 @@ func (w *EvolutionDispatcher) Step(ctx context.Context) error {
 		return nil
 	}
 	// Preparation and replay each get a bounded opportunity on every tick.
-	return errors.Join(w.prepare(ctx), w.resolveDependencies(ctx), w.dispatch(ctx))
+	return errors.Join(w.prepareBackfill(ctx), w.prepare(ctx), w.resolveDependencies(ctx), w.dispatch(ctx))
 }
 func (w *EvolutionDispatcher) prepare(ctx context.Context) error {
 	var group, operation string

@@ -9,7 +9,7 @@ import (
 // caller-selected subject. Sessions may expire; current account/grants still apply.
 func (s *Store) EvolutionParticipantActor(ctx context.Context, scope ProjectionScope, action string) (string, error) {
 	var subject string
-	if action != "reserve" && action != "adopt" && action != "lookup" && action != "cancel" && action != "bases" {
+	if action != "reserve" && action != "adopt" && action != "lookup" && action != "cancel" && action != "bases" && action != "manual-bases" {
 		return "", ErrInvalid
 	}
 	err := s.write(ctx, func(tx *sql.Tx) error {
@@ -36,6 +36,15 @@ func (s *Store) EvolutionParticipantActor(ctx context.Context, scope ProjectionS
 				return err
 			}
 			if !allowed {
+				return ErrForbidden
+			}
+		}
+		if action == "manual-bases" {
+			var active int
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_group_configs WHERE operation_id=? AND state='active' AND active_revision=?", scope.OperationID, scope.Revision).Scan(&active); err != nil {
+				return err
+			}
+			if active != 1 {
 				return ErrForbidden
 			}
 		}

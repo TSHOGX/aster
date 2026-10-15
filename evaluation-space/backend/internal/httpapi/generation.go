@@ -110,7 +110,7 @@ func (a *GenerationAPI) serve(w http.ResponseWriter, r *http.Request, action str
 			write(w, 403, map[string]string{"error": "generation_authority_required"})
 			return
 		}
-		run, err := a.Store.AdmitRun(r.Context(), projections.RunAdmission{ID: assignment.RunID, BatchID: assignment.BatchID, GroupID: assignment.GroupID, BindingID: assignment.BindingID, OccurrenceID: assignment.OccurrenceID, Pins: assignment.Pins})
+		run, err := a.Store.AdmitRun(r.Context(), projections.RunAdmission{ID: assignment.RunID, Budget: assignment.Budget, BatchID: assignment.BatchID, GroupID: assignment.GroupID, BindingID: assignment.BindingID, OccurrenceID: assignment.OccurrenceID, Pins: assignment.Pins})
 		if err == nil {
 			err = a.Store.RetainGenerationGrant(r.Context(), assignment, grant)
 		}

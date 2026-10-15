@@ -5,6 +5,7 @@ package producthttp
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -55,7 +56,7 @@ func (l *lostNativeAdmission) GenerationOutput(ctx context.Context, scope evolut
 }
 
 func TestNativeGenerationRealProcesses(t *testing.T) {
-	for _, mode := range []string{"success", "sibling-failure", "lost-model-reply", "automatic", "dependencies", "dependency-failure"} {
+	for _, mode := range []string{"success", "sibling-failure", "lost-model-reply", "automatic", "dependencies", "dependency-failure", "backfill"} {
 		t.Run(mode, func(t *testing.T) { nativeGenerationProcesses(t, mode) })
 	}
 }
@@ -114,7 +115,8 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	}
 	t.Setenv("TEST_EVALUATOR_INPUT_SECRET", inputSecret)
 	t.Setenv("STUDIO_EVALUATION_INPUT_SECRET", inputSecret)
-	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "central.db"))
+	centralPath := filepath.Join(t.TempDir(), "central.db")
+	store, err := product.Open(ctx, centralPath)
 	must(t, err)
 	defer store.Close()
 	admin, err := store.BootstrapAccount(ctx, "admin", "permanent-admin-password", identitySeed(t))
@@ -337,6 +339,11 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	for _, pkg := range packages {
 		configuration.Bindings = append(configuration.Bindings, evolution.Binding{ID: pkg.Template.Ref.ID, Enabled: true, Template: pkg.Template.Ref, Workflow: pkg.Template.Workflows[0], Service: service.Ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: pkg.Template.SuggestedPrefix, Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: pkg.Template.Evaluation, Budget: budget, Trigger: "manual"})
 	}
+	if mode == "backfill" {
+		for i := range configuration.Bindings {
+			configuration.Bindings[i].Inputs = map[string]evolution.BindingInput{"corpus": {Sources: []string{"source"}}}
+		}
+	}
 	if automatic {
 		configuration.AutoEnabled = true
 		for i := range configuration.Bindings {
@@ -458,7 +465,72 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	}
 	runIDs := map[string]string{}
 	skipped := map[string]bool{}
-	if automatic {
+	if mode == "backfill" {
+		// Synthetic retained source episode; capture, transfer, admission, models,
+		// handoff and human review use the actual running services below.
+		stamp := time.Now().UTC().Add(-time.Hour).Format("2006-01-02T15:04:05.000000000Z07:00")
+		native := `{"type":"custom","customType":"aster.execution","data":{"run_id":"episode","phase":"start"}}` + "\n" + `{"type":"message","message":{"role":"user","content":"Perform and verify the task."}}` + "\n" + `{"type":"message","message":{"role":"assistant","content":"The task completed with verified output."}}` + "\n" + `{"type":"custom","customType":"aster.execution","data":{"run_id":"episode","phase":"end"}}` + "\n"
+		hostPath := filepath.Join(t.TempDir(), "episode.jsonl")
+		must(t, os.WriteFile(hostPath, []byte(native), 0600))
+		db, err := sql.Open("sqlite", centralPath)
+		must(t, err)
+		db.SetMaxOpenConns(1)
+		_, err = db.Exec("PRAGMA foreign_keys=ON")
+		must(t, err)
+		tx, err := db.BeginTx(ctx, nil)
+		must(t, err)
+		_, err = tx.Exec(`INSERT INTO sessions(id,project_id,title,creation_digest,created_at,updated_at) VALUES('source-session','project','Source','fixture',?,?)`, stamp, stamp)
+		must(t, err)
+		_, err = tx.Exec(`INSERT INTO turns(id,project_id,session_id,request_id,content,initially_held,disposition,sequence,created_at,updated_at) VALUES('family','project','source-session','fixture','Perform the task',0,'handled',1,?,?)`, stamp, stamp)
+		must(t, err)
+		_, err = tx.Exec(`INSERT INTO agent_incarnations(id,project_id,session_id,store_id,sandbox_id,epoch,handle,owner,state,created_at) VALUES('source-incarnation','project','source-session','fixture-store','fixture-sandbox',1,'fixture-handle',1,'exited',?)`, stamp)
+		must(t, err)
+		_, err = tx.Exec(`INSERT INTO execution_runs(id,project_id,session_id,prompt_id,incarnation_id,owner,state,acknowledged,outcome,started_at,settled_at) VALUES('episode','project','source-session','family','source-incarnation',1,'settled',1,'completed',?,?)`, stamp, stamp)
+		must(t, err)
+		_, err = tx.Exec(`INSERT INTO native_captures(turn_id,incarnation_id,path,digest,size,host_path,state) VALUES('family','source-incarnation','/runtime/sessions/source-session/native/captures/episode.jsonl',?,?,?,'exported')`, evolution.Digest([]byte(native)), len(native), hostPath)
+		must(t, err)
+		must(t, tx.Commit())
+		must(t, db.Close())
+		_, err = store.SetEvolutionGroupGrant(ctx, token, configuration.GroupID, product.EvolutionGroupGrantInput{RequestID: "backfill-source-read", AccountID: admin.ID, Action: "source.read", Effect: "allow"})
+		must(t, err)
+		budgets := map[string]evolution.Budget{}
+		for _, b := range configuration.Bindings {
+			limited := b.Budget
+			limited.MaxTokens = 200
+			limited.MaxCostMicros = 2000
+			budgets[b.ID] = limited
+		}
+		preview, err := store.PreviewEvolutionBackfill(ctx, token, configuration.GroupID, product.EvolutionBackfillInput{RequestID: "preview", ConfigurationRevision: 1, From: time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339Nano), Until: time.Now().UTC().Format(time.RFC3339Nano), MaxEpisodes: 1, Budgets: budgets})
+		must(t, err)
+		if len(preview.Episodes) != 1 || preview.Episodes[0].Truncated {
+			t.Fatal("backfill fixture did not capture complete evidence", preview)
+		}
+		_, err = store.CommandEvolutionBackfill(ctx, token, configuration.GroupID, preview.ID, "execute", product.BackfillCommand{RequestID: "execute", Digest: preview.Digest})
+		must(t, err)
+		transport := &lostNativeAdmission{client: evalClient}
+		dispatcher := &product.EvolutionDispatcher{Store: store, Evaluation: transport, Studio: studioClient, Issuer: issuer}
+		for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); {
+			if err := dispatcher.Step(ctx); errors.Is(err, errLostNativeAdmission) {
+				dispatcher = &product.EvolutionDispatcher{Store: store, Evaluation: transport, Studio: studioClient, Issuer: issuer}
+			} else {
+				must(t, err)
+			}
+			page, err := store.EvolutionTriggers(ctx, token, configuration.GroupID, 0)
+			must(t, err)
+			for _, item := range page.Items {
+				if item.DispatchState == "dispatched" {
+					runIDs[item.BindingID] = item.RunID
+				}
+			}
+			if len(runIDs) == len(configuration.Bindings) {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if len(runIDs) != 2 || transport.calls != 3 {
+			t.Fatal("manual backfill replay", runIDs, transport.calls)
+		}
+	} else if automatic {
 		triggers := &product.EvolutionTriggerWorker{Store: store}
 		transport := &lostNativeAdmission{client: evalClient}
 		dispatcher := &product.EvolutionDispatcher{Store: store, Evaluation: transport, Studio: studioClient, Issuer: issuer}
@@ -496,10 +568,18 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			runIDs[binding.ID] = binding.ID
 			pins := evolution.RunPins{ConfigurationRevision: 1, ConfigurationDigest: pending.DesiredDigest, SourcePolicyRevision: 1, Template: binding.Template, Workflow: binding.Workflow, Service: binding.Service, InputPorts: map[string]evolution.ArtifactRef{"corpus": artifact}, Inputs: []evolution.ArtifactRef{artifact}, Base: main, Output: binding.Output, Evaluation: binding.Evaluation}
 			assignment := evolution.GenerationAssignment{RunID: binding.ID, GroupID: configuration.GroupID, BindingID: binding.ID, OccurrenceID: "manual", Requester: evolution.Principal{Issuer: issuer, Subject: admin.ID, Kind: "human"}, Pins: pins, Budget: budget}
+			assignment.Budget.MaxTokens = 200
+			assignment.Budget.MaxCostMicros = 2000
 			status, raw := privateCall("admit", assignment)
 			if status != 200 {
 				t.Fatal("admission", binding.ID, status, string(raw))
 			}
+			var admitted evolution.Run
+			must(t, json.Unmarshal(raw, &admitted))
+			if admitted.Budget != assignment.Budget {
+				t.Fatal("native admission widened explicit budget", admitted.Budget)
+			}
+
 		}
 
 	}

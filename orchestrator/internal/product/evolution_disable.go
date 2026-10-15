@@ -48,7 +48,7 @@ func (s *Store) DisableEvolution(ctx context.Context, token, group string, input
 		if _, err = tx.ExecContext(ctx, "DELETE FROM corpus_collectors WHERE group_id=?", group); err != nil {
 			return err
 		}
-		if err = clearEvolutionTriggers(ctx, tx, group); err != nil {
+		if err = clearEvolutionTriggers(ctx, tx, group, true); err != nil {
 			return err
 		}
 		raw, err = json.Marshal(result)

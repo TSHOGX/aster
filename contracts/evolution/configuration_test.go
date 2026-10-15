@@ -170,3 +170,18 @@ func TestSourceExclusionsUseExplicitEvidenceSelectors(t *testing.T) {
 		}
 	}
 }
+
+func TestBudgetWithinRequiresEveryFiniteDimension(t *testing.T) {
+	ceiling := Budget{MaxTokens: 100, MaxCostMicros: 100, MaxAttempts: 10, TimeoutSeconds: 60, MaxArtifactBytes: 1024}
+	reduced := Budget{MaxTokens: 10, MaxCostMicros: 0, MaxAttempts: 1, TimeoutSeconds: 30, MaxArtifactBytes: 512}
+	if !reduced.Within(ceiling) || !ceiling.Within(ceiling) {
+		t.Fatal("valid tightened budget rejected")
+	}
+	for _, change := range []func(*Budget){func(b *Budget) { b.MaxTokens = 101 }, func(b *Budget) { b.MaxCostMicros = 101 }, func(b *Budget) { b.MaxAttempts = 11 }, func(b *Budget) { b.TimeoutSeconds = 61 }, func(b *Budget) { b.MaxArtifactBytes = 1025 }, func(b *Budget) { b.MaxTokens = 0 }} {
+		budget := reduced
+		change(&budget)
+		if budget.Within(ceiling) {
+			t.Fatal("invalid bound accepted", budget)
+		}
+	}
+}

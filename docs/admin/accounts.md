@@ -348,3 +348,49 @@ work retains `dependency_failed` and requires a new occurrence to run again.
 For an input-size limit, reduce the selected sources or raise the binding's
 artifact budget within the group ceiling. Restore revoked permissions before retrying
 an authority-denied assignment; its original pins remain unchanged.
+
+### Preview and execute bounded historical backfill
+
+An administrator with current `config.manage`, `run.start`, and explicit `source.read`
+permission can preview historical Project/session evidence without enabling automation.
+POST `/api/admin/groups/{group}/evolution/backfills/preview` with a unique `request_id`,
+the active `configuration_revision`, RFC3339 `from` and `until` timestamps,
+`max_episodes` (1–32), and `budgets` keyed by binding ID. The range selects executions
+by start time, includes `from`, excludes `until`, and may span at most 90 days. Only
+terminal executions from the bindings' declared corpus inputs qualify. Current source
+exclusions apply. Include budgets for every selected binding's prerequisite bindings.
+
+Each budget specifies `max_tokens`, `max_cost_micros`, `max_attempts`, `timeout_seconds`,
+and `max_artifact_bytes`. Every bound must be within that binding's configured ceiling.
+Choose enough capacity for the model service's per-call reservation; a smaller ceiling
+can prevent a call even when its eventual usage would have been low. Concurrent work
+still shares the group's spending ceiling.
+
+The preview returns its ID and digest, exact selected execution IDs, family/capture/
+outcome labels, requested budgets, aggregate maximum cost/tokens, and reserved run IDs. It retains the selected bytes
+and starts no generation. A range exceeding `max_episodes` is rejected rather than
+silently truncated; narrow the range and preview again. At least one selected binding
+must use a Project/session corpus input. Missing native traces remain explicitly
+partial evidence. Late capture arrivals do not change an existing preview; create a
+new preview to include them. Inspect the exact frozen corpus bytes with
+`GET /api/admin/groups/{group}/evolution/backfills/{id}/inputs/{binding}/{port}`.
+This download rechecks current source/evidence/use permission and audits the export.
+
+Execute the reviewed selection with
+`POST /api/admin/groups/{group}/evolution/backfills/{id}/execute`, supplying a new
+`request_id` and the preview's exact `digest`. The original previewing administrator
+must execute it. Use the same endpoint ending in `/cancel` to cancel a preview or queued
+batch before preparation. Cancellation remains available to the owning administrator
+after source-read revocation and returns no episode metadata. Both actions support
+exact request replay. Inspect
+`GET /api/admin/groups/{group}/evolution/backfills/{id}` for state and errors; use the
+returned run IDs and the group's trigger records for subsequent generation status.
+
+A queued batch waits for its bindings to become available. Preparation freezes current
+Studio bases once per output Volume and retains dependency plans. A changed active
+configuration makes an unprepared backfill stale and supersedes prepared runs that
+have not been admitted; create a new preview instead of
+reusing its digest. Once prepared, generation uses the normal current-authority,
+capacity, retry, cancellation, and Studio review rules. Disabling automatic triggers
+does not cancel manually requested backfill. Historical previews and successful
+backfill runs do not advance automatic capture or consumption frontiers.

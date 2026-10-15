@@ -495,3 +495,13 @@ the producer's exact group, run, output port and winning fence plus current cent
 read authority. It exposes only declared output ports from the completed workflow
 checkpoint. Failed prerequisites mark consumers skipped; output-transport outages
 remain retryable without changing the batch's original pins.
+
+Manual backfill uses the same participant connections and native worker. Studio's
+`manual-bases` participant action permits base selection for the current active
+configuration while automatic triggers are off. Only the configuration's saved actor
+can be resolved by central authority; the backfill requester still needs current
+run, input and output-read permissions. Preview records retain exact historical
+input bytes; the dispatcher checks current authority again before transferring them.
+The native admission contract carries the explicit requested budget and never widens
+it to the binding's maximum. Keep model per-call reservation ceilings within the
+budgets selected for those runs.

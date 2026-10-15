@@ -72,4 +72,7 @@ func TestEvolutionBasesRequireCurrentlyActiveAutomaticOperation(t *testing.T) {
 	if _, err = s.EvolutionParticipantActor(ctx, scope, "bases"); err != ErrForbidden {
 		t.Fatal("disabled operation read generation bases", err)
 	}
+	if subject, err := s.EvolutionParticipantActor(ctx, scope, "manual-bases"); err != nil || subject != admin.ID {
+		t.Fatal("manual backfill bases denied with automation off", subject, err)
+	}
 }

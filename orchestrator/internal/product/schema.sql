@@ -2121,7 +2121,7 @@ CREATE TABLE evolution_trigger_occurrences (
  group_id TEXT NOT NULL REFERENCES account_groups(id),
  binding_id TEXT NOT NULL,
  configuration_revision INTEGER NOT NULL,
- trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('event','schedule')),
+ trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('event','schedule','backfill')),
  state TEXT NOT NULL CHECK(state IN ('pending','frozen','superseded')),
  first_at TEXT NOT NULL,
  latest_at TEXT NOT NULL,
@@ -2194,3 +2194,23 @@ CREATE TRIGGER immutable_turn_evidence_family BEFORE UPDATE ON turn_evidence_fam
 BEGIN SELECT RAISE(ABORT,'immutable evidence family'); END;
 
 CREATE INDEX corpus_message_execution ON agent_records(command_id,incarnation_id,sequence);
+
+CREATE TABLE evolution_backfills (
+ id TEXT PRIMARY KEY,
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ actor_id TEXT NOT NULL REFERENCES accounts(id),
+ configuration_revision INTEGER NOT NULL,
+ operation_id TEXT NOT NULL,
+ digest TEXT NOT NULL,
+ preview BLOB NOT NULL CHECK(json_valid(preview)),
+ assignments BLOB NOT NULL CHECK(json_valid(assignments)),
+ state TEXT NOT NULL CHECK(state IN ('preview','queued','prepared','cancelled','stale')),
+ last_error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL
+);
+CREATE INDEX evolution_backfill_work ON evolution_backfills(state,id);
+CREATE TRIGGER immutable_evolution_backfill BEFORE UPDATE OF id,group_id,actor_id,configuration_revision,operation_id,digest,preview,assignments,created_at ON evolution_backfills
+BEGIN SELECT RAISE(ABORT,'immutable backfill selection'); END;
+
+CREATE INDEX backfill_project_range ON execution_runs(project_id,started_at,id) WHERE state IN ('settled','failed','unknown');
+CREATE INDEX backfill_session_range ON execution_runs(session_id,started_at,id) WHERE state IN ('settled','failed','unknown');

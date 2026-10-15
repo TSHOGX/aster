@@ -274,3 +274,9 @@ func (b Binding) ValidateInputPorts(workflow Workflow) error {
 	}
 	return nil
 }
+
+// Within permits a caller to tighten every budget dimension without changing the
+// binding's configured maximum. Zero cost is valid; all other bounds stay finite.
+func (b Budget) Within(ceiling Budget) bool {
+	return b.Validate() == nil && b.MaxTokens <= ceiling.MaxTokens && b.MaxCostMicros <= ceiling.MaxCostMicros && b.MaxAttempts <= ceiling.MaxAttempts && b.TimeoutSeconds <= ceiling.TimeoutSeconds && b.MaxArtifactBytes <= ceiling.MaxArtifactBytes
+}

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"aster/contracts/evolution"
 	"harness-platform/orchestrator/internal/product"
@@ -67,8 +68,22 @@ func TestCorpusRoutesRequireCurrentEvidenceAndOrigin(t *testing.T) {
 	if code := call(path, token, "https://app", input); code != 403 {
 		t.Fatal("admin implicitly reads corpus", code)
 	}
+	backfillPath := "/api/admin/groups/" + product.StandardUsersGroup + "/evolution/backfills/preview"
+	preview := product.EvolutionBackfillInput{RequestID: "preview", ConfigurationRevision: 1, From: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano), Until: time.Now().UTC().Format(time.RFC3339Nano), MaxEpisodes: 10, Budgets: map[string]evolution.Budget{"binding": {MaxTokens: 1, MaxAttempts: 1, TimeoutSeconds: 1, MaxArtifactBytes: 1024}}}
+	if code := call(backfillPath, "", "https://app", preview); code != 401 {
+		t.Fatal("anonymous backfill", code)
+	}
+	if code := call(backfillPath, token, "https://foreign", preview); code != 403 {
+		t.Fatal("foreign backfill", code)
+	}
+	if code := call(backfillPath, token, "https://app", preview); code != 403 {
+		t.Fatal("administrator implicit backfill evidence", code)
+	}
 	_, err = store.SetEvolutionGroupGrant(ctx, token, product.StandardUsersGroup, product.EvolutionGroupGrantInput{RequestID: "source-read", AccountID: admin.ID, Action: "source.read", Effect: "allow"})
 	must(t, err)
+	if code := call(backfillPath, token, "https://app", preview); code != 404 {
+		t.Fatal("missing active backfill configuration", code)
+	}
 	if code := call(path, token, "https://app", input); code != 404 {
 		t.Fatal("authorized missing episode", code)
 	}

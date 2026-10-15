@@ -13,6 +13,7 @@ import (
 )
 
 type RunAdmission struct {
+	Budget       evolution.Budget  `json:"budget"`
 	BatchID      string            `json:"batch_id,omitempty"`
 	ID           string            `json:"id"`
 	GroupID      string            `json:"group_id"`
@@ -97,6 +98,10 @@ func (s *Store) AdmitRun(ctx context.Context, input RunAdmission) (evolution.Run
 			budget = binding.Budget
 		}
 	}
+	if !input.Budget.Within(budget) {
+		return result, ErrRunBudget
+	}
+	budget = input.Budget
 	result = evolution.Run{ID: input.ID, BatchID: input.BatchID, GroupID: input.GroupID, BindingID: input.BindingID, Pins: input.Pins, State: "queued", Handoff: "not_ready", EvaluationState: evaluationState(input.Pins.Evaluation.Mode), Fence: 0, Budget: budget, CreatedAt: time.Now().UTC()}
 	body, err = json.Marshal(result)
 	if err != nil {

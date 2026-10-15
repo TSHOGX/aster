@@ -94,7 +94,12 @@ func TestConfigurationResolvesExactCompatibleCatalog(t *testing.T) {
 	if err = s.SealArtifact(ctx, pins.Inputs[0], strings.NewReader("snapshot")); err != nil {
 		t.Fatal(err)
 	}
-	admission := RunAdmission{ID: "run", GroupID: "group", BindingID: "binding", OccurrenceID: "manual-one", Pins: pins}
+	admission := RunAdmission{ID: "run", Budget: config.Bindings[0].Budget, GroupID: "group", BindingID: "binding", OccurrenceID: "manual-one", Pins: pins}
+	overBudget := admission
+	overBudget.Budget.MaxTokens++
+	if _, err := s.AdmitRun(ctx, overBudget); !errors.Is(err, ErrRunBudget) {
+		t.Fatal("oversized run budget accepted", err)
+	}
 	run, err := s.AdmitRun(ctx, admission)
 	if err != nil {
 		t.Fatal("run admission", err)

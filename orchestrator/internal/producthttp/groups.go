@@ -6,6 +6,10 @@ import (
 )
 
 func (a *Authentication) groupRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/admin/groups/{group}/evolution/backfills/preview", a.backfillPreview)
+	mux.HandleFunc("GET /api/admin/groups/{group}/evolution/backfills/{backfill}", a.backfillRead)
+	mux.HandleFunc("GET /api/admin/groups/{group}/evolution/backfills/{backfill}/inputs/{binding}/{port}", a.backfillContent)
+	mux.HandleFunc("POST /api/admin/groups/{group}/evolution/backfills/{backfill}/{action}", a.backfillCommand)
 	mux.HandleFunc("GET /api/admin/groups/{group}/corpus/collectors", a.corpusCollectors)
 	mux.HandleFunc("GET /api/admin/groups/{group}/evolution/triggers", a.evolutionTriggers)
 	mux.HandleFunc("POST /api/admin/groups/{group}/corpus/capture", a.corpusCapture)

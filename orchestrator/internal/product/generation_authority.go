@@ -151,7 +151,7 @@ func (s *Store) checkGenerationTree(ctx context.Context, q queryer, input evolut
 			break
 		}
 	}
-	if input.Budget != binding.Budget || input.Automatic && binding.Trigger == "manual" {
+	if !input.Budget.Within(binding.Budget) || input.Automatic && binding.Trigger == "manual" {
 		return config, ErrInvalid
 	}
 	allowedSources := map[string]evolution.SourceBinding{}
