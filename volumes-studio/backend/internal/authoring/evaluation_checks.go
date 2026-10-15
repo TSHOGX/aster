@@ -157,10 +157,13 @@ func (s *Store) retainedBranchChecks(ctx context.Context, library, branch string
 	return evolution.UnionChecks(checks)
 }
 
-func (s *Store) preparedBindingChecks(ctx context.Context, library string, branch Branch, main evolution.ContentRef, result history.Snapshot) ([]evolution.CheckRequirement, error) {
+func (s *Store) preparedBindingChecks(ctx context.Context, library string, branch Branch, main evolution.ContentRef, result history.Snapshot, retain ...bool) ([]evolution.CheckRequirement, error) {
 	current, err := s.currentBindingChecks(ctx, library, branch, main, result)
 	if err != nil {
 		return nil, err
+	}
+	if len(retain) > 0 && !retain[0] {
+		return current, nil
 	}
 	retained, err := s.retainedBranchChecks(ctx, library, branch.ID, main)
 	if err != nil {

@@ -27,7 +27,7 @@ func TestConflictedPreparationPersistsExactInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := PrepareInput{"conflicting", other.ID, checkpoint.CommitID, accepted.AcceptedCommit, 1}
+	input := PrepareInput{"conflicting", other.ID, checkpoint.CommitID, accepted.AcceptedCommit, 1, ""}
 	prepared, err := s.PrepareMerge(ctx, testActor, l.ID, input)
 	if err != nil || prepared.ConflictWorkspaceID == "" || len(prepared.Conflicts) != 1 {
 		t.Fatal(prepared, err)

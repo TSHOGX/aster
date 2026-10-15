@@ -19,6 +19,9 @@ type PrepareInput struct {
 	ExpectedHead           string `json:"expected_head"`
 	ExpectedMain           string `json:"expected_main"`
 	ExpectedPolicyRevision int64  `json:"expected_policy_revision"`
+	// RebindPreparedDigest explicitly replaces retained requirements from an
+	// earlier open preparation; policy relaxation never does this implicitly.
+	RebindPreparedDigest string `json:"rebind_prepared_digest,omitempty"`
 }
 type PreparedResult struct {
 	ConflictWorkspaceID string                      `json:"conflict_workspace_id,omitempty"`
@@ -112,9 +115,29 @@ func (s *Store) PrepareMerge(ctx context.Context, a Actor, library string, input
 		}
 		return result, nil
 	}
-	return s.persistPrepared(ctx, a, library, input.RequestID, body, b, main, revision, policy, tree, merged, "")
+	retain := input.RebindPreparedDigest == ""
+	if !retain {
+		if !manifest.ValidDigest(input.RebindPreparedDigest) {
+			return result, ErrInvalid
+		}
+		var oldLibrary string
+		if err = s.db.QueryRowContext(ctx, "SELECT library_id FROM prepared_merges WHERE digest=?", input.RebindPreparedDigest).Scan(&oldLibrary); err != nil {
+			return result, normalizeDB(err)
+		}
+		if oldLibrary != library {
+			return result, ErrConflict
+		}
+		var sourceBranch, sourceHead string
+		if err = s.db.QueryRowContext(ctx, "SELECT branch_id,head FROM prepared_sources WHERE prepared_digest=? ORDER BY branch_id LIMIT 1", input.RebindPreparedDigest).Scan(&sourceBranch, &sourceHead); err != nil {
+			return result, normalizeDB(err)
+		}
+		if sourceBranch != b.ID || sourceHead != b.Head {
+			return result, ErrConflict
+		}
+	}
+	return s.persistPrepared(ctx, a, library, input.RequestID, body, b, main, revision, policy, tree, merged, "", retain)
 }
-func (s *Store) persistPrepared(ctx context.Context, a Actor, library, request, body string, b Branch, main string, revision int64, policy string, tree history.Snapshot, merged map[string][]byte, workspace string) (PreparedResult, error) {
+func (s *Store) persistPrepared(ctx context.Context, a Actor, library, request, body string, b Branch, main string, revision int64, policy string, tree history.Snapshot, merged map[string][]byte, workspace string, retainChecks ...bool) (PreparedResult, error) {
 	var result PreparedResult
 	result.Conflicts = []history.Conflict{}
 	repo, err := s.historyRepository(ctx, library)
@@ -176,7 +199,11 @@ func (s *Store) persistPrepared(ctx context.Context, a Actor, library, request, 
 	ref := func(id string, snapshot history.Snapshot) evolution.ContentRef {
 		return evolution.ContentRef{LibraryID: library, CommitID: id, Profile: snapshot.Profile, TreeDigest: snapshot.TreeDigest()}
 	}
-	checks, err := s.preparedBindingChecks(ctx, library, b, ref(main, mainTree), tree)
+	retain := true
+	if len(retainChecks) > 0 {
+		retain = retainChecks[0]
+	}
+	checks, err := s.preparedBindingChecks(ctx, library, b, ref(main, mainTree), tree, retain)
 	if err != nil {
 		return result, err
 	}

@@ -143,6 +143,28 @@ func TestPrepareIntegrationAndReview(t *testing.T) {
 	}
 }
 
+func TestPrepareExplicitPolicyRebindCreatesNewIdentity(t *testing.T) {
+	s, l, b, oldDigest := reviewFixture(t)
+	ctx := context.Background()
+	main, err := s.MainCommit(ctx, testActor, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SetMergePolicy(ctx, testActor, l.ID, MergePolicyInput{"rebind", 1, 2}); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := s.PrepareMerge(ctx, testActor, l.ID, PrepareInput{RequestID: "rebind-prepare", BranchID: b.ID, ExpectedHead: b.Head, ExpectedMain: main.CommitID, ExpectedPolicyRevision: 2, RebindPreparedDigest: oldDigest})
+	if err != nil || prepared.Identity == nil || prepared.Digest == oldDigest {
+		t.Fatal("explicit rebind did not create a new identity", prepared, err)
+	}
+	if _, err = s.Integration(ctx, testActor, l.ID, oldDigest); err != nil {
+		t.Fatal("original preparation was not retained", err)
+	}
+	if prepared.Identity.PolicyRevision != 2 {
+		t.Fatal("rebound policy revision missing", prepared.Identity)
+	}
+}
+
 func TestMergeRequiresApprovalAndPreservesReplay(t *testing.T) {
 	s, l, b, _ := reviewFixture(t)
 	ctx := context.Background()
@@ -154,7 +176,7 @@ func TestMergeRequiresApprovalAndPreservesReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := s.PrepareMerge(ctx, testActor, l.ID, PrepareInput{"prepare-merge", b.ID, b.Head, main, 1})
+	prepared, err := s.PrepareMerge(ctx, testActor, l.ID, PrepareInput{"prepare-merge", b.ID, b.Head, main, 1, ""})
 	if err != nil {
 		t.Fatal(err)
 	}

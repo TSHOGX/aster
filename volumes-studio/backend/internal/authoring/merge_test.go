@@ -21,7 +21,7 @@ func approvedIntegration(t *testing.T, s *Store, l Library, b Branch) MergeInput
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := s.PrepareMerge(ctx, testActor, l.ID, PrepareInput{"prepare-final", b.ID, b.Head, main, 1})
+	prepared, err := s.PrepareMerge(ctx, testActor, l.ID, PrepareInput{"prepare-final", b.ID, b.Head, main, 1, ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestArchivedLibraryCannotPrepareApproveOrMerge(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, "UPDATE libraries SET archived=1 WHERE id=?", l.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PrepareMerge(ctx, testActor, l.ID, PrepareInput{"archived-prepare", b.ID, b.Head, input.ExpectedMain, 1}); err != ErrConflict {
+	if _, err := s.PrepareMerge(ctx, testActor, l.ID, PrepareInput{"archived-prepare", b.ID, b.Head, input.ExpectedMain, 1, ""}); err != ErrConflict {
 		t.Fatal("archived preparation accepted", err)
 	}
 	if _, err := s.Review(ctx, testActor, l.ID, ReviewInput{"archived-review", input.PreparedDigest, "approve", ""}); err != ErrConflict {
@@ -197,7 +197,7 @@ func TestMergeRequiresDistinctCurrentReviewers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := s.PrepareMerge(ctx, testActor, l.ID, PrepareInput{"prepare-two", b.ID, b.Head, main.CommitID, policy.Revision})
+	prepared, err := s.PrepareMerge(ctx, testActor, l.ID, PrepareInput{"prepare-two", b.ID, b.Head, main.CommitID, policy.Revision, ""})
 	if err != nil {
 		t.Fatal(err)
 	}

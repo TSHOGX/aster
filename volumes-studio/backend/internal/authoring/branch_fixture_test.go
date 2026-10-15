@@ -64,7 +64,7 @@ func acceptDraft(s *Store, ctx context.Context, a Actor, b Branch, revision int6
 	if err != nil {
 		return result, err
 	}
-	prepared, err := s.PrepareMerge(ctx, a, b.LibraryID, PrepareInput{randomID(), b.ID, checkpoint.CommitID, main.CommitID, 1})
+	prepared, err := s.PrepareMerge(ctx, a, b.LibraryID, PrepareInput{randomID(), b.ID, checkpoint.CommitID, main.CommitID, 1, ""})
 	if err != nil {
 		return result, err
 	}

@@ -218,7 +218,7 @@ func (s *Store) CompleteConflict(ctx context.Context, a Actor, library, id strin
 	if err != nil {
 		return result, err
 	}
-	return s.persistPrepared(ctx, a, library, input.RequestID, body, branch, workspace.MainCommit, workspace.PolicyRevision, workspace.PolicyDigest, resolved, content, id)
+	return s.persistPrepared(ctx, a, library, input.RequestID, body, branch, workspace.MainCommit, workspace.PolicyRevision, workspace.PolicyDigest, resolved, content, id, true)
 }
 
 func (s *Store) ConflictFile(ctx context.Context, a Actor, library, id, side, path string) (IntegrationFile, error) {

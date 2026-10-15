@@ -95,7 +95,7 @@ func TestMachineResultCreatesReviewableBranchWithoutAdvancingMain(t *testing.T) 
 	if _, err = s.Release(ctx, testActor, scope.Output.LibraryID, ReleaseInput{RequestID: "bypass", AcceptedCommit: receipt.CommitID, Label: "bypass"}); !errors.Is(err, ErrConflict) {
 		t.Fatal("machine branch published without review", err)
 	}
-	prepared, err := s.PrepareMerge(ctx, testActor, scope.Output.LibraryID, PrepareInput{"prepare", branch.ID, branch.Head, main.CommitID, 1})
+	prepared, err := s.PrepareMerge(ctx, testActor, scope.Output.LibraryID, PrepareInput{"prepare", branch.ID, branch.Head, main.CommitID, 1, ""})
 	if err != nil {
 		t.Fatal(err)
 	}

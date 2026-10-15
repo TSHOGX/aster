@@ -53,7 +53,7 @@ func prepareCheck(t *testing.T, s *Store, b Branch) PreparedResult {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := s.PrepareMerge(ctx, testActor, b.LibraryID, PrepareInput{randomID(), b.ID, b.Head, main.CommitID, 1})
+	prepared, err := s.PrepareMerge(ctx, testActor, b.LibraryID, PrepareInput{randomID(), b.ID, b.Head, main.CommitID, 1, ""})
 	if err != nil {
 		t.Fatal(err)
 	}
