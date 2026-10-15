@@ -1389,3 +1389,16 @@ dd {
   .branch-controls label > select,
   .branch-controls label > textarea { flex: 1; }
 }
+
+.history-panel { overflow: auto; padding: 1rem; min-width: 0; }
+.history-panel code { overflow-wrap: anywhere; }
+.history-panel form { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; margin-block: 1rem; }
+.history-panel label { display: grid; flex: 1 1 15rem; min-width: 0; gap: .25rem; }
+.history-panel input { width: 100%; min-width: 0; }
+.history-panel .commit-list { padding-left: 1.5rem; }
+.history-panel li { margin-block: .75rem; }
+.history-panel button { max-width: 100%; overflow-wrap: anywhere; }
+.history-panel .snapshot-metadata { display: flex; flex-wrap: wrap; gap: 1rem; }
+.history-panel .snapshot-metadata section { flex: 1 1 15rem; min-width: 0; }
+.history-panel .snapshot-metadata a { display: block; }
+.history-panel .diff-host { min-height: 16rem; }

@@ -2,7 +2,6 @@ package authoring
 
 import (
 	"aster/contracts/evolution"
-	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -12,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"unicode/utf8"
 
 	manifest "aster/contracts/volumemanifest"
 )
@@ -359,39 +357,5 @@ func (s *Store) BranchHeadFile(ctx context.Context, a Actor, library, branch, he
 	if err != nil {
 		return file, err
 	}
-	snapshot, err := repo.Snapshot(ctx, head)
-	if err != nil {
-		return file, err
-	}
-	file.CommitID = head
-	for _, entry := range snapshot.Entries {
-		if entry.Path == path {
-			file.Entry = entry
-			break
-		}
-	}
-	if file.Entry.Path == "" {
-		return file, ErrNotFound
-	}
-	if file.Entry.Kind == "directory" {
-		file.Preview = "directory"
-		return file, nil
-	}
-	size, _ := manifest.ParseSize(file.Entry.Size)
-	if size > MaxTextBytes {
-		file.Preview = "too_large"
-		return file, nil
-	}
-	raw, err := repo.ReadFile(ctx, head, path)
-	if err != nil {
-		return file, err
-	}
-	if !utf8.Valid(raw) || bytes.IndexByte(raw, 0) >= 0 {
-		file.Preview = "binary"
-		return file, nil
-	}
-	text := string(raw)
-	file.Text = &text
-	file.Preview = "text"
-	return file, nil
+	return snapshotFile(ctx, repo, head, path)
 }

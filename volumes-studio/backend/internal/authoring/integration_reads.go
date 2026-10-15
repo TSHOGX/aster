@@ -1,13 +1,11 @@
 package authoring
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
-	"unicode/utf8"
 
 	"aster/contracts/evolution"
 	manifest "aster/contracts/volumemanifest"
@@ -151,45 +149,5 @@ func (s *Store) IntegrationFile(ctx context.Context, a Actor, library, digest, s
 	if side == "main" {
 		ref = view.Identity.Main
 	}
-	file.CommitID = ref.CommitID
-	repo, err := s.historyRepository(ctx, library)
-	if err != nil {
-		return file, err
-	}
-	snapshot, err := repo.Snapshot(ctx, ref.CommitID)
-	if err != nil {
-		return file, err
-	}
-	found := false
-	for _, entry := range snapshot.Entries {
-		if entry.Path == path {
-			file.Entry = entry
-			found = true
-			break
-		}
-	}
-	if !found {
-		return file, ErrNotFound
-	}
-	if file.Entry.Kind == "directory" {
-		file.Preview = "directory"
-		return file, nil
-	}
-	size, _ := manifest.ParseSize(file.Entry.Size)
-	if size > MaxTextBytes {
-		file.Preview = "too_large"
-		return file, nil
-	}
-	raw, err := repo.ReadFile(ctx, ref.CommitID, path)
-	if err != nil {
-		return file, err
-	}
-	if !utf8.Valid(raw) || bytes.IndexByte(raw, 0) >= 0 {
-		file.Preview = "binary"
-		return file, nil
-	}
-	text := string(raw)
-	file.Text = &text
-	file.Preview = "text"
-	return file, nil
+	return s.CommitFile(ctx, a, library, ref.CommitID, path)
 }

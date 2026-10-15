@@ -2,6 +2,7 @@
 /* eslint-disable react-hooks/set-state-in-effect -- Hydrate browser navigation and synchronize external workspace snapshots. */
 "use client";
 import { message, useT } from "../lib/i18n";
+import { History } from "./history";
 import { IntegrationReview } from "./integration-review";
 import { BranchCheckpoint } from "./checkpoint";
 import { BranchSelector } from "./branch-selector";
@@ -131,7 +132,7 @@ export function LibraryEditor({ id }: { id: string }) {
     const initialScope = workspaceKey(id, p.get("version") ? "" : p.get("branch") || "", p.get("version") || "");
     setVersion(p.get("version") || "");
     setView(
-      ["files", "changes", "versions"].includes(p.get("view") || "")
+      ["files", "changes", "versions", "history"].includes(p.get("view") || "")
         ? p.get("view")!
         : "files",
     );
@@ -553,7 +554,7 @@ export function LibraryEditor({ id }: { id: string }) {
               </button>
             )}
             <nav aria-label={tr("Library views")}>
-              {["files", "changes", "versions"].map((v) => (
+              {["files", "changes", "versions", "history"].map((v) => (
                 <button
                   key={v}
                   aria-current={view === v ? "page" : undefined}
@@ -817,6 +818,7 @@ export function LibraryEditor({ id }: { id: string }) {
             </>
           )}
           {view === "changes" && library && <Changes library={library} />}{" "}
+          {view === "history" && <History key={id} library={id} branch={branchID} />}
           {view === "versions" && library && (
             <Versions
               library={library}

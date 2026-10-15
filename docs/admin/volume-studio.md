@@ -96,6 +96,20 @@ an integration. Saved conflict choices remain accessible through the workspace U
 Binary and oversized content are identified explicitly when a text preview is
 unavailable; selecting a side preserves its file bytes.
 
+## Inspect history and compare snapshots
+
+Open **History** to browse immutable commits and their parent links. **Load current
+main** and **Load branch head** resolve the current head once; later edits do not
+change the displayed history. Parent links include both sides of a merge.
+
+Choose **Use as comparison base** and **Use as comparison target**, or enter exact
+commit IDs, then choose **Compare snapshots**. Open a changed path to inspect its
+before/after content. Binary files, directories and files larger than the text
+preview limit show metadata; files have authenticated download links. The URL
+retains the selected history head and comparison so refresh shows the same snapshots.
+Saved draft edits are excluded until committed. Library read grants apply to history,
+comparisons and downloads, including subsequent pages.
+
 ## Publish a version
 
 1. Open the accepted integration and enter a **Version label** and **Release note**.
