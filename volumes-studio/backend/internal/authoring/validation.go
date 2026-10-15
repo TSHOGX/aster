@@ -12,6 +12,7 @@ import (
 )
 
 type Validation struct {
+	AcceptedCommit   string             `json:"accepted_commit,omitempty"`
 	Profile          string             `json:"profile"`
 	Revision         int64              `json:"revision"`
 	Valid            bool               `json:"valid"`
@@ -39,7 +40,7 @@ func (s *Store) Validation(ctx context.Context, library, version string) (Valida
 	if err != nil {
 		return Validation{}, err
 	}
-	return s.validateTree(Validation{Profile: v.Profile, Revision: v.SourceRevision, Findings: []manifest.Finding{}, Valid: true}, tree)
+	return s.validateTree(Validation{Profile: v.Profile, AcceptedCommit: v.AcceptedCommit, Findings: []manifest.Finding{}, Valid: true}, tree)
 }
 func (s *Store) validateTree(out Validation, tree []manifest.Entry) (Validation, error) {
 	if out.Profile != manifest.SharedAssetsProfile {

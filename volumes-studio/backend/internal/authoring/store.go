@@ -84,7 +84,6 @@ type Version struct {
 	Profile          string `json:"profile"`
 	Label            string `json:"label"`
 	Note             string `json:"note"`
-	SourceRevision   int64  `json:"source_revision"`
 	DescriptorDigest string `json:"descriptor_digest"`
 	State            string `json:"state"`
 	Publisher        Actor  `json:"publisher"`

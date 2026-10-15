@@ -15,7 +15,7 @@ CREATE TABLE libraries(
 CREATE TABLE versions(
  accepted_commit TEXT NOT NULL DEFAULT '',
  id TEXT PRIMARY KEY,library_id TEXT NOT NULL REFERENCES libraries(id),
- label TEXT NOT NULL,note TEXT NOT NULL,source_revision INTEGER NOT NULL,
+ label TEXT NOT NULL,note TEXT NOT NULL,
  descriptor BLOB NOT NULL,descriptor_digest TEXT NOT NULL UNIQUE,
  state TEXT NOT NULL CHECK(state IN('pending','validating','published','archived','failed','retired')),
  issuer TEXT NOT NULL,subject TEXT NOT NULL,created_at INTEGER NOT NULL,

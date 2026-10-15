@@ -1,5 +1,4 @@
 "use client";
-import { formatQuantity } from "../../../web/i18n/locale";
 import { intlLocale } from "../../../web/i18n/locale";
 import { message, useT } from "../lib/i18n";
 
@@ -389,8 +388,8 @@ export function Versions({
               {selected.note || tr("No release note.")}
             </p>
             <dl>
-              <dt>{tr("Source revision")}</dt>
-              <dd>{formatQuantity(selected.source_revision)}</dd>
+              <dt>{tr("Accepted commit")}</dt>
+              <dd><code>{selected.accepted_commit}</code></dd>
               <dt>{tr("Publisher")}</dt>
               <dd>{selected.publisher.subject}</dd>
               <dt>{tr("Created")}</dt>

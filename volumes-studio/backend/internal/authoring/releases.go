@@ -98,7 +98,7 @@ func (s *Store) Release(ctx context.Context, a Actor, library string, input Rele
 		return result, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO versions(id,library_id,label,note,source_revision,descriptor,descriptor_digest,state,issuer,subject,created_at,accepted_commit) VALUES(?,?,?,?,0,?,?,'pending',?,?,?,?)`, id, library, input.Label, input.Note, raw, digest, a.Issuer, a.Subject, s.now().Unix(), input.AcceptedCommit); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO versions(id,library_id,label,note,descriptor,descriptor_digest,state,issuer,subject,created_at,accepted_commit) VALUES(?,?,?,?,?,?,'pending',?,?,?,?)`, id, library, input.Label, input.Note, raw, digest, a.Issuer, a.Subject, s.now().Unix(), input.AcceptedCommit); err != nil {
 		return result, err
 	}
 	for _, e := range tree.Entries {

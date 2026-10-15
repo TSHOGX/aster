@@ -27,7 +27,6 @@ export type Version = {
   library_id: string;
   label: string;
   note: string;
-  source_revision: number;
   descriptor_digest: string;
   state: string;
   publisher: { issuer: string; subject: string };

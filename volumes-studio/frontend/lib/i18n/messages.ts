@@ -274,7 +274,6 @@ export const ZH: Record<string, string> = {
   "Sign out everywhere in this session": "退出此会话中的所有应用",
   "Sign out failed. Please retry.": "退出失败，请重试。",
   "Some files changed while saving. Save them before publication review.": "部分文件在保存时发生了变化。请在发布审阅前保存它们。",
-  "Source revision": "来源修订版本",
   "Studio": "Studio",
   "Switch library": "切换库",
   "Switch to Draft to publish.": "请切换到草稿以发布。",

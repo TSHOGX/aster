@@ -14,11 +14,11 @@ import (
 	"aster/contracts/volumemanifest"
 )
 
-const versionColumns = "id,library_id,label,note,source_revision,descriptor_digest,state,issuer,subject,error,generation,(SELECT value FROM metadata WHERE key='publisher_id'),json_extract(descriptor,'$.profile'),accepted_commit"
+const versionColumns = "id,library_id,label,note,descriptor_digest,state,issuer,subject,error,generation,(SELECT value FROM metadata WHERE key='publisher_id'),json_extract(descriptor,'$.profile'),accepted_commit"
 
 func scanVersion(row scanner) (Version, error) {
 	var v Version
-	err := row.Scan(&v.ID, &v.LibraryID, &v.Label, &v.Note, &v.SourceRevision, &v.DescriptorDigest, &v.State, &v.Publisher.Issuer, &v.Publisher.Subject, &v.Error, &v.Generation, &v.PublisherID, &v.Profile, &v.AcceptedCommit)
+	err := row.Scan(&v.ID, &v.LibraryID, &v.Label, &v.Note, &v.DescriptorDigest, &v.State, &v.Publisher.Issuer, &v.Publisher.Subject, &v.Error, &v.Generation, &v.PublisherID, &v.Profile, &v.AcceptedCommit)
 	return v, normalizeDB(err)
 }
 func (s *Store) Version(ctx context.Context, id string) (Version, error) {
@@ -145,7 +145,7 @@ func (s *Store) ValidateNext(ctx context.Context) (bool, error) {
 	if n != 1 {
 		return true, ErrConflict
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO audit(issuer,subject,action,library_id,request_id,revision,created_at) VALUES(?,?,'version.published',?,'',?,?)", v.Publisher.Issuer, v.Publisher.Subject, v.LibraryID, v.SourceRevision, s.now().Unix()); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO audit(issuer,subject,action,library_id,request_id,revision,created_at) VALUES(?,?,'version.published',?,'',?,?)", v.Publisher.Issuer, v.Publisher.Subject, v.LibraryID, 0, s.now().Unix()); err != nil {
 		return true, err
 	}
 	return true, tx.Commit()

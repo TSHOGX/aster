@@ -46,7 +46,7 @@ func (s *Store) seedSharedAssets(ctx context.Context) error {
 	if _, err = tx.ExecContext(ctx, `INSERT INTO libraries(id,name,description,profile,issuer,subject,created_at) VALUES(?,?,?,?,'platform','aster',?)`, library, "Aster shared assets", "Base Agent context. Publish a new version to extend it.", manifest.SharedAssetsProfile, now); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO versions(id,library_id,label,note,source_revision,descriptor,descriptor_digest,state,issuer,subject,created_at,published_at) VALUES(?,?,'v1','Built-in Aster context',1,?,?,'published','platform','aster',?,?)`, version, library, raw, descriptorDigest, now, now); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO versions(id,library_id,label,note,descriptor,descriptor_digest,state,issuer,subject,created_at,published_at) VALUES(?,?,'v1','Built-in Aster context',?,?,'published','platform','aster',?,?)`, version, library, raw, descriptorDigest, now, now); err != nil {
 		return err
 	}
 	for _, e := range tree {

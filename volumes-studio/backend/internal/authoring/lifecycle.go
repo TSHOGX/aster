@@ -111,7 +111,7 @@ func (s *Store) Operation(ctx context.Context, a Actor, id string, input Operati
 	if _, err = tx.ExecContext(ctx, "UPDATE versions SET state=?,error=?,issuer=?,subject=?,generation=? WHERE id=?", v.State, v.Error, v.Publisher.Issuer, v.Publisher.Subject, v.Generation, id); err != nil {
 		return v, err
 	}
-	if err = s.record(ctx, tx, a, input.RequestID, body, "version."+input.Action, v.LibraryID, v.SourceRevision, v); err != nil {
+	if err = s.record(ctx, tx, a, input.RequestID, body, "version."+input.Action, v.LibraryID, 0, v); err != nil {
 		return v, err
 	}
 	return v, tx.Commit()
