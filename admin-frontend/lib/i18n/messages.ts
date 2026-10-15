@@ -1,4 +1,7 @@
 export const ZH: Record<string, string> = {
+  "project": "项目",
+  "session": "会话",
+  "volume": "卷",
   "Apply reviewed permission": "应用已审阅权限",
   "This changes current authority immediately. Existing exported copies are not erased.": "此操作立即更改当前权限。现有导出副本不会被删除。",
   "Review permission change": "审阅权限变更",
