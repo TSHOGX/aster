@@ -241,3 +241,38 @@ func TestNativeRunRejectsRevokedInputsBeforeModelWork(t *testing.T) {
 		t.Fatal("revoked inputs reached model", err, provider.calls)
 	}
 }
+
+func TestPausedCheckpointExperimentRunsThroughNativeWorker(t *testing.T) {
+	store, _, run, executor, provider := nativeFixture(t)
+	ctx := context.Background()
+	lease, err := store.ClaimRun(ctx, run.ID, "source-worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SaveRunCheckpoint(ctx, lease, projections.RunCheckpoint{ID: "paused-checkpoint", RunID: run.ID, Fence: lease.Fence, Artifact: run.Pins.Inputs[0]}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.ControlRun(ctx, projections.RunControl{RequestID: "pause-source", RunID: run.ID, ExpectedFence: lease.Fence, Action: "pause"}); err != nil {
+		t.Fatal(err)
+	}
+	graph, err := store.Workflow(ctx, run.Pins.Workflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.CreateRunExperiment(ctx, projections.RunExperimentRequest{ID: "experiment", GroupID: run.GroupID, SourceRunID: run.ID, CheckpointID: "paused-checkpoint", Workflow: graph})
+	if err != nil || created.ExperimentOf != run.ID || created.State != "queued" {
+		t.Fatal(created, err)
+	}
+	worker := Worker{Store: store, ID: "experiment-worker", Authority: executor.Authority, Executor: executor}
+	if err = worker.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.Run(ctx, run.GroupID, created.ID)
+	if err != nil || current.State != "completed" || provider.calls != 1 {
+		t.Fatal(current, err, provider.calls)
+	}
+	source, err := store.Run(ctx, run.GroupID, run.ID)
+	if err != nil || source.State != "paused" || source.ExperimentOf != "" {
+		t.Fatal(source, err)
+	}
+}
