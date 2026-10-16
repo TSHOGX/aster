@@ -8,6 +8,7 @@ import { api, Library, requestID, Version } from "../lib/api";
 import { Page, query, relativeTime } from "../lib/workbench";
 import { Menu, Modal, Picker } from "./ui";
 import { useStudio } from "./studio-provider";
+import { VersionRetention } from "./version-retention";
 export function VersionPicker({
   library,
   value,
@@ -120,7 +121,7 @@ export function Versions({
   const [q, setQ] = useState(""),
     [status, setStatus] = useState("all"),
     [page, setPage] = useState<Page<Version> | null>(null),
-    [selected, setSelected] = useState<Version | null>(null),
+    [selected, setSelected] = useState<string | null>(null),
     [error, setError] = useState("");
   const loadedCount = useRef(50);
   useEffect(() => {
@@ -128,15 +129,27 @@ export function Versions({
   }, [page]);
   const params = query({ mode: "workbench", q, status });
   const root = `/libraries/${library.id}`;
+  function selectDetails(id: string | null) {
+    setSelected(id);
+    const url = new URL(location.href);
+    if (id) url.searchParams.set("version_details", id); else url.searchParams.delete("version_details");
+    history.replaceState(null, "", url);
+  }
+  useEffect(() => {
+    const restore = () => setSelected(new URL(location.href).searchParams.get("version_details"));
+    restore();
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, [root]);
   useEffect(() => {
     const abort = new AbortController();
     const timer = setTimeout(() => {
       void api<Page<Version>>(`${root}/versions?${params}`, {
         signal: abort.signal,
       })
-        .then(setPage)
+        .then(value => { if (!abort.signal.aborted) { setPage(value); setError(""); } })
         .catch((e) => {
-          if (!abort.signal.aborted) setError(String(e));
+          if (!abort.signal.aborted) { setPage(null); setSelected(null); setError(String(e)); }
         });
     }, 150);
     return () => {
@@ -162,9 +175,9 @@ export function Versions({
           );
           items.push(...p.items);
         }
-        if (!abort.signal.aborted) setPage({ ...p, items });
+        if (!abort.signal.aborted) { setPage({ ...p, items }); setError(""); }
       } catch (e) {
-        if (!abort.signal.aborted) setError(String(e));
+        if (!abort.signal.aborted) { setPage(null); setSelected(null); setError(String(e)); }
       } finally {
         busy = false;
       }
@@ -180,15 +193,11 @@ export function Versions({
   }, [root, params]);
   async function action(v: Version, action: string) {
     try {
-      const titles: Record<string, string> = { branch: "Create branch from version", archive: "Archive version", retire: "Retire version", retry: "Retry version", cancel: "Cancel version" };
-      const prompts: Record<string, string> = { archive: "Archive version {label}?", retry: "Retry version {label}?", cancel: "Cancel version {label}?" };
+      const titles: Record<string, string> = { branch: "Create branch from version", retry: "Retry version", cancel: "Cancel version" };
+      const prompts: Record<string, string> = { retry: "Retry version {label}?", cancel: "Cancel version {label}?" };
       let prompt = message(prompts[action] || titles[action], { label: v.label });
       if (action === "branch") {
         prompt = message("Create a working branch from version {label}? Current drafts remain unchanged.", { label: v.label });
-      }
-      if (action === "retire") {
-        const retention = await api<Record<string, unknown>>(`${root}/versions/${v.id}/retention`);
-        prompt = message("Retire version {label}? Source files may be collected. Retention: {retention}", { label: v.label, retention: JSON.stringify(retention) });
       }
       if (
         (await studio.ask(
@@ -209,24 +218,19 @@ export function Versions({
         studio.selectBranch(branch);
         const url = new URL(location.href); url.searchParams.set("branch", branch.id); url.searchParams.delete("version"); history.replaceState(null, "", url);
         onInspect("");
-      } else if (action === "archive" || action === "retire")
-        await studio.write(`${root}/versions/${v.id}/lifecycle`, {
-          request_id: requestID(),
-          action,
-        });
-      else
+      } else
         await studio.write(`/operations/${v.id}/${action}`, {
           request_id: requestID(),
         });
       studio.changed();
       onChanged();
-      setSelected(null);
+      selectDetails(null);
     } catch (e) {
       setError(String(e));
     }
   }
   const actions = (v: Version) => [
-    { label: message("Version details"), action: () => setSelected(v) },
+    { label: message("Version details"), action: () => selectDetails(v.id) },
     ...(["published", "archived"].includes(v.state)
       ? [{ label: message("Create branch from version"), action: () => void action(v, "branch") }]
       : []),
@@ -234,7 +238,7 @@ export function Versions({
       ? [
           {
             label: message("Archive source"),
-            action: () => void action(v, "archive"),
+            action: () => selectDetails(v.id),
             danger: true,
           },
         ]
@@ -243,7 +247,7 @@ export function Versions({
       ? [
           {
             label: message("Retire source"),
-            action: () => void action(v, "retire"),
+            action: () => selectDetails(v.id),
             danger: true,
           },
         ]
@@ -316,7 +320,7 @@ export function Versions({
                 <td>
                   <button
                     className="text-action"
-                    onClick={() => setSelected(v)}
+                    onClick={() => selectDetails(v.id)}
                   >
                     {v.label}
                   </button>
@@ -375,39 +379,8 @@ export function Versions({
              {tr("Load more versions")} </button>
         )}
       </div>
-      <Modal
-        title={selected?.label || tr("Version details")}
-        open={!!selected}
-        onClose={() => setSelected(null)}
-        drawer
-      >
-        {selected && (
-          <>
-            <span className={`badge ${selected.state}`}>{tr(selected.state)}</span>
-            <p className="preserve-lines">
-              {selected.note || tr("No release note.")}
-            </p>
-            <dl>
-              <dt>{tr("Accepted commit")}</dt>
-              <dd><code>{selected.accepted_commit}</code></dd>
-              <dt>{tr("Publisher")}</dt>
-              <dd>{selected.publisher.subject}</dd>
-              <dt>{tr("Created")}</dt>
-              <dd>
-                {selected.created_at ? new Date(selected.created_at * 1000).toLocaleString(intlLocale()) : tr("Unknown")}
-              </dd>
-              <dt>{tr("Published")}</dt>
-              <dd>
-                {selected.published_at ? new Date(selected.published_at * 1000).toLocaleString(intlLocale()) : tr("Unknown / not published")}
-              </dd>
-              <dt>{tr("Descriptor")}</dt>
-              <dd>
-                <code>{selected.descriptor_digest}</code>
-              </dd>
-            </dl>
-            {selected.error && <p className="error">{tr(selected.error)}</p>}
-          </>
-        )}
+      <Modal title={tr("Version details")} open={!!selected} onClose={() => selectDetails(null)} drawer>
+        {selected && <VersionRetention key={selected} library={library.id} id={selected} onChanged={onChanged} />}
       </Modal>
     </section>
   );

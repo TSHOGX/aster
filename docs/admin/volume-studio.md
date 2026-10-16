@@ -263,10 +263,27 @@ to reseed the copy.
 
 ## Archive, retire and clean up
 
-Archiving a Studio source stops new discovery and exports. Existing bounded exports
-can retain access until expiry. Retirement waits for active readers and validation
-and removes source references; other versions or drafts can retain the same bytes.
-It never recalls copies already imported by Aster.
+Open **Versions** and select a version to review **Source retention**. The details
+URL preserves that exact version across reload. Active exports, reader pins and
+publication validations block retirement; reload after they settle. Reader pins
+are conservative counts and may include more than one pin for a single reader.
+Branch draft references retain shared bytes independently and do not block
+retirement. The server rechecks current state and pins when you confirm an action.
+
+**Archive source** stops new discovery and exports. Existing bounded exports can
+retain access until expiry. **Retire source** is available for archived or failed
+versions after blockers clear. It removes distribution references so unreferenced
+source blobs can be collected. Accepted Git history, independent branch drafts,
+backups and copies already imported by Aster remain separate; retirement does not
+erase them.
+
+An unconfirmed archive or retirement keeps its original request in this browser
+tab, scoped to the account and exact version. Reload and choose **Recover version
+operation** before starting another action, even if the displayed state has
+already changed. **Discard version recovery** removes only that local identity
+and cannot undo a completed operation. Failed detail reads clear old retention
+counts; restore access or connectivity and **Reload version details**. If local
+recovery is unavailable, keep the tab open until confirmation.
 
 Aster cleanup is separate. Saved environments, Projects, retained rollback releases
 and unsettled operations can prevent retirement. Failed or uncertain imports may
