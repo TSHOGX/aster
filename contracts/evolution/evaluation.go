@@ -108,6 +108,9 @@ func AssessEvaluation(profile EvaluationProfile, assigned EvaluationSubject, res
 		if report.Validate() != nil || report.GroupID != assigned.Dataset.GroupID || reports[report.ID] {
 			return result, fmt.Errorf("invalid scoped evaluation report")
 		}
+		if report.ID == assigned.Dataset.ID || report.Digest == assigned.Dataset.Digest {
+			return result, fmt.Errorf("evaluation report contains protected input")
+		}
 		reports[report.ID] = true
 	}
 	result.Outcome = "inconclusive"

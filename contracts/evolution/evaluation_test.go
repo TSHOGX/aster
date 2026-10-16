@@ -92,6 +92,20 @@ func TestEvaluationFixedModelAndReportScope(t *testing.T) {
 	}
 }
 
+func TestEvaluationCannotPublishHeldOutDatasetAsReport(t *testing.T) {
+	for _, alias := range []bool{false, true} {
+		profile, subject, result := evaluationFixture(t)
+		report := profile.Dataset
+		if alias {
+			report.ID = "renamed-report"
+		}
+		result.Reports = []ArtifactRef{report}
+		if _, err := AssessEvaluation(profile, subject, result); err == nil {
+			t.Fatal("held-out dataset accepted as report", alias)
+		}
+	}
+}
+
 func TestZeroFenceIsOnlyUndispatchedCancellation(t *testing.T) {
 	profile, subject, result := evaluationFixture(t)
 	result.Fence = 0

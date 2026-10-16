@@ -346,6 +346,10 @@ group-authorized, bounded route. The response identifies the sealed digest and
 original size; a response over the one MiB default is marked `X-Report-Truncated:
 true` and is not a complete report download. Dataset and evaluator input bytes
 remain on private provider routes.
+Evaluator implementations must return aggregate reports without raw answers or
+detailed grading traces. Evaluation Space rejects reports that identify a protected
+dataset or have the same digest as any registered profile's dataset. Downloads
+repeat that check, including datasets registered after a report was completed.
 Run inspectors can request a source-authorized debugger projection for bounded
 budget usage and retained provider observations. Providers that expose only opaque
 job evidence are labeled as such; the UI does not infer tool or internal model

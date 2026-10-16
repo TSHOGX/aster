@@ -46,17 +46,17 @@ type EvaluationAdmission struct {
 	Seed              int64                      `json:"seed"`
 }
 type EvaluationJob struct {
-	Grant     *evolution.EvaluationGrant  `json:"grant,omitempty"`
-	ID        string                      `json:"id"`
-	GroupID   string                      `json:"group_id"`
-	Service   evolution.Revision          `json:"service"`
-	Profile   evolution.EvaluationProfile `json:"profile"`
-	Subject   evolution.EvaluationSubject `json:"subject"`
-	PolicyMode string                     `json:"policy_mode"`
-	Budget    evolution.Budget            `json:"budget"`
-	CreatedAt time.Time                   `json:"created_at"`
-	State     string                      `json:"state"`
-	Fence     int64                       `json:"fence"`
+	Grant      *evolution.EvaluationGrant  `json:"grant,omitempty"`
+	ID         string                      `json:"id"`
+	GroupID    string                      `json:"group_id"`
+	Service    evolution.Revision          `json:"service"`
+	Profile    evolution.EvaluationProfile `json:"profile"`
+	Subject    evolution.EvaluationSubject `json:"subject"`
+	PolicyMode string                      `json:"policy_mode"`
+	Budget     evolution.Budget            `json:"budget"`
+	CreatedAt  time.Time                   `json:"created_at"`
+	State      string                      `json:"state"`
+	Fence      int64                       `json:"fence"`
 }
 type EvaluationLease struct {
 	GroupID   string    `json:"group_id"`
@@ -307,6 +307,9 @@ func (s *Store) EvaluationReportArtifact(ctx context.Context, group, id, reportI
 		if report.ID != reportID {
 			continue
 		}
+		if err := requirePublicEvaluationReport(ctx, s.db, report); err != nil {
+			return evolution.ArtifactRef{}, nil, err
+		}
 		raw, readErr := s.Artifact(ctx, report)
 		return report, raw, readErr
 	}
@@ -367,6 +370,9 @@ func (s *Store) CompleteEvaluation(ctx context.Context, lease EvaluationLease, c
 	}
 	var reportBytes int64
 	for _, report := range result.Reports {
+		if err = requirePublicEvaluationReport(ctx, tx, report); err != nil {
+			return result, err
+		}
 		if report.Size > job.Budget.MaxArtifactBytes-reportBytes {
 			return result, fmt.Errorf("evaluation artifacts exceed budget")
 		}
@@ -383,6 +389,23 @@ func (s *Store) CompleteEvaluation(ctx context.Context, lease EvaluationLease, c
 		return result, err
 	}
 	return result, tx.Commit()
+}
+
+// A provider cannot turn an operator-provisioned dataset into a downloadable
+// report by advertising it under another job or artifact ID. Recheck on download
+// as additional immutable profiles may mark previously public bytes protected.
+func requirePublicEvaluationReport(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, report evolution.ArtifactRef) error {
+	var protected bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM catalog_definitions WHERE kind='profile' AND (json_extract(body,'$.dataset.digest')=? OR (json_extract(body,'$.dataset.group_id')=? AND json_extract(body,'$.dataset.id')=?)))`, report.Digest, report.GroupID, report.ID).Scan(&protected)
+	if err != nil {
+		return err
+	}
+	if protected {
+		return ErrNotFound
+	}
+	return nil
 }
 func readEvaluationBody(ctx context.Context, tx *sql.Tx, group, id string) (EvaluationJob, error) {
 	var body []byte
