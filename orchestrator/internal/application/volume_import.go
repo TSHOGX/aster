@@ -235,6 +235,13 @@ func (a *Application) volumeImportHandler() http.Handler {
 		}
 
 		if action == "retry" {
+			if existing, found, err := a.Store.VolumeImportActionReceipt(r.Context(), importToken(r), id, input.RequestID, action); err != nil {
+				importError(w, err)
+				return
+			} else if found {
+				importJSON(w, 200, existing)
+				return
+			}
 			i, err := a.Store.VolumeImport(r.Context(), id)
 			if err != nil {
 				importError(w, err)

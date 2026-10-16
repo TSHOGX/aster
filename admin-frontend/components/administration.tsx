@@ -99,7 +99,7 @@ export function Administration() {
           : (route[0] === "users" || route[0] === "groups") && route.length === 3 && route[2] === "resources" ? <ResourceEditor key={`${route[0]}-${route[1]}-resources`} kind={route[0] === "users" ? "user" : "group"} id={route[1]} onDirty={setEditorDirty} />
           : route[0] === "projects" && route.length === 1 ? <ProjectList />
           : route[0] === "projects" && route.length === 2 ? <ProjectView key={route[1]} id={route[1]} onDirty={setEditorDirty} />
-          : route[0] === "resources" ? <ResourceCenter section={route[1]} onDirty={setEditorDirty} />
+          : route[0] === "resources" ? <ResourceCenter key={identity.id} accountID={identity.id} section={route[1]} onDirty={setEditorDirty} />
           : route[0] === "audit" && route.length === 1 ? <AuditView />
           : route[0] === "operations" && route.length === 2 ? <OperationView id={route[1]} />
           : <><h1>{tr("Page not found")}</h1><Link href="/users">{tr("Open users")}</Link></>}

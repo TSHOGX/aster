@@ -258,6 +258,29 @@ func (s *Store) SettleVolumeTransfer(ctx context.Context, id string) error {
 		return err
 	})
 }
+
+// VolumeImportActionReceipt reconciles an already admitted lifecycle action
+// before its caller performs state-dependent publication preparation.
+func (s *Store) VolumeImportActionReceipt(ctx context.Context, token, id, requestID, action string) (VolumeImport, bool, error) {
+	if action != "retry" && action != "cancel" {
+		return VolumeImport{}, false, ErrInvalid
+	}
+	actor, err := s.adminSession(ctx, s.reader, token)
+	if err != nil {
+		return VolumeImport{}, false, err
+	}
+	request, err := mutationRequest(requestID, "volume.import."+action, id, map[string]string{"action": action})
+	if err != nil {
+		return VolumeImport{}, false, err
+	}
+	_, found, err := readAdminReceipt(ctx, s.reader, actor.ID, request)
+	if err != nil || !found {
+		return VolumeImport{}, found, err
+	}
+	imported, err := s.VolumeImport(ctx, id)
+	return imported, true, err
+}
+
 func (s *Store) VolumeImportAction(ctx context.Context, token, id, requestID, action string) (VolumeImport, error) {
 	request, err := mutationRequest(requestID, "volume.import."+action, id, map[string]string{"action": action})
 	if err != nil {

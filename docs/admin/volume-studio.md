@@ -323,6 +323,18 @@ drafts intact. The resulting changes still require review and merge.
    data or shared-assets mounts, separately [review a rollout](environment-updates.md).
    Importing or publishing alone never changes an environment or retained Project.
 
+If admission, retry, cancellation or retirement has an unknown result, choose
+**Check original request**. Reload preserves the exact request for your account;
+current local import access must succeed before recovery appears. Other mutations
+remain blocked until it is confirmed or explicitly discarded. Check local imports
+before discarding because the original operation may already have completed. If
+local recovery storage is unavailable, keep the tab open until confirmation.
+The confirmed import ID stays in the URL so reload can find it beyond the first page.
+**More imports** loads another page; polling refreshes all loaded pages. **Refresh
+sources and imports** deliberately returns to the first page while preserving the
+URL-selected import. Failed reads clear affected lists; a source outage leaves
+successfully authorized local imports visible.
+
 An import may be acquiring bytes, preparing runtime storage, failed or awaiting
 cleanup. Source catalog availability is separate from local readiness. Once acquired,
 preparation can continue without Studio; ready artifacts remain usable during a

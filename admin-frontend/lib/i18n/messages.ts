@@ -1,4 +1,9 @@
 export const ZH: Record<string, string> = {
+  "Local import recovery is unavailable. Keep this tab open until the request is confirmed.": "本地导入恢复不可用。请求确认前，请保持此标签页打开。",
+  "Local import recovery is invalid. Discard it before starting another operation.": "本地导入恢复记录无效。开始其他操作前，请先丢弃该记录。",
+  "The original import request may already have completed. Check local imports before discarding recovery.": "原始导入请求可能已完成。丢弃恢复记录前，请检查本地导入。",
+  "Discard import recovery": "丢弃导入恢复记录",
+
   "Back to user": "返回用户",
   "Configure Volume policies": "配置卷策略",
   "Publish and manage versions": "发布和管理版本",
