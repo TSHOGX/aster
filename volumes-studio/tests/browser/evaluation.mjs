@@ -20,6 +20,10 @@ try {
   await page.goto(`${config.origin}/volumes-studio/libraries/aster-shared-assets?branch=${config.branch}&integration=${encodeURIComponent(config.prepared)}`);
   const checks = page.getByRole('region', { name: 'Evaluation checks', exact: true });
   await expect(checks).toBeVisible();
+  if (config.replacement_profile) {
+    await expect(checks).toContainText(`Evaluation profile: ${config.replacement_profile.id} · ${config.replacement_profile.revision}`);
+    await expect(checks).toContainText(`Evaluation service: ${config.replacement_service.id} · ${config.replacement_service.revision}`);
+  }
   await expect(page.getByRole('button', { name: 'Approve integration', exact: true })).toBeDisabled();
   await checks.getByLabel('Evaluation token limit', { exact: true }).fill('1000');
   await checks.getByLabel('Evaluation cost limit (micros)', { exact: true }).fill('10000');
@@ -127,9 +131,9 @@ try {
   await expect(page.getByText('Acceptance is complete. Publishing creates a version; it does not deploy to Projects.')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   expect(errors).toEqual([]);
-  if (comparativeResult) {
+  if (comparativeResult || config.replacement_profile) {
     mkdirSync(config.evidence_directory, { recursive: true });
-    await page.screenshot({ path: path.join(config.evidence_directory, 'comparative-stale-main.png'), fullPage: true });
+    await page.screenshot({ path: path.join(config.evidence_directory, config.replacement_profile ? 'replacement-accepted.png' : 'comparative-stale-main.png'), fullPage: true });
   }
   process.stdout.write(`Required evaluation browser journey passed (${config.browser}, ${config.width}px).\n`);
 } finally {

@@ -339,7 +339,13 @@ Configuration managers can edit evaluator profiles from the Evaluation Space gro
 page. The editor pins the dataset artifact, scorer, runtime, model, tools, metric
 thresholds and minimum sample/coverage requirements; publishing creates the next
 immutable profile revision. Existing runs and reports retain their earlier profile
-identity. Dataset scope is checked against the selected group and profile bytes are
+identity. To replace an evaluator, register a new exact service revision and its
+connection, grant that service use of the exact dataset, and select the new service
+and profile in the applicable group binding or Studio path policy. Publishing a
+profile alone does not change those policies. Prepare the next integration and
+request fresh evidence; historical approval and reports do not authorize its changed
+conditions. Old reports retain their original profile/scorer/service identity.
+Dataset scope is checked against the selected group and profile bytes are
 never exposed to generation-only readers.
 Settled report artifacts are available from the report page through a separate
 group-authorized, bounded route. The response identifies the sealed digest and

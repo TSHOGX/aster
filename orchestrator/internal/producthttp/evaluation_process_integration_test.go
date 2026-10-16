@@ -40,10 +40,15 @@ type evaluationProcessCase struct {
 	Mode, Outcome string
 	PathPolicy    bool
 	StaleMain     bool
+	Replacement   bool
 }
 
 func TestRequiredEvaluationRealProcesses(t *testing.T) {
 	evaluationPolicyProcesses(t, evaluationProcessCase{Mode: "required", Outcome: "pass"})
+}
+
+func TestEvaluationReplacementRealProcesses(t *testing.T) {
+	evaluationPolicyProcesses(t, evaluationProcessCase{Mode: "required", Outcome: "pass", PathPolicy: true, Replacement: true})
 }
 
 func TestComparativeEvaluationRealProcesses(t *testing.T) {
@@ -168,9 +173,13 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 		providerMu.Lock()
 		defer providerMu.Unlock()
 		user, password, ok := r.BasicAuth()
-		if !ok || user != "space" || password != secret {
+		if !ok || (user != "space" && !(test.Replacement && user == "space-replacement")) || password != secret {
 			w.WriteHeader(403)
 			return
+		}
+		inputActor := "evaluator"
+		if user == "space-replacement" {
+			inputActor = "evaluator-replacement"
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == "PUT" {
@@ -190,14 +199,18 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 			} else {
 				// A valid dispatch grant does not let a generation service or an
 				// ambient browser borrow the evaluator's private dataset access.
-				for _, denied := range []struct{ user, password, cookie, origin, grant, fence string }{
+				deniedCredentials := []struct{ user, password, cookie, origin, grant, fence string }{
 					{"model", secret, "", "", value.GrantID, fmt.Sprint(value.Fence)},
 					{"central", secret, "", "", value.GrantID, fmt.Sprint(value.Fence)},
-					{"evaluator", inputSecret, "session=browser", "", value.GrantID, fmt.Sprint(value.Fence)},
-					{"evaluator", inputSecret, "", "https://app", value.GrantID, fmt.Sprint(value.Fence)},
-					{"evaluator", inputSecret, "", "", "wrong-grant", fmt.Sprint(value.Fence)},
-					{"evaluator", inputSecret, "", "", value.GrantID, "999999"},
-				} {
+					{inputActor, inputSecret, "session=browser", "", value.GrantID, fmt.Sprint(value.Fence)},
+					{inputActor, inputSecret, "", "https://app", value.GrantID, fmt.Sprint(value.Fence)},
+					{inputActor, inputSecret, "", "", "wrong-grant", fmt.Sprint(value.Fence)},
+					{inputActor, inputSecret, "", "", value.GrantID, "999999"},
+				}
+				if inputActor == "evaluator-replacement" {
+					deniedCredentials = append(deniedCredentials, struct{ user, password, cookie, origin, grant, fence string }{"evaluator", inputSecret, "", "", value.GrantID, fmt.Sprint(value.Fence)})
+				}
+				for _, denied := range deniedCredentials {
 					endpoint := spaceOrigin + "/evaluation-space/provider/v1/groups/" + value.Subject.Dataset.GroupID + "/jobs/" + value.JobID + "/dataset"
 					request, err := http.NewRequestWithContext(r.Context(), "GET", endpoint, nil)
 					if err != nil {
@@ -233,7 +246,7 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 					if err != nil {
 						return nil, err
 					}
-					request.SetBasicAuth("evaluator", inputSecret)
+					request.SetBasicAuth(inputActor, inputSecret)
 					request.Header.Set("X-Evaluation-Grant", value.GrantID)
 					request.Header.Set("X-Evaluation-Fence", fmt.Sprint(value.Fence))
 					reply, err := http.DefaultClient.Do(request)
@@ -264,7 +277,11 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 					return
 				}
 				content, err := read("candidate", "skills/derived/SKILL.md")
-				if err != nil || string(content) != "# Reviewed skill\nUse the verified example.\n" {
+				expectedContent := "# Reviewed skill\nUse the verified example.\n"
+				if user == "space-replacement" {
+					expectedContent = "# Reviewed skill\nUse the verified example. Check the replacement scorer.\n"
+				}
+				if err != nil || string(content) != expectedContent {
 					providerFailure = fmt.Sprint("candidate: ", err)
 					w.WriteHeader(500)
 					return
@@ -408,8 +425,27 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 		must(t, err)
 		provision("profile", profile.Ref, profile)
 	}
+	replacementService := evaluator
+	replacementService.Ref.ID = "evaluator-replacement"
+	replacementService.ConnectionID = "evaluator-replacement"
+	replacementService.RunnerDigest = evolution.Digest([]byte("replacement-evaluator-runner"))
+	replacementService.Ref.Digest, err = evolution.DefinitionDigest(replacementService)
+	must(t, err)
+	replacementProfile := profile
+	replacementProfile.Ref.Revision = 2
+	replacementProfile.Scorer = evolution.Revision{ID: "replacement-scorer", Revision: 1, Digest: evolution.Digest([]byte("replacement-scorer"))}
+	replacementProfile.Ref.Digest, err = evolution.DefinitionDigest(replacementProfile)
+	must(t, err)
+	if test.Replacement {
+		provision("service", replacementService.Ref, replacementService)
+		provision("profile", replacementProfile.Ref, replacementProfile)
+	}
 	connections := filepath.Join(t.TempDir(), "connections.json")
-	raw, _ := json.Marshal(map[string]any{"connections": []any{map[string]string{"id": "evaluator", "endpoint": provider.URL, "client_id": "space", "secret_env": "TEST_EVALUATOR_SECRET", "input_secret_env": "TEST_EVALUATOR_INPUT_SECRET"}}})
+	connectionDefinitions := []any{map[string]string{"id": "evaluator", "endpoint": provider.URL, "client_id": "space", "secret_env": "TEST_EVALUATOR_SECRET", "input_secret_env": "TEST_EVALUATOR_INPUT_SECRET"}}
+	if test.Replacement {
+		connectionDefinitions = append(connectionDefinitions, map[string]string{"id": "evaluator-replacement", "endpoint": provider.URL, "client_id": "space-replacement", "secret_env": "TEST_EVALUATOR_SECRET", "input_secret_env": "TEST_EVALUATOR_INPUT_SECRET"})
+	}
+	raw, _ := json.Marshal(map[string]any{"connections": connectionDefinitions})
 	must(t, os.WriteFile(connections, raw, 0600))
 	start := func(binary, addr string, args ...string) {
 		t.Helper()
@@ -890,4 +926,28 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 	if canMerge && view.Acceptance != "accepted" || !canMerge && view.Acceptance != "not_accepted" {
 		t.Fatal("evaluation acceptance changed", view)
 	}
+	if test.Replacement {
+		_, err = store.SetEvaluationDatasetGrant(ctx, token, configuration.GroupID, product.EvaluationDatasetGrantInput{RequestID: "replacement-dataset", Artifact: dataset, Service: replacementService.Ref, Enabled: true})
+		must(t, err)
+		verifyEvaluationReplacement(t, ctx, evaluationReplacementFixture{Call: call, Post: post, Get: get, Main: accepted, Historical: prepared, Profile: replacementProfile, Service: replacementService, Budget: budget, Browser: browserEnabled, Repository: root, Origin: issuer, Cookies: cookies, Token: token})
+		providerMu.Lock()
+		reads, failure := inputReads, providerFailure
+		oldSubjects, newSubjects := 0, 0
+		for _, submission := range submissions {
+			if submission.Subject.Profile == profile.Ref && submission.Subject.MatchesProfile(profile) == nil {
+				oldSubjects++
+			}
+			if submission.Subject.Profile == replacementProfile.Ref && submission.Subject.MatchesProfile(replacementProfile) == nil {
+				newSubjects++
+			}
+		}
+		providerMu.Unlock()
+		if oldSubjects != 1 || newSubjects != 1 {
+			t.Fatal("replacement lost frozen profile/scorer conditions", oldSubjects, newSubjects)
+		}
+		if reads != 6 || failure != "" {
+			t.Fatal("replacement provider did not read exact new inputs", reads, failure)
+		}
+	}
+
 }
