@@ -74,6 +74,15 @@ func TestDebuggerAndAttemptPagesRetainExactTotals(t *testing.T) {
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
+	selected, err := s.WorkflowAttempt(ctx, "group", "run", "attempt-105")
+	if err != nil || selected.Call.ID != "attempt-105" || selected.Call.Instance != "root/attempt-105" {
+		t.Fatal("exact attempt", selected, err)
+	}
+	for _, scope := range [][3]string{{"other", "run", "attempt-105"}, {"group", "other", "attempt-105"}, {"group", "run", "missing"}, {"group", "run", "../attempt-105"}} {
+		if _, err = s.WorkflowAttempt(ctx, scope[0], scope[1], scope[2]); err != ErrNotFound {
+			t.Fatal("attempt lookup escaped scope", scope, err)
+		}
+	}
 	page, err := s.WorkflowAttemptPage(ctx, "group", "run", "", 100)
 	if err != nil || len(page.Items) != 100 || !page.HasMore || page.NextAfter != "attempt-100" {
 		t.Fatal("first attempts", len(page.Items), page.NextAfter, err)

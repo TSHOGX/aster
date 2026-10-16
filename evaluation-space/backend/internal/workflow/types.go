@@ -17,7 +17,7 @@ type Values map[string]json.RawMessage
 type Call struct {
 	ID       string             `json:"id"`
 	Instance string             `json:"instance"`
-	Parent   string             `json:"parent"`
+	Parent   string             `json:"parent"` // Exact enclosing attempt ID; empty for root nodes.
 	Number   int                `json:"number"`
 	Workflow evolution.Revision `json:"workflow"`
 	Node     evolution.Node     `json:"node"`

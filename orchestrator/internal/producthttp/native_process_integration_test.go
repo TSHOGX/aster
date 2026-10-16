@@ -1226,17 +1226,45 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 				t.Fatal(status, string(raw))
 			}
 			var attempts struct {
-				Items []struct {
-					ReusedFrom json.RawMessage `json:"reused_from"`
-				} `json:"items"`
+				Items []json.RawMessage `json:"items"`
 			}
 			must(t, json.Unmarshal(raw, &attempts))
 			if len(attempts.Items) == 0 {
 				t.Fatal("missing test attempts")
 			}
-			for _, attempt := range attempts.Items {
+			for _, retained := range attempts.Items {
+				var attempt struct {
+					Call struct {
+						ID       string `json:"id"`
+						Parent   string `json:"parent"`
+						Instance string `json:"instance"`
+					} `json:"call"`
+					ReusedFrom json.RawMessage `json:"reused_from"`
+				}
+				must(t, json.Unmarshal(retained, &attempt))
 				if len(attempt.ReusedFrom) > 0 && string(attempt.ReusedFrom) != "null" {
 					t.Fatal("test reused source attempt")
+				}
+				status, raw = spaceCall("GET", runRoot+testRun.ID+"/attempts/"+attempt.Call.ID, nil)
+				if status != 200 || !bytes.Equal(bytes.TrimSpace(raw), bytes.TrimSpace(retained)) {
+					t.Fatal("exact native attempt changed", status, string(raw), string(retained))
+				}
+				if attempt.Call.Parent != "" {
+					status, raw = spaceCall("GET", runRoot+testRun.ID+"/attempts/"+attempt.Call.Parent, nil)
+					if status != 200 {
+						t.Fatal("parent attempt lookup", status, string(raw))
+					}
+					var parent struct {
+						Call struct {
+							ID       string `json:"id"`
+							Instance string `json:"instance"`
+							Number   int    `json:"number"`
+						} `json:"call"`
+					}
+					must(t, json.Unmarshal(raw, &parent))
+					if parent.Call.ID != attempt.Call.Parent || !strings.HasPrefix(attempt.Call.Instance, parent.Call.Instance+"/attempt-") {
+						t.Fatal("wrong native parent", string(raw))
+					}
 				}
 			}
 			if _, err = evalClient.GenerationOutput(ctx, evolution.GenerationOutputScope{GroupID: testRun.GroupID, RunID: testRun.ID, Fence: testRun.Fence, Port: "candidate"}); err == nil {

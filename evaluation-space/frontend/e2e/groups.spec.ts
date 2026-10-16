@@ -489,6 +489,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
         const url = new URL(route.request().url()); let body: unknown = run; let code = status;
         if (url.pathname.endsWith("/artifacts/sensitive-artifact")) return route.fulfill({ status: previewStatus, contentType: binary ? "application/octet-stream" : "text/plain", headers: { "X-Artifact-Truncated": String(truncated), "X-Artifact-Size": truncated ? "2097152" : "24" }, body: oversized ? "x".repeat(1048580) : truncated ? "bounded-prefix" : "<script>inert()</script>" });
         if (url.pathname.endsWith("/events")) { cursors.push(url.searchParams.get("after")!); body = { events: [event, event], next_after: 1 }; code = evidenceStatus; }
+        else if (url.pathname.endsWith("/attempts/attempt")) { body = attempt; code = evidenceStatus; }
         else if (url.pathname.endsWith("/attempts")) { body = url.searchParams.has("after") ? { items: [{ ...attempt, call: { ...attempt.call, id: "attempt-two", instance: "root/critic" } }], next_after: "attempt-two", has_more: false } : { items: [attempt], next_after: "attempt", has_more: true }; code = evidenceStatus; }
         else if (url.pathname.endsWith("/artifacts")) { body = url.searchParams.has("after") ? { items: [], next_after: "", has_more: false } : { items: [artifact], next_after: "sensitive-artifact", has_more: true }; code = evidenceStatus; }
         else if (url.pathname.endsWith("/debugger")) { body = url.searchParams.has("after") ? { ...debug, has_more: false, next_after: "provider-002", provider_observations: [{ ...observation, call: { ...observation.call, id: "provider-002" } }] } : debug; code = evidenceStatus; }
@@ -683,6 +684,65 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    await expect(form.getByRole("link", { name: forkID, exact: true })).toBeVisible();
    await page.screenshot({ path: info.outputPath("draft-list.png"), fullPage: true });
    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+   expect(errors).toEqual([]);
+  } finally { await context.close(); }
+ });
+}
+
+for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", width: 390 }]) {
+ test(`inspector exact attempt links survive reload and history ${variant.locale}`, async ({ page: admin, browser }, info) => {
+  const { beta, user } = await provision(admin);
+  const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: variant.locale, viewport: { width: variant.width, height: 900 } });
+  const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  try {
+   await login(page, user); await page.goto(`/evaluation-space/groups/${beta.id}/`);
+   await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
+   await expect(page.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
+   const root = `/evaluation-space/api/v1/groups/${beta.id}/runs/nested`;
+   const child = { call: { id: "z-child", instance: "root/map/attempt-1/item-2/loop/attempt-2/iteration-3/agent", parent: "parent", number: 2, node: { id: "agent", kind: "agent", model_ref: { id: "model", revision: 3 }, tools: [{ id: "tool", revision: 2 }] }, prompt: "exact nested prompt", inputs: { corpus: "frozen-input" } }, state: "failed", error_code: "node-timeout", outputs: { result: "retained-output" } };
+   const parent = { call: { id: "parent", instance: "root/map/attempt-1/item-2/loop", number: 1, node: { id: "loop", kind: "loop" } }, state: "failed", outputs: {} };
+   const paths: string[] = []; let selectedStatus = 200;
+   // UI projection fixture; exact native records and authority are separately process-tested.
+   await page.route(`${origin}${root}**`, route => {
+    const url = new URL(route.request().url()); paths.push(url.pathname + url.search);
+    let body: unknown = { id: "nested", state: "failed", handoff: "not_ready", evaluation_state: "not_requested", pins: { workflow: { id: "frozen", revision: 1 } } };
+    if (url.pathname.endsWith("/attempts/z-child")) return route.fulfill({ status: selectedStatus, contentType: "application/json", body: JSON.stringify(selectedStatus === 200 ? child : { error: "unavailable" }) });
+    if (url.pathname.endsWith("/attempts/parent")) body = parent;
+    else if (url.pathname.includes("/attempts/")) return route.fulfill({ status: 404, body: '{}' });
+    else if (url.pathname.endsWith("/attempts")) body = { items: [parent], next_after: "parent", has_more: true };
+    else if (url.pathname.endsWith("/events")) body = { events: [{ id: "event", sequence: 1, kind: "attempt-failed", attempt_id: child.call.id, timestamp: new Date().toISOString() }], next_after: 1 };
+    else if (url.pathname.endsWith("/artifacts")) body = { items: [], next_after: "", has_more: false };
+    else if (url.pathname.endsWith("/debugger")) body = { budget: { spent: { tokens: 5, cost_micros: 10 }, held: { tokens: 0, cost_micros: 0 }, available: { tokens: 10, cost_micros: 10 } }, counts: { attempts: 101, events: 1, provider_observations: 0 }, provider_observations: [], opaque: [] };
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+   });
+   const url = `/evaluation-space/groups/${beta.id}/runs/nested/?attempt=z-child`;
+   await page.goto(url);
+   const detail = page.locator("#attempt-z-child"); const summary = detail.locator("summary");
+   await expect(summary).toBeFocused(); await expect(detail).toHaveAttribute("open", "");
+   await expect(detail.getByText("exact nested prompt", { exact: true })).toBeVisible();
+   await expect(detail.getByText(tr("Execution depth", "执行深度"), { exact: true }).locator("..")).toContainText("2");
+   await expect(detail.getByText(tr("Loop iteration", "循环迭代"), { exact: true }).locator("..")).toContainText("3");
+   await expect(detail.getByText(tr("Map item", "映射项目"), { exact: true }).locator("..")).toContainText("2");
+   await expect(detail.getByRole("link", { name: tr("Link to this attempt", "此尝试的链接"), exact: true })).toHaveAttribute("href", url);
+   expect(paths.some(path => path.includes("/attempts?after="))).toBe(false);
+   await page.reload(); await expect(summary).toBeFocused();
+   await detail.getByRole("button", { name: "parent", exact: true }).click();
+   await expect(page).toHaveURL(/attempt=parent$/); await expect(page.locator("#attempt-parent")).toHaveAttribute("open", "");
+   await page.goBack(); await expect(page).toHaveURL(/attempt=z-child$/); await expect(summary).toBeFocused();
+   await summary.press("Enter"); await expect(page).not.toHaveURL(/attempt=/);
+   await page.getByRole("button", { name: "z-child", exact: true }).click();
+   await expect(page).toHaveURL(/attempt=z-child$/); await expect(summary).toBeFocused();
+   if (variant.width === 390) expect(await page.locator(".run-grid").evaluate(element => getComputedStyle(element).gridTemplateColumns.split(" ").length)).toBe(1);
+   await page.screenshot({ path: info.outputPath("nested-attempt-link.png"), fullPage: true });
+   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+   const refresh = page.getByRole("button", { name: tr("Refresh", "刷新"), exact: true });
+   for (const status of [403, 503, 404]) {
+    selectedStatus = status; await refresh.click();
+    await expect(page.getByText("exact nested prompt", { exact: true })).toHaveCount(0);
+    await expect(page.getByText(tr(status === 404 ? "Selected attempt is missing or was not retained." : "Run evidence is unavailable. Retry or check source access.", status === 404 ? "所选尝试不存在或未被保留。" : "运行证据不可用，请重试或检查源访问权限。"), { exact: true })).toBeVisible();
+   }
+   selectedStatus = 200; await refresh.click(); await expect(summary).toBeFocused();
    expect(errors).toEqual([]);
   } finally { await context.close(); }
  });

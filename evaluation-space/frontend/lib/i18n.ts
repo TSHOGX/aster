@@ -95,5 +95,7 @@ const zh = {
   "Draft creation is unavailable. Check workflow and source permissions, then retry.": "无法创建草稿，请检查工作流和源访问权限后重试。",
   "Draft creation was rejected. Choose a fresh ID and an accessible source revision.": "草稿创建被拒绝，请选择新的 ID 和可访问的源版本。",
   "Draft creation response is unavailable. Recover the pending request before creating another draft.": "未收到草稿创建响应。创建其他草稿前，请先恢复待确认的请求。",
+  "Link to this attempt": "此尝试的链接",
+  "Selected attempt is missing or was not retained.": "所选尝试不存在或未被保留。",
 };
 export function useT() { return useTranslator(zh); }

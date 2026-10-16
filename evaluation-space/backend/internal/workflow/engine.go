@@ -342,12 +342,12 @@ func (x *execution) evaluate(ctx context.Context, call Call, depth int) (Values,
 		raw, _ := json.Marshal(call.Inputs)
 		return Values{keys(node.OutputPorts)[0]: raw}, nil, nil
 	case "subgraph":
-		out, err := x.graph(ctx, *node.Body, call.Inputs, fmt.Sprintf("%s/attempt-%d/body", call.Instance, call.Number), call.Instance, depth+1)
+		out, err := x.graph(ctx, *node.Body, call.Inputs, fmt.Sprintf("%s/attempt-%d/body", call.Instance, call.Number), call.ID, depth+1)
 		return out, nil, err
 	case "loop":
 		current := call.Inputs
 		for iteration := 0; iteration < node.MaxIterations; iteration++ {
-			out, err := x.graph(ctx, *node.Body, current, fmt.Sprintf("%s/attempt-%d/iteration-%d", call.Instance, call.Number, iteration), call.Instance, depth+1)
+			out, err := x.graph(ctx, *node.Body, current, fmt.Sprintf("%s/attempt-%d/iteration-%d", call.Instance, call.Number, iteration), call.ID, depth+1)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -464,7 +464,7 @@ scheduling:
 			for name, items := range arrays {
 				input[name] = items[i]
 			}
-			outputs[i], failures[i] = x.graph(work, *node.Body, input, fmt.Sprintf("%s/attempt-%d/item-%d", call.Instance, call.Number, i), call.Instance, depth+1)
+			outputs[i], failures[i] = x.graph(work, *node.Body, input, fmt.Sprintf("%s/attempt-%d/item-%d", call.Instance, call.Number, i), call.ID, depth+1)
 			if errors.Is(failures[i], ErrPauseRequested) {
 				pausing.Store(true)
 			} else if failures[i] != nil && node.FailureMode == "fail_fast" {

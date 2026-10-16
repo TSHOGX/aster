@@ -150,7 +150,7 @@ func TestGraphRouterSkipsInactiveBranchAndJoin(t *testing.T) {
 func TestMapBoundsConcurrencyOrdersOutputsAndCollectsFailures(t *testing.T) {
 	for _, mode := range []string{"fail_fast", "collect_errors"} {
 		t.Run(mode, func(t *testing.T) {
-			engine, c, _, schema := setup()
+			engine, c, j, schema := setup()
 			body := add(c, base("body", schema, []evolution.Node{transform("work", schema)}, []evolution.Edge{{From: "$input.value", To: "work.value"}, {From: "work.value", To: "$output.value"}}))
 			node := evolution.Node{ID: "map", Kind: "map", InputPorts: map[string]string{"value": schema}, OutputPorts: map[string]string{"value": schema}, ItemInputs: map[string]string{"value": schema}, ItemOutputs: map[string]string{"value": schema}, Body: &body, MaxItems: 10, Concurrency: 2, FailureMode: mode, MaxAttempts: 1, TimeoutSeconds: 10}
 			ref := add(c, base("map", schema, []evolution.Node{node}, []evolution.Edge{{From: "$input.value", To: "map.value"}, {From: "map.value", To: "$output.value"}}))
@@ -193,6 +193,7 @@ func TestMapBoundsConcurrencyOrdersOutputsAndCollectsFailures(t *testing.T) {
 			if string(out["value"]) != expected {
 				t.Fatal(string(out["value"]))
 			}
+			assertAttemptParents(t, j.records)
 		})
 	}
 }
@@ -212,6 +213,7 @@ func TestLoopAndSubgraphExposeBoundedIterations(t *testing.T) {
 	if err != nil || string(out["value"]) != "true" || count != 2 || len(j.records) != 4 {
 		t.Fatal(out, err, count, len(j.records))
 	}
+	assertAttemptParents(t, j.records)
 }
 func TestInvalidOutputAndKnownRetryAreDurable(t *testing.T) {
 	engine, c, j, _ := setup()
@@ -339,5 +341,58 @@ func TestMapPauseIsNotFailureOrCancellationAndResumesRetainedItems(t *testing.T)
 				}
 			}
 		})
+	}
+}
+
+func assertAttemptParents(t *testing.T, records map[string]Record) {
+	t.Helper()
+	children := 0
+	for _, record := range records {
+		if record.Call.Parent == "" {
+			continue
+		}
+		children++
+		parent, ok := records[record.Call.Parent]
+		if !ok || !strings.HasPrefix(record.Call.Instance, fmt.Sprintf("%s/attempt-%d/", parent.Call.Instance, parent.Call.Number)) {
+			t.Fatalf("child %s does not identify its exact parent attempt %s", record.Call.Instance, record.Call.Parent)
+		}
+	}
+	if children == 0 {
+		t.Fatal("no nested attempts exercised")
+	}
+}
+
+func TestContainerRetryRetainsExactParentAttempt(t *testing.T) {
+	engine, catalog, journal, schema := setup()
+	child := transform("work", schema)
+	child.MaxAttempts = 1
+	body := add(catalog, base("body", schema, []evolution.Node{child}, []evolution.Edge{{From: "$input.value", To: "work.value"}, {From: "work.value", To: "$output.value"}}))
+	container := evolution.Node{ID: "sub", Kind: "subgraph", InputPorts: map[string]string{"value": schema}, OutputPorts: map[string]string{"value": schema}, Body: &body, MaxDepth: 4, MaxAttempts: 2, TimeoutSeconds: 10}
+	ref := add(catalog, base("root", schema, []evolution.Node{container}, []evolution.Edge{{From: "$input.value", To: "sub.value"}, {From: "sub.value", To: "$output.value"}}))
+	calls := 0
+	engine.Runtime = runtimeFunc(func(_ context.Context, call Call) (Values, error) {
+		calls++
+		if calls == 1 {
+			return nil, Failure{Code: "temporary", Retryable: true}
+		}
+		return call.Inputs, nil
+	})
+	for replay := 0; replay < 2; replay++ {
+		if _, err := engine.Execute(context.Background(), ref, Values{"value": json.RawMessage(`1`)}); err != nil {
+			t.Fatal(err)
+		}
+		if calls != 2 || len(journal.records) != 4 {
+			t.Fatal("container retry/replay", calls, len(journal.records))
+		}
+		assertAttemptParents(t, journal.records)
+		parents := map[string]bool{}
+		for _, record := range journal.records {
+			if record.Call.Parent != "" {
+				parents[record.Call.Parent] = true
+			}
+		}
+		if len(parents) != 2 {
+			t.Fatal("distinct parent attempts collapsed", parents)
+		}
 	}
 }

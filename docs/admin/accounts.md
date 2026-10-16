@@ -297,6 +297,13 @@ evaluator metrics and explicit stale or redacted states. Artifact metadata inclu
 identity, digest, size and media kind; bytes still require a separate current grant.
 They never expose dataset bytes or service credentials.
 
+Open a node attempt to retain its selection in the run URL. **Link to this attempt**
+can be copied or bookmarked; reload restores the exact dynamic attempt even when
+it falls beyond the first results page. Parent attempts and event entries navigate
+to the corresponding attempt, and reused checkpoints link to their source attempt.
+Each lookup checks current source access. Missing attempts show an explicit status;
+denied or unavailable evidence is cleared until a successful refresh.
+
 Use **Test saved draft** after saving a complete, valid graph. Select an admitted
 source run from the same group, choose the full workflow, a node, or a subgraph
 container, and set the test budget within the source run's limits. Node and

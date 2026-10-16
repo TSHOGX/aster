@@ -45,7 +45,7 @@ const WorkflowCheckpointSchema = "sha256:37b41b3118e1e2bfea9435afe810bd164ce0f25
 
 func (j WorkflowJournal) Begin(ctx context.Context, call workflow.Call, maximum int) (workflow.Record, error) {
 	var record workflow.Record
-	if j.Store == nil || !manifest.ValidID(j.GrantID) || !manifest.ValidID(call.ID) || call.Workflow.Validate() != nil || call.Number < 1 || len(call.Instance) > 4096 || len(call.Parent) > 4096 || maximum < 1 {
+	if j.Store == nil || !manifest.ValidID(j.GrantID) || !manifest.ValidID(call.ID) || call.Workflow.Validate() != nil || call.Number < 1 || len(call.Instance) > 4096 || call.Parent != "" && !manifest.ValidID(call.Parent) || maximum < 1 {
 		return record, fmt.Errorf("invalid workflow attempt")
 	}
 	raw, err := json.Marshal(call)
@@ -194,6 +194,23 @@ type WorkflowAttemptPage struct {
 func (s *Store) WorkflowAttempts(ctx context.Context, group, run, after string, limit int) ([]workflow.Record, error) {
 	page, err := s.WorkflowAttemptPage(ctx, group, run, after, limit)
 	return page.Items, err
+}
+
+// WorkflowAttempt resolves one dynamic attempt without scanning earlier pages.
+// Like WorkflowAttemptPage, it requires current trace authority at the boundary.
+func (s *Store) WorkflowAttempt(ctx context.Context, group, run, id string) (workflow.Record, error) {
+	if !manifest.ValidID(group) || !manifest.ValidID(run) || !manifest.ValidID(id) {
+		return workflow.Record{}, ErrNotFound
+	}
+	var raw []byte
+	err := s.db.QueryRowContext(ctx, "SELECT a.record FROM workflow_attempts a JOIN runs r ON r.id=a.run_id WHERE r.group_id=? AND r.id=? AND a.id=?", group, run, id).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return workflow.Record{}, ErrNotFound
+	}
+	if err != nil {
+		return workflow.Record{}, err
+	}
+	return evolution.Decode[workflow.Record](bytes.NewReader(raw))
 }
 
 func (s *Store) WorkflowAttemptPage(ctx context.Context, group, run, after string, limit int) (WorkflowAttemptPage, error) {

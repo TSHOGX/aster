@@ -61,7 +61,7 @@ function GroupList({ selected }: { selected: string }) {
     <form onSubmit={event => { event.preventDefault(); setSearch(draft.trim()); setAfter(""); }}><label htmlFor="group-search">{tr("Search groups")}</label><div className="search"><input id="group-search" value={draft} maxLength={256} onChange={e => setDraft(e.target.value)} /><button type="submit">{tr("Search")}</button></div></form>
     {read.loading && <p role="status">{tr("Loading groups…")}</p>}
     {read.status && <div role="alert"><p>{tr(read.status === 401 || read.status === 403 ? "Group access was revoked. Sign in again or contact an administrator." : "Group access is unavailable. Please retry.")}</p><button onClick={read.refresh}>{tr("Retry")}</button></div>}
-    {read.data && <><ul>{read.data.items.map(group => <li key={group.id}><Link href={`/groups/${encodeURIComponent(group.id)}/`} aria-current={selected === group.id ? "page" : undefined}>{group.name}</Link></li>)}</ul>
+    {read.data && <><ul>{read.data.items.map(group => <li key={group.id}><Link prefetch={false} href={`/groups/${encodeURIComponent(group.id)}/`} aria-current={selected === group.id ? "page" : undefined}>{group.name}</Link></li>)}</ul>
       {!read.data.items.length && <div><h3>{tr(search ? "No matching groups" : "No readable groups")}</h3>{!search && <p>{tr("Ask an administrator for group membership and configuration read access.")}</p>}</div>}
       <div className="pagination">{after && <button onClick={() => setAfter("")}>{tr("First page")}</button>}{read.data.has_more && <button onClick={() => setAfter(read.data!.next_after)}>{tr("Next page")}</button>}</div>
     </>}

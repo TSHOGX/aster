@@ -68,6 +68,9 @@ func TestBrowserSurfaceSeparatesTraceAndControlAuthority(t *testing.T) {
 	if response := request("GET", "/evaluation-space/api/v1/groups/team/runs/missing/events", ""); response.Code != http.StatusForbidden {
 		t.Fatalf("trace route bypassed source authority: %d", response.Code)
 	}
+	if response := request("GET", "/evaluation-space/api/v1/groups/team/runs/missing/attempts/attempt", ""); response.Code != http.StatusForbidden {
+		t.Fatalf("exact attempt bypassed source authority: %d", response.Code)
+	}
 	if response := request("GET", "/evaluation-space/api/v1/groups/team/runs/missing/artifacts", ""); response.Code != http.StatusForbidden {
 		t.Fatalf("artifact route bypassed source authority: %d", response.Code)
 	}

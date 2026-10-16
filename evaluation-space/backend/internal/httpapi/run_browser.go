@@ -122,6 +122,23 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 		}
 		write(w, 200, page)
 	}
+	attempt := func(w http.ResponseWriter, r *http.Request) {
+		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
+		if err := authorize(r, session, "source.read"); err != nil {
+			workflowAuthError(w, err)
+			return
+		}
+		record, err := store.WorkflowAttempt(r.Context(), r.PathValue("group"), r.PathValue("run"), r.PathValue("attempt"))
+		if errors.Is(err, projections.ErrNotFound) {
+			write(w, 404, map[string]string{"error": "attempt_not_found"})
+			return
+		}
+		if err != nil {
+			write(w, 503, map[string]string{"error": "attempt_unavailable"})
+			return
+		}
+		write(w, 200, record)
+	}
 	artifacts := func(w http.ResponseWriter, r *http.Request) {
 		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
 		if err := authorize(r, session, "source.read"); err != nil {
@@ -338,6 +355,7 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}", read)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/events", events)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/attempts", attempts)
+	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/attempts/{attempt}", attempt)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/artifacts", artifacts)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/artifacts/{artifact}", artifact)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/runs/{run}/debugger", debugger)

@@ -43,3 +43,5 @@ dd { margin: 0; text-align: right; }
 .workbench-fields { border:0; padding:0; margin:0; min-width:0; }.workbench-fields .card { min-width:0; }.workbench-fields code { overflow-wrap:anywhere; }
 
 .artifact-preview-panel{display:block;border:1px solid var(--border,#cbd5e1);padding:.75rem;margin:.5rem 0;min-width:0;overflow-wrap:anywhere}.artifact-preview-panel>strong,.artifact-preview-panel>[role=status],.artifact-preview-panel>[role=alert]{display:block}.artifact-preview-body{display:block;white-space:pre-wrap;overflow-wrap:anywhere;max-height:24rem;overflow:auto;margin:.5rem 0}.artifact-preview-panel button{margin:.25rem}
+
+@media (max-width:700px){.run-grid,.overview-grid{grid-template-columns:minmax(0,1fr)}}
