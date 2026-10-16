@@ -37,10 +37,11 @@ type evaluationProcessPrepared struct {
 }
 
 type evaluationProcessCase struct {
-	Mode, Outcome string
-	PathPolicy    bool
-	StaleMain     bool
-	Replacement   bool
+	Mode, Outcome     string
+	ReferenceStrategy string
+	PathPolicy        bool
+	StaleMain         bool
+	Replacement       bool
 }
 
 func TestRequiredEvaluationRealProcesses(t *testing.T) {
@@ -52,7 +53,11 @@ func TestEvaluationReplacementRealProcesses(t *testing.T) {
 }
 
 func TestComparativeEvaluationRealProcesses(t *testing.T) {
-	evaluationPolicyProcesses(t, evaluationProcessCase{Mode: "required", Outcome: "pass", StaleMain: true})
+	for _, strategy := range []string{"target_main", "generation_base", "pinned_release"} {
+		t.Run(strategy, func(t *testing.T) {
+			evaluationPolicyProcesses(t, evaluationProcessCase{Mode: "required", Outcome: "pass", StaleMain: true, ReferenceStrategy: strategy, PathPolicy: strategy == "pinned_release"})
+		})
+	}
 }
 
 func TestManualPathEvaluationRealProcesses(t *testing.T) {
@@ -516,7 +521,7 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 		spaceArgs = append(spaceArgs, "--evaluation-connections", connections)
 	}
 	start(spaceBinary, spaceAddress, spaceArgs...)
-	for _, action := range []string{"volume.read", "volume.author", "volume.review", "volume.merge", "volume.configure"} {
+	for _, action := range []string{"volume.read", "volume.author", "volume.review", "volume.merge", "volume.configure", "volume.publish"} {
 		_, err = store.ApplyStudioGrant(ctx, token, product.StudioGrantCommand{RequestID: strings.ReplaceAll(action, ".", "-"), Kind: "account", SubjectID: admin.ID, LibraryID: "aster-shared-assets", Action: action, Effect: "allow"})
 		must(t, err)
 	}
@@ -556,7 +561,10 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 		policy = evolution.EvaluationPolicy{Mode: test.Mode, Profile: &profile.Ref, Service: &evaluator.Ref, ReferenceStrategy: "none"}
 	}
 	if test.StaleMain {
-		policy.ReferenceStrategy = "target_main"
+		// The pinned policy is installed after an accepted release exists.
+		if test.ReferenceStrategy != "pinned_release" {
+			policy.ReferenceStrategy = test.ReferenceStrategy
+		}
 	}
 	bindingPolicy := policy
 	if test.PathPolicy {
@@ -652,8 +660,15 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 		}
 	}
 	var main evolution.ContentRef
+	var pinnedReference evolution.ContentRef
+	if test.ReferenceStrategy == "pinned_release" {
+		release, reference := prepareEvaluationReferenceRelease(t, post, get)
+		pinnedReference = reference
+		policy.ReferenceStrategy = "pinned_release"
+		policy.ReferenceRelease = &release
+	}
 	if test.PathPolicy {
-		if browserEnabled {
+		if browserEnabled && test.ReferenceStrategy != "pinned_release" {
 			width := 1440
 			if os.Getenv("STUDIO_NARROW") == "1" {
 				width = 390
@@ -671,6 +686,13 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 		}
 	}
 	get("/main", &main)
+	expectedReference := main
+	if test.ReferenceStrategy == "pinned_release" {
+		expectedReference = pinnedReference
+		if expectedReference == main {
+			t.Fatal("pinned release must differ from current main and generation base")
+		}
+	}
 	var branch struct {
 		ID   string `json:"id"`
 		Head string `json:"head"`
@@ -714,7 +736,7 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 			browserName = "chromium"
 		}
 		resultFile := filepath.Join(t.TempDir(), "browser-result.json")
-		raw, _ := json.Marshal(map[string]any{"stale_main": test.StaleMain, "result_file": resultFile, "backend": "http://" + studioAddress, "origin": issuer, "cookies": cookies, "central_cookie": token, "branch": branch.ID, "prepared": prepared.Digest, "width": width, "browser": browserName, "cancel_first": cancellationJourney, "mode": test.Mode, "outcome": test.Outcome, "evidence_directory": filepath.Join(root, "volumes-studio/frontend/test-results/evaluation-policy", fmt.Sprintf("%s-%d", browserName, width))})
+		raw, _ := json.Marshal(map[string]any{"stale_main": test.StaleMain, "reference_strategy": test.ReferenceStrategy, "expected_reference": expectedReference, "result_file": resultFile, "backend": "http://" + studioAddress, "origin": issuer, "cookies": cookies, "central_cookie": token, "branch": branch.ID, "prepared": prepared.Digest, "width": width, "browser": browserName, "cancel_first": cancellationJourney, "mode": test.Mode, "outcome": test.Outcome, "evidence_directory": filepath.Join(root, "volumes-studio/frontend/test-results/evaluation-policy", fmt.Sprintf("%s-%d", browserName, width))})
 		script := "evaluation.mjs"
 		if test.Mode != "required" || test.Outcome != "pass" {
 			script = "evaluation-policy.mjs"
@@ -797,8 +819,8 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 		}
 		if test.StaleMain {
 			original := prepared
-			if original.Identity.Checks[0].Reference == nil || *original.Identity.Checks[0].Reference != main {
-				t.Fatal("first comparative reference is not frozen main")
+			if original.Identity.Checks[0].Reference == nil || *original.Identity.Checks[0].Reference != expectedReference {
+				t.Fatal("first comparative reference does not match policy")
 			}
 			post("/integrations/reviews", map[string]any{"request_id": "old-approval", "prepared_digest": original.Digest, "verdict": "approve", "rationale": "Original comparison passed"}, nil)
 			var human struct {
@@ -826,10 +848,17 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 			if main != humanPrepared.Identity.Result {
 				t.Fatal("human main was not preserved")
 			}
+			if test.ReferenceStrategy == "target_main" {
+				expectedReference = main
+			}
 			prepared = evaluationProcessPrepared{}
 			post("/integrations/prepare", map[string]any{"request_id": "reprepare", "branch_id": branch.ID, "expected_head": checkpoint.Commit, "expected_main": main.CommitID, "expected_policy_revision": 1}, &prepared)
-			if prepared.Digest == original.Digest || prepared.Identity.Result.TreeDigest == original.Identity.Result.TreeDigest || len(prepared.Identity.Checks) != 1 || prepared.Identity.Checks[0].Reference == nil || *prepared.Identity.Checks[0].Reference != main || prepared.Identity.Checks[0].Digest == original.Identity.Checks[0].Digest {
+			if prepared.Digest == original.Digest || prepared.Identity.Result.TreeDigest == original.Identity.Result.TreeDigest || len(prepared.Identity.Checks) != 1 || prepared.Identity.Checks[0].Reference == nil || *prepared.Identity.Checks[0].Reference != expectedReference {
 				t.Fatal("reprepare lost integrated tree or reference identity", prepared)
+			}
+			sameConditions := prepared.Identity.Checks[0].Digest == original.Identity.Checks[0].Digest
+			if sameConditions != (test.ReferenceStrategy != "target_main") {
+				t.Fatal("reference condition identity changed incorrectly", prepared)
 			}
 			status, raw = call("POST", libraryRoot+"/integrations/reviews", map[string]any{"request_id": "stale-result-review", "prepared_digest": prepared.Digest, "verdict": "approve"})
 			if status != 409 {
@@ -865,7 +894,7 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 			newSubmission := submissions[newJob.ID]
 			count := len(submissions)
 			providerMu.Unlock()
-			if count != 2 || newSubmission == nil || newSubmission.Subject.Candidate != prepared.Identity.Result || newSubmission.Subject.Reference == nil || *newSubmission.Subject.Reference != main {
+			if count != 2 || newSubmission == nil || newSubmission.Subject.Candidate != prepared.Identity.Result || newSubmission.Subject.Reference == nil || *newSubmission.Subject.Reference != expectedReference {
 				t.Fatal("provider did not compare exact new tree/reference")
 			}
 		}

@@ -100,7 +100,12 @@ The **Evaluation checks** panel shows the exact profile, evaluator, path policy 
 reference commit captured for the integrated result. A target-main comparison pins
 the main commit at preparation time. If another branch merges first, prepare again:
 the new integrated tree and reference need their own passing check and approval.
-The earlier report keeps its original identities for historical inspection.
+A generation-base comparison keeps the branch's initial base; a pinned-release
+comparison keeps the accepted commit of the selected published version. Those
+references stay fixed when main advances. A changed integrated tree still needs
+its own passing evidence and approval even when the comparison reference and
+policy are unchanged. The earlier report keeps its original identities for
+historical inspection.
 Off means no benchmark was
 requested. Informational evaluation remains mergeable under human approval while
 pending or after failure, error or inconclusive results. A report arriving after

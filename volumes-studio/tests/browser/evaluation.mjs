@@ -81,8 +81,9 @@ try {
       expect(response.ok(), await response.text()).toBe(true); return response.json();
     };
     const original = await get(`/integrations/${encodeURIComponent(config.prepared)}`);
-    expect(original.identity.checks[0].reference).toEqual(original.identity.main);
-    await expect(checks).toContainText(original.identity.main.commit_id);
+    expect(original.identity.checks[0].reference).toEqual(config.expected_reference);
+    expect(original.identity.checks[0].reference_strategy).toBe(config.reference_strategy);
+    await expect(checks).toContainText(config.expected_reference.commit_id);
     const human = await post('/branches', { name: 'Concurrent human guide', base_commit: original.identity.main.commit_id });
     await post(`/branches/${human.id}/draft/text`, { expected_revision: 1, expected_head: human.head, path: 'AGENTS.md', text: '# Human instructions\nPreserve this concurrent human edit.\n' });
     const committed = await post(`/branches/${human.id}/commits`, { expected_revision: 2, expected_head: human.head, message: 'Human instructions' });
@@ -101,13 +102,15 @@ try {
     const next = await get(`/integrations/${encodeURIComponent(newDigest)}`);
     expect(next.identity.result.tree_digest).not.toBe(original.identity.result.tree_digest);
     expect(next.identity.checks).toHaveLength(1);
-    expect(next.identity.checks[0].reference).toEqual(humanPrepared.identity.result);
+    const expectedReference = config.reference_strategy === 'target_main' ? humanPrepared.identity.result : config.expected_reference;
+    expect(next.identity.checks[0].reference).toEqual(expectedReference);
+    expect(next.identity.checks[0].digest === original.identity.checks[0].digest).toBe(config.reference_strategy !== 'target_main');
     expect(next.evaluations).toHaveLength(0);
     expect(next.reviews).toHaveLength(0);
-    await expect(checks).toContainText(humanPrepared.identity.result.commit_id);
+    await expect(checks).toContainText(expectedReference.commit_id);
     await expect(page.getByRole('button', { name: 'Approve integration', exact: true })).toBeDisabled();
     await language('zh');
-    await expect(page.getByRole('region', { name: '评估检查', exact: true })).toContainText(humanPrepared.identity.result.commit_id);
+    await expect(page.getByRole('region', { name: '评估检查', exact: true })).toContainText(expectedReference.commit_id);
     await expect(page.getByRole('button', { name: '批准集成', exact: true })).toBeDisabled();
     await language('en');
     await page.reload();
@@ -133,7 +136,7 @@ try {
   expect(errors).toEqual([]);
   if (comparativeResult || config.replacement_profile) {
     mkdirSync(config.evidence_directory, { recursive: true });
-    await page.screenshot({ path: path.join(config.evidence_directory, config.replacement_profile ? 'replacement-accepted.png' : 'comparative-stale-main.png'), fullPage: true });
+    await page.screenshot({ path: path.join(config.evidence_directory, config.replacement_profile ? 'replacement-accepted.png' : `comparative-${config.reference_strategy}.png`), fullPage: true });
   }
   process.stdout.write(`Required evaluation browser journey passed (${config.browser}, ${config.width}px).\n`);
 } finally {
