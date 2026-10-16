@@ -9,12 +9,14 @@ import shutil
 import stat
 import socket
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = "evaluation-space-release.json"
+COMMANDS = ("evaluation-space", "evaluation-catalog", "evaluation-space-backup", "evaluation-space-restore")
 
 
 def digest(path):
@@ -53,16 +55,60 @@ def verify(root):
         raise ValueError("unsupported Evaluation Space release")
     if inventory(root) != document.get("files"):
         raise ValueError("Evaluation Space release inventory changed")
-    for name in ["bin/evaluation-space", "bin/evaluation-space-backup", "bin/evaluation-space-restore", "frontend/server.js"]:
+    for name in [*("bin/" + command for command in COMMANDS), "frontend/server.js"]:
         if not (root / name).is_file():
             raise ValueError(f"release is missing {name}")
     return document
+
+
+def smoke_maintenance(root):
+    """Exercise only disposable application state with packaged operator binaries."""
+    with tempfile.TemporaryDirectory(prefix="evaluation-space-maintenance-") as temporary:
+        scratch = Path(temporary)
+        state = scratch / "state"
+        content = scratch / "evidence.txt"
+        content.write_bytes(b"Retained smoke evidence")
+        ref = {"id": "smoke-artifact", "group_id": "smoke-group", "grant_id": "smoke-grant",
+               "policy_revision": 1, "schema_digest": "sha256:" + hashlib.sha256(b"schema").hexdigest(),
+               "digest": "sha256:" + digest(content), "size": content.stat().st_size, "media_type": "text/plain"}
+
+        def catalog(action, document, directory=state, extra=()):
+            result = subprocess.run([str(root / "bin/evaluation-catalog"), "--state-directory", str(directory),
+                                     "--action", action, *extra], input=json.dumps(document), text=True,
+                                    capture_output=True, check=True)
+            return json.loads(result.stdout)
+
+        catalog("seal-artifact", ref, extra=("--artifact-file", str(content)))
+        before = catalog("inspect-artifact", ref)
+        if before["artifact"] != ref or before["pins"] or "expired_at" in before:
+            raise ValueError("packaged artifact inspection failed")
+        request = {"request_id": "smoke-expiry", "artifact": ref, "reason": "Disposable bundle smoke evidence"}
+        receipt = catalog("expire-artifact", request)
+        if receipt["artifact"] != ref or receipt["released_bytes"] != ref["size"] or not receipt["expired_at"]:
+            raise ValueError("packaged artifact expiry failed")
+        if catalog("expire-artifact", request) != receipt:
+            raise ValueError("packaged expiry retry changed receipt")
+        backup, restored = scratch / "backup", scratch / "restored"
+        run([str(root / "bin/evaluation-space-backup"), "-state-directory", str(state), "-output", str(backup)], root)
+        run([str(root / "bin/evaluation-space-restore"), "-input", str(backup), "-output", str(restored)], root)
+        after = catalog("inspect-artifact", ref, restored)
+        if after["artifact"] != ref or after["expired_at"] != receipt["expired_at"]:
+            raise ValueError("packaged restore lost artifact expiry")
+        if catalog("expire-artifact", request, restored) != receipt:
+            raise ValueError("packaged restore lost expiry receipt")
+        reseal = subprocess.run([str(root / "bin/evaluation-catalog"), "--state-directory", str(restored),
+                                 "--action", "seal-artifact", "--artifact-file", str(content)],
+                                input=json.dumps(ref), text=True, capture_output=True)
+        if reseal.returncode == 0 or "artifact_expired" not in reseal.stderr:
+            raise ValueError("packaged restore resurrected expired content")
+    print("Packaged catalog, artifact expiry, backup and restore smoke passed.")
 
 
 def smoke(root):
     """Verify the packaged frontend serves prefixed assets and deep links."""
     root = root.resolve()
     verify(root)
+    smoke_maintenance(root)
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
@@ -135,7 +181,7 @@ def build(target, offline=False, source_ref="HEAD"):
         run(["go", "test", "-mod=readonly", "./..."], app / "backend", env)
         staged = scratch / "bundle"
         (staged / "bin").mkdir(parents=True)
-        for command in ["evaluation-space", "evaluation-space-backup", "evaluation-space-restore"]:
+        for command in COMMANDS:
             run(["go", "build", "-trimpath", "-mod=readonly", "-o", str(staged / "bin" / command), "./cmd/" + command], app / "backend", env)
         shutil.copytree(app / "frontend/.next/standalone", staged / "frontend", symlinks=True)
         shutil.copytree(app / "frontend/.next/static", staged / "frontend/evaluation-space/frontend/.next/static")
