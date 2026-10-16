@@ -56,6 +56,14 @@ func (l *lostNativeAdmission) GenerationOutput(ctx context.Context, scope evolut
 	return l.client.GenerationOutput(ctx, scope)
 }
 
+func TestNativeDynamicBudgetFailureRealProcesses(t *testing.T) {
+	nativeGenerationProcesses(t, "dynamic-budget")
+}
+
+func TestNativeDynamicInspectionRealProcesses(t *testing.T) {
+	nativeGenerationProcesses(t, "dynamic-inspection")
+}
+
 func TestNativeToolInspectionRealProcesses(t *testing.T) {
 	nativeGenerationProcesses(t, "tool-inspection")
 }
@@ -70,6 +78,7 @@ func TestNativeGenerationRealProcesses(t *testing.T) {
 	}
 }
 func nativeGenerationProcesses(t *testing.T, mode string) {
+	dynamic := mode == "dynamic-inspection" || mode == "dynamic-budget"
 	dependent := mode == "dependencies" || mode == "dependency-failure"
 	automatic := mode == "automatic" || dependent
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -100,6 +109,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	studioAddress, participantAddress, spaceAddress := address(), address(), address()
 	spaceBrowserAddress := address()
 	spaceOrigin := "http://" + spaceAddress
+	browserDynamic := mode == "dynamic-inspection" && os.Getenv("EVALUATION_DYNAMIC_BROWSER_TEST") == "1"
 	browserTools := mode == "tool-inspection" && os.Getenv("EVALUATION_TOOLS_BROWSER_TEST") == "1"
 	browserRetention := mode == "retention" && os.Getenv("EVALUATION_RETENTION_BROWSER_TEST") == "1"
 	browserUpgrade := mode == "browser-retry" && os.Getenv("ADMIN_EVOLUTION_UPGRADE_TEST") == "1"
@@ -140,7 +150,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		}
 	}
 	var evaluationFrontend string
-	if browserUpgrade || browserRetention || browserTools {
+	if browserUpgrade || browserRetention || browserTools || browserDynamic {
 		frontendAddress := address()
 		evaluationFrontend = "http://" + frontendAddress
 		copyCmd := exec.CommandContext(ctx, "cp", "-r", filepath.Join(root, "evaluation-space/frontend/.next/static"), filepath.Join(root, "evaluation-space/frontend/.next/standalone/evaluation-space/frontend/.next/"))
@@ -182,7 +192,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	studioURL, _ := url.Parse("http://" + studioAddress)
 	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { host := r.In.Host; r.SetURL(studioURL); r.Out.Host = host }}
 	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if (browserUpgrade || browserRetention || browserTools) && strings.HasPrefix(r.URL.Path, "/evaluation-space/") {
+		if (browserUpgrade || browserRetention || browserTools || browserDynamic) && strings.HasPrefix(r.URL.Path, "/evaluation-space/") {
 			spaceProxy.ServeHTTP(w, r)
 			return
 		}
@@ -316,6 +326,28 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			_, _ = w.Write(retained)
 			return
 		}
+		if mode == "dynamic-budget" && r.Method == "POST" && len(parts) == 7 && parts[6] == "cancel" {
+			var cancellation struct {
+				Key    string             `json:"idempotency_key"`
+				Digest string             `json:"request_digest"`
+				Model  evolution.Revision `json:"model"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&cancellation); err != nil {
+				t.Error(err)
+				w.WriteHeader(400)
+				return
+			}
+			if cancellation.Model != modelRef || cancellation.Key == "" || cancellation.Digest == "" {
+				t.Error("invalid model cancellation identity")
+				w.WriteHeader(400)
+				return
+			}
+			raw, _ := json.Marshal(map[string]any{"run_id": runID, "call_id": callID, "idempotency_key": cancellation.Key, "request_digest": cancellation.Digest, "model": modelRef, "provider_request_id": key, "state": "cancelled", "usage": map[string]int{"tokens": 0, "cost_micros": 0}, "outputs": map[string]any{}, "response_model": "native-fixture-v1", "tool_trace_state": "complete", "tools": []any{}})
+			responses[key] = raw
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(raw)
+			return
+		}
 		if r.Method != "PUT" {
 			w.WriteHeader(404)
 			_, _ = w.Write([]byte(`{"error":"model_call_not_found"}`))
@@ -359,7 +391,20 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			}
 			outputs = map[string]any{"candidate": map[string]any{"files": []any{map[string]any{"path": "verified.md", "text": "Reviewed upstream skill. Evidence IDs: episode"}}, "held": []any{}}}
 		case "extract":
-			outputs = map[string]any{"items": []any{proposal}}
+			items := []any{proposal}
+			if dynamic {
+				items = append(items, map[string]any{"id": "followup", "title": "Follow-up verification", "body": "Inspect the retained result.", "evidence_ids": []string{"episode"}, "status": "supported"})
+			}
+			outputs = map[string]any{"items": items}
+		case "review-item":
+			if mode == "dynamic-budget" {
+				// Hold the first effect while its sibling exceeds the remaining
+				// ceiling. Cancellation must reconcile this exact request.
+				responses[key], _ = json.Marshal(map[string]any{"run_id": submission.RunID, "call_id": submission.CallID, "idempotency_key": submission.Key, "request_digest": submission.Digest, "model": modelRef, "provider_request_id": key, "state": "cancelled", "usage": map[string]int{"tokens": 0, "cost_micros": 0}, "outputs": map[string]any{}, "response_model": "native-fixture-v1", "tool_trace_state": "complete", "tools": []any{}})
+				<-r.Context().Done()
+				return
+			}
+			outputs = map[string]any{"items": submission.Call.Inputs["items"]}
 		case "draft":
 			outputs = map[string]any{"state": map[string]any{"corpus": submission.Call.Inputs["corpus"], "items": []any{proposal}, "valid": false}}
 		case "critic", "review":
@@ -455,6 +500,27 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			publishToolDefinition("template", pkg.Template.Ref, pkg.Template)
 		}
 	}
+	additionalSchemas := map[string]json.RawMessage{}
+	if dynamic {
+		for i := range packages {
+			pkg := &packages[i]
+			if pkg.Template.Ref.ID != "example-corrections" {
+				continue
+			}
+			graph := &pkg.Workflows[0]
+			graph.Workflow, additionalSchemas = publishDynamicInspectionWorkflow(t, ctx, catalog, spaceDirectory, graph.Workflow, pkg.Schemas, modelRef)
+			raw, err := graph.Workflow.Canonical()
+			must(t, err)
+			graph.Ref.Revision++
+			graph.Ref.Digest = evolution.Digest(raw)
+			publishNativeInspectionDefinition(t, ctx, catalog, spaceDirectory, "workflow", graph.Ref, graph.Workflow)
+			pkg.Template.Workflows = []evolution.Revision{graph.Ref}
+			pkg.Template.Ref.Revision++
+			pkg.Template.Ref.Digest, err = evolution.DefinitionDigest(pkg.Template)
+			must(t, err)
+			publishNativeInspectionDefinition(t, ctx, catalog, spaceDirectory, "template", pkg.Template.Ref, pkg.Template)
+		}
+	}
 	var dependentTemplate evolution.Template
 	if dependent {
 		schema := packages[0].Template.Outputs["candidate"]
@@ -477,7 +543,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		must(t, err)
 		publish("template", dependentTemplate.Ref, dependentTemplate)
 	}
-	service := evolution.Service{Ref: evolution.Revision{ID: "native-service", Revision: 1}, Kind: "evolution", ConnectionID: "native", RunnerDigest: evolution.Digest([]byte("native-runner")), Enabled: true, Capabilities: evolution.Capabilities{ProtocolVersion: 1, WorkflowVersions: []int{1}, NodeKinds: []string{"agent", "validator", "transform", "loop"}}}
+	service := evolution.Service{Ref: evolution.Revision{ID: "native-service", Revision: 1}, Kind: "evolution", ConnectionID: "native", RunnerDigest: evolution.Digest([]byte("native-runner")), Enabled: true, Capabilities: evolution.Capabilities{ProtocolVersion: 1, WorkflowVersions: []int{1}, NodeKinds: []string{"agent", "validator", "transform", "loop", "map", "subgraph"}}}
 	service.Ref.Digest, err = evolution.DefinitionDigest(service)
 	must(t, err)
 	raw, _ = json.Marshal(map[string]any{"kind": "service", "ref": service.Ref, "body": service})
@@ -501,7 +567,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		registeredTools = append(registeredTools, toolRef)
 	}
 	nativePath := filepath.Join(t.TempDir(), "native.json")
-	raw, _ = json.Marshal(map[string]any{"models": []any{map[string]any{"reference": modelRef, "endpoint": model.URL, "tools": registeredTools, "client_id": "space", "secret_env": "TEST_EVALUATOR_SECRET", "ceiling": map[string]int{"tokens": 100, "cost_micros": 1000}}}, "schemas": map[string]any{}, "example_builders": true})
+	raw, _ = json.Marshal(map[string]any{"models": []any{map[string]any{"reference": modelRef, "endpoint": model.URL, "tools": registeredTools, "client_id": "space", "secret_env": "TEST_EVALUATOR_SECRET", "ceiling": map[string]int{"tokens": 100, "cost_micros": 1000}}}, "schemas": additionalSchemas, "example_builders": true})
 	must(t, os.WriteFile(nativePath, raw, 0600))
 	start := func(binary, addr string, args ...string) func() {
 		t.Helper()
@@ -526,7 +592,13 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 				logFile.Close()
 			})
 		}
-		t.Cleanup(stop)
+		t.Cleanup(func() {
+			stop()
+			if t.Failed() {
+				raw, _ := os.ReadFile(logFile.Name())
+				t.Logf("%s log: %s", filepath.Base(binary), raw)
+			}
+		})
 		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
 			reply, err := http.Get("http://" + addr + "/probe")
 			if err == nil {
@@ -548,9 +620,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 
 	start(studioBinary, studioAddress, "--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evaluation-endpoint", spaceOrigin)
 	spaceArgs := []string{"--listen", spaceAddress, "--state-directory", spaceDirectory, "--identity-endpoint", central.URL, "--native-config", nativePath, "--studio-input-endpoint", "http://" + participantAddress}
-	if mode == "browser-retry" || mode == "retention" || mode == "tool-inspection" {
+	if mode == "browser-retry" || mode == "retention" || mode == "tool-inspection" || mode == "dynamic-inspection" {
 		frontendOrigin := central.URL
-		if browserUpgrade || browserRetention || browserTools {
+		if browserUpgrade || browserRetention || browserTools || browserDynamic {
 			frontendOrigin = evaluationFrontend
 		}
 		spaceArgs = append(spaceArgs, "--browser-listen", spaceBrowserAddress, "--public-origin", issuer, "--frontend", frontendOrigin)
@@ -860,7 +932,13 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			pins := evolution.RunPins{ConfigurationRevision: 1, ConfigurationDigest: pending.DesiredDigest, SourcePolicyRevision: 1, Template: binding.Template, Workflow: binding.Workflow, Service: binding.Service, InputPorts: map[string]evolution.ArtifactRef{"corpus": artifact}, Inputs: []evolution.ArtifactRef{artifact}, Base: main, Output: binding.Output, Evaluation: binding.Evaluation}
 			assignment := evolution.GenerationAssignment{RunID: binding.ID, GroupID: configuration.GroupID, BindingID: binding.ID, OccurrenceID: "manual", Requester: evolution.Principal{Issuer: issuer, Subject: admin.ID, Kind: "human"}, Pins: pins, Budget: budget}
 			assignment.Budget.MaxTokens = 200
+			if mode == "dynamic-inspection" {
+				assignment.Budget.MaxTokens = 400
+			}
 			assignment.Budget.MaxCostMicros = 2000
+			if mode == "dynamic-inspection" {
+				assignment.Budget.MaxCostMicros = 4000
+			}
 			status, raw := privateCall("admit", assignment)
 			if status != 200 {
 				t.Fatal("admission", binding.ID, status, string(raw))
@@ -892,7 +970,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			}
 			must(t, json.Unmarshal(raw, &state))
 			if state.State == "failed" {
-				if mode == "sibling-failure" && binding.ID == "example-corrections" || mode == "dependency-failure" && binding.ID == "example-skills" {
+				if (mode == "sibling-failure" || mode == "dynamic-budget") && binding.ID == "example-corrections" || mode == "dependency-failure" && binding.ID == "example-skills" {
 					failed[binding.ID] = true
 					continue
 				}
@@ -908,6 +986,24 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	if len(branches)+len(failed) != len(configuration.Bindings) {
+		db, err := sql.Open("sqlite", "file:"+spaceDirectory+"/projections.db?mode=ro")
+		if err == nil {
+			defer db.Close()
+			for _, query := range []string{"SELECT body FROM runs", "SELECT record FROM workflow_attempts", "SELECT body FROM provider_outcomes"} {
+				rows, err := db.QueryContext(ctx, query)
+				if err != nil {
+					t.Log(query, err)
+					continue
+				}
+				for rows.Next() {
+					var raw []byte
+					if rows.Scan(&raw) == nil {
+						t.Log(query, string(raw))
+					}
+				}
+				rows.Close()
+			}
+		}
 		t.Fatal("native handoff not settled", branches)
 	}
 	var workflowUpgrade func(evolution.ContentRef)
@@ -1516,8 +1612,29 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			t.Fatal("dependent model calls", dependentCalls)
 		}
 	}
-	if skillCalls != expectedSkills || correctionCalls != 1 {
+	expectedCorrections := 1
+	if mode == "dynamic-inspection" {
+		expectedCorrections = 3
+	}
+	if mode == "dynamic-budget" {
+		if correctionCalls < 1 || correctionCalls > 2 || !failed["example-corrections"] {
+			t.Fatal("budget failure did not settle without a branch", correctionCalls, failed)
+		}
+		expectedCorrections = correctionCalls
+		db, err := sql.Open("sqlite", "file:"+spaceDirectory+"/projections.db?mode=ro")
+		must(t, err)
+		defer db.Close()
+		var held int
+		must(t, db.QueryRowContext(ctx, "SELECT count(*) FROM run_budget_reservations WHERE run_id=? AND state='held'", runIDs["example-corrections"]).Scan(&held))
+		if held != 0 {
+			t.Fatal("known budget failure left provider holds", held)
+		}
+	}
+	if skillCalls != expectedSkills || correctionCalls != expectedCorrections {
 		t.Fatal("independent graph model calls", skillCalls, correctionCalls)
+	}
+	if mode == "dynamic-inspection" {
+		verifyNativeDynamicInspection(t, ctx, nativeToolInspection{Store: store, Token: token, Actor: admin.ID, Group: configuration.GroupID, Run: runIDs["example-corrections"], Repository: root, State: spaceDirectory, Origin: issuer, Browser: browserDynamic})
 	}
 	if mode == "tool-inspection" {
 		verifyNativeToolInspection(t, ctx, nativeToolInspection{Store: store, Token: token, Actor: admin.ID, Group: configuration.GroupID, Run: runIDs["example-corrections"], Repository: root, State: spaceDirectory, Origin: issuer, Browser: browserTools, Tool: toolRef})

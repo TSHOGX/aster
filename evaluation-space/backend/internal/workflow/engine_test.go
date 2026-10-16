@@ -241,7 +241,7 @@ func TestInvalidOutputAndKnownRetryAreDurable(t *testing.T) {
 }
 
 func TestMapFailureAndAttemptLimitNeverFabricateResults(t *testing.T) {
-	for _, mode := range []string{"terminal", "uncertain", "budget"} {
+	for _, mode := range []string{"terminal", "uncertain", "budget", "adapter-budget"} {
 		t.Run(mode, func(t *testing.T) {
 			engine, c, _, schema := setup()
 			body := add(c, base("body", schema, []evolution.Node{transform("work", schema)}, []evolution.Edge{{From: "$input.value", To: "work.value"}, {From: "work.value", To: "$output.value"}}))
@@ -251,9 +251,13 @@ func TestMapFailureAndAttemptLimitNeverFabricateResults(t *testing.T) {
 				w.Limits.MaxTotalAttempts = 2
 			}
 			ref := add(c, w)
+			budgetFailure := errors.New("adapter_budget_exhausted")
 			engine.Runtime = runtimeFunc(func(context.Context, Call) (Values, error) {
 				if mode == "terminal" {
 					return nil, Failure{Code: "known_failure"}
+				}
+				if mode == "adapter-budget" {
+					return nil, budgetFailure
 				}
 				if mode == "uncertain" {
 					return nil, ErrUncertain
@@ -263,6 +267,15 @@ func TestMapFailureAndAttemptLimitNeverFabricateResults(t *testing.T) {
 			out, err := engine.Execute(context.Background(), ref, Values{"value": json.RawMessage(`[1,2,3,4]`)})
 			if err == nil || out != nil {
 				t.Fatal("failed map returned success", out, err)
+			}
+			if mode == "uncertain" && !errors.Is(err, ErrUncertain) {
+				t.Fatal("map lost uncertainty", err)
+			}
+			if mode == "budget" && !errors.Is(err, ErrAttemptLimit) {
+				t.Fatal("map lost attempt limit", err)
+			}
+			if mode == "adapter-budget" && !errors.Is(err, budgetFailure) {
+				t.Fatal("map lost adapter budget failure", err)
 			}
 			if mode == "terminal" {
 				var failure NodeFailure

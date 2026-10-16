@@ -493,6 +493,18 @@ scheduling:
 		return nil, nil, ErrPauseRequested
 	}
 	if node.FailureMode == "fail_fast" && work.Err() != nil {
+		// Cancellation stops siblings; it must not replace the error that caused
+		// it. Adapters rely on typed budget/attempt errors for terminal cleanup,
+		// and uncertain effects must retain their reconciliation identity.
+		var causes []error
+		for _, err := range failures {
+			if err != nil && !errors.Is(err, context.Canceled) {
+				causes = append(causes, err)
+			}
+		}
+		if len(causes) > 0 {
+			return nil, nil, errors.Join(causes...)
+		}
 		return nil, nil, work.Err()
 	}
 	out := Values{}
