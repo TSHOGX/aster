@@ -484,9 +484,10 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       const event = { id: "event", sequence: 1, kind: "attempt-succeeded", attempt_id: "attempt", timestamp: new Date().toISOString(), artifacts: [artifact] };
       const observation = { call: { id: "provider-001", idempotency_key: "provider-001", request: { id: artifact.id, digest: artifact.digest, size: artifact.size } }, outcome: { state: "completed", provider_request_id: "request", usage: { tokens: 1, cost_micros: 1 } } };
       const debug = { budget: { spent: { tokens: 2, cost_micros: 3 }, held: { tokens: 0, cost_micros: 0 }, available: { tokens: 98, cost_micros: 97 } }, counts: { attempts: 2, events: 1, provider_observations: 2 }, next_after: "provider-001", has_more: true, provider_observations: [observation], opaque: [] };
-      let status = 200, evidenceStatus = 200; const cursors: string[] = [];
+      let status = 200, evidenceStatus = 200, previewStatus = 200; let truncated = false; let binary = false; let oversized = false; const cursors: string[] = [];
       await page.route(`${origin}${runs}/**`, route => {
         const url = new URL(route.request().url()); let body: unknown = run; let code = status;
+        if (url.pathname.endsWith("/artifacts/sensitive-artifact")) return route.fulfill({ status: previewStatus, contentType: binary ? "application/octet-stream" : "text/plain", headers: { "X-Artifact-Truncated": String(truncated), "X-Artifact-Size": truncated ? "2097152" : "24" }, body: oversized ? "x".repeat(1048580) : truncated ? "bounded-prefix" : "<script>inert()</script>" });
         if (url.pathname.endsWith("/events")) { cursors.push(url.searchParams.get("after")!); body = { events: [event, event], next_after: 1 }; code = evidenceStatus; }
         else if (url.pathname.endsWith("/attempts")) { body = url.searchParams.has("after") ? { items: [{ ...attempt, call: { ...attempt.call, id: "attempt-two", instance: "root/critic" } }], next_after: "attempt-two", has_more: false } : { items: [attempt], next_after: "attempt", has_more: true }; code = evidenceStatus; }
         else if (url.pathname.endsWith("/artifacts")) { body = url.searchParams.has("after") ? { items: [], next_after: "", has_more: false } : { items: [artifact], next_after: "sensitive-artifact", has_more: true }; code = evidenceStatus; }
@@ -507,6 +508,27 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       await expect(page.getByText(tr("Load all attempt pages to compare execution paths.", "加载全部尝试页面后才能比较执行路径。"), { exact: true })).toHaveCount(0);
       await page.getByRole("button", { name: tr("Load more provider observations", "加载更多提供商观察记录"), exact: true }).click();
       await expect(page.getByText("provider-002", { exact: true })).toBeVisible();
+      await download.click();
+      const preview = page.getByRole("region", { name: `${tr("Artifact preview", "工件预览")}: sensitive-artifact`, exact: true });
+      await expect(preview.getByRole("status")).toContainText(tr("Complete artifact content.", "完整工件内容。"));
+      await expect(preview.getByText("<script>inert()</script>", { exact: true })).toBeVisible();
+      truncated = true; await preview.getByRole("button", { name: tr("Retry", "重试"), exact: true }).click();
+      await expect(preview.getByRole("status")).toContainText(tr("Truncated preview.", "预览已截断"));
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.screenshot({ path: info.outputPath("artifact-preview-truncated.png"), fullPage: true });
+      oversized = true; truncated = false;
+      await preview.getByRole("button", { name: tr("Retry", "重试"), exact: true }).click();
+      await expect(preview.getByRole("status")).toContainText(tr("Truncated preview.", "预览已截断"));
+      expect(await preview.locator("code").evaluate(element => element.textContent?.length)).toBe(1048576);
+      oversized = false; truncated = true;
+      for (const [code, message, chinese] of [[403, "Artifact access was denied.", "工件访问被拒绝。"], [404, "Artifact content is missing.", "工件内容缺失。"], [410, "Artifact content has expired.", "工件内容已过期。"], [503, "Artifact content is unavailable. Retry when access or service is restored.", "工件内容不可用，请在访问权限或服务恢复后重试。"]] as const) {
+        previewStatus = code; await preview.getByRole("button", { name: tr("Retry", "重试"), exact: true }).click();
+        await expect(preview.getByRole("alert")).toHaveText(tr(message, chinese));
+        await expect(preview.getByText("bounded-prefix", { exact: true })).toHaveCount(0);
+      }
+      previewStatus = 200; binary = true; await preview.getByRole("button", { name: tr("Retry", "重试"), exact: true }).click();
+      await expect(preview.getByRole("link", { name: tr("Download bounded bytes", "下载有界字节"), exact: true })).toBeVisible();
+      await preview.getByRole("button", { name: tr("Close", "关闭"), exact: true }).click(); await expect(preview).toHaveCount(0);
       await page.locator("summary").filter({ hasText: "root/extract" }).click();
       await expect(page.locator("details").filter({ has: page.locator("summary").filter({ hasText: "root/extract" }) }).getByText("sensitive-prompt", { exact: true })).toBeVisible();
       await expect.poll(() => cursors.includes("1")).toBe(true);

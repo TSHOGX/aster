@@ -298,7 +298,11 @@ observations have separate load-more controls. Debugger totals include every
 retained record; semantic comparison waits until both attempt lists are fully
 loaded and uses the latest attempt number for each execution path. It includes retained provider
 requests, outputs and evidence, plus workflow events and checkpoints. Direct
-artifact downloads resolve the exact run advertisement independently of list pages. Artifact bytes are
+artifact downloads resolve the exact run advertisement independently of list pages.
+**Open bounded content** previews up to 1 MiB as inert text and reports truncation,
+denied access, missing content, expiry or temporary failure separately. Binary
+artifacts offer a bounded download. Closing the preview discards its displayed
+bytes; a later open or retry checks current source authority again. Artifact bytes are
 served only through the separate current-grant download operation. Pause, resume and cancel are
 compare-and-swap controls and retain `run.start` authority. Pause shows **Pausing**
 while admitted work settles; new nodes and new model budget reservations stop.
