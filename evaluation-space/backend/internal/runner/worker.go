@@ -87,13 +87,27 @@ func (w *Worker) Step(ctx context.Context) error {
 				return
 			case <-timer.C:
 				if err := w.Authority.AuthorizeRun(work, run, cleanup); err != nil {
-					cancel()
-					renewed <- err
+					// Execute may have completed while this check was in flight.
+					// Its shutdown cancellation is not a renewal failure. Final
+					// authority and lease checks still fence terminal settlement.
+					if work.Err() != nil {
+						renewed <- nil
+					} else {
+						cancel()
+						renewed <- err
+					}
 					return
 				}
 				if _, err := w.Store.RenewRun(work, lease, duration); err != nil {
-					cancel()
-					renewed <- err
+					// Execute may have completed while this check was in flight.
+					// Its shutdown cancellation is not a renewal failure. Final
+					// authority and lease checks still fence terminal settlement.
+					if work.Err() != nil {
+						renewed <- nil
+					} else {
+						cancel()
+						renewed <- err
+					}
 					return
 				}
 			}

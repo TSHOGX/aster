@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -140,5 +141,43 @@ func TestWorkerCancelsExecutorWhenAuthorityRevokedDuringRun(t *testing.T) {
 	run, err := store.Run(context.Background(), "group", "run")
 	if err != nil || run.State != "running" {
 		t.Fatal("uncertain effects marked settled", run, err)
+	}
+}
+
+type authorityFunc func(context.Context, evolution.Run, bool) error
+
+func (a authorityFunc) AuthorizeRun(ctx context.Context, run evolution.Run, cleanup bool) error {
+	return a(ctx, run, cleanup)
+}
+
+func TestWorkerCompletionCancelsInFlightRenewalWithoutLosingSettlement(t *testing.T) {
+	store := workerStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	started := make(chan struct{})
+	var calls atomic.Int32
+	authority := authorityFunc(func(ctx context.Context, _ evolution.Run, _ bool) error {
+		// Admission and pre-execution checks precede the first renewal.
+		if calls.Add(1) == 3 {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		return nil
+	})
+	worker := Worker{Store: store, ID: "worker", Authority: authority, LeaseDuration: time.Second, Executor: executorFixture{execute: func(ctx context.Context, _ projections.RunLease, _ evolution.Run) (string, error) {
+		select {
+		case <-started:
+			return "completed", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}}}
+	if err := worker.Step(ctx); err != nil {
+		t.Fatal("successful completion lost to renewal cancellation", err)
+	}
+	run, err := store.Run(ctx, "group", "run")
+	if err != nil || run.State != "completed" || calls.Load() != 4 {
+		t.Fatal("terminal authority/settlement missing", run, calls.Load(), err)
 	}
 }
