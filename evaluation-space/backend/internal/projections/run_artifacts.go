@@ -2,89 +2,111 @@ package projections
 
 import (
 	"aster/contracts/evolution"
+	manifest "aster/contracts/volumemanifest"
 	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
-
-	manifest "aster/contracts/volumemanifest"
 )
 
-// RunArtifact resolves one artifact only when it is advertised by the exact
-// run. The returned bytes are still subject to the caller's current authority
-// and any transport-level response bound.
-func (s *Store) RunArtifact(ctx context.Context, group, run, id string) (evolution.ArtifactRef, []byte, error) {
-	if !manifest.ValidID(group) || !manifest.ValidID(run) || !manifest.ValidID(id) {
-		return evolution.ArtifactRef{}, nil, fmt.Errorf("invalid run artifact scope")
+// Include every durable advertisement, including provider requests and evidence
+// that do not appear in a workflow event. Filtering and pagination occur in SQL;
+// a late artifact is never mistaken for missing because an event scan was capped.
+const advertisedRunArtifacts = `WITH advertised(metadata) AS (
+ SELECT j.value FROM run_events e, json_each(e.request,'$.artifacts') j WHERE e.run_id=:run
+ UNION ALL SELECT json_extract(body,'$.artifact') FROM run_checkpoints WHERE run_id=:run
+ UNION ALL SELECT json_extract(body,'$.request') FROM provider_calls WHERE run_id=:run
+ UNION ALL SELECT json_extract(body,'$.output') FROM provider_outcomes WHERE run_id=:run
+ UNION ALL SELECT j.value FROM provider_outcomes o, json_each(o.body,'$.evidence') j WHERE o.run_id=:run
+), refs AS (
+ SELECT json_extract(metadata,'$.id') id, min(metadata) metadata, count(DISTINCT metadata) variants
+ FROM advertised WHERE metadata IS NOT NULL GROUP BY json_extract(metadata,'$.id')
+) `
+
+type RunArtifactPage struct {
+	Items     []evolution.ArtifactRef `json:"items"`
+	NextAfter string                  `json:"next_after"`
+	HasMore   bool                    `json:"has_more"`
+}
+
+func (s *Store) requireArtifactRun(ctx context.Context, group, run string) error {
+	if !manifest.ValidID(group) || !manifest.ValidID(run) {
+		return fmt.Errorf("invalid run artifact scope")
 	}
-	items, err := s.RunArtifacts(ctx, group, run)
+	var exists int
+	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM runs WHERE group_id=? AND id=?", group, run).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
+}
+
+func decodeRunArtifact(group string, raw []byte, variants int) (evolution.ArtifactRef, error) {
+	ref, err := evolution.Decode[evolution.ArtifactRef](bytes.NewReader(raw))
+	if err != nil || variants != 1 || ref.GroupID != group || ref.Validate() != nil {
+		return evolution.ArtifactRef{}, ErrConflict
+	}
+	return ref, nil
+}
+
+// RunArtifact resolves an exact advertised artifact independently of list cursors.
+// Callers must resolve current source authority before accessing metadata or bytes.
+func (s *Store) RunArtifact(ctx context.Context, group, run, id string) (evolution.ArtifactRef, []byte, error) {
+	if !manifest.ValidID(id) {
+		return evolution.ArtifactRef{}, nil, fmt.Errorf("invalid artifact identity")
+	}
+	if err := s.requireArtifactRun(ctx, group, run); err != nil {
+		return evolution.ArtifactRef{}, nil, err
+	}
+	var raw []byte
+	var variants int
+	err := s.db.QueryRowContext(ctx, advertisedRunArtifacts+"SELECT metadata,variants FROM refs WHERE id=:id", sql.Named("run", run), sql.Named("id", id)).Scan(&raw, &variants)
+	if errors.Is(err, sql.ErrNoRows) {
+		return evolution.ArtifactRef{}, nil, ErrNotFound
+	}
 	if err != nil {
 		return evolution.ArtifactRef{}, nil, err
 	}
-	for _, ref := range items {
-		if ref.ID != id {
-			continue
-		}
-		raw, err := s.Artifact(ctx, ref)
-		return ref, raw, err
+	ref, err := decodeRunArtifact(group, raw, variants)
+	if err != nil {
+		return ref, nil, err
 	}
-	return evolution.ArtifactRef{}, nil, ErrNotFound
+	body, err := s.Artifact(ctx, ref)
+	return ref, body, err
 }
 
-// RunArtifacts returns immutable artifact metadata advertised by the exact run.
-// It deliberately does not read artifact bytes; callers must use the separate
-// current-grant download boundary when bytes are permitted.
-func (s *Store) RunArtifacts(ctx context.Context, group, run string) ([]evolution.ArtifactRef, error) {
-	if !manifest.ValidID(group) || !manifest.ValidID(run) {
-		return nil, fmt.Errorf("invalid run artifact scope")
+// RunArtifacts returns a bounded page of immutable advertised metadata. Bytes
+// remain behind the separate current-grant download boundary.
+func (s *Store) RunArtifacts(ctx context.Context, group, run, after string, limit int) (RunArtifactPage, error) {
+	result := RunArtifactPage{Items: []evolution.ArtifactRef{}, NextAfter: after}
+	if limit < 1 || limit > 100 || after != "" && !manifest.ValidID(after) {
+		return result, fmt.Errorf("invalid artifact page")
 	}
-	var exists int
-	if err := s.db.QueryRowContext(ctx, "SELECT 1 FROM runs WHERE group_id=? AND id=?", group, run).Scan(&exists); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
+	if err := s.requireArtifactRun(ctx, group, run); err != nil {
+		return result, err
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT request FROM run_events WHERE run_id=? ORDER BY sequence LIMIT 1001", run)
+	rows, err := s.db.QueryContext(ctx, advertisedRunArtifacts+"SELECT metadata,variants FROM refs WHERE id>:after ORDER BY id LIMIT :limit", sql.Named("run", run), sql.Named("after", after), sql.Named("limit", limit+1))
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	defer rows.Close()
-	byID := map[string]evolution.ArtifactRef{}
 	for rows.Next() {
+		if len(result.Items) == limit {
+			result.HasMore = true
+			break
+		}
 		var raw []byte
-		if err = rows.Scan(&raw); err != nil {
-			return nil, err
+		var variants int
+		if err = rows.Scan(&raw, &variants); err != nil {
+			return result, err
 		}
-		event, decodeErr := evolution.Decode[evolution.Event](bytes.NewReader(raw))
-		if decodeErr != nil || event.RunID != run {
-			return nil, fmt.Errorf("invalid stored run event")
+		ref, err := decodeRunArtifact(group, raw, variants)
+		if err != nil {
+			return result, err
 		}
-		for _, artifact := range event.Artifacts {
-			if artifact.GroupID != group || artifact.Validate() != nil {
-				return nil, fmt.Errorf("invalid stored run artifact")
-			}
-			byID[artifact.ID] = artifact
-		}
+		result.Items = append(result.Items, ref)
+		result.NextAfter = ref.ID
 	}
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-	checkpoint, err := s.LatestRunCheckpoint(ctx, group, run)
-	if err == nil {
-		if checkpoint.Artifact.GroupID != group || checkpoint.Artifact.Validate() != nil {
-			return nil, fmt.Errorf("invalid stored checkpoint artifact")
-		}
-		byID[checkpoint.Artifact.ID] = checkpoint.Artifact
-	} else if !errors.Is(err, ErrNotFound) {
-		return nil, err
-	}
-	result := make([]evolution.ArtifactRef, 0, len(byID))
-	for _, artifact := range byID {
-		result = append(result, artifact)
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
-	return result, nil
+	return result, rows.Err()
 }

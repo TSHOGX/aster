@@ -292,7 +292,10 @@ silently change the active revision. Run detail links use
 `/evaluation-space/groups/{group}/runs/{run}`; the browser API returns only the
 current group's frozen run metadata, deduplicated event cursor and authorized
 attempt records, including effective prompts, node inputs/outputs and artifact
-metadata when the current `source.read` grant permits them. Artifact bytes are
+metadata when the current `source.read` grant permits them. Artifact metadata is
+paginated; use **Load more artifacts** to continue. It includes retained provider
+requests, outputs and evidence, plus workflow events and checkpoints. Direct
+artifact downloads resolve the exact run advertisement independently of list pages. Artifact bytes are
 served only through the separate current-grant download operation. Pause, resume and cancel are
 compare-and-swap controls and retain `run.start` authority. Pause shows **Pausing**
 while admitted work settles; new nodes and new model budget reservations stop.

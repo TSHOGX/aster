@@ -128,7 +128,16 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 			workflowAuthError(w, err)
 			return
 		}
-		items, err := store.RunArtifacts(r.Context(), r.PathValue("group"), r.PathValue("run"))
+		limit := 100
+		var err error
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			limit, err = strconv.Atoi(raw)
+		}
+		if err != nil || limit < 1 || limit > 100 {
+			write(w, 400, map[string]string{"error": "invalid_limit"})
+			return
+		}
+		page, err := store.RunArtifacts(r.Context(), r.PathValue("group"), r.PathValue("run"), r.URL.Query().Get("after"), limit)
 		if errors.Is(err, projections.ErrNotFound) {
 			write(w, 404, map[string]string{"error": "run_not_found"})
 			return
@@ -137,7 +146,7 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 			write(w, 422, map[string]string{"error": "artifacts_unavailable"})
 			return
 		}
-		write(w, 200, map[string]any{"items": items})
+		write(w, 200, page)
 	}
 	artifact := func(w http.ResponseWriter, r *http.Request) {
 		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)

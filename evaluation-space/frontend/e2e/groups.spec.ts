@@ -488,7 +488,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
         const url = new URL(route.request().url()); let body: unknown = run; let code = status;
         if (url.pathname.endsWith("/events")) { cursors.push(url.searchParams.get("after")!); body = { events: [event, event], next_after: 1 }; code = evidenceStatus; }
         else if (url.pathname.endsWith("/attempts")) { body = { items: [attempt] }; code = evidenceStatus; }
-        else if (url.pathname.endsWith("/artifacts")) { body = { items: [artifact] }; code = evidenceStatus; }
+        else if (url.pathname.endsWith("/artifacts")) { body = url.searchParams.has("after") ? { items: [], next_after: "", has_more: false } : { items: [artifact], next_after: "sensitive-artifact", has_more: true }; code = evidenceStatus; }
         else if (url.pathname.endsWith("/debugger")) { body = debug; code = evidenceStatus; }
         else if (url.pathname.endsWith("/source-run")) body = { ...run, id: "source-run", experiment_of: undefined };
         return route.fulfill({ status: code, contentType: "application/json", body: JSON.stringify(code === 200 ? body : { error: "unavailable" }) });
@@ -497,6 +497,9 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       const download = page.getByRole("link", { name: tr("Open bounded content", "打开有界内容"), exact: true });
       const refresh = page.getByRole("button", { name: tr("Refresh", "刷新"), exact: true });
       await expect(download).toBeVisible();
+      await expect(page.getByRole("button", { name: tr("Load more artifacts", "加载更多工件"), exact: true })).toBeVisible();
+      await page.getByRole("button", { name: tr("Load more artifacts", "加载更多工件"), exact: true }).click();
+      await expect(page.getByRole("button", { name: tr("Load more artifacts", "加载更多工件"), exact: true })).toHaveCount(0);
       await page.locator("summary").filter({ hasText: "root/extract" }).click();
       await expect(page.getByText("sensitive-prompt", { exact: true })).toBeVisible();
       await expect.poll(() => cursors.includes("1")).toBe(true);

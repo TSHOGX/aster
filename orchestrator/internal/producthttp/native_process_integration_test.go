@@ -866,6 +866,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		}
 		var debugger struct {
 			Observations []struct {
+				Call struct {
+					Request evolution.ArtifactRef `json:"request"`
+				} `json:"call"`
 				Outcome struct {
 					State string `json:"state"`
 				} `json:"outcome"`
@@ -874,6 +877,21 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		must(t, json.Unmarshal(raw, &debugger))
 		if len(debugger.Observations) == 0 || debugger.Observations[0].Outcome.State != "completed" {
 			t.Fatal("native debugger lost provider observations", string(raw))
+		}
+		status, raw = spaceCall("GET", runRoot+sourceID+"/artifacts?limit=1", nil)
+		var artifactPage struct {
+			Items     []evolution.ArtifactRef `json:"items"`
+			HasMore   bool                    `json:"has_more"`
+			NextAfter string                  `json:"next_after"`
+		}
+		must(t, json.Unmarshal(raw, &artifactPage))
+		if status != 200 || len(artifactPage.Items) != 1 || !artifactPage.HasMore || artifactPage.NextAfter != artifactPage.Items[0].ID {
+			t.Fatal("native artifact pagination", status, string(raw))
+		}
+		providerRequest := debugger.Observations[0].Call.Request
+		status, raw = spaceCall("GET", runRoot+sourceID+"/artifacts/"+providerRequest.ID, nil)
+		if status != 200 || evolution.Digest(raw) != providerRequest.Digest {
+			t.Fatal("native provider artifact download", status, string(raw))
 		}
 		input := map[string]string{"request_id": "browser-retry-request", "source_run_id": sourceID, "new_run_id": "browser-native-retry"}
 		var retry evolution.Run
