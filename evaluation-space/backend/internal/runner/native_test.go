@@ -170,6 +170,12 @@ func TestNativeRunExecutesPinnedGraphAndRecordsBudgetedResult(t *testing.T) {
 	if err = worker.Step(ctx); err != nil || provider.calls != 1 {
 		t.Fatal("terminal model rerun", err)
 	}
+	debugContext, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	debug, err := store.RunDebugger(debugContext, run.GroupID, run.ID)
+	if err != nil || len(debug.Observations) != 1 || debug.Observations[0].Outcome.Usage.Tokens != 4 {
+		t.Fatal("native provider evidence unavailable", debug, err)
+	}
 }
 
 func TestNativeTerminalRetryCreatesIndependentRunAndExecutes(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"aster/contracts/evolution"
 	"context"
 	"errors"
-	"sort"
 
 	"aster/evaluation-space/internal/workflow"
 )
@@ -47,11 +46,23 @@ func (s *Store) RunDebugger(ctx context.Context, group, run string) (RunDebugger
 		return result, err
 	}
 	defer rows.Close()
+	var calls []string
 	for rows.Next() {
 		var id string
 		if err = rows.Scan(&id); err != nil {
 			return result, err
 		}
+		calls = append(calls, id)
+	}
+	if err = rows.Err(); err != nil {
+		return result, err
+	}
+	// The store has one connection. Release the ID cursor before opening
+	// each observation's transaction, including its sealed-artifact checks.
+	if err = rows.Close(); err != nil {
+		return result, err
+	}
+	for _, id := range calls {
 		observation, readErr := s.RunProviderObservation(ctx, group, run, id)
 		if errors.Is(readErr, ErrNotFound) {
 			continue
@@ -61,9 +72,5 @@ func (s *Store) RunDebugger(ctx context.Context, group, run string) (RunDebugger
 		}
 		result.Observations = append(result.Observations, observation)
 	}
-	if err = rows.Err(); err != nil {
-		return result, err
-	}
-	sort.Slice(result.Observations, func(i, j int) bool { return result.Observations[i].Call.ID < result.Observations[j].Call.ID })
 	return result, nil
 }

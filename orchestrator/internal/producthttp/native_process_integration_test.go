@@ -846,6 +846,21 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		}
 		var before evolution.Run
 		must(t, json.Unmarshal(raw, &before))
+		status, raw = spaceCall("GET", runRoot+sourceID+"/debugger", nil)
+		if status != 200 {
+			t.Fatal("native debugger read", status, string(raw))
+		}
+		var debugger struct {
+			Observations []struct {
+				Outcome struct {
+					State string `json:"state"`
+				} `json:"outcome"`
+			} `json:"provider_observations"`
+		}
+		must(t, json.Unmarshal(raw, &debugger))
+		if len(debugger.Observations) == 0 || debugger.Observations[0].Outcome.State != "completed" {
+			t.Fatal("native debugger lost provider observations", string(raw))
+		}
 		input := map[string]string{"request_id": "browser-retry-request", "source_run_id": sourceID, "new_run_id": "browser-native-retry"}
 		var retry evolution.Run
 		for i := 0; i < 2; i++ {
