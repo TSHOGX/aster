@@ -21,8 +21,12 @@ class DeploymentAdmissionTest(unittest.TestCase):
         self.root = Path(self.temporary.name)
         (self.root / "studio").mkdir()
         (self.root / "studio/studio-release.json").write_text(json.dumps({"source_commit": "a" * 40}))
+        (self.root / "evaluation-space").mkdir()
+        evaluation_manifest = self.root / "evaluation-space/evaluation-space-release.json"
+        evaluation_manifest.write_text(json.dumps({"format": "evaluation-space-release-v1", "source_commit": "a" * 40}))
         (self.root / "deployment-build.json").write_text(json.dumps({
             "format": "aster-deployment-v1", "source_commit": "a" * 40,
+            "evaluation_space_manifest_sha256": hashlib.sha256(evaluation_manifest.read_bytes()).hexdigest(),
             "engine_sha256": "0" * 64, "runtime_manifest_sha256": "0" * 64,
         }))
 
@@ -39,6 +43,17 @@ class DeploymentAdmissionTest(unittest.TestCase):
         with patch.object(deploy.candidate, "verify", return_value={"commit": "a" * 40}), \
                 patch.object(deploy, "run"), patch.object(deploy, "clear_state") as clear:
             with self.assertRaisesRegex(ValueError, "build bytes changed"):
+                deploy.validate(self.root, {})
+            clear.assert_not_called()
+
+    def test_changed_evaluation_manifest_rejected_before_configuration_or_state_access(self):
+        manifest = self.root / "evaluation-space/evaluation-space-release.json"
+        value = json.loads(manifest.read_text())
+        value["changed"] = True
+        manifest.write_text(json.dumps(value))
+        with patch.object(deploy.candidate, "verify", return_value={"commit": "a" * 40}), \
+                patch.object(deploy, "run"), patch.object(deploy, "clear_state") as clear:
+            with self.assertRaisesRegex(ValueError, "Evaluation Space release manifest changed"):
                 deploy.validate(self.root, {})
             clear.assert_not_called()
 

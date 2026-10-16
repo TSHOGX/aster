@@ -21,8 +21,9 @@ Prepare these inputs before opening browser access:
   and exact digest. Preserve the engine's persistent store identity.
 - Reviewed Agent configuration and shared assets, TLS material, upstream credentials
   and private host configuration.
-- Independent service supervision for engine/proxy, both frontends, application
-  owner and any service gateway. The engine must use manual cold recovery.
+- Independent service supervision for engine/proxy, both frontends, the
+  Evaluation Space backend/frontend/browser TLS gateway, application owner and
+  any service gateway. The engine must use manual cold recovery.
 
 The application state filesystem must support Linux `O_TMPFILE` for file captures.
 Protect state and Unix sockets from unrelated host users. There is one active
@@ -43,9 +44,12 @@ or full runtime suitability. Use artifacts qualified for your host and workload;
 keep qualification records private. Runtime assembly and registration are covered
 in [runtime inventory](runtime-inventory.md).
 
-To assemble the application, independent Studio bundle, pinned engine and a fresh
-Minimal and Work guest runtimes together from one committed revision, use `scripts/rebuild.py` on
-a privileged Linux builder with the runtime prerequisites above. See the
+To assemble the application, independent Studio and Evaluation Space bundles,
+pinned engine and fresh Minimal and Work guest runtimes together from one
+committed revision, use `scripts/rebuild.py` on a privileged Linux builder with
+the runtime prerequisites above. The resulting deployment manifest pins all
+three application source identities and the Evaluation Space release inventory.
+See the
 [installation tools](../../scripts/README.md) for arguments and current limitations.
 The builder does not activate services. Use a new output directory and qualify
 the complete build before deployment.
@@ -58,6 +62,14 @@ path: relative paths resolve against that file's directory, not the checkout.
 Replace the engine store identity, Minimal and Work manifest paths/digests, service endpoints and
 content paths. Set `public_dns_resolvers` for the Public built-in. Restricted is
 the standard-user default.
+
+Set `evaluation_space.endpoint` to the private TLS address exposed by the
+Evaluation Space browser/worker service (the reference host uses
+`https://10.203.0.2:18447`) and `evaluation_space.credential_env` to the
+environment variable containing the central service credential. The deployment
+validator rejects a complete build when this endpoint is absent. Keep the worker
+listener private; only the front door may route `/evaluation-space/` to its TLS
+gateway.
 
 Read [configuration](configuration.md) before enabling model gateways: deployments
 using Khora's dedicated gateway UID need reachable **non-loopback** engine TLS,
@@ -132,4 +144,8 @@ if enabled, then remove only your disposable resources. Confirm the running
 executable and frontend identities match the selected artifacts.
 
 Create accounts and grant resources using the [administration guides](../admin/accounts.md).
-For Studio, follow its separate [deployment guide](../../volumes-studio/deploy/README.md).
+For Studio and the packaged Evaluation Space service, follow their deployment
+guides ([Studio](../../volumes-studio/deploy/README.md),
+[Evaluation Space](../../evaluation-space/deploy/README.md)). The complete
+deployment supervisor starts Evaluation Space only after its bundle and unit
+templates pass identity, manifest and syntax checks.

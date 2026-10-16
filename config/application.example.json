@@ -48,6 +48,10 @@
     "operator_broadcast": true
   },
   "admin_frontend": "http://127.0.0.1:3001",
+  "evaluation_space": {
+    "endpoint": "https://10.203.0.2:18447",
+    "credential_env": "EVALUATION_SPACE_CENTRAL_SECRET"
+  },
   "work_template": {
     "id": "sandbox-work-v1",
     "manifest": "../sandbox-image/runtime-work.manifest.json",

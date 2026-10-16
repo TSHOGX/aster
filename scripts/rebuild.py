@@ -51,6 +51,11 @@ def build(destination, source_ref=None, os_base=None, work_os_base=None):
         run(["bash", "scripts/check.sh", "backend"], cwd=source, env=env)
         run(["python3", "scripts/candidate.py", "build", destination / "application"], cwd=source, env=env)
         run(["python3", "volumes-studio/scripts/release.py", "build", destination / "studio"], cwd=source, env=env)
+        # Evaluation Space is a first-class release in the complete deployment.
+        # Build it from the same detached source commit so its backend, frontend,
+        # maintenance commands and manifest cannot drift from the other bundles.
+        run(["python3", "evaluation-space/scripts/release.py", "build", destination / "evaluation-space",
+             "--source-ref", commit], cwd=source, env=env)
         module = subprocess.check_output(
             ["go", "list", "-m", "-f", "{{.Dir}}", "github.com/TSHOGX/khora"],
             cwd=source / "orchestrator", env=env, text=True,
@@ -87,14 +92,18 @@ def build(destination, source_ref=None, os_base=None, work_os_base=None):
         (destination / "content/shared-assets/skills").mkdir(exist_ok=True)
         app = json.loads((destination / "application/candidate.json").read_text())
         studio = json.loads((destination / "studio/studio-release.json").read_text())
-        if app["commit"] != commit or studio["source_commit"] != commit:
-            raise ValueError("application and Studio source identities differ")
+        evaluation = json.loads((destination / "evaluation-space/evaluation-space-release.json").read_text())
+        if app["commit"] != commit or studio["source_commit"] != commit or evaluation["source_commit"] != commit:
+            raise ValueError("application, Studio and Evaluation Space source identities differ")
+        evaluation_manifest = destination / "evaluation-space/evaluation-space-release.json"
         manifest = destination / "runtime.manifest.json"
         runtime_digest = (destination / "runtime.manifest.json.sha256").read_text().strip()
         run([verifier, "--root", runtime, runtime_digest])
         report = {
             "format": "aster-deployment-v1", "source_commit": commit,
             "application": "application", "studio": "studio", "engine": "bin/khora",
+            "evaluation_space": "evaluation-space",
+            "evaluation_space_manifest_sha256": hashlib.sha256(evaluation_manifest.read_bytes()).hexdigest(),
             "engine_revision": engine_revision,
             "runtime_verifier_sha256": hashlib.sha256(verifier.read_bytes()).hexdigest(),
             "runtime_digest": runtime_digest,

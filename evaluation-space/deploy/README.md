@@ -16,6 +16,25 @@ and the frontend under the fixed `/evaluation-space/` base path. Keep the bundle
 manifest with the release; it records the source commit, Go toolchain and every
 packaged file digest.
 
+For a complete Aster installation, use `python3 scripts/rebuild.py` from the
+repository root. It builds this bundle beside the application and Studio
+bundles and records its manifest digest in `deployment-build.json`; do not build
+an unpinned Evaluation Space directory beside an otherwise complete release.
+The deployment plan must supervise all of these units:
+
+| Unit | Required responsibility |
+| --- | --- |
+| `aster-evaluation-space.service` | Run `bin/evaluation-space` with the private worker listener and `127.0.0.1:18485` browser listener. |
+| `aster-evaluation-frontend.service` | Run the packaged `frontend/server.js` from the release. |
+| `aster-evaluation-tls.service` | Expose the browser listener on the private TLS address (reference port `18447`). |
+
+The `aster-web.service` command must pass `-evaluation-space` for that TLS
+address. The front door owns public `/evaluation-space/` routing; never expose
+the worker listener directly. `scripts/deploy.py` rejects missing units,
+unresolved `@EVALUATION_SPACE@` paths, missing browser/TLS ports, absent front
+door routing, mixed source revisions, and changed release manifests before it
+stops any service or clears state.
+
 The smoke command uses a disposable state directory to seal, inspect and expire
 an artifact through the packaged catalog command, then backs up and restores the
 state and checks that the expired body cannot be resealed. It also starts the
