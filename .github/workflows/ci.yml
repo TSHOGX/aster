@@ -104,6 +104,18 @@ jobs:
       - run: npm ci --prefix evaluation-space/frontend
       - run: npm --prefix evaluation-space/frontend run build
       - run: scripts/check.sh evaluation-browser
+      - name: Install admin evolution browser gate dependencies
+        run: npm ci --prefix admin-frontend
+      - name: Native evolution authoring and activation browser gates
+        run: scripts/check.sh evolution-browser
+      - name: Failed evolution browser evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evolution-browser-failure-${{ github.run_attempt }}
+          path: admin-frontend/test-results/evolution-live
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Core race checks (main and explicit qualification)
         if: github.event_name != 'pull_request'
         run: scripts/check.sh race

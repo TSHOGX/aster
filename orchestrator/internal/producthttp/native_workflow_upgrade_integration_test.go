@@ -6,6 +6,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +21,8 @@ import (
 )
 
 type nativeWorkflowUpgrade struct {
+	BrowserUpgrade                  bool
+	Repository                      string
 	Store                           *product.Store
 	Token, Issuer, Actor, SourceRun string
 	Evaluation                      *evaluationclient.Client
@@ -161,22 +167,72 @@ func verifyNativeWorkflowUpgrade(t *testing.T, ctx context.Context, f nativeWork
 	if frozen.State != "completed" || frozen.Pins.Workflow != v1 {
 		t.Fatal("authored v1 execution", frozen)
 	}
-	// Publish v2 without altering either group's current configuration.
-	for i := range draft.Workflow.Nodes {
-		if draft.Workflow.Nodes[i].Prompt != nil {
-			prompt := draft.Workflow.Nodes[i].Prompt
-			prompt.Text += "\nKeep explicit source evidence."
-			prompt.Digest = evolution.Digest([]byte(prompt.Text))
-			break
+	var v2 evolution.Revision
+	var template2 evolution.Template
+	runBrowser := func(phase string) {
+		t.Helper()
+		workerCtx, stop := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			worker := &product.EvolutionWorker{Store: f.Store, Evaluation: f.Evaluation, Studio: f.Studio}
+			for {
+				if err := worker.Step(workerCtx); err != nil && !errors.Is(err, context.Canceled) {
+					t.Log("upgrade activation pending", err)
+				}
+				select {
+				case <-workerCtx.Done():
+					return
+				case <-time.After(50 * time.Millisecond):
+				}
+			}
+		}()
+		cmd := exec.CommandContext(ctx, "node", "node_modules/@playwright/test/cli.js", "test", "--config", "playwright.evolution.config.ts")
+		cmd.Dir = filepath.Join(f.Repository, "admin-frontend")
+		cmd.Env = append(os.Environ(), "ADMIN_EVOLUTION_URL="+f.Issuer, "ADMIN_EVOLUTION_TOKEN="+f.Token, "ADMIN_EVOLUTION_UPGRADE_PHASE="+phase, "ADMIN_EVOLUTION_SOURCE_RUN="+assignment.RunID)
+		output, err := cmd.CombinedOutput()
+		stop()
+		<-done
+		if err != nil {
+			t.Fatalf("upgrade browser %s: %v\n%s", phase, err, output)
 		}
 	}
-	call("PUT", root, map[string]any{"id": draft.ID, "expected_revision": draft.Revision, "expected_layout_revision": draft.LayoutRevision, "workflow": draft.Workflow, "layout": map[string]any{}}, 200, &draft)
-	var v2 evolution.Revision
-	call("POST", root+"/publish", map[string]int64{"revision": draft.Revision}, 201, &v2)
-	if v2.ID != v1.ID || v2.Revision != 2 || v2.Digest == v1.Digest {
-		t.Fatal("immutable author revision", v1, v2)
+	if f.BrowserUpgrade {
+		runBrowser("publish")
+		var catalog struct {
+			Revisions []evolution.Revision `json:"revisions"`
+		}
+		call("GET", "groups/"+selected.GroupID+"/templates", nil, 200, &catalog)
+		for _, ref := range catalog.Revisions {
+			if ref.ID == template1.Ref.ID && ref.Revision == 2 {
+				call("GET", "groups/"+selected.GroupID+"/templates/browser-upgrade-template/2?digest="+ref.Digest, nil, 200, &template2)
+			}
+		}
+		for _, ref := range template2.Workflows {
+			if ref.ID == v1.ID && ref.Revision == 2 {
+				v2 = ref
+			}
+		}
+		if v2.ID == "" || v2.Digest == v1.Digest {
+			t.Fatal("browser did not publish new workflow", template2)
+		}
+	} else {
+		// Publish v2 without altering either group's current configuration.
+		for i := range draft.Workflow.Nodes {
+			if draft.Workflow.Nodes[i].Prompt != nil {
+				prompt := draft.Workflow.Nodes[i].Prompt
+				prompt.Text += "\nKeep explicit source evidence."
+				prompt.Digest = evolution.Digest([]byte(prompt.Text))
+				break
+			}
+		}
+		call("PUT", root, map[string]any{"id": draft.ID, "expected_revision": draft.Revision, "expected_layout_revision": draft.LayoutRevision, "workflow": draft.Workflow, "layout": map[string]any{}}, 200, &draft)
+		call("POST", root+"/publish", map[string]int64{"revision": draft.Revision}, 201, &v2)
+		if v2.ID != v1.ID || v2.Revision != 2 || v2.Digest == v1.Digest {
+			t.Fatal("immutable author revision", v1, v2)
+		}
+		template2 = publishTemplate([]evolution.Revision{v1, v2}, 2)
 	}
-	template2 := publishTemplate([]evolution.Revision{v1, v2}, 2)
 	for _, prior := range []product.EvolutionGroupConfig{first, other} {
 		current, err := f.Store.EvolutionConfig(ctx, f.Token, prior.GroupID)
 		must(t, err)
@@ -190,7 +246,24 @@ func verifyNativeWorkflowUpgrade(t *testing.T, ctx context.Context, f nativeWork
 	}
 	selected.Bindings[bindingIndex].Workflow = v2
 	selected.Bindings[bindingIndex].Template = template2.Ref
-	upgraded := activate("authored-v2", selected)
+	var upgraded product.EvolutionGroupConfig
+	if f.BrowserUpgrade {
+		runBrowser("activate")
+		upgraded, err = f.Store.EvolutionConfig(ctx, f.Token, selected.GroupID)
+		must(t, err)
+		if upgraded.State != "active" || upgraded.ActiveRevision != selected.Revision {
+			t.Fatal("browser activation", upgraded)
+		}
+		actual, err := f.Store.EvolutionConfigurationRevision(ctx, f.Token, selected.GroupID, upgraded.ActiveRevision)
+		must(t, err)
+		want, _ := json.Marshal(selected)
+		got, _ := json.Marshal(actual.Configuration)
+		if !bytes.Equal(want, got) {
+			t.Fatalf("browser changed unrelated configuration\nwant %s\ngot %s", want, got)
+		}
+	} else {
+		upgraded = activate("authored-v2", selected)
+	}
 	currentOther, err := f.Store.EvolutionConfig(ctx, f.Token, second.GroupID)
 	must(t, err)
 	if currentOther != other {

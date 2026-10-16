@@ -91,10 +91,11 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	studioAddress, participantAddress, spaceAddress := address(), address(), address()
 	spaceBrowserAddress := address()
 	spaceOrigin := "http://" + spaceAddress
+	browserUpgrade := mode == "browser-retry" && os.Getenv("ADMIN_EVOLUTION_UPGRADE_TEST") == "1"
 	browserBackfill := mode == "backfill" && os.Getenv("ADMIN_EVOLUTION_BROWSER_TEST") == "1"
 	browserConfig := mode == "backfill" && os.Getenv("ADMIN_EVOLUTION_CONFIG_TEST") == "1"
 	var adminProxy http.Handler
-	if browserBackfill || browserConfig {
+	if browserBackfill || browserConfig || browserUpgrade {
 		adminAddress := address()
 		adminURL, _ := url.Parse("http://" + adminAddress)
 		adminProxy = &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(adminURL) }}
@@ -127,10 +128,53 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			t.Fatal("admin frontend unavailable")
 		}
 	}
+	var evaluationFrontend string
+	if browserUpgrade {
+		frontendAddress := address()
+		evaluationFrontend = "http://" + frontendAddress
+		copyCmd := exec.CommandContext(ctx, "cp", "-r", filepath.Join(root, "evaluation-space/frontend/.next/static"), filepath.Join(root, "evaluation-space/frontend/.next/standalone/evaluation-space/frontend/.next/"))
+		if raw, err := copyCmd.CombinedOutput(); err != nil {
+			t.Fatalf("copy evaluation assets: %v %s", err, raw)
+		}
+		frontend := exec.CommandContext(ctx, "node", filepath.Join(root, "evaluation-space/frontend/.next/standalone/evaluation-space/frontend/server.js"))
+		frontend.Env = append(os.Environ(), "HOSTNAME=127.0.0.1", "PORT="+strings.Split(frontendAddress, ":")[1])
+		frontend.Stderr = os.Stderr
+		must(t, frontend.Start())
+		done := make(chan error, 1)
+		go func() { done <- frontend.Wait() }()
+		t.Cleanup(func() {
+			_ = frontend.Process.Signal(os.Interrupt)
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				_ = frontend.Process.Kill()
+				<-done
+			}
+		})
+		ready := false
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+			response, err := http.Get(evaluationFrontend + "/evaluation-space/")
+			if err == nil {
+				response.Body.Close()
+				ready = true
+				break
+			}
+			time.Sleep(30 * time.Millisecond)
+		}
+		if !ready {
+			t.Fatal("evaluation frontend unavailable")
+		}
+	}
+	spaceBrowserURL, _ := url.Parse("http://" + spaceBrowserAddress)
+	spaceProxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { host := r.In.Host; r.SetURL(spaceBrowserURL); r.Out.Host = host }}
 	var publicHandler http.Handler
 	studioURL, _ := url.Parse("http://" + studioAddress)
 	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { host := r.In.Host; r.SetURL(studioURL); r.Out.Host = host }}
 	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if browserUpgrade && strings.HasPrefix(r.URL.Path, "/evaluation-space/") {
+			spaceProxy.ServeHTTP(w, r)
+			return
+		}
 		if adminProxy != nil && strings.HasPrefix(r.URL.Path, "/admin") {
 			adminProxy.ServeHTTP(w, r)
 			return
@@ -306,12 +350,12 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			outputs = map[string]any{"items": []any{proposal}}
 		case "draft":
 			outputs = map[string]any{"state": map[string]any{"corpus": submission.Call.Inputs["corpus"], "items": []any{proposal}, "valid": false}}
-		case "critic":
+		case "critic", "review":
 			var state map[string]any
 			if err := json.Unmarshal(submission.Call.Inputs["state"], &state); err != nil {
 				t.Error(err)
 			}
-			state["valid"] = true
+			state["valid"] = submission.Call.Node.ID == "critic"
 			outputs = map[string]any{"state": state}
 		default:
 			t.Error("unexpected node", submission.Call.Node.ID)
@@ -443,7 +487,11 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	start(studioBinary, studioAddress, "--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evaluation-endpoint", spaceOrigin)
 	spaceArgs := []string{"--listen", spaceAddress, "--state-directory", spaceDirectory, "--identity-endpoint", central.URL, "--native-config", nativePath, "--studio-input-endpoint", "http://" + participantAddress}
 	if mode == "browser-retry" {
-		spaceArgs = append(spaceArgs, "--browser-listen", spaceBrowserAddress, "--public-origin", issuer, "--frontend", central.URL)
+		frontendOrigin := central.URL
+		if browserUpgrade {
+			frontendOrigin = evaluationFrontend
+		}
+		spaceArgs = append(spaceArgs, "--browser-listen", spaceBrowserAddress, "--public-origin", issuer, "--frontend", frontendOrigin)
 	}
 	stopSpace := start(spaceBinary, spaceAddress, spaceArgs...)
 	for _, action := range []string{"volume.read", "volume.author", "volume.review", "volume.merge", "volume.configure"} {
@@ -1331,7 +1379,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 					template = pkg.Template
 				}
 			}
-			verifyNativeWorkflowUpgrade(t, ctx, nativeWorkflowUpgrade{Store: store, Token: token, Issuer: issuer, Actor: admin.ID, SourceRun: sourceID, Restart: func() {
+			verifyNativeWorkflowUpgrade(t, ctx, nativeWorkflowUpgrade{Store: store, Token: token, Issuer: issuer, Actor: admin.ID, SourceRun: sourceID, BrowserUpgrade: browserUpgrade, Repository: root, Restart: func() {
 				stopSpace()
 				stopSpace = start(spaceBinary, spaceAddress, spaceArgs...)
 			}, Evaluation: evalClient, Studio: studioClient, Configuration: configuration, Template: template, Artifact: artifact, Browser: spaceCall, StudioBrowser: call, Private: privateCall}, base)

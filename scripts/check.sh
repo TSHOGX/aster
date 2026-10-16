@@ -31,8 +31,10 @@ case "${1:-all}" in
     ;;
   evolution-browser)
     npm --prefix admin-frontend run build
+    npm --prefix evaluation-space/frontend run build
     ADMIN_EVOLUTION_BROWSER_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses/backfill$' -count=1
     ADMIN_EVOLUTION_CONFIG_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses/backfill$' -count=1
+    ADMIN_EVOLUTION_UPGRADE_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses/browser-retry$' -count=1
     ;;
   studio-browser)
     npm --prefix volumes-studio/frontend run test:browser
