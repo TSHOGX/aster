@@ -2,6 +2,7 @@ package projections
 
 import (
 	"aster/contracts/evolution"
+	manifest "aster/contracts/volumemanifest"
 	"bytes"
 	"context"
 	"database/sql"
@@ -54,6 +55,19 @@ func decodeDefinition(kind string, body []byte) (any, evolution.Revision, error)
 // PublishDefinition stores immutable Evaluation Space definitions. The calling
 // API must enforce publication authority before reaching this storage boundary.
 func (s *Store) PublishDefinition(ctx context.Context, kind string, body []byte) error {
+	return s.publishDefinition(ctx, "", kind, body)
+}
+
+// PublishOwnedTemplate claims only unused IDs and retains group ownership through
+// publication, retries and offline catalog operations in the same transaction.
+func (s *Store) PublishOwnedTemplate(ctx context.Context, group string, body []byte) error {
+	if !manifest.ValidID(group) {
+		return fmt.Errorf("invalid template owner")
+	}
+	return s.publishDefinition(ctx, group, "template", body)
+}
+
+func (s *Store) publishDefinition(ctx context.Context, group, kind string, body []byte) error {
 	value, ref, err := decodeDefinition(kind, body)
 	if err != nil {
 		return err
@@ -63,6 +77,28 @@ func (s *Store) PublishDefinition(ctx context.Context, kind string, body []byte)
 		return err
 	}
 	defer tx.Rollback()
+	if kind == "template" {
+		var owner string
+		err = tx.QueryRowContext(ctx, "SELECT group_id FROM template_owners WHERE id=?", ref.ID).Scan(&owner)
+		if err == nil {
+			if owner != group {
+				return ErrConflict
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		} else if group != "" {
+			var count int
+			if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM catalog_definitions WHERE kind='template' AND id=?", ref.ID).Scan(&count); err != nil {
+				return err
+			}
+			if count != 0 || ref.Revision != 1 {
+				return ErrConflict
+			}
+			if _, err = tx.ExecContext(ctx, "INSERT INTO template_owners(id,group_id) VALUES(?,?)", ref.ID, group); err != nil {
+				return err
+			}
+		}
+	}
 	if profile, ok := value.(evolution.EvaluationProfile); ok {
 		var first []byte
 		err = tx.QueryRowContext(ctx, "SELECT body FROM catalog_definitions WHERE kind='profile' AND id=? ORDER BY revision LIMIT 1", ref.ID).Scan(&first)

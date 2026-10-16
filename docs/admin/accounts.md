@@ -297,9 +297,9 @@ and blocks saving until corrected. Validation identifies and focuses invalid nod
 settings; graph-wide edge and cycle errors focus the executable configuration. Use **Activate from configuration** after publishing
 when the group should adopt the immutable workflow revision; publication alone
 never changes the active group configuration. The selected template must explicitly
-include that workflow revision. If it does not, an operator must publish a compatible
-template revision through the [catalog provisioning procedure](../operators/configuration.md#provision-evaluation-space-catalog-revisions)
-before it can be selected. This does not upgrade other groups or earlier runs. Run and evaluation deep links retain
+include that workflow revision. Publication displays the exact workflow reference;
+use **Open goal templates** to publish a compatible template before selecting it in
+configuration. This does not upgrade other groups or earlier runs. Run and evaluation deep links retain
 the group scope; their browser views show frozen pins, deduplicated event cursors,
 authorized node attempts, effective prompts, inputs, outputs, artifact metadata,
 evaluator metrics and explicit stale or redacted states. Artifact metadata includes
@@ -330,6 +330,28 @@ frozen pins and budget into a fresh queued run with `retry_of` lineage; the sour
 run and its evidence remain unchanged. The action requires `run.start`, rejects a
 different group scope, and is safe to replay after a lost response. Retrying a
 draft test preserves its test restrictions and rechecks the testing permissions.
+
+### Publish goal templates
+
+Open a group in Evaluation Space and use **Goal template editor**. Configuration
+read access permits browsing published templates; `workflow.edit` permits authoring
+for that group. A template defines its goal, parameter schema, input/output schemas,
+output content profile, compatible workflow revisions, suggested output prefix and
+evaluation defaults. Every workflow reference must already be published and match
+the template's exact input/output schemas. Missing or incompatible revisions prevent
+publication. The server calculates the template's own digest.
+
+To customize a shared template, select its revision and change its ID to a new ID
+with revision 1. That group owns the new template's revision history. To revise a
+template your group owns, increment its revision; another group cannot append to
+it. Existing publications remain immutable and readable, including after an upgrade.
+Use **Load more templates** to browse further pages. After a lost publication
+response, retry the unchanged definition to recover its exact revision.
+
+**Activate from configuration** opens the group's central configuration editor.
+Select the published template and a workflow it explicitly supports, review the
+binding changes, and activate with configuration-management permission. Publishing
+alone changes no active configuration and grants no source, model or output access.
 
 ### Publish evaluator profiles
 

@@ -60,6 +60,9 @@ CREATE TRIGGER retained_workflow BEFORE DELETE ON workflow_revisions BEGIN SELEC
 CREATE TABLE catalog_definitions(kind TEXT NOT NULL CHECK(kind IN ('service','template','profile')),id TEXT NOT NULL,revision INTEGER NOT NULL CHECK(revision>0),digest TEXT NOT NULL,body BLOB NOT NULL,PRIMARY KEY(kind,id,revision));
 CREATE TRIGGER immutable_definition BEFORE UPDATE ON catalog_definitions BEGIN SELECT RAISE(ABORT,'immutable catalog definition'); END;
 CREATE TRIGGER retained_definition BEFORE DELETE ON catalog_definitions BEGIN SELECT RAISE(ABORT,'retain catalog provenance'); END;
+CREATE TABLE template_owners(id TEXT PRIMARY KEY,group_id TEXT NOT NULL);
+CREATE TRIGGER immutable_template_owner BEFORE UPDATE ON template_owners BEGIN SELECT RAISE(ABORT,'immutable template owner'); END;
+CREATE TRIGGER retained_template_owner BEFORE DELETE ON template_owners BEGIN SELECT RAISE(ABORT,'retain template owner'); END;
 CREATE TABLE service_states(service_id TEXT PRIMARY KEY,revision INTEGER NOT NULL CHECK(revision>0),enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));
 CREATE TABLE service_state_receipts(request_id TEXT PRIMARY KEY,request TEXT NOT NULL,revision INTEGER NOT NULL);
 CREATE TABLE runs(tokens INTEGER NOT NULL DEFAULT 0 CHECK(tokens>=0),cost_micros INTEGER NOT NULL DEFAULT 0 CHECK(cost_micros>=0),worker_id TEXT NOT NULL DEFAULT '',fence INTEGER NOT NULL DEFAULT 0 CHECK(fence>=0),lease_until INTEGER NOT NULL DEFAULT 0,id TEXT PRIMARY KEY,group_id TEXT NOT NULL,binding_id TEXT NOT NULL,configuration_revision INTEGER NOT NULL,occurrence_id TEXT NOT NULL,experiment_of TEXT NOT NULL DEFAULT '',request BLOB NOT NULL,body BLOB NOT NULL,state TEXT NOT NULL CHECK(state IN ('queued','running','pause_requested','paused','cancelling','completed','failed','cancelled')),UNIQUE(group_id,binding_id,configuration_revision,occurrence_id));

@@ -39,6 +39,7 @@ function Editor({ group, workflow }: { group: string; workflow: string }) {
   const tr = useT();
   const [session, setSession] = useState<Session>();
   const [draft, setDraft] = useState<Draft>();
+  const [published, setPublished] = useState<{ id: string; revision: number; digest: string }>();
   const [text, setText] = useState("");
   const [layout, setLayout] = useState("{}");
   const [selected, setSelected] = useState("");
@@ -145,7 +146,7 @@ function Editor({ group, workflow }: { group: string; workflow: string }) {
     setPast(items => [...items, snapshot()]); setFuture(items => items.slice(0, -1)); setText(next.workflow); setLayout(next.layout); setFieldDrafts(next.fields ?? {}); setSelected(next.selected ?? ""); setNodeID(next.nodeID ?? ""); if (next.workflow !== text) setDigest(""); setDirty(true);
   }
   async function load() {
-    setErrorKey("");
+    setErrorKey(""); setPublished(undefined);
     try {
       const sessionResponse = await fetch(`${base}/api/v1/session`, { credentials: "same-origin" });
       if (!sessionResponse.ok) throw new Error("session");
@@ -194,7 +195,7 @@ function Editor({ group, workflow }: { group: string; workflow: string }) {
     setBusy(true); setErrorKey("");
     try {
       const response = await fetch(`${base}${path}/publish`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", Origin: location.origin, "X-CSRF-Token": session.csrf }, body: JSON.stringify({ revision: draft.revision }) });
-      if (!response.ok) throw new Error("publish"); setStatusKey("Published immutable workflow revision.");
+      if (!response.ok) throw new Error("publish"); setPublished(await response.json()); setStatusKey("Published immutable workflow revision.");
     } catch { setErrorKey("Publishing requires workflow-edit permission and a valid saved draft."); }
     finally { setBusy(false); }
   }
@@ -234,6 +235,7 @@ function Editor({ group, workflow }: { group: string; workflow: string }) {
   if (errorKey && !draft) return <main className="session-gate"><h1>{tr("Workflow editor")}</h1><p role="alert">{tr(errorKey)}</p><button onClick={() => void load()}>{tr("Retry")}</button><Link prefetch={false} href={`/groups/${encodeURIComponent(group)}/`}>{tr("Back to group")}</Link></main>;
   return <main ref={editor} className="editor-page">
     <header className="section-heading"><div><Link prefetch={false} href={`/groups/${encodeURIComponent(group)}/`}>{tr("Back to group")}</Link><h1>{tr("Workflow editor")}: {workflow}</h1><p>{tr("Draft, published revision and group activation are separate steps.")}</p></div><div className="editor-actions"><button disabled={busy || !past.length} onClick={undo}>{tr("Undo")}</button><button disabled={busy || !future.length} onClick={redo}>{tr("Redo")}</button><button onClick={saveRecovery}>{tr("Save recovery")}</button><button disabled={busy || !draft || !parsed || invalidFields.length > 0 || !!selectedNode && nodeID !== selected || !parseObject(layout)} onClick={() => void save()}>{tr("Save draft")}</button><button disabled={busy || !draft || dirty || invalidFields.length > 0} onClick={() => void publish()}>{tr("Publish revision")}</button><a className="button" href={`/admin/groups/${encodeURIComponent(group)}/optimization`}>{tr("Activate from configuration")}</a></div></header>
+    {published && <section className="card published-workflow"><h2>{tr("Published workflow reference")}</h2><pre>{pretty(published)}</pre><p>{tr("Add this exact reference to a compatible goal template before activating it.")}</p><Link prefetch={false} href={`/groups/${encodeURIComponent(group)}/`}>{tr("Open goal templates")}</Link></section>}
     {statusKey && <p role="status">{tr(statusKey)}</p>}{errorKey && <p role="alert">{tr(errorKey)}</p>}{validationField && <p id="workflow-field-error" role="alert"><code>{validationField.path}</code>: {tr(validationField.message)}</p>}
     {errorKey === "The draft changed elsewhere. Reload before saving." && <button onClick={() => { saveRecovery(); void load(); }}>{tr("Keep recovery and reload latest")}</button>}
     {statusKey === "A local recovery draft is available. Review it before restoring." && <button onClick={recover}>{tr("Restore recovery")}</button>}

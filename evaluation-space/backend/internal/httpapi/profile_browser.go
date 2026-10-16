@@ -72,7 +72,7 @@ func BrowserProfileAPI(client *appidentity.Client, store *projections.Store) fun
 			workflowAuthError(w, err)
 			return
 		}
-		ref, err := profileRef(r)
+		ref, err := browserCatalogRef(r)
 		if err != nil {
 			write(w, 400, map[string]string{"error": "invalid_profile_reference"})
 			return
@@ -167,7 +167,7 @@ func scopedProfiles(ctx context.Context, store *projections.Store, group, after 
 	return result, nil
 }
 
-func profileRef(r *http.Request) (evolution.Revision, error) {
+func browserCatalogRef(r *http.Request) (evolution.Revision, error) {
 	var ref evolution.Revision
 	n, err := strconv.ParseInt(r.PathValue("revision"), 10, 64)
 	if err != nil {

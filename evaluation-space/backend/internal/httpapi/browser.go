@@ -66,6 +66,7 @@ func BrowserAPI(client *appidentity.Client, store *projections.Store) func(appid
 	runs := BrowserRunAPI(client, store)
 	evaluations := BrowserEvaluationAPI(client, store)
 	profiles := BrowserProfileAPI(client, store)
+	templates := BrowserTemplateAPI(client, store)
 	return func(session appidentity.Session, w http.ResponseWriter, r *http.Request) {
 		request := r.WithContext(context.WithValue(r.Context(), browserSessionKey{}, session))
 		if strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/workflows/") || strings.HasSuffix(r.URL.Path, "/workflows")) {
@@ -82,6 +83,10 @@ func BrowserAPI(client *appidentity.Client, store *projections.Store) func(appid
 		}
 		if strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/profiles/") || strings.HasSuffix(r.URL.Path, "/profiles")) {
 			profiles(session, w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/templates/") || strings.HasSuffix(r.URL.Path, "/templates")) {
+			templates(session, w, r)
 			return
 		}
 		mux.ServeHTTP(w, request)

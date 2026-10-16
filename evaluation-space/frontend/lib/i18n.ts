@@ -1,6 +1,23 @@
 "use client";
 import { useTranslator } from "../../../web/i18n";
 const zh = {
+"Goal templates are unavailable. Retry when the service is restored.": "目标模板不可用，请在服务恢复后重试。",
+"Template detail is unavailable. Retry or check group access.": "模板详情不可用，请重试或检查团队访问权限。",
+"Template publication failed. Check ownership, next revision, parameter schema and exact compatible workflows. Copy shared templates using a new ID and revision 1.": "模板发布失败。请检查归属、下一版本号、参数架构和精确兼容工作流。复制共享模板时请使用新 ID 和版本 1。",
+"Goal template editor": "目标模板编辑器",
+"Templates pin a goal, parameter schema, input/output schemas, output profile, compatible workflows and evaluation defaults. Publication does not activate a group.": "模板固定目标、参数架构、输入输出架构、输出配置、兼容工作流和默认评估策略。发布不会激活团队配置。",
+"Use a new ID with revision 1 to customize a shared template. Only its owning group can publish later revisions. The server computes the template digest.": "自定义共享模板时请使用新 ID 和版本 1。只有所属团队可发布后续版本。服务器计算模板摘要。",
+"Discard unsaved template changes?": "放弃未保存的模板更改？",
+"Loading templates…": "正在加载模板…",
+"Published immutable goal template": "已发布不可变目标模板",
+"Existing template": "现有模板",
+"Create or choose a template": "创建或选择模板",
+"Load more templates": "加载更多模板",
+"Template JSON": "模板 JSON",
+"Publish template revision": "发布模板版本",
+"Published workflow reference": "已发布工作流引用",
+"Add this exact reference to a compatible goal template before activating it.": "激活前，请将此精确引用添加到兼容的目标模板中。",
+"Open goal templates": "打开目标模板",
 "Discard unsaved profile changes?": "放弃未保存的评估配置更改？",
 "Loading profiles…": "正在加载评估配置…",
 "Load more profiles": "加载更多评估配置",

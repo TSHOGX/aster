@@ -1331,9 +1331,8 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 					template = pkg.Template
 				}
 			}
-			verifyNativeWorkflowUpgrade(t, ctx, nativeWorkflowUpgrade{Store: store, Token: token, Issuer: issuer, Actor: admin.ID, Catalog: catalog, Directory: spaceDirectory, SourceRun: sourceID, Offline: func(publish func()) {
+			verifyNativeWorkflowUpgrade(t, ctx, nativeWorkflowUpgrade{Store: store, Token: token, Issuer: issuer, Actor: admin.ID, SourceRun: sourceID, Restart: func() {
 				stopSpace()
-				publish()
 				stopSpace = start(spaceBinary, spaceAddress, spaceArgs...)
 			}, Evaluation: evalClient, Studio: studioClient, Configuration: configuration, Template: template, Artifact: artifact, Browser: spaceCall, StudioBrowser: call, Private: privateCall}, base)
 		}

@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -18,17 +17,17 @@ import (
 )
 
 type nativeWorkflowUpgrade struct {
-	Store                                               *product.Store
-	Token, Issuer, Actor, Catalog, Directory, SourceRun string
-	Evaluation                                          *evaluationclient.Client
-	Offline                                             func(func())
-	Studio                                              *studioclient.Client
-	Configuration                                       evolution.Configuration
-	Template                                            evolution.Template
-	Artifact                                            evolution.ArtifactRef
-	Browser                                             func(string, string, any) (int, []byte)
-	StudioBrowser                                       func(string, string, any) (int, []byte)
-	Private                                             func(string, any) (int, []byte)
+	Store                           *product.Store
+	Token, Issuer, Actor, SourceRun string
+	Evaluation                      *evaluationclient.Client
+	Restart                         func()
+	Studio                          *studioclient.Client
+	Configuration                   evolution.Configuration
+	Template                        evolution.Template
+	Artifact                        evolution.ArtifactRef
+	Browser                         func(string, string, any) (int, []byte)
+	StudioBrowser                   func(string, string, any) (int, []byte)
+	Private                         func(string, any) (int, []byte)
 }
 
 // Publication and activation use the actual browser authority, central operation
@@ -70,15 +69,13 @@ func verifyNativeWorkflowUpgrade(t *testing.T, ctx context.Context, f nativeWork
 		var err error
 		value.Ref.Digest, err = evolution.DefinitionDigest(value)
 		must(t, err)
-		raw, err := json.Marshal(map[string]any{"kind": "template", "ref": value.Ref, "body": value})
-		must(t, err)
-		command := exec.CommandContext(ctx, f.Catalog, "--state-directory", f.Directory)
-		command.Stdin = bytes.NewReader(raw)
-		f.Offline(func() {
-			if output, err := command.CombinedOutput(); err != nil {
-				t.Fatalf("upgrade template: %v %s", err, output)
-			}
-		})
+		var published evolution.Revision
+		call("POST", "groups/"+f.Configuration.GroupID+"/templates", value, 201, &published)
+		if published != value.Ref {
+			t.Fatal("online template identity", published, value.Ref)
+		}
+		f.Restart()
+
 		return value
 	}
 	template1 := publishTemplate([]evolution.Revision{v1}, 1)

@@ -696,9 +696,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
   const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   try {
-   await login(page, user); await page.goto(`/evaluation-space/groups/${beta.id}/`);
-   await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
-   await expect(page.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
+   await login(page, user);
    const root = `/evaluation-space/api/v1/groups/${beta.id}/runs/nested`;
    const child = { call: { id: "z-child", instance: "root/map/attempt-1/item-2/loop/attempt-2/iteration-3/agent", parent: "parent", number: 2, node: { id: "agent", kind: "agent", model_ref: { id: "model", revision: 3 }, tools: [{ id: "tool", revision: 2 }] }, prompt: "exact nested prompt", inputs: { corpus: "frozen-input" } }, state: "failed", error_code: "node-timeout", outputs: { result: "retained-output" } };
    const parent = { call: { id: "parent", instance: "root/map/attempt-1/item-2/loop", number: 1, node: { id: "loop", kind: "loop" } }, state: "failed", outputs: {} };
@@ -717,7 +715,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
    });
    const url = `/evaluation-space/groups/${beta.id}/runs/nested/?attempt=z-child`;
-   await page.goto(url);
+   await page.goto(`/evaluation-space/auth/login?return=${encodeURIComponent(url)}`);
    const detail = page.locator("#attempt-z-child"); const summary = detail.locator("summary");
    await expect(summary).toBeFocused(); await expect(detail).toHaveAttribute("open", "");
    await expect(detail.getByText("exact nested prompt", { exact: true })).toBeVisible();
@@ -917,4 +915,72 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       expect(errors).toEqual([]);
     } finally { await context.close(); }
   });
+}
+
+for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", width: 390 }]) {
+ test(`online template authoring and exact workflow publication ${variant.locale}`, async ({ page: admin, browser }, info) => {
+  const { alpha, beta, user, grant } = await provision(admin);
+  await grant(alpha.id, "workflow.edit");
+  const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: variant.locale, viewport: { width: variant.width, height: 900 } });
+  const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  try {
+   await login(page, user); await page.goto(`/evaluation-space/groups/${beta.id}/`);
+   await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
+   const graph = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8")); graph.id = `template-graph-${crypto.randomUUID().slice(0, 8)}`;
+   const session = await (await page.request.get("/evaluation-space/api/v1/session")).json();
+   const headers = { Origin: origin, "X-CSRF-Token": session.csrf };
+   const draftPath = `/evaluation-space/api/v1/groups/${beta.id}/workflows/${graph.id}/draft`;
+   expect((await page.request.put(draftPath, { headers, data: { id: graph.id, expected_revision: 0, expected_layout_revision: 0, workflow: graph, layout: {} } })).status()).toBe(200);
+   const drafts = page.getByRole("region", { name: tr("Workflow drafts", "工作流草稿"), exact: true });
+   await drafts.getByRole("button", { name: tr("Refresh", "刷新"), exact: true }).click();
+   const draftLink = drafts.getByRole("link", { name: graph.id, exact: true });
+   for (let pages = 0; pages < 20; pages++) {
+    await expect(drafts.getByRole("status")).toHaveCount(0);
+    if (await draftLink.count()) break;
+    const next = drafts.getByRole("button", { name: tr("Next page", "下一页"), exact: true });
+    await expect(next).toBeVisible(); await next.click();
+   }
+   await draftLink.click();
+   await page.getByRole("button", { name: tr("Publish revision", "发布版本"), exact: true }).click();
+   const published = page.locator("section.card").filter({ has: page.getByRole("heading", { name: tr("Published workflow reference", "已发布工作流引用"), exact: true }) });
+   await expect(published).toBeVisible();
+   const workflow = JSON.parse(await published.locator("pre").innerText());
+   expect(workflow).toMatchObject({ id: graph.id, revision: 1 });
+   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+   const before = await (await page.request.get(`/evaluation-space/api/v1/groups/${beta.id}`)).json();
+   await page.getByRole("link", { name: tr("Open goal templates", "打开目标模板"), exact: true }).click();
+   const editor = page.locator("section.card").filter({ has: page.getByRole("heading", { name: tr("Goal template editor", "目标模板编辑器"), exact: true }) });
+   const input = editor.getByRole("textbox", { name: tr("Template JSON", "模板 JSON"), exact: true });
+   const publish = editor.getByRole("button", { name: tr("Publish template revision", "发布模板版本"), exact: true });
+   await expect(input).toBeEnabled();
+   const template = { ref: { id: `online-template-${crypto.randomUUID().slice(0, 8)}`, revision: 1 }, goal: "Extract grounded skills", parameters_schema: { type: "object" }, inputs: graph.inputs, outputs: graph.outputs, profile: "authored-v1", workflows: [workflow], suggested_prefix: "skills", evaluation: { mode: "disabled", reference_strategy: "none" } };
+   await input.fill(JSON.stringify(template)); await publish.focus(); await publish.press("Enter");
+   await expect(editor.getByRole("status")).toContainText(`${template.ref.id} @1`);
+   const first = JSON.parse(await input.inputValue());
+   const root = `/evaluation-space/api/v1/groups/${beta.id}/templates`;
+   // Incompatible typed ports fail before an immutable revision is published.
+   const invalid = { ...first, ref: { ...first.ref, revision: 2 }, inputs: { invalid: workflow.digest } };
+   await input.fill(JSON.stringify(invalid)); await publish.click(); await expect(editor.getByRole("alert")).toBeVisible();
+   const next = { ...first, ref: { ...first.ref, revision: 2 }, goal: "Extract grounded skills with citations" };
+   await input.fill(JSON.stringify(next));
+   await page.route(`**${root}`, async route => {
+    if (route.request().method() !== "POST") return route.continue();
+    const response = await route.fetch(); expect(response.status()).toBe(201);
+    await route.fulfill({ status: 503, contentType: "application/json", body: '{}' });
+   });
+   await publish.click(); await expect(editor.getByRole("alert")).toBeVisible(); await page.unroute(`**${root}`);
+   await publish.click(); await expect(editor.getByRole("status")).toContainText(`${template.ref.id} @2`);
+   expect((await (await page.request.get(`${root}/${first.ref.id}/1?digest=${first.ref.digest}`)).json()).goal).toBe(template.goal);
+   expect((await page.request.post(`/evaluation-space/api/v1/groups/${alpha.id}/templates`, { headers, data: next })).status()).toBe(409);
+   expect(await (await page.request.get(`/evaluation-space/api/v1/groups/${beta.id}`)).json()).toEqual(before);
+   await expect(editor.getByRole("link", { name: tr("Activate from configuration", "从配置中激活"), exact: true })).toHaveAttribute("href", `/admin/groups/${beta.id}/optimization`);
+   await page.screenshot({ path: info.outputPath("published-template.png"), fullPage: true });
+   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+   await grant(beta.id, "workflow.edit", "deny", 1);
+   await input.fill(JSON.stringify({ ...next, ref: { ...next.ref, revision: 3 } })); await publish.click();
+   await expect(editor.getByRole("alert")).toBeVisible(); await expect(input).toHaveValue("");
+   expect(errors).toEqual([]);
+  } finally { await context.close(); }
+ });
 }

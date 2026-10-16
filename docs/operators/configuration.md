@@ -393,6 +393,11 @@ available.
 
 ### Provision Evaluation Space catalog revisions
 
+Group workflow editors can [publish goal templates online](../admin/accounts.md#publish-goal-templates).
+Use offline provisioning for operator-managed catalog definitions, including service
+registration. Group-owned template IDs cannot be extended through the offline command;
+publish their later revisions through the owning group's editor.
+
 Stop Evaluation Space before offline catalog publication. Build the provisioning
 command from `evaluation-space/backend` with
 `go build -o evaluation-catalog ./cmd/evaluation-catalog`, then run

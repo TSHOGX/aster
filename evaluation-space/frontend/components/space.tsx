@@ -8,7 +8,7 @@ import { clearAppearanceBinding } from "../../../web/appearance";
 import { base, type Session, type Group, type GroupPage } from "../lib/api";
 import { useT } from "../lib/i18n";
 import { useRead } from "../lib/use-read";
-import { ProfileEditor } from "./profile-editor";
+import { CatalogEditor } from "./catalog-editor";
 import { WorkflowDrafts } from "./workflow-drafts";
 
 export function Space({ groupID = "" }: { groupID?: string }) {
@@ -45,7 +45,7 @@ function SignOut({ session }: { session: Session }) {
 function Workspace({ session, groupID }: { session: Session; groupID: string }) {
   const tr = useT(); const preferences = useAccountPreferences(session.subject, true);
   return <>
-    <header className="header"><Link className="brand" href="/">{tr("Evaluation Space")}</Link>
+    <header className="header"><Link prefetch={false} className="brand" href="/">{tr("Evaluation Space")}</Link>
       <nav aria-label={tr("Central application")}><a href="/">{tr("Central application")}</a><a href="/volumes-studio/">{tr("Volume Studio")}</a></nav>
       <LanguagePicker preferences={preferences} /><SignOut session={session} />
     </header>
@@ -89,7 +89,8 @@ function GroupDetails({ group, refresh }: { group: Group; refresh: () => void })
       {group.desired_revision !== group.active_revision && <p>{tr("A configuration change is pending. The active revision remains separate.")}</p>}
     </section>
     <div className="workbench-grid overview-grid"><section className="card"><h2>{tr("Recent runs")}</h2>{runs.status && <p role="alert">{tr("Runs are unavailable. Retry when the service is restored.")}</p>}{!runs.loading && !runs.data?.items.length && <p>{tr("No runs yet.")}</p>}<ul>{runs.data?.items.map(run => <li key={run.id}><Link href={`/groups/${encodeURIComponent(group.id)}/runs/${encodeURIComponent(run.id)}`}>{run.id}</Link> · {tr(run.state === "pause_requested" ? "Pausing" : run.state)} · {tr(run.evaluation_state)}</li>)}</ul></section><section className="card"><h2>{tr("Recent evaluations")}</h2>{evaluations.status && <p role="alert">{tr("Evaluations are unavailable. Retry when the service is restored.")}</p>}{!evaluations.loading && !evaluations.data?.items.length && <p>{tr("No evaluations yet.")}</p>}<ul>{evaluations.data?.items.map(job => <li key={job.id}><Link href={`/groups/${encodeURIComponent(group.id)}/evaluations/${encodeURIComponent(job.id)}`}>{job.id}</Link> · {tr(job.state)} · {job.profile.ref?.id ?? "—"}</li>)}</ul></section></div>
+    <CatalogEditor key={`templates:${group.id}`} group={group.id} kind="templates" editable={group.can_edit_workflows} />
     <WorkflowDrafts group={group.id} editable={group.can_edit_workflows} evidence={group.can_read_evidence} />
-    {group.can_manage && <ProfileEditor group={group.id} />}<section className="card"><h2>{tr("Your permissions")}</h2><dl>{[["Read configuration", true], ["Manage configuration", group.can_manage], ["Edit and publish workflows", group.can_edit_workflows], ["Operate runs", group.can_run], ["Read source evidence", group.can_read_evidence]].map(([label, allowed]) => <div key={String(label)}><dt>{tr(String(label))}</dt><dd>{tr(allowed ? "Allowed" : "Not granted")}</dd></div>)}</dl><p>{tr("Configuration access does not grant source evidence access.")}</p></section>
+    {group.can_manage && <CatalogEditor group={group.id} kind="profiles" editable />}<section className="card"><h2>{tr("Your permissions")}</h2><dl>{[["Read configuration", true], ["Manage configuration", group.can_manage], ["Edit and publish workflows", group.can_edit_workflows], ["Operate runs", group.can_run], ["Read source evidence", group.can_read_evidence]].map(([label, allowed]) => <div key={String(label)}><dt>{tr(String(label))}</dt><dd>{tr(allowed ? "Allowed" : "Not granted")}</dd></div>)}</dl><p>{tr("Configuration access does not grant source evidence access.")}</p></section>
   </>;
 }
