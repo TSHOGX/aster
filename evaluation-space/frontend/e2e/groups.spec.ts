@@ -474,9 +474,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
     const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
     const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
     try {
-      await login(page, user); await page.goto(`/evaluation-space/groups/${beta.id}/`);
-      await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
-      await expect(page.getByRole("region", { name: tr("Group overview", "团队概览"), exact: true }).getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
+      await login(page, user);
       const runs = `/evaluation-space/api/v1/groups/${beta.id}/runs`; const root = `${runs}/sensitive-run`;
       const run = { id: "sensitive-run", state: "completed", fence: 1, handoff: "not_ready", evaluation_state: "not_requested", experiment_of: "source-run", pins: { workflow: { id: "skills", revision: 1 } }, created_at: new Date().toISOString() };
       const attempt = { call: { id: "attempt", instance: "root/extract", number: 1, node: { id: "extract", kind: "agent" }, inputs: { corpus: "sensitive-input" }, prompt: "sensitive-prompt" }, state: "succeeded", outputs: { result: "sensitive-output" } };
@@ -497,6 +495,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
         return route.fulfill({ status: code, contentType: "application/json", body: JSON.stringify(code === 200 ? body : { error: "unavailable" }) });
       });
       await page.goto(`/evaluation-space/groups/${beta.id}/runs/sensitive-run`);
+      await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
       const download = page.getByRole("link", { name: tr("Open bounded content", "打开有界内容"), exact: true });
       const refresh = page.getByRole("button", { name: tr("Refresh", "刷新"), exact: true });
       await expect(download).toBeVisible();

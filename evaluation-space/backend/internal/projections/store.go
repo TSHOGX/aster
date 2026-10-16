@@ -83,8 +83,14 @@ CREATE TRIGGER immutable_run_checkpoint BEFORE UPDATE ON run_checkpoints BEGIN S
 CREATE TRIGGER retained_run_checkpoint BEFORE DELETE ON run_checkpoints BEGIN SELECT RAISE(ABORT,'retain run checkpoint'); END;
 CREATE TABLE artifact_store_quota(id INTEGER PRIMARY KEY CHECK(id=1),used_bytes INTEGER NOT NULL CHECK(used_bytes>=0));
 INSERT INTO artifact_store_quota(id,used_bytes) VALUES(1,0);
-CREATE TABLE artifacts(group_id TEXT NOT NULL,id TEXT NOT NULL,metadata BLOB NOT NULL,body BLOB NOT NULL,PRIMARY KEY(group_id,id));
-CREATE TRIGGER immutable_artifact BEFORE UPDATE ON artifacts BEGIN SELECT RAISE(ABORT,'immutable sealed artifact'); END;
+CREATE TABLE artifacts(group_id TEXT NOT NULL,id TEXT NOT NULL,metadata BLOB NOT NULL,body BLOB,expired_at INTEGER NOT NULL DEFAULT 0 CHECK(expired_at>=0),PRIMARY KEY(group_id,id),CHECK((expired_at=0 AND body IS NOT NULL) OR (expired_at>0 AND body IS NULL)));
+CREATE TABLE artifact_expirations(request_id TEXT PRIMARY KEY,group_id TEXT NOT NULL,artifact_id TEXT NOT NULL,request BLOB NOT NULL,result BLOB NOT NULL,expired_at INTEGER NOT NULL CHECK(expired_at>0),UNIQUE(group_id,artifact_id),FOREIGN KEY(group_id,artifact_id) REFERENCES artifacts(group_id,id));
+CREATE TRIGGER immutable_artifact_expiration BEFORE UPDATE ON artifact_expirations BEGIN SELECT RAISE(ABORT,'immutable artifact expiration'); END;
+CREATE TRIGGER retained_artifact_expiration BEFORE DELETE ON artifact_expirations BEGIN SELECT RAISE(ABORT,'retain artifact expiration'); END;
+CREATE TRIGGER immutable_artifact BEFORE UPDATE ON artifacts WHEN NOT (
+ NEW.group_id=OLD.group_id AND NEW.id=OLD.id AND NEW.metadata=OLD.metadata AND OLD.expired_at=0 AND NEW.expired_at>0 AND NEW.body IS NULL AND
+ EXISTS(SELECT 1 FROM artifact_expirations e WHERE e.group_id=OLD.group_id AND e.artifact_id=OLD.id AND e.expired_at=NEW.expired_at)
+) BEGIN SELECT RAISE(ABORT,'immutable sealed artifact'); END;
 CREATE TRIGGER retained_artifact BEFORE DELETE ON artifacts BEGIN SELECT RAISE(ABORT,'retain artifact provenance'); END;
 CREATE TABLE run_usage_receipts(run_id TEXT NOT NULL REFERENCES runs(id),request_id TEXT NOT NULL,request BLOB NOT NULL,result BLOB NOT NULL,PRIMARY KEY(run_id,request_id));
 CREATE TRIGGER immutable_run_usage BEFORE UPDATE ON run_usage_receipts BEGIN SELECT RAISE(ABORT,'immutable usage receipt'); END;

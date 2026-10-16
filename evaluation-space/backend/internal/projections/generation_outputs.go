@@ -23,6 +23,9 @@ func (s *Store) GenerationOutput(ctx context.Context, scope evolution.Generation
 	if run.DraftTest != nil || run.State != "completed" || run.Fence != scope.Fence {
 		return output, ErrConflict
 	}
+	if err = requireAvailableRunEvidence(ctx, s.db, scope.GroupID, scope.RunID); err != nil {
+		return output, err
+	}
 	_, grant, err := s.GenerationGrant(ctx, scope.GroupID, scope.RunID)
 	if err != nil {
 		return output, err

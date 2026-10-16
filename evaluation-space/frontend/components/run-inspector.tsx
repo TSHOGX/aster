@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { base } from "../lib/api";
+import { APIError, base } from "../lib/api";
 import { ArtifactPreview } from "./artifact-preview";
 import { RunExperiment } from "./run-experiment";
 import { RunAttempt, type Attempt } from "./run-attempt";
@@ -59,7 +59,7 @@ function Inspector({ group, run }: { group: string; run: string }) {
       current = next;
       const evidence = async (path: string) => {
         const response = await fetch(path, options);
-        if (!response.ok) throw new Error("evidence unavailable");
+        if (!response.ok) throw new APIError(response.status);
         return response.json();
       };
       const readArtifacts = async () => {
@@ -99,7 +99,7 @@ function Inspector({ group, run }: { group: string; run: string }) {
         if (!selectedID || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(selectedID)) return undefined;
         const response = await fetch(`${root}/attempts/${encodeURIComponent(selectedID)}`, options);
         if (response.status === 404) return undefined;
-        if (!response.ok) throw new Error("selected attempt unavailable");
+        if (!response.ok) throw new APIError(response.status);
         const record = await response.json() as Attempt;
         if (record.call.id !== selectedID) throw new Error("selected attempt identity mismatch");
         return record;
@@ -128,10 +128,11 @@ function Inspector({ group, run }: { group: string; run: string }) {
       setEvents(retainedEvents.current); setAttempts(attemptPage.items); setArtifacts(artifactPage.items); setMoreArtifacts(artifactPage.has_more); setDebuggerValue(debug);
       setComparison(source); setComparisonDebugger(sourceDebugger); setSourceAttempts(sourcePage.items); setMoreAttempts(attemptPage.has_more || sourcePage.has_more); setMoreProviders(debug.has_more); setEvidenceReady(true);
       setError(comparisonUnavailable ? "Source comparison is unavailable. Retry or check source access." : ""); setStale(comparisonUnavailable);
-    } catch {
+    } catch (failure) {
       if (controller.signal.aborted) return;
       controller.abort(); // Stop sibling reads as soon as any evidence read fails.
-      setValue(current); clearEvidence(); setError(current ? "Run evidence is unavailable. Retry or check source access." : "Run detail is unavailable. Retry or check group access."); setStale(true);
+      const expired = current && failure instanceof APIError && failure.status === 410;
+      setValue(current); clearEvidence(); setError(expired ? "Run evidence has expired. Retained run metadata is still available." : current ? "Run evidence is unavailable. Retry or check source access." : "Run detail is unavailable. Retry or check group access."); setStale(!expired);
     } finally { if (activeRead.current === controller) activeRead.current = null; }
   }, [root, group, clearEvidence, selectedID]);
   useEffect(() => {

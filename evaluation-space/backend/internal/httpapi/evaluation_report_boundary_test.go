@@ -97,7 +97,13 @@ func TestBrowserReportDownloadRechecksProtectedDatasetBytes(t *testing.T) {
 			t.Fatal("protected report boundary", w.Code, w.Body.String())
 		}
 	}
+	_, err = s.ExpireArtifact(ctx, projections.ArtifactExpirationInput{RequestID: "expire-report", Artifact: report, Reason: "Report retention"})
+	check(err)
+	if w := request(root + report.ID); w.Code != 410 || bytes.Contains(w.Body.Bytes(), []byte("accuracy: 0.95")) || !strings.Contains(w.Header().Get("Cache-Control"), "no-store") || w.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatal("expired report disclosure or wrong status", w.Code, w.Body.String(), w.Header())
+	}
 	// A later profile marks the same bytes protected, even through a new ID.
+	// Dataset denial takes precedence over disclosing its expiration status.
 	protected := seal("new-dataset", "accuracy: 0.95")
 	profile.Ref.ID = "new-profile"
 	profile.Dataset = protected

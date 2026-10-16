@@ -56,6 +56,10 @@ func (l *lostNativeAdmission) GenerationOutput(ctx context.Context, scope evolut
 	return l.client.GenerationOutput(ctx, scope)
 }
 
+func TestNativeArtifactRetentionRealProcesses(t *testing.T) {
+	nativeGenerationProcesses(t, "retention")
+}
+
 func TestNativeGenerationRealProcesses(t *testing.T) {
 	for _, mode := range []string{"success", "sibling-failure", "lost-model-reply", "automatic", "dependencies", "dependency-failure", "backfill", "browser-retry"} {
 		t.Run(mode, func(t *testing.T) { nativeGenerationProcesses(t, mode) })
@@ -92,6 +96,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	studioAddress, participantAddress, spaceAddress := address(), address(), address()
 	spaceBrowserAddress := address()
 	spaceOrigin := "http://" + spaceAddress
+	browserRetention := mode == "retention" && os.Getenv("EVALUATION_RETENTION_BROWSER_TEST") == "1"
 	browserUpgrade := mode == "browser-retry" && os.Getenv("ADMIN_EVOLUTION_UPGRADE_TEST") == "1"
 	browserBackfill := mode == "backfill" && os.Getenv("ADMIN_EVOLUTION_BROWSER_TEST") == "1"
 	browserConfig := mode == "backfill" && os.Getenv("ADMIN_EVOLUTION_CONFIG_TEST") == "1"
@@ -130,7 +135,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		}
 	}
 	var evaluationFrontend string
-	if browserUpgrade {
+	if browserUpgrade || browserRetention {
 		frontendAddress := address()
 		evaluationFrontend = "http://" + frontendAddress
 		copyCmd := exec.CommandContext(ctx, "cp", "-r", filepath.Join(root, "evaluation-space/frontend/.next/static"), filepath.Join(root, "evaluation-space/frontend/.next/standalone/evaluation-space/frontend/.next/"))
@@ -172,7 +177,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	studioURL, _ := url.Parse("http://" + studioAddress)
 	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { host := r.In.Host; r.SetURL(studioURL); r.Out.Host = host }}
 	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if browserUpgrade && strings.HasPrefix(r.URL.Path, "/evaluation-space/") {
+		if (browserUpgrade || browserRetention) && strings.HasPrefix(r.URL.Path, "/evaluation-space/") {
 			spaceProxy.ServeHTTP(w, r)
 			return
 		}
@@ -487,9 +492,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 
 	start(studioBinary, studioAddress, "--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evaluation-endpoint", spaceOrigin)
 	spaceArgs := []string{"--listen", spaceAddress, "--state-directory", spaceDirectory, "--identity-endpoint", central.URL, "--native-config", nativePath, "--studio-input-endpoint", "http://" + participantAddress}
-	if mode == "browser-retry" {
+	if mode == "browser-retry" || mode == "retention" {
 		frontendOrigin := central.URL
-		if browserUpgrade {
+		if browserUpgrade || browserRetention {
 			frontendOrigin = evaluationFrontend
 		}
 		spaceArgs = append(spaceArgs, "--browser-listen", spaceBrowserAddress, "--public-origin", issuer, "--frontend", frontendOrigin)
@@ -1457,5 +1462,8 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	}
 	if skillCalls != expectedSkills || correctionCalls != 1 {
 		t.Fatal("independent graph model calls", skillCalls, correctionCalls)
+	}
+	if mode == "retention" {
+		verifyNativeArtifactRetention(t, ctx, nativeArtifactRetention{Store: store, Token: token, Actor: admin.ID, Group: configuration.GroupID, Run: runIDs["example-skills"], Repository: root, State: spaceDirectory, Catalog: catalog, Origin: issuer, Browser: browserRetention, Stop: stopSpace, Restart: func() { stopSpace = start(spaceBinary, spaceAddress, spaceArgs...) }})
 	}
 }

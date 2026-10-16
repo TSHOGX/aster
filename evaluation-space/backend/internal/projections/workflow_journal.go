@@ -61,7 +61,7 @@ func (j WorkflowJournal) Begin(ctx context.Context, call workflow.Call, maximum 
 	if err != nil {
 		return record, err
 	}
-	if err = requireNonDatasetRun(ctx, tx, run.GroupID, run.ID); err != nil {
+	if err = requireAvailableRunEvidence(ctx, tx, run.GroupID, run.ID); err != nil {
 		return record, err
 	}
 	if run.Pins.Workflow.Validate() != nil || run.Pins.SourcePolicyRevision < 1 {

@@ -56,6 +56,7 @@ const zh = {
 "Discard unsaved workflow changes?": "放弃未保存的工作流更改？",
 "Keep recovery and reload latest": "保留恢复副本并加载最新版本",
 
+"Run evidence has expired. Retained run metadata is still available.": "运行证据已过期，保留的运行元数据仍可查看。",
 "Run evidence is unavailable. Retry or check source access.": "运行证据不可用，请重试或检查源访问权限。",
 "Source comparison is unavailable. Retry or check source access.": "源运行比较不可用，请重试或检查源访问权限。",
 "Checkpoint experiment": "检查点实验",

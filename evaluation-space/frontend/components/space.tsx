@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-html-link-for-pages -- Root links leave this application base path for the central application. */
 "use client";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { LanguagePicker } from "../../../web/language-picker";
 import { useAccountPreferences } from "../../../web/account-preferences";
 import { clearAppearanceBinding } from "../../../web/appearance";
@@ -11,7 +11,7 @@ import { useRead } from "../lib/use-read";
 import { CatalogEditor } from "./catalog-editor";
 import { WorkflowDrafts } from "./workflow-drafts";
 
-export function Space({ groupID = "" }: { groupID?: string }) {
+export function SpaceShell({ children }: { children: ReactNode }) {
   const tr = useT();
   const session = useRead<Session>("/session", true);
   const [lastSession, setLastSession] = useState<Session>();
@@ -28,7 +28,7 @@ export function Space({ groupID = "" }: { groupID?: string }) {
       <button onClick={session.refresh}>{tr("Retry")}</button>
       {lastSession && <SignOut session={lastSession} />}</>}
   </main>;
-  return <Workspace key={session.data.subject} session={session.data} groupID={groupID} />;
+  return <Workspace key={session.data.subject} session={session.data}>{children}</Workspace>;
 }
 function SignOut({ session }: { session: Session }) {
   const tr = useT(); const [pending, setPending] = useState(false); const [error, setError] = useState(false);
@@ -42,18 +42,23 @@ function SignOut({ session }: { session: Session }) {
   }
   return <div><button disabled={pending} onClick={() => void logout()}>{tr(pending ? "Signing out…" : "Sign out of this central session")}</button>{error && <p role="alert">{tr("Sign out is unavailable. Please retry.")}</p>}</div>;
 }
-function Workspace({ session, groupID }: { session: Session; groupID: string }) {
+function Workspace({ session, children }: { session: Session; children: ReactNode }) {
   const tr = useT(); const preferences = useAccountPreferences(session.subject, true);
   return <>
     <header className="header"><Link prefetch={false} className="brand" href="/">{tr("Evaluation Space")}</Link>
       <nav aria-label={tr("Central application")}><a href="/">{tr("Central application")}</a><a href="/volumes-studio/">{tr("Volume Studio")}</a></nav>
       <LanguagePicker preferences={preferences} /><SignOut session={session} />
     </header>
-    <main className="workspace"><GroupList selected={groupID} /><section className="overview" aria-label={tr("Group overview")}>
-      {groupID ? <GroupOverview key={groupID} id={groupID} /> : <><h1>{tr("Select a group")}</h1><p>{tr("Each group keeps its own configuration and permissions.")}</p></>}
-    </section></main>
+    {children}
   </>;
 }
+export function Space({ groupID = "" }: { groupID?: string }) {
+  const tr = useT();
+  return <main className="workspace"><GroupList selected={groupID} /><section className="overview" aria-label={tr("Group overview")}>
+      {groupID ? <GroupOverview key={groupID} id={groupID} /> : <><h1>{tr("Select a group")}</h1><p>{tr("Each group keeps its own configuration and permissions.")}</p></>}
+    </section></main>;
+}
+
 function GroupList({ selected }: { selected: string }) {
   const tr = useT(); const [draft, setDraft] = useState(""); const [search, setSearch] = useState(""); const [after, setAfter] = useState("");
   const read = useRead<GroupPage>(`/groups?${new URLSearchParams({ search, after, limit: "25" })}`);

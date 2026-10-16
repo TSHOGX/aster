@@ -426,6 +426,49 @@ Publish nested workflows before their parents and workflows before templates.
 Revisions start at one and increase sequentially; an identical publication can be
 retried. Existing revisions cannot be replaced or deleted.
 
+### Expire retained artifact content
+
+Evaluation Space keeps artifact content until an operator explicitly expires it;
+there is no automatic age-based deletion. Stop Evaluation Space and build
+`evaluation-catalog` from `evaluation-space/backend`. Save the complete artifact
+reference from the run metadata as `/absolute/artifact.json`, then inspect its pins:
+
+```sh
+go build -o evaluation-catalog ./cmd/evaluation-catalog
+./evaluation-catalog --state-directory /absolute/evaluation-state \
+  --action inspect-artifact < /absolute/artifact.json
+```
+
+The result includes `pins` and, for previously expired content, `expired_at`.
+Profile datasets remain pinned. Active runs, their dependencies and experiments,
+pending handoffs, unsettled accounting and active evaluator work also prevent
+expiry. Let that work finish before retrying; do not remove journal records to
+bypass a pin. The command refuses access while the service owns the database.
+
+Create `/absolute/expiration.json` with a unique `request_id`, the exact reference
+in `artifact`, and a nonempty `reason`, then run:
+
+```sh
+./evaluation-catalog --state-directory /absolute/evaluation-state \
+  --action expire-artifact < /absolute/expiration.json
+```
+
+Keep the receipt with the operator record and restart Evaluation Space. Repeating
+exactly the same request returns the same receipt. Changing its identity or reason
+fails. Expiry removes the sealed body and releases its charged store quota in one
+transaction. Metadata, ancestry and the expiry receipt remain; the expired identity
+cannot be resealed. New use of its bytes is rejected.
+
+Authorized downloads return HTTP 410. The inspector explains that evidence has
+expired while retaining run metadata; inline attempts and checkpoint replay that
+depend on expired content are unavailable. Current access and held-out dataset
+restrictions still apply before expiry information is disclosed.
+
+Expiry makes SQLite pages reusable, but does not guarantee a smaller database file
+or secure erasure. It does not remove copies in journals, earlier backups, exports
+or Studio content. Apply their retention policies separately. Backups taken after
+expiry preserve the receipt and do not restore the expired body.
+
 ### Back up and restore Evaluation Space
 
 Stop Evaluation Space before taking a backup. Build the maintenance commands from
@@ -439,7 +482,8 @@ go build -o evaluation-space-backup ./cmd/evaluation-space-backup
 ```
 
 The snapshot contains the projection database, including immutable catalog
-revisions, run and evaluator journals, sealed artifact metadata and bytes. Keep
+revisions, run and evaluator journals, artifact metadata, expiry receipts and
+unexpired sealed bytes. Keep
 `backup.json` with the database; its digest is checked during restore. An
 interrupted backup retains `backup.incomplete` and cannot be restored.
 

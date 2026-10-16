@@ -87,10 +87,14 @@ func (s *Store) SealArtifact(ctx context.Context, ref evolution.ArtifactRef, inp
 // validated ref, metadata, exact byte length and digest before entering here.
 func storeSealedArtifact(ctx context.Context, tx *sql.Tx, ref evolution.ArtifactRef, metadata, raw []byte) error {
 	var prior []byte
-	err := tx.QueryRowContext(ctx, "SELECT metadata FROM artifacts WHERE group_id=? AND id=?", ref.GroupID, ref.ID).Scan(&prior)
+	var expired int64
+	err := tx.QueryRowContext(ctx, "SELECT metadata,expired_at FROM artifacts WHERE group_id=? AND id=?", ref.GroupID, ref.ID).Scan(&prior, &expired)
 	if err == nil {
 		if !bytes.Equal(prior, metadata) {
 			return ErrConflict
+		}
+		if expired > 0 {
+			return ErrArtifactExpired
 		}
 		return nil
 	}
@@ -124,7 +128,8 @@ func readArtifact(ctx context.Context, q artifactQuery, ref evolution.ArtifactRe
 		return nil, fmt.Errorf("invalid artifact reference")
 	}
 	var metadata, raw []byte
-	err := q.QueryRowContext(ctx, "SELECT metadata,body FROM artifacts WHERE group_id=? AND id=?", ref.GroupID, ref.ID).Scan(&metadata, &raw)
+	var expired int64
+	err := q.QueryRowContext(ctx, "SELECT metadata,body,expired_at FROM artifacts WHERE group_id=? AND id=?", ref.GroupID, ref.ID).Scan(&metadata, &raw, &expired)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -135,6 +140,9 @@ func readArtifact(ctx context.Context, q artifactQuery, ref evolution.ArtifactRe
 	if err != nil || stored != ref {
 		return nil, ErrConflict
 	}
+	if expired > 0 {
+		return nil, ErrArtifactExpired
+	}
 	if int64(len(raw)) != ref.Size || evolution.Digest(raw) != ref.Digest {
 		return nil, fmt.Errorf("stored artifact integrity mismatch")
 	}
@@ -143,13 +151,20 @@ func readArtifact(ctx context.Context, q artifactQuery, ref evolution.ArtifactRe
 
 func requireSealedArtifact(ctx context.Context, tx *sql.Tx, ref evolution.ArtifactRef) error {
 	var metadata []byte
-	var size int64
-	if err := tx.QueryRowContext(ctx, "SELECT metadata,length(body) FROM artifacts WHERE group_id=? AND id=?", ref.GroupID, ref.ID).Scan(&metadata, &size); err != nil {
+	var size sql.NullInt64
+	var expired int64
+	if err := tx.QueryRowContext(ctx, "SELECT metadata,length(body),expired_at FROM artifacts WHERE group_id=? AND id=?", ref.GroupID, ref.ID).Scan(&metadata, &size, &expired); err != nil {
 		return err
 	}
 	stored, err := evolution.Decode[evolution.ArtifactRef](bytes.NewReader(metadata))
-	if err != nil || stored != ref || size != ref.Size {
+	if err != nil || stored != ref {
 		return fmt.Errorf("sealed artifact identity mismatch")
+	}
+	if expired > 0 {
+		return ErrArtifactExpired
+	}
+	if !size.Valid || size.Int64 != ref.Size {
+		return fmt.Errorf("sealed artifact size mismatch")
 	}
 	return nil
 }
@@ -180,7 +195,7 @@ func (s *Store) beginGenerationRead(ctx context.Context, group, run string) (*sq
 	if err != nil {
 		return nil, err
 	}
-	if err = requireNonDatasetRun(ctx, tx, group, run); err != nil {
+	if err = requireAvailableRunEvidence(ctx, tx, group, run); err != nil {
 		_ = tx.Rollback()
 		return nil, err
 	}

@@ -122,6 +122,10 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 			return
 		}
 		page, err := store.WorkflowAttemptPage(r.Context(), r.PathValue("group"), r.PathValue("run"), r.URL.Query().Get("after"), limit)
+		if errors.Is(err, projections.ErrArtifactExpired) {
+			write(w, 410, map[string]string{"error": "run_evidence_expired"})
+			return
+		}
 		if err != nil {
 			write(w, 422, map[string]string{"error": "attempts_unavailable"})
 			return
@@ -137,6 +141,10 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 		record, err := store.WorkflowAttempt(r.Context(), r.PathValue("group"), r.PathValue("run"), r.PathValue("attempt"))
 		if errors.Is(err, projections.ErrNotFound) {
 			write(w, 404, map[string]string{"error": "attempt_not_found"})
+			return
+		}
+		if errors.Is(err, projections.ErrArtifactExpired) {
+			write(w, 410, map[string]string{"error": "run_evidence_expired"})
 			return
 		}
 		if err != nil {
@@ -180,6 +188,10 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 		ref, raw, err := store.RunArtifact(r.Context(), r.PathValue("group"), r.PathValue("run"), r.PathValue("artifact"))
 		if errors.Is(err, projections.ErrNotFound) {
 			write(w, 404, map[string]string{"error": "artifact_not_found"})
+			return
+		}
+		if errors.Is(err, projections.ErrArtifactExpired) {
+			write(w, 410, map[string]string{"error": "run_evidence_expired"})
 			return
 		}
 		if err != nil {
@@ -251,6 +263,10 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 			write(w, 404, map[string]string{"error": "run_not_found"})
 			return
 		}
+		if errors.Is(err, projections.ErrArtifactExpired) {
+			write(w, 410, map[string]string{"error": "run_evidence_expired"})
+			return
+		}
 		if err != nil {
 			write(w, 422, map[string]string{"error": "debugger_unavailable"})
 			return
@@ -274,6 +290,10 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 		preview, err := store.PreviewRunExperiment(r.Context(), value)
 		if errors.Is(err, projections.ErrNotFound) {
 			write(w, 404, map[string]string{"error": "run_not_found"})
+			return
+		}
+		if errors.Is(err, projections.ErrArtifactExpired) {
+			write(w, 410, map[string]string{"error": "run_evidence_expired"})
 			return
 		}
 		if err != nil {

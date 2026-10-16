@@ -94,6 +94,10 @@ func BrowserEvaluationAPI(client *appidentity.Client, store *projections.Store) 
 			write(w, 404, map[string]string{"error": "report_not_found"})
 			return
 		}
+		if errors.Is(err, projections.ErrArtifactExpired) {
+			write(w, 410, map[string]string{"error": "report_expired"})
+			return
+		}
 		if err != nil {
 			write(w, 422, map[string]string{"error": "report_unavailable"})
 			return

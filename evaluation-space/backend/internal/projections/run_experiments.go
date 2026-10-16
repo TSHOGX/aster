@@ -88,6 +88,9 @@ func (s *Store) PreviewRunExperiment(ctx context.Context, input RunExperimentReq
 		input.CheckpointID = latest.ID
 	}
 	checkpoint, plan, err := s.checkpointReuse(ctx, source, input.CheckpointID, input.Workflow, input.StartNode)
+	if errors.Is(err, ErrArtifactExpired) {
+		return result, err
+	}
 	if err != nil {
 		result.Reasons = append(result.Reasons, err.Error())
 		return result, nil

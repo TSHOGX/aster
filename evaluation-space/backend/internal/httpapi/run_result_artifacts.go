@@ -71,6 +71,8 @@ func (a *RunResultArtifactAPI) serve(w http.ResponseWriter, r *http.Request) {
 		status := 409
 		if errors.Is(err, projections.ErrNotFound) {
 			status = 404
+		} else if errors.Is(err, projections.ErrArtifactExpired) {
+			status = 410
 		}
 		write(w, status, map[string]string{"error": "result_artifact_unavailable"})
 		return
