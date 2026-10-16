@@ -194,8 +194,32 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       const edited = retained.workflow.nodes.find((node: { id: string }) => node.id === "extract");
       expect(edited.prompt.text).toBe("Extract {{corpus}} with evidence");
       expect(edited.prompt.digest).toBe(`sha256:${createHash("sha256").update(edited.prompt.text).digest("hex")}`);
+      const beforeLayout = structuredClone(retained);
+      const publishButton = page.getByRole("button", { name: tr("Publish revision", "发布版本"), exact: true });
+      const publishedReference = page.locator("section.card").filter({ has: page.getByRole("heading", { name: tr("Published workflow reference", "已发布工作流引用"), exact: true }) }).locator("pre");
+      await publishButton.click(); await expect(publishedReference).toBeVisible();
+      const publishedBeforeLayout = JSON.parse(await publishedReference.innerText());
       await page.getByLabel(tr("Canvas layout JSON", "画布布局 JSON"), { exact: true }).fill('{"extract":{"x":80,"y":120}}');
       await expect(digest).toHaveText(originalDigest); await save.click(); await expect(digest).toHaveText(originalDigest);
+      retained = await (await page.request.get(draftPath)).json();
+      expect(retained.revision).toBe(beforeLayout.revision);
+      expect(retained.layout_revision).toBe(beforeLayout.layout_revision + 1);
+      expect(retained.workflow).toEqual(beforeLayout.workflow);
+      await publishButton.click(); await expect(publishedReference).toBeVisible();
+      expect(JSON.parse(await publishedReference.innerText())).toEqual(publishedBeforeLayout);
+      // Reformat the declarative view, return to visual editing and save/reload.
+      // Whitespace and canvas movement cannot mint a new executable identity.
+      await page.getByLabel(tr("Executable workflow JSON", "可执行工作流 JSON"), { exact: true }).fill(JSON.stringify(retained.workflow, null, 4));
+      await page.getByRole("button", { name: /^extract\b/ }).click();
+      await expect(prompt).toHaveValue("Extract {{corpus}} with evidence");
+      await save.click(); await page.reload();
+      await page.getByRole("button", { name: /^extract\b/ }).click();
+      await expect(prompt).toHaveValue("Extract {{corpus}} with evidence");
+      const roundTrip = await (await page.request.get(draftPath)).json();
+      expect(roundTrip.revision).toBe(retained.revision);
+      expect(roundTrip.layout_revision).toBe(retained.layout_revision);
+      expect(roundTrip.workflow).toEqual(retained.workflow);
+      await validate.click(); await expect(digest).toHaveText(originalDigest);
       await page.getByLabel(tr("Node ID", "节点 ID"), { exact: true }).fill("gather");
       await page.getByRole("button", { name: tr("Rename node", "重命名节点"), exact: true }).click();
       await expect(digest).toHaveCount(0);
