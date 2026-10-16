@@ -154,6 +154,12 @@ func TestPrivateGenerationAdmissionReplayAndScope(t *testing.T) {
 	if w := seal([]byte("wrong")); w.Code != 422 {
 		t.Fatal("corrupt transfer accepted", w.Code)
 	}
+	t.Run("held-out-downloads", func(t *testing.T) { checkGenerationDatasetDownloads(t, store, input) })
+	protectedAssignment := assignment
+	protectedAssignment.RunID, protectedAssignment.OccurrenceID = "protected-run", "protected-occurrence"
+	if w := call("admit", "central", secret, "", protectedAssignment); w.Code != 404 || strings.Contains(w.Body.String(), "episodes") {
+		t.Fatal("held-out admission", w.Code, w.Body.String())
+	}
 	central.denied = true
 	scope["group_id"] = "group"
 	if w := call("read", "central", secret, "", scope); w.Code != 403 {

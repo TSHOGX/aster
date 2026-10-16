@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -251,5 +252,83 @@ func TestHTTPModelRejectsUnsafeConnections(t *testing.T) {
 			provider.Close()
 			t.Fatal("unsafe model origin", origin)
 		}
+	}
+}
+
+func TestHTTPModelProtectedRequestDeniesSubmitButPreservesCleanup(t *testing.T) {
+	store, model, call, raw := modelCallFixture(t)
+	ctx := context.Background()
+	profile := evolution.EvaluationProfile{Ref: evolution.Revision{ID: "protected-request", Revision: 1}, Dataset: call.Request, Scorer: model, Runtime: model, Model: model, Thresholds: []evolution.MetricThreshold{{Name: "accuracy", Unit: "ratio", Operator: "gte", Value: 0.9, MinimumSamples: 1, MinimumCoverage: 1}}}
+	profile.Ref.Digest, _ = evolution.DefinitionDigest(profile)
+	body, _ := json.Marshal(profile)
+	if err := store.PublishDefinition(ctx, "profile", body); err != nil {
+		t.Fatal(err)
+	}
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+		if r.Method == "GET" {
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"error":"model_call_not_found"}`))
+			return
+		}
+		if !strings.HasSuffix(r.URL.Path, "/cancel") {
+			t.Error("protected prompt submitted")
+		}
+		input, _ := io.ReadAll(r.Body)
+		if bytes.Contains(input, []byte("Read corpus")) {
+			t.Error("cleanup transmitted protected prompt")
+		}
+		_ = json.NewEncoder(w).Encode(ModelObservation{RunID: call.RunID, CallID: call.ID, IdempotencyKey: call.IdempotencyKey, RequestDigest: call.Request.Digest, Model: model, ProviderRequestID: "provider", State: "cancelled", ToolTraceState: "complete"})
+	}))
+	defer server.Close()
+	provider, err := NewHTTPModel(store, ModelConnection{Endpoint: server.URL, ClientID: "space", Secret: strings.Repeat("s", 32), Model: model})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	if _, err = provider.Submit(ctx, call, raw, projections.RunUsage{Tokens: 1}); !errors.Is(err, projections.ErrNotFound) {
+		t.Fatal("protected submit accepted", err)
+	}
+	if _, err = provider.Lookup(ctx, call); !errors.Is(err, projections.ErrProviderCallNotFound) {
+		t.Fatal("cleanup lookup blocked", err)
+	}
+	if outcome, err := provider.Cancel(ctx, call); err != nil || outcome.State != "cancelled" {
+		t.Fatal("cleanup cancellation blocked", outcome, err)
+	}
+	if len(methods) != 2 || methods[0] != "GET" || methods[1] != "POST" {
+		t.Fatal("unexpected provider effects", methods)
+	}
+}
+
+func TestProtectedRunInputClosesRetainedInlineTrace(t *testing.T) {
+	store, _, run, executor, _ := nativeFixture(t)
+	ctx := context.Background()
+	worker := Worker{Store: store, ID: "worker", Authority: executor.Authority, Executor: executor}
+	if err := worker.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	attempts, err := store.WorkflowAttempts(ctx, run.GroupID, run.ID, "", 100)
+	if err != nil || len(attempts) == 0 {
+		t.Fatal("ordinary trace unavailable", err)
+	}
+	var condition evolution.Revision
+	for ref := range executor.Registry.Models {
+		condition = ref
+	}
+	profile := evolution.EvaluationProfile{Ref: evolution.Revision{ID: "protected-input", Revision: 1}, Dataset: run.Pins.Inputs[0], Scorer: condition, Runtime: condition, Model: condition, Thresholds: []evolution.MetricThreshold{{Name: "accuracy", Unit: "ratio", Operator: "gte", Value: 0.9, MinimumSamples: 1, MinimumCoverage: 1}}}
+	profile.Ref.Digest, _ = evolution.DefinitionDigest(profile)
+	raw, _ := json.Marshal(profile)
+	if err = store.PublishDefinition(ctx, "profile", raw); err != nil {
+		t.Fatal(err)
+	}
+	if value, err := store.WorkflowAttempt(ctx, run.GroupID, run.ID, attempts[0].Call.ID); !errors.Is(err, projections.ErrNotFound) || len(value.Call.Inputs) != 0 {
+		t.Fatal("protected inline attempt escaped", err)
+	}
+	if page, err := store.WorkflowAttemptPage(ctx, run.GroupID, run.ID, "", 100); !errors.Is(err, projections.ErrNotFound) || len(page.Items) != 0 {
+		t.Fatal("protected attempt page escaped", err)
+	}
+	if records, err := store.CheckpointWorkflowAttempts(ctx, run.GroupID, run.ID, "node-"+attempts[0].Call.ID, "", 100); !errors.Is(err, projections.ErrNotFound) || len(records) != 0 {
+		t.Fatal("protected checkpoint replay escaped", err)
 	}
 }

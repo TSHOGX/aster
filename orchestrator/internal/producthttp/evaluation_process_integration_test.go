@@ -178,6 +178,42 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 					return
 				}
 			} else {
+				// A valid dispatch grant does not let a generation service or an
+				// ambient browser borrow the evaluator's private dataset access.
+				for _, denied := range []struct{ user, password, cookie, origin, grant, fence string }{
+					{"model", secret, "", "", value.GrantID, fmt.Sprint(value.Fence)},
+					{"central", secret, "", "", value.GrantID, fmt.Sprint(value.Fence)},
+					{"evaluator", inputSecret, "session=browser", "", value.GrantID, fmt.Sprint(value.Fence)},
+					{"evaluator", inputSecret, "", "https://app", value.GrantID, fmt.Sprint(value.Fence)},
+					{"evaluator", inputSecret, "", "", "wrong-grant", fmt.Sprint(value.Fence)},
+					{"evaluator", inputSecret, "", "", value.GrantID, "999999"},
+				} {
+					endpoint := spaceOrigin + "/evaluation-space/provider/v1/groups/" + value.Subject.Dataset.GroupID + "/jobs/" + value.JobID + "/dataset"
+					request, err := http.NewRequestWithContext(r.Context(), "GET", endpoint, nil)
+					if err != nil {
+						providerFailure = err.Error()
+						w.WriteHeader(500)
+						return
+					}
+					request.SetBasicAuth(denied.user, denied.password)
+					request.Header.Set("Cookie", denied.cookie)
+					request.Header.Set("Origin", denied.origin)
+					request.Header.Set("X-Evaluation-Grant", denied.grant)
+					request.Header.Set("X-Evaluation-Fence", denied.fence)
+					reply, err := http.DefaultClient.Do(request)
+					if err != nil {
+						providerFailure = err.Error()
+						w.WriteHeader(500)
+						return
+					}
+					raw, readErr := io.ReadAll(reply.Body)
+					_ = reply.Body.Close()
+					if readErr != nil || reply.StatusCode != 403 || bytes.Contains(raw, []byte("Reviewed skill")) || !strings.Contains(reply.Header.Get("Cache-Control"), "no-store") || reply.Header.Get("X-Content-Type-Options") != "nosniff" {
+						providerFailure = fmt.Sprintf("dataset isolation: %d %s", reply.StatusCode, raw)
+						w.WriteHeader(500)
+						return
+					}
+				}
 				read := func(kind, path string) ([]byte, error) {
 					endpoint := spaceOrigin + "/evaluation-space/provider/v1/groups/" + value.Subject.Dataset.GroupID + "/jobs/" + value.JobID + "/" + kind
 					if path != "" {
@@ -199,7 +235,7 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 					if err != nil {
 						return nil, err
 					}
-					if reply.StatusCode != 200 {
+					if reply.StatusCode != 200 || !strings.Contains(reply.Header.Get("Cache-Control"), "no-store") {
 						return nil, fmt.Errorf("input %s: %d %s", kind, reply.StatusCode, raw)
 					}
 					inputReads++

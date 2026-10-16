@@ -1,7 +1,9 @@
 package projections
 
 import (
+	"aster/contracts/evolution"
 	"context"
+	"database/sql"
 	"errors"
 )
 
@@ -39,6 +41,9 @@ func (s *Store) ExecuteProviderCall(ctx context.Context, lease RunLease, call Pr
 		if stored.Request != call.Request {
 			return zero, ErrConflict
 		}
+		if err := s.requireGenerationOutcome(ctx, stored, retained); err != nil {
+			return zero, err
+		}
 		return retained, nil
 	}
 	if !errors.Is(err, ErrNotFound) {
@@ -58,7 +63,7 @@ func (s *Store) ExecuteProviderCall(ctx context.Context, lease RunLease, call Pr
 	}
 	outcome, err := provider.Lookup(ctx, prepared)
 	if errors.Is(err, ErrProviderCallNotFound) {
-		request, readErr := s.Artifact(ctx, prepared.Request)
+		request, readErr := s.NonDatasetArtifact(ctx, prepared.Request)
 		if readErr != nil {
 			return zero, readErr
 		}
@@ -92,5 +97,28 @@ func (s *Store) ExecuteProviderCall(ctx context.Context, lease RunLease, call Pr
 	if err = s.RecordProviderOutcome(ctx, lease, outcome); err != nil {
 		return zero, err
 	}
+	if err = s.requireGenerationOutcome(ctx, prepared, outcome); err != nil {
+		return zero, err
+	}
 	return outcome, nil
+}
+
+// Accounting retains authenticated terminal outcomes even when their artifacts
+// are protected. Execution and cache replay must not expose those references.
+func (s *Store) requireGenerationOutcome(ctx context.Context, call ProviderCall, outcome ProviderOutcome) error {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	refs := append([]evolution.ArtifactRef{call.Request}, outcome.Evidence...)
+	if outcome.Output != nil {
+		refs = append(refs, *outcome.Output)
+	}
+	for _, ref := range refs {
+		if err := requireNonDatasetArtifact(ctx, tx, ref); err != nil {
+			return err
+		}
+	}
+	return nil
 }

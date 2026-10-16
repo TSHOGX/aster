@@ -68,7 +68,7 @@ func (w Worker) Step(ctx context.Context, group, id string) error {
 		if err = w.Authority.Artifact(ctx, run, checkpoint.Artifact); err != nil {
 			return err
 		}
-		raw, err := w.Store.Artifact(ctx, checkpoint.Artifact)
+		raw, err := w.Store.NonDatasetArtifact(ctx, checkpoint.Artifact)
 		if err != nil {
 			return err
 		}

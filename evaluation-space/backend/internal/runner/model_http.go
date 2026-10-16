@@ -139,6 +139,9 @@ func (p *HTTPModel) Lookup(ctx context.Context, call projections.ProviderCall) (
 	return p.call(ctx, http.MethodGet, "", call, node, run, nil, true)
 }
 func (p *HTTPModel) Submit(ctx context.Context, call projections.ProviderCall, raw []byte, ceiling projections.RunUsage) (projections.ProviderOutcome, error) {
+	if _, err := p.store.NonDatasetArtifact(ctx, call.Request); err != nil {
+		return projections.ProviderOutcome{}, err
+	}
 	node, run, err := p.frozen(ctx, call)
 	if err != nil {
 		return projections.ProviderOutcome{}, err

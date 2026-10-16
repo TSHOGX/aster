@@ -43,7 +43,7 @@ func (s *Store) GenerationOutput(ctx context.Context, scope evolution.Generation
 	if checkpoint.ID != "workflow-result" || checkpoint.Artifact.GrantID != grant.ID || checkpoint.Artifact.SchemaDigest != evolution.Digest(schemas) || checkpoint.Artifact.PolicyRevision != run.Pins.SourcePolicyRevision {
 		return output, ErrConflict
 	}
-	raw, err := s.Artifact(ctx, checkpoint.Artifact)
+	raw, err := s.NonDatasetArtifact(ctx, checkpoint.Artifact)
 	if err != nil {
 		return output, err
 	}
@@ -57,6 +57,9 @@ func (s *Store) GenerationOutput(ctx context.Context, scope evolution.Generation
 	}
 	identity := evolution.Digest([]byte(fmt.Sprintf("%s/%s/%s", scope.RunID, scope.Port, evolution.Digest(body))))
 	ref := evolution.ArtifactRef{ID: "output-" + strings.TrimPrefix(identity, "sha256:"), GroupID: scope.GroupID, SchemaDigest: schema, Digest: evolution.Digest(body), Size: int64(len(body)), MediaType: "application/json", GrantID: grant.ID, PolicyRevision: run.Pins.SourcePolicyRevision}
+	if err = requireNonDatasetArtifact(ctx, s.db, ref); err != nil {
+		return output, err
+	}
 	if err = s.SealArtifact(ctx, ref, bytes.NewReader(body)); err != nil {
 		return output, err
 	}

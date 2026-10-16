@@ -45,7 +45,7 @@ func (s *Store) SaveRunCheckpoint(ctx context.Context, lease RunLease, value Run
 	if value.Artifact.GroupID != group {
 		return fmt.Errorf("checkpoint artifact group mismatch")
 	}
-	if err = requireSealedArtifact(ctx, tx, value.Artifact); err != nil {
+	if err = requireSealedGenerationArtifact(ctx, tx, value.Artifact); err != nil {
 		return err
 	}
 	var prior []byte
@@ -108,7 +108,7 @@ func (s *Store) ReadWorkflowCheckpoint(ctx context.Context, group, run, id strin
 	if err != nil || checkpoint.ID != id || checkpoint.RunID != run || checkpoint.Artifact.GroupID != group || checkpoint.Artifact.SchemaDigest != WorkflowCheckpointSchema {
 		return RunCheckpoint{}, snapshot, ErrConflict
 	}
-	raw, err = s.Artifact(ctx, checkpoint.Artifact)
+	raw, err = s.NonDatasetArtifact(ctx, checkpoint.Artifact)
 	if err != nil {
 		return checkpoint, snapshot, err
 	}

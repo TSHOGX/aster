@@ -99,7 +99,7 @@ func (s *Store) PreviewRunExperiment(ctx context.Context, input RunExperimentReq
 		if artifact.GroupID != input.GroupID {
 			return result, ErrConflict
 		}
-		if _, err = s.Artifact(ctx, artifact); err != nil {
+		if _, err = s.NonDatasetArtifact(ctx, artifact); err != nil {
 			result.Reasons = append(result.Reasons, "dependency_unavailable")
 			break
 		}
@@ -200,7 +200,7 @@ func (s *Store) CreateRunExperiment(ctx context.Context, input RunExperimentRequ
 		return result, ErrConflict
 	}
 	for _, artifact := range preview.Dependencies {
-		if err = requireSealedArtifact(ctx, tx, artifact); err != nil {
+		if err = requireSealedGenerationArtifact(ctx, tx, artifact); err != nil {
 			return result, err
 		}
 	}

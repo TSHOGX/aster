@@ -47,7 +47,7 @@ func (s *Store) AppendRunEvent(ctx context.Context, lease RunLease, event evolut
 			return event, fmt.Errorf("event artifact group mismatch or duplicate identity")
 		}
 		artifacts[artifact.ID] = true
-		if err = requireSealedArtifact(ctx, tx, artifact); err != nil {
+		if err = requireSealedGenerationArtifact(ctx, tx, artifact); err != nil {
 			return event, err
 		}
 	}

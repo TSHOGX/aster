@@ -91,7 +91,7 @@ func (s *Store) AdmitRun(ctx context.Context, input RunAdmission) (evolution.Run
 		return result, fmt.Errorf("%w: %v", ErrCatalog, err)
 	}
 	for _, artifact := range input.Pins.Inputs {
-		if err = requireSealedArtifact(ctx, tx, artifact); err != nil {
+		if err = requireSealedGenerationArtifact(ctx, tx, artifact); err != nil {
 			return result, err
 		}
 	}

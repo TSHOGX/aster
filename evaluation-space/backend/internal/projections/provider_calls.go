@@ -43,7 +43,7 @@ func (s *Store) PrepareProviderCall(ctx context.Context, lease RunLease, id stri
 	if request.GroupID != run.GroupID {
 		return result, fmt.Errorf("provider request group mismatch")
 	}
-	if err = requireSealedArtifact(ctx, tx, request); err != nil {
+	if err = requireSealedGenerationArtifact(ctx, tx, request); err != nil {
 		return result, err
 	}
 	var state string

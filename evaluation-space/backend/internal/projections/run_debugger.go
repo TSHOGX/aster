@@ -69,6 +69,8 @@ func (s *Store) RunDebugger(ctx context.Context, group, run, after string, limit
 		return result, err
 	}
 	for _, id := range calls {
+		// Even a now-protected observation consumes its cursor position.
+		result.NextAfter = id
 		observation, readErr := s.RunProviderObservation(ctx, group, run, id)
 		if errors.Is(readErr, ErrNotFound) {
 			continue
@@ -77,7 +79,6 @@ func (s *Store) RunDebugger(ctx context.Context, group, run, after string, limit
 			return result, readErr
 		}
 		result.Observations = append(result.Observations, observation)
-		result.NextAfter = id
 	}
 	return result, nil
 }

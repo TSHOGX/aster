@@ -61,6 +61,9 @@ func (j WorkflowJournal) Begin(ctx context.Context, call workflow.Call, maximum 
 	if err != nil {
 		return record, err
 	}
+	if err = requireNonDatasetRun(ctx, tx, run.GroupID, run.ID); err != nil {
+		return record, err
+	}
 	if run.Pins.Workflow.Validate() != nil || run.Pins.SourcePolicyRevision < 1 {
 		return record, fmt.Errorf("invalid workflow checkpoint provenance")
 	}
@@ -160,6 +163,9 @@ func (j WorkflowJournal) Complete(ctx context.Context, record workflow.Record) e
 	if err != nil {
 		return err
 	}
+	if err = requireNonDatasetArtifact(ctx, tx, artifact); err != nil {
+		return err
+	}
 	if err = storeSealedArtifact(ctx, tx, artifact, metadata, snapshot); err != nil {
 		return err
 	}
@@ -202,8 +208,13 @@ func (s *Store) WorkflowAttempt(ctx context.Context, group, run, id string) (wor
 	if !manifest.ValidID(group) || !manifest.ValidID(run) || !manifest.ValidID(id) {
 		return workflow.Record{}, ErrNotFound
 	}
+	tx, err := s.beginGenerationRead(ctx, group, run)
+	if err != nil {
+		return workflow.Record{}, err
+	}
+	defer tx.Rollback()
 	var raw []byte
-	err := s.db.QueryRowContext(ctx, "SELECT a.record FROM workflow_attempts a JOIN runs r ON r.id=a.run_id WHERE r.group_id=? AND r.id=? AND a.id=?", group, run, id).Scan(&raw)
+	err = tx.QueryRowContext(ctx, "SELECT a.record FROM workflow_attempts a JOIN runs r ON r.id=a.run_id WHERE r.group_id=? AND r.id=? AND a.id=?", group, run, id).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return workflow.Record{}, ErrNotFound
 	}
@@ -218,7 +229,12 @@ func (s *Store) WorkflowAttemptPage(ctx context.Context, group, run, after strin
 	if limit < 1 || limit > 100 || after != "" && !manifest.ValidID(after) {
 		return result, fmt.Errorf("invalid workflow attempt page")
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT a.record FROM workflow_attempts a JOIN runs r ON r.id=a.run_id WHERE r.group_id=? AND r.id=? AND a.id>? ORDER BY a.id LIMIT ?", group, run, after, limit+1)
+	tx, err := s.beginGenerationRead(ctx, group, run)
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, "SELECT a.record FROM workflow_attempts a JOIN runs r ON r.id=a.run_id WHERE r.group_id=? AND r.id=? AND a.id>? ORDER BY a.id LIMIT ?", group, run, after, limit+1)
 	if err != nil {
 		return result, err
 	}
@@ -252,7 +268,12 @@ func (s *Store) CheckpointWorkflowAttempts(ctx context.Context, group, run, chec
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT a.record FROM workflow_attempts a JOIN run_events e ON e.run_id=a.run_id AND e.event_id=a.id||'-attempt-'||a.state WHERE a.run_id=? AND e.sequence<=? AND a.id>? AND a.state<>'running' ORDER BY a.id LIMIT ?", run, snapshot.Through, after, limit)
+	tx, err := s.beginGenerationRead(ctx, group, run)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, "SELECT a.record FROM workflow_attempts a JOIN run_events e ON e.run_id=a.run_id AND e.event_id=a.id||'-attempt-'||a.state WHERE a.run_id=? AND e.sequence<=? AND a.id>? AND a.state<>'running' ORDER BY a.id LIMIT ?", run, snapshot.Through, after, limit)
 	if err != nil {
 		return nil, err
 	}

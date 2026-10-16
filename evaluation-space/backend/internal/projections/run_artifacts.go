@@ -72,7 +72,7 @@ func (s *Store) RunArtifact(ctx context.Context, group, run, id string) (evoluti
 	if err != nil {
 		return ref, nil, err
 	}
-	body, err := s.Artifact(ctx, ref)
+	body, err := s.NonDatasetArtifact(ctx, ref)
 	return ref, body, err
 }
 
@@ -86,7 +86,7 @@ func (s *Store) RunArtifacts(ctx context.Context, group, run, after string, limi
 	if err := s.requireArtifactRun(ctx, group, run); err != nil {
 		return result, err
 	}
-	rows, err := s.db.QueryContext(ctx, advertisedRunArtifacts+"SELECT metadata,variants FROM refs WHERE id>:after ORDER BY id LIMIT :limit", sql.Named("run", run), sql.Named("after", after), sql.Named("limit", limit+1))
+	rows, err := s.db.QueryContext(ctx, advertisedRunArtifacts+`SELECT metadata,variants FROM refs WHERE id>:after AND NOT EXISTS(SELECT 1 FROM catalog_definitions d WHERE d.kind='profile' AND (json_extract(d.body,'$.dataset.digest')=json_extract(refs.metadata,'$.digest') OR (json_extract(d.body,'$.dataset.group_id')=json_extract(refs.metadata,'$.group_id') AND json_extract(d.body,'$.dataset.id')=refs.id))) ORDER BY id LIMIT :limit`, sql.Named("run", run), sql.Named("after", after), sql.Named("limit", limit+1))
 	if err != nil {
 		return result, err
 	}

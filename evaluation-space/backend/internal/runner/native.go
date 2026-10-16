@@ -130,7 +130,7 @@ func (r nativeRuntime) Execute(ctx context.Context, call workflow.Call) (workflo
 	if err = r.executor.Authority.AuthorizeArtifact(ctx, r.run, *outcome.Output); err != nil {
 		return nil, err
 	}
-	output, err := r.executor.Registry.Store.Artifact(ctx, *outcome.Output)
+	output, err := r.executor.Registry.Store.NonDatasetArtifact(ctx, *outcome.Output)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func (e *NativeExecutor) Execute(ctx context.Context, lease projections.RunLease
 		if err = e.Authority.AuthorizeArtifact(ctx, run, artifact); err != nil {
 			return "", err
 		}
-		raw, err := e.Registry.Store.Artifact(ctx, artifact)
+		raw, err := e.Registry.Store.NonDatasetArtifact(ctx, artifact)
 		if err != nil {
 			return "", err
 		}

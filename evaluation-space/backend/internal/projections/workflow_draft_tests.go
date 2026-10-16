@@ -143,7 +143,7 @@ func (s *Store) CreateWorkflowDraftTest(ctx context.Context, input WorkflowDraft
 		return result, ErrConflict
 	}
 	for _, artifact := range source.Pins.Inputs {
-		if err = requireSealedArtifact(ctx, tx, artifact); err != nil {
+		if err = requireSealedGenerationArtifact(ctx, tx, artifact); err != nil {
 			return result, err
 		}
 	}

@@ -22,6 +22,8 @@ type ProviderOutcome struct {
 
 // RecordProviderOutcome atomically retains a verified provider result and settles
 // its budget hold. The transport is responsible for authenticating the outcome.
+// Protected artifacts remain private for accounting; generation execution and
+// browser observation/download must independently exclude registered datasets.
 func (s *Store) RecordProviderOutcome(ctx context.Context, lease RunLease, value ProviderOutcome) error {
 	if !manifest.ValidID(value.CallID) || value.ProviderRequestID == "" || len(value.ProviderRequestID) > 512 || value.Usage.Tokens < 0 || value.Usage.CostMicros < 0 {
 		return fmt.Errorf("invalid provider outcome")
@@ -172,7 +174,7 @@ func (s *Store) RunProviderObservation(ctx context.Context, group, run, id strin
 		if artifact.GroupID != group {
 			return RunProviderObservation{}, ErrConflict
 		}
-		if err = requireSealedArtifact(ctx, tx, artifact); err != nil {
+		if err = requireSealedGenerationArtifact(ctx, tx, artifact); err != nil {
 			return RunProviderObservation{}, err
 		}
 	}

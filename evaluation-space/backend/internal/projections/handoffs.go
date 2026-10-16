@@ -57,7 +57,7 @@ func (s *Store) PrepareHandoff(ctx context.Context, group string, patch evolutio
 			if entry.Artifact.GroupID != group {
 				return result, ErrConflict
 			}
-			if err = requireSealedArtifact(ctx, tx, *entry.Artifact); err != nil {
+			if err = requireSealedGenerationArtifact(ctx, tx, *entry.Artifact); err != nil {
 				return result, err
 			}
 		}

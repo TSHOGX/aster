@@ -29,7 +29,7 @@ func (s *Store) RunResultArtifact(ctx context.Context, scope evolution.RunResult
 	}
 	for _, entry := range handoff.Patch.Entries {
 		if entry.Artifact != nil && *entry.Artifact == ref {
-			return s.Artifact(ctx, ref)
+			return s.NonDatasetArtifact(ctx, ref)
 		}
 	}
 	return nil, ErrNotFound

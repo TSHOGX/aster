@@ -350,6 +350,15 @@ Evaluator implementations must return aggregate reports without raw answers or
 detailed grading traces. Evaluation Space rejects reports that identify a protected
 dataset or have the same digest as any registered profile's dataset. Downloads
 repeat that check, including datasets registered after a report was completed.
+The same exclusion applies to generation inputs, provider requests, checkpoint
+reuse, handoff artifacts and run downloads, including identical bytes stored under
+another ID or group. If a retained run input or advertised artifact later becomes
+a registered dataset, inline attempt inspection and replay become unavailable.
+Dataset registration does not erase earlier downloads or detect arbitrary rewritten
+copies; provision held-out data before use and keep it out of generation sources.
+Already-dispatched provider calls can still be looked up or cancelled, and confirmed
+usage still settles. Protected results remain unavailable to generation, cached
+execution and the inspector; uncertain calls retain their budget holds.
 Run inspectors can request a source-authorized debugger projection for bounded
 budget usage and retained provider observations. Providers that expose only opaque
 job evidence are labeled as such; the UI does not infer tool or internal model
