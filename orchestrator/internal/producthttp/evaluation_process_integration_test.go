@@ -42,12 +42,17 @@ type evaluationProcessCase struct {
 	PathPolicy        bool
 	StaleMain         bool
 	Replacement       bool
+	Revert            bool
 	PartialSelection  bool
 	Permissions       bool
 }
 
 func TestRequiredEvaluationRealProcesses(t *testing.T) {
 	evaluationPolicyProcesses(t, evaluationProcessCase{Mode: "required", Outcome: "pass"})
+}
+
+func TestReviewedRevertEvaluationRealProcesses(t *testing.T) {
+	evaluationPolicyProcesses(t, evaluationProcessCase{Mode: "required", Outcome: "pass", Revert: true})
 }
 
 func TestPartialCompositionEvaluationRealProcesses(t *testing.T) {
@@ -723,6 +728,17 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 		draftRevision++
 	}
 	post("/branches/"+branch.ID+"/commits", map[string]any{"request_id": "commit", "expected_revision": draftRevision, "expected_head": branch.Head, "message": "Reviewed skill"}, &checkpoint)
+	if test.Revert {
+		original := checkpoint.Commit
+		post("/branches/"+branch.ID+"/draft/text", map[string]any{"request_id": "bad-edit", "expected_revision": draftRevision, "expected_head": original, "path": "skills/derived/SKILL.md", "text": "# Superseded edit\nDo not use this instruction.\n"}, nil)
+		post("/branches/"+branch.ID+"/commits", map[string]any{"request_id": "bad-commit", "expected_revision": draftRevision + 1, "expected_head": original, "message": "Superseded edit"}, &checkpoint)
+		target := checkpoint.Commit
+		post("/branches/revert", map[string]any{"request_id": "reviewed-revert", "name": "Reviewed inverse candidate", "commit": target, "parent": original}, &branch)
+		if branch.Head != target {
+			t.Fatal("inverse changed base", branch)
+		}
+		post("/branches/"+branch.ID+"/commits", map[string]any{"request_id": "revert-commit", "expected_revision": 1, "expected_head": target, "message": "Review inverse before evaluation"}, &checkpoint)
+	}
 	var prepared evaluationProcessPrepared
 	if test.PartialSelection {
 		post("/integrations/compose", map[string]any{"request_id": "partial", "expected_main": main.CommitID, "expected_policy_revision": 1, "branches": []any{map[string]any{"branch_id": branch.ID, "expected_head": checkpoint.Commit, "selected_paths": []string{"skills/derived"}}}}, &prepared)

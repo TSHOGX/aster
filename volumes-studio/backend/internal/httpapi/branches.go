@@ -41,6 +41,14 @@ func (a *AuthoringAPI) registerBranches() {
 		value, err := a.Store.CreateBranch(r.Context(), actor(r), r.PathValue("library"), input)
 		respond(w, 201, value, err)
 	})
+	a.mux.HandleFunc("POST "+root+"/revert", func(w http.ResponseWriter, r *http.Request) {
+		var input authoring.RevertBranchInput
+		if !decodeBody(w, r, &input) {
+			return
+		}
+		value, err := a.Store.RevertBranch(r.Context(), actor(r), r.PathValue("library"), input)
+		respond(w, 201, value, err)
+	})
 	a.mux.HandleFunc("GET "+root+"/{branch}", func(w http.ResponseWriter, r *http.Request) {
 		value, err := a.Store.Branch(r.Context(), actor(r), r.PathValue("library"), r.PathValue("branch"))
 		respond(w, 200, value, err)

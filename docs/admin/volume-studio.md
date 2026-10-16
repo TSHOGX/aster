@@ -275,6 +275,25 @@ history, comparison metadata and file content. **Retry** reloads the pinned URL
 identities after access or connectivity is restored. History controls wait for the
 initial read so an older response cannot replace a newer selected head.
 
+To undo an authored change, choose **Review inverse change** on its history commit.
+Select an explicit immediate parent, enter a **Revert branch name**, and choose
+**Preview inverse change**. For merge commits, the selected parent determines which
+side is retained; root commits have no inverse parent. The preview compares the
+selected commit with that parent, with exact file downloads and paginated paths.
+Choose **Create revert branch** to save the inverse as a new branch draft. Its head
+and base remain the selected commit. Inspect and **Commit saved draft**, then
+prepare against current main. Later independent changes survive; conflicting edits
+need resolution. Fresh evaluation and expert approval apply before acceptance.
+Creating a branch from an old snapshot alone does not undo accepted changes.
+
+If creation is unconfirmed, reload and choose **Recover revert creation** to replay
+the exact original request. Recovery is scoped to this account and Volume and appears
+only after current read access succeeds. Invalid local records block creation until
+explicitly discarded. The original request may already have created a branch, so
+check branch history before discarding recovery. When local recovery storage fails,
+keep the tab open until confirmation. Reverting never rewrites old history or changes
+Project deployments; deployment rollback is a separate explicit action in Aster.
+
 ## Publish a version
 
 1. Open the accepted integration and enter a **Version label** and **Release note**.

@@ -4,6 +4,7 @@ import { api, base, bytes, type Entry } from "../lib/api";
 import { branchAPI } from "../lib/branches";
 import { useT } from "../lib/i18n";
 import { intlLocale } from "../../../web/i18n/locale";
+import { ReviewedRevert } from "./reviewed-revert";
 import { TextDiff } from "./changes";
 
 type Commit = {id:string;parents:string[];created_at:number;message:string};
@@ -15,6 +16,7 @@ type Preview = {commit_id:string;entry:Entry;text?:string;preview:string};
 export function History({library,branch}:{library:string;branch?:string}) {
  const tr=useT();
  const root=`/libraries/${encodeURIComponent(library)}`;
+ const [revert,setRevert]=useState<Commit>();
  const [head,setHead]=useState("");
  const [from,setFrom]=useState("");
  const [to,setTo]=useState("");
@@ -89,11 +91,13 @@ export function History({library,branch}:{library:string;branch?:string}) {
     <code>{commit.id}</code><p className="preserve-lines">{commit.message}</p>
     <time dateTime={new Date(commit.created_at*1000).toISOString()}>{new Date(commit.created_at*1000).toLocaleString(intlLocale())}</time>
     <div>{tr("Parents")}: {commit.parents.length?commit.parents.map(parent=><button key={parent} disabled={busy} onClick={()=>void run(signal=>loadHead(parent,signal))}><code>{parent}</code></button>):tr("None")}</div>
+    {commit.parents.length>0&&<button disabled={busy} onClick={()=>setRevert(commit)}>{tr("Review inverse change")}</button>}
     <button disabled={busy} onClick={()=>setFrom(commit.id)}>{tr("Use as comparison base")}</button>
     <button disabled={busy} onClick={()=>setTo(commit.id)}>{tr("Use as comparison target")}</button>
    </li>)}</ol>
    {history.next&&<button disabled={busy} onClick={()=>void run(async signal=>{const page=await api<HistoryPage>(`${root}/history?${new URLSearchParams({head:history.head,cursor:history.next})}`,{signal});if(signal.aborted)return;setHistory({...page,commits:[...history.commits,...page.commits]});})}>{tr("Load more commits")}</button>}
   </>}
+  <ReviewedRevert key={library} library={library} selection={history?revert:undefined} authorized={!!history}/>
   <h2>{tr("Compare snapshots")}</h2>
   <form onSubmit={event=>{event.preventDefault();void run(compare);}}>
    <label>{tr("Base commit")} <input value={from} disabled={busy} onChange={event=>setFrom(event.target.value)}/></label>

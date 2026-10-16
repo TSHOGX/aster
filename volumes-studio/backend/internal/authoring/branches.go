@@ -70,6 +70,27 @@ func (s *Store) branch(ctx context.Context, library, id string) (Branch, error) 
 // CreateBranch copies an exact immutable snapshot into isolated saved draft state.
 // Main is never represented as a mutable draft branch.
 func (s *Store) CreateBranch(ctx context.Context, a Actor, library string, input CreateBranchInput) (Branch, error) {
+	return s.createBranch(ctx, a, library, input, "", "branch.create", requestDigest("branch.create", library, input))
+}
+
+// RevertBranchInput identifies a reviewed inverse without moving protected main.
+// The explicit immediate parent disambiguates merge commits. The saved draft is
+// that parent's snapshot while the branch base and head remain the selected commit.
+type RevertBranchInput struct {
+	RequestID string `json:"request_id"`
+	Name      string `json:"name"`
+	Commit    string `json:"commit"`
+	Parent    string `json:"parent"`
+}
+
+func (s *Store) RevertBranch(ctx context.Context, a Actor, library string, input RevertBranchInput) (Branch, error) {
+	if !evolution.ObjectID(input.Parent) {
+		return Branch{}, ErrInvalid
+	}
+	return s.createBranch(ctx, a, library, CreateBranchInput{RequestID: input.RequestID, Name: input.Name, BaseCommit: input.Commit}, input.Parent, "branch.revert", requestDigest("branch.revert", library, input))
+}
+
+func (s *Store) createBranch(ctx context.Context, a Actor, library string, input CreateBranchInput, parent, operation, body string) (Branch, error) {
 	if !manifest.ValidID(library) || !evolution.ObjectID(input.BaseCommit) || !validText(input.Name, 128) || strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Name) != input.Name || input.Name == "main" {
 		return Branch{}, ErrInvalid
 	}
@@ -81,7 +102,6 @@ func (s *Store) CreateBranch(ctx context.Context, a Actor, library string, input
 	if s.poisoned {
 		return Branch{}, ErrBusy
 	}
-	body := requestDigest("branch.create", library, input)
 	var b Branch
 	if replay, err := readReceipt(ctx, s.db.DB, a, input.RequestID, body, &b); err != nil || replay {
 		return b, err
@@ -111,12 +131,37 @@ func (s *Store) CreateBranch(ctx context.Context, a Actor, library string, input
 	if snapshot.Profile != l.Profile {
 		return b, ErrInvalid
 	}
+	draftCommit := input.BaseCommit
+	if parent != "" {
+		parents, err := r.Parents(ctx, input.BaseCommit)
+		if err != nil {
+			return b, err
+		}
+		found := false
+		for _, candidate := range parents {
+			if candidate == parent {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return b, ErrInvalid
+		}
+		draftCommit = parent
+		snapshot, err = r.Snapshot(ctx, draftCommit)
+		if err != nil {
+			return b, err
+		}
+		if snapshot.Profile != l.Profile {
+			return b, ErrInvalid
+		}
+	}
 	// Materialize only digest-addressed blobs. Paths never become host filenames.
 	for _, entry := range snapshot.Entries {
 		if entry.Kind != "file" {
 			continue
 		}
-		if err = s.materialize(ctx, entry, func(w io.Writer) error { return r.ExportFile(ctx, input.BaseCommit, entry.Path, w) }); err != nil {
+		if err = s.materialize(ctx, entry, func(w io.Writer) error { return r.ExportFile(ctx, draftCommit, entry.Path, w) }); err != nil {
 			return b, err
 		}
 	}
@@ -139,7 +184,7 @@ func (s *Store) CreateBranch(ctx context.Context, a Actor, library string, input
 			return b, err
 		}
 	}
-	if err = s.record(ctx, tx, a, input.RequestID, body, "branch.create", library, 1, b); err != nil {
+	if err = s.record(ctx, tx, a, input.RequestID, body, operation, library, 1, b); err != nil {
 		return b, err
 	}
 	if err = tx.Commit(); err != nil {
