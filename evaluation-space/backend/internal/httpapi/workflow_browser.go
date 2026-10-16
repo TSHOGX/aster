@@ -123,11 +123,16 @@ func BrowserWorkflowAPI(client *appidentity.Client, store *projections.Store) fu
 			Workflow evolution.Workflow `json:"workflow"`
 		}](http.MaxBytesReader(w, r.Body, evolution.MaxDocumentBytes))
 		if err != nil {
-			write(w, 400, map[string]string{"error": "invalid_workflow_test"})
+			write(w, 400, map[string]string{"error": "invalid_workflow_validation"})
 			return
 		}
 		if err = value.Workflow.Validate(); err != nil {
-			write(w, 422, map[string]string{"error": "workflow_validation_failed", "detail": err.Error()})
+			result := map[string]any{"error": "workflow_validation_failed"}
+			var field evolution.FieldError
+			if errors.As(err, &field) {
+				result["fields"] = []evolution.FieldError{field}
+			}
+			write(w, 422, result)
 			return
 		}
 		canonical, err := value.Workflow.Canonical()
@@ -142,7 +147,6 @@ func BrowserWorkflowAPI(client *appidentity.Client, store *projections.Store) fu
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft/revisions/{revision}", revision)
 	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft/publish", publish)
 	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft/validate", validate)
-	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft/test", validate)
 	return func(session appidentity.Session, w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(w, contextWithBrowserSession(r, session))
 	}

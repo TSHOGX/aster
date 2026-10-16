@@ -2,11 +2,14 @@ package httpapi
 
 import (
 	"aster/contracts/appidentity"
+	"aster/contracts/evolution"
 	"aster/evaluation-space/internal/projections"
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -59,7 +62,28 @@ func TestBrowserWorkflowDraftBoundaryRejectsAmbientCredentials(t *testing.T) {
 	if w := call("POST", "/evaluation-space/api/v1/groups/team/workflows/skills/draft/publish", "", "", map[string]any{"revision": 1}); w.Code != 404 && w.Code != 409 && w.Code != 422 {
 		t.Fatal(w.Code)
 	}
-	if w := call("POST", "/evaluation-space/api/v1/groups/team/workflows/skills/draft/test", "", "", map[string]any{"workflow": map[string]any{}}); w.Code != 400 && w.Code != 422 {
-		t.Fatalf("invalid draft test accepted: %d", w.Code)
+	if w := call("POST", "/evaluation-space/api/v1/groups/team/workflows/skills/draft/validate", "", "", map[string]any{"workflow": map[string]any{}}); w.Code != 400 && w.Code != 422 {
+		t.Fatalf("invalid draft validation accepted: %d", w.Code)
 	}
+	raw, err := os.ReadFile("../../../../contracts/evolution/testdata/skills.valid.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := evolution.DecodeWorkflow(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph.Nodes[0].Prompt.Text = "Extract {{missing}}"
+	graph.Nodes[0].Prompt.Digest = evolution.Digest([]byte(graph.Nodes[0].Prompt.Text))
+	w := call("POST", "/evaluation-space/api/v1/groups/team/workflows/skills/draft/validate", "", "", map[string]any{"workflow": graph})
+	var result struct {
+		Fields []evolution.FieldError `json:"fields"`
+	}
+	if w.Code != 422 || json.Unmarshal(w.Body.Bytes(), &result) != nil || len(result.Fields) != 1 || result.Fields[0].Path != "nodes[0].prompt.text" {
+		t.Fatalf("missing actionable validation field: %d %s", w.Code, w.Body.String())
+	}
+	if w := call("POST", "/evaluation-space/api/v1/groups/team/workflows/skills/draft/test", "", "", map[string]any{"workflow": graph}); w.Code != 404 {
+		t.Fatalf("validation-only test endpoint retained: %d", w.Code)
+	}
+
 }

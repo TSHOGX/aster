@@ -270,7 +270,9 @@ It does not expose the private catalog or worker APIs.
 Workflow editor routes under `/evaluation-space/groups/{group}/workflows/{workflow}`
 use the same client-bound central grant. Draft saves retain bounded typed graph JSON, including incomplete connections or
 unfinished node settings, and a separate layout object with independent revisions.
-Validate and Publish require a complete executable graph. Conflicts preserve local
+Validate and Publish require a complete executable graph. Validation reports the
+affected field and selects its node for correction; it does not execute the graph
+or charge a model budget. Conflicts preserve local
 edits and offer a recovery copy before loading the latest draft. Publication records an immutable workflow
 revision and does not activate it for a group. `workflow.edit` is explicit and
 separate from `config.manage`, `run.start` and `source.read`.

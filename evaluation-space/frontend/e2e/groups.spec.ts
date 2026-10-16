@@ -176,6 +176,12 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       const validate = page.getByRole("button", { name: tr("Validate draft", "验证草稿"), exact: true });
       const digest = page.getByRole("status").filter({ hasText: tr("Executable digest", "可执行摘要") });
       await validate.click(); await expect(digest).toContainText("sha256:");
+      await prompt.fill("Extract {{missing}} with evidence");
+      await page.getByRole("button", { name: /^critic\b/ }).click();
+      await validate.click();
+      await expect(page.getByRole("alert").filter({ hasText: tr("unbound prompt variable", "提示词变量未绑定") })).toContainText(".prompt.text");
+      await expect(prompt).toBeFocused(); await expect(prompt).toHaveValue("Extract {{missing}} with evidence");
+      await prompt.fill("Extract {{corpus}} with evidence"); await validate.click(); await expect(digest).toContainText("sha256:");
       const originalDigest = await digest.innerText();
       await save.click(); await expect(page.getByRole("status").filter({ hasText: tr("Draft saved.", "草稿已保存。") })).toBeVisible();
       let retained = await (await page.request.get(draftPath)).json();
