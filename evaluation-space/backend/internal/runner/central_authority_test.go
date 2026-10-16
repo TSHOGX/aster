@@ -234,8 +234,149 @@ func (c *centralGeneration) AuthorizeGenerationInput(context.Context, evolution.
 }
 func (c *centralGeneration) AdmitGeneration(_ context.Context, a evolution.GenerationAssignment) (evolution.GenerationGrant, error) {
 	digest, err := a.Digest()
-	if err != nil || digest != c.grant.AssignmentDigest {
+	if err != nil || digest != c.grant.AssignmentDigest || c.deny {
 		return evolution.GenerationGrant{}, errors.New("denied")
 	}
 	return c.grant, nil
+}
+
+// A real CentralAuthority must recover the admission intent before executing a
+// retry. The service fake models an admission committed before its reply is lost.
+type retryAdmissionCentral struct {
+	centralGeneration
+	admissions int
+	loseReply  bool
+}
+
+func (c *retryAdmissionCentral) AdmitGeneration(ctx context.Context, input evolution.GenerationAssignment) (evolution.GenerationGrant, error) {
+	c.admissions++
+	grant, err := c.centralGeneration.AdmitGeneration(ctx, input)
+	if err != nil {
+		return grant, err
+	}
+	if c.loseReply {
+		c.loseReply = false
+		return evolution.GenerationGrant{}, errors.New("lost admission reply")
+	}
+	return grant, nil
+}
+func TestCentralRetryRecoversAdmissionBeforeExecutionOrCancellation(t *testing.T) {
+	for _, mode := range []string{"execute", "revoked", "cancel"} {
+		t.Run(mode, func(t *testing.T) {
+			store, path, source, executor, provider := nativeFixture(t)
+			ctx := context.Background()
+			worker := Worker{Store: store, ID: "source-worker", Authority: executor.Authority, Executor: executor}
+			if err := worker.Step(ctx); err != nil {
+				t.Fatal(err)
+			}
+			retry, err := store.RetryRun(ctx, projections.RunRetry{GroupID: source.GroupID, RequestID: "retry", SourceRunID: source.ID, NewRunID: "retry-run"}, evolution.Principal{Issuer: "https://app", Subject: "operator", Kind: "human"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assignment, err := store.PendingGenerationAssignment(ctx, source.GroupID, retry.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest, err := assignment.Digest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			grant := evolution.GenerationGrant{ID: "retry-grant", RunID: retry.ID, GroupID: retry.GroupID, AssignmentDigest: digest}
+			central := &retryAdmissionCentral{centralGeneration: centralGeneration{assignment: assignment, grant: grant, state: "admitted"}, loseReply: true}
+			authority := CentralAuthority{Store: store, Central: central}
+			if err = authority.AuthorizeRun(ctx, retry, false); err == nil {
+				t.Fatal("lost reply succeeded")
+			}
+			if _, _, err = store.GenerationGrant(ctx, retry.GroupID, retry.ID); !errors.Is(err, projections.ErrNotFound) {
+				t.Fatal("lost reply retained authority", err)
+			}
+			if provider.calls != 1 {
+				t.Fatal("executed before admission")
+			}
+			// Reopen durable state: no in-memory request/receipt is needed to recover.
+			if err = store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			store, err = projections.Open(ctx, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			authority.Store = store
+			executor.Registry.Store = store
+			provider.store = store
+			executor.Authority = authority
+			provider.outcome = nil
+			central.deny = mode == "revoked"
+			if mode == "cancel" {
+				_, err = store.ControlRun(ctx, projections.RunControl{RequestID: "cancel-retry", RunID: retry.ID, Action: "cancel", ExpectedFence: 0})
+				if err != nil {
+					t.Fatal(err)
+				}
+				pending, err := store.UnsettledGenerations(ctx, "", 100)
+				if err != nil || len(pending) != 1 || pending[0].RunID != retry.ID {
+					t.Fatal("cancelled pending admission lost", pending, err)
+				}
+				retry, err = store.Run(ctx, retry.GroupID, retry.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = authority.ReconcileTerminal(ctx, retry); err != nil {
+					t.Fatal(err)
+				}
+				if central.state != "cancelled" || central.spent != (projections.RunUsage{}) || provider.calls != 1 {
+					t.Fatal("cancelled admission executed or retained budget", central)
+				}
+			} else {
+				worker = Worker{Store: store, ID: "retry-worker", Authority: authority, Executor: executor}
+				err = worker.Step(ctx)
+				if mode == "revoked" {
+					if err == nil || provider.calls != 1 {
+						t.Fatal("revoked receipt permitted execution", err, provider.calls)
+					}
+				} else {
+					if err != nil {
+						t.Fatal(err)
+					}
+					retry, err = store.Run(ctx, retry.GroupID, retry.ID)
+					if err != nil || retry.State != "completed" || provider.calls != 2 {
+						t.Fatal(retry, err, provider.calls)
+					}
+					if err = authority.ReconcileTerminal(ctx, retry); err != nil {
+						t.Fatal(err)
+					}
+					if central.spent.Tokens != 4 || central.spent.CostMicros != 7 {
+						t.Fatal("retry usage missing", central.spent)
+					}
+				}
+			}
+			if central.admissions != 2 {
+				t.Fatal("admission not replayed exactly", central.admissions)
+			}
+			_, retained, err := store.GenerationGrant(ctx, retry.GroupID, retry.ID)
+			if mode == "revoked" {
+				if !errors.Is(err, projections.ErrNotFound) {
+					t.Fatal("revoked pending admission retained a grant", err)
+				}
+			} else if err != nil || retained != grant {
+				t.Fatal("retry grant missing", retained, err)
+			}
+			original, err := store.Run(ctx, source.GroupID, source.ID)
+			if err != nil || original.State != "completed" || original.RetryOf != "" {
+				t.Fatal("source mutated", original, err)
+			}
+		})
+	}
+}
+
+func (c *centralGeneration) CancelGenerationAdmission(ctx context.Context, input evolution.GenerationAdmissionCancellation) (evolution.GenerationGrant, error) {
+	digest, err := input.Assignment.Digest()
+	if err != nil || digest != c.grant.AssignmentDigest {
+		return evolution.GenerationGrant{}, errors.New("wrong cancellation assignment")
+	}
+	return c.grant, nil
+}
+func (c *retryAdmissionCentral) CancelGenerationAdmission(ctx context.Context, input evolution.GenerationAdmissionCancellation) (evolution.GenerationGrant, error) {
+	c.admissions++
+	return c.centralGeneration.CancelGenerationAdmission(ctx, input)
 }

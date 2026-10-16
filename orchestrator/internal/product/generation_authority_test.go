@@ -182,3 +182,76 @@ func TestCompletedGenerationCanSettleAfterRevocationButCannotHandoff(t *testing.
 		t.Fatal("revocation authorized output handoff", err)
 	}
 }
+
+func TestGenerationCancellationReceiptRecoveryAfterRevocation(t *testing.T) {
+	s, token, input := generationFixture(t)
+	ctx := context.Background()
+	grant, err := s.AuthorizeGeneration(ctx, input)
+	must(t, err)
+	_, err = s.SetGenerationInputGrant(ctx, token, input.GroupID, GenerationInputGrantInput{RequestID: "revoke", ExpectedRevision: 1, Artifact: input.Pins.Inputs[0], SourceIDs: []string{"source"}, Enabled: false})
+	must(t, err)
+	recovered, err := s.CancelGenerationAdmission(ctx, evolution.GenerationAdmissionCancellation{Assignment: input, Fence: 1})
+	must(t, err)
+	if recovered != grant {
+		t.Fatal("lost admission could not recover exact receipt")
+	}
+	if _, err = s.ResolveGeneration(ctx, evolution.GenerationGrantScope{Grant: recovered, Action: "execute", Fence: 0}); !errors.Is(err, ErrForbidden) {
+		t.Fatal("receipt recovery bypassed revocation", err)
+	}
+	fresh := input
+	fresh.RunID, fresh.OccurrenceID = "retry", "retry-occurrence"
+	if _, err = s.AuthorizeGeneration(ctx, fresh); !errors.Is(err, ErrForbidden) {
+		t.Fatal("revoked new admission accepted", err)
+	}
+	must(t, s.ObserveGeneration(ctx, evolution.GenerationObservation{Grant: recovered, State: "cancelled", Fence: 1}))
+	must(t, s.SettleGeneration(ctx, GenerationSettlement{Grant: recovered, Fence: 1}))
+}
+
+func TestCancelPendingGenerationAdmissionFencesDelayedRequestsAfterRevocation(t *testing.T) {
+	for _, admitted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before-admission", true: "lost-admission-reply"}[admitted], func(t *testing.T) {
+			s, token, input := generationFixture(t)
+			ctx := context.Background()
+			var original evolution.GenerationGrant
+			if admitted {
+				var err error
+				original, err = s.AuthorizeGeneration(ctx, input)
+				must(t, err)
+			}
+			_, err := s.SetGenerationInputGrant(ctx, token, input.GroupID, GenerationInputGrantInput{RequestID: "revoke", ExpectedRevision: 1, Artifact: input.Pins.Inputs[0], SourceIDs: []string{"source"}, Enabled: false})
+			must(t, err)
+			cancel := evolution.GenerationAdmissionCancellation{Assignment: input, Fence: 1}
+			grant, err := s.CancelGenerationAdmission(ctx, cancel)
+			must(t, err)
+			if admitted && grant != original {
+				t.Fatal("existing reservation replaced")
+			}
+			replay, err := s.CancelGenerationAdmission(ctx, cancel)
+			must(t, err)
+			if replay != grant {
+				t.Fatal("cancellation receipt changed")
+			}
+			must(t, s.ObserveGeneration(ctx, evolution.GenerationObservation{Grant: grant, State: "cancelled", Fence: 1}))
+			must(t, s.SettleGeneration(ctx, GenerationSettlement{Grant: grant, Fence: 1}))
+			_, err = s.SetGenerationInputGrant(ctx, token, input.GroupID, GenerationInputGrantInput{RequestID: "restore", ExpectedRevision: 2, Artifact: input.Pins.Inputs[0], SourceIDs: []string{"source"}, Enabled: true})
+			must(t, err)
+			late, err := s.AuthorizeGeneration(ctx, input)
+			must(t, err)
+			if late != grant {
+				t.Fatal("late admission changed receipt")
+			}
+			if _, err = s.ResolveGeneration(ctx, evolution.GenerationGrantScope{Grant: late, Action: "execute", Fence: 1}); !errors.Is(err, ErrForbidden) {
+				t.Fatal("late admission resurrected cancelled work", err)
+			}
+			var held, used int
+			must(t, s.reader.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(used_tokens),0) FROM generation_authorizations WHERE settlement IS NULL OR used_tokens<>0 OR used_cost<>0").Scan(&held, &used))
+			if held != 0 || used != 0 {
+				t.Fatal("cancelled request retained budget or spend", held, used)
+			}
+			cancel.Assignment.Requester.Subject = "other"
+			if _, err = s.CancelGenerationAdmission(ctx, cancel); !errors.Is(err, ErrConflict) {
+				t.Fatal("cancel rebound requester", err)
+			}
+		})
+	}
+}

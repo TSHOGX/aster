@@ -34,8 +34,8 @@ type RunRetry struct {
 
 var ErrBindingBusy = errors.New("binding_has_active_run")
 
-// AdmitRun persists an already-authorized admission. The future admission service
-// must verify current central, source, artifact and reservation authority first;
+// AdmitRun persists an already-authorized admission. Its caller must verify
+// current central, source, artifact and reservation authority first;
 // an adopted projection alone is never evidence of current activation authority.
 func (s *Store) AdmitRun(ctx context.Context, input RunAdmission) (evolution.Run, error) {
 	var result evolution.Run
@@ -127,17 +127,20 @@ func (s *Store) AdmitRun(ctx context.Context, input RunAdmission) (evolution.Run
 // RetryRun creates one fresh queued run from a completed, failed or cancelled
 // run. The original run and every pinned identity remain immutable. Request
 // receipts make a lost response replay the same new run.
-func (s *Store) RetryRun(ctx context.Context, input RunRetry) (evolution.Run, error) {
+func (s *Store) RetryRun(ctx context.Context, input RunRetry, requester evolution.Principal) (evolution.Run, error) {
 	var result evolution.Run
 	for _, id := range []string{input.RequestID, input.SourceRunID, input.NewRunID} {
 		if !manifest.ValidID(id) {
 			return result, fmt.Errorf("invalid run retry identity")
 		}
 	}
-	if input.GroupID != "" && !manifest.ValidID(input.GroupID) {
+	if !manifest.ValidID(input.GroupID) || requester.Kind != "human" || requester.Issuer == "" || !manifest.ValidID(requester.Subject) {
 		return result, fmt.Errorf("invalid run retry group")
 	}
-	rawRequest, err := json.Marshal(input)
+	rawRequest, err := json.Marshal(struct {
+		Retry     RunRetry            `json:"retry"`
+		Requester evolution.Principal `json:"requester"`
+	}{input, requester})
 	if err != nil || len(rawRequest) > evolution.MaxDocumentBytes {
 		return result, fmt.Errorf("invalid run retry request")
 	}
@@ -198,6 +201,7 @@ func (s *Store) RetryRun(ctx context.Context, input RunRetry) (evolution.Run, er
 	result.State = "queued"
 	result.Fence = 0
 	result.RetryOf = input.SourceRunID
+	result.ResultBranch = ""
 	result.Handoff = "not_ready"
 	result.EvaluationState = evaluationState(result.Pins.Evaluation.Mode)
 	result.CreatedAt = time.Now().UTC()
@@ -210,6 +214,19 @@ func (s *Store) RetryRun(ctx context.Context, input RunRetry) (evolution.Run, er
 		return result, fmt.Errorf("invalid retry occurrence")
 	}
 	if _, err = tx.ExecContext(ctx, "INSERT INTO runs(id,group_id,binding_id,configuration_revision,occurrence_id,experiment_of,request,body,state) VALUES(?,?,?,?,?,?,?,?,?)", result.ID, group, binding, configurationRevision, retryOccurrence, experiment, rawRequest, newBody, result.State); err != nil {
+		return result, err
+	}
+	assignment := evolution.GenerationAssignment{BatchID: result.BatchID, RunID: result.ID, GroupID: group, BindingID: binding, OccurrenceID: retryOccurrence, Requester: requester, Pins: result.Pins, Budget: result.Budget}
+	if _, err = assignment.Digest(); err != nil {
+		return result, err
+	}
+	assignmentRaw, err := json.Marshal(assignment)
+	if err != nil {
+		return result, err
+	}
+	// Admission intent and run are one commit. A worker recovers central admission
+	// after a crash; queued work cannot execute without the exact retained grant.
+	if _, err = tx.ExecContext(ctx, "INSERT INTO generation_admissions(run_id,assignment) VALUES(?,?)", result.ID, assignmentRaw); err != nil {
 		return result, err
 	}
 	if _, err = tx.ExecContext(ctx, "INSERT INTO run_control_receipts(request_id,run_id,request,result) VALUES(?,?,?,?)", input.RequestID, input.SourceRunID, rawRequest, newBody); err != nil {

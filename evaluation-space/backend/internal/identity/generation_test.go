@@ -36,6 +36,16 @@ func TestGenerationTransportPinsAssignmentAndRejectsCentralSubstitution(t *testi
 			return
 		}
 		switch r.URL.Path {
+		case "/api/identity/v1/generation/cancel-admission":
+			value, err := evolution.Decode[evolution.GenerationAdmissionCancellation](r.Body)
+			if err != nil || value.Assignment.RunID != "run" || value.Fence != 7 {
+				t.Error("lost cancellation scope", value, err)
+			}
+			copy := grant
+			if mode == "substitute" {
+				copy.AssignmentDigest = evolution.Digest([]byte("other"))
+			}
+			_ = json.NewEncoder(w).Encode(copy)
 		case "/api/identity/v1/generation/admit":
 			value, err := evolution.Decode[evolution.GenerationAssignment](r.Body)
 			if err != nil || value.RunID != "run" {
@@ -76,6 +86,10 @@ func TestGenerationTransportPinsAssignmentAndRejectsCentralSubstitution(t *testi
 	if err != nil || got != grant {
 		t.Fatal(got, err)
 	}
+	cancel := evolution.GenerationAdmissionCancellation{Assignment: assignment, Fence: 7}
+	if got, err = authority.CancelGenerationAdmission(context.Background(), cancel); err != nil || got != grant {
+		t.Fatal("cancellation receipt", got, err)
+	}
 	scope := evolution.GenerationGrantScope{Grant: grant, Action: "handoff", Fence: 7}
 	if _, err = authority.ResolveGeneration(context.Background(), scope); err != nil {
 		t.Fatal(err)
@@ -87,6 +101,9 @@ func TestGenerationTransportPinsAssignmentAndRejectsCentralSubstitution(t *testi
 		t.Fatal(err)
 	}
 	mode = "substitute"
+	if _, err = authority.CancelGenerationAdmission(context.Background(), cancel); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("substituted cancellation receipt", err)
+	}
 	if _, err = authority.AdmitGeneration(context.Background(), assignment); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("substituted grant", err)
 	}

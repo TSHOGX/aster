@@ -42,12 +42,21 @@ func (a *ProjectionAuthority) generationCall(ctx context.Context, action string,
 	return raw, nil
 }
 func (a *ProjectionAuthority) AdmitGeneration(ctx context.Context, input evolution.GenerationAssignment) (evolution.GenerationGrant, error) {
+	return a.generationAdmissionReceipt(ctx, "admit", input, input)
+}
+func (a *ProjectionAuthority) CancelGenerationAdmission(ctx context.Context, input evolution.GenerationAdmissionCancellation) (evolution.GenerationGrant, error) {
+	if input.Fence < 1 {
+		return evolution.GenerationGrant{}, ErrUnauthorized
+	}
+	return a.generationAdmissionReceipt(ctx, "cancel-admission", input, input.Assignment)
+}
+func (a *ProjectionAuthority) generationAdmissionReceipt(ctx context.Context, action string, request any, input evolution.GenerationAssignment) (evolution.GenerationGrant, error) {
 	var grant evolution.GenerationGrant
 	digest, err := input.Digest()
 	if err != nil {
 		return grant, err
 	}
-	raw, err := a.generationCall(ctx, "admit", input)
+	raw, err := a.generationCall(ctx, action, request)
 	if err != nil {
 		return grant, err
 	}

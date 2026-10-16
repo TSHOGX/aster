@@ -525,3 +525,37 @@ func (s *Store) AuthorizeGenerationInput(ctx context.Context, artifact evolution
 		return s.auditEvent(ctx, tx, "evaluation-space", "generation.input.transfer", "artifact", artifact.ID, artifact.GrantID, artifact.PolicyRevision, map[string]string{"group_id": artifact.GroupID, "digest": artifact.Digest})
 	})
 }
+
+// CancelGenerationAdmission returns an existing exact receipt for cleanup, or
+// records a terminal zero-reservation receipt before a delayed admission arrives.
+// It deliberately requires no live source/output authority: it cannot start work.
+func (s *Store) CancelGenerationAdmission(ctx context.Context, input evolution.GenerationAdmissionCancellation) (evolution.GenerationGrant, error) {
+	var grant evolution.GenerationGrant
+	assignment := input.Assignment
+	digest, err := assignment.Digest()
+	if err != nil || input.Fence < 1 {
+		return grant, ErrInvalid
+	}
+	raw, _ := json.Marshal(assignment)
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		var prior, receipt []byte
+		err := tx.QueryRowContext(ctx, "SELECT assignment,grant FROM generation_authorizations WHERE run_id=?", assignment.RunID).Scan(&prior, &receipt)
+		if err == nil {
+			if !bytes.Equal(prior, raw) {
+				return ErrConflict
+			}
+			return json.Unmarshal(receipt, &grant)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		grant = evolution.GenerationGrant{ID: uuid.NewString(), RunID: assignment.RunID, GroupID: assignment.GroupID, AssignmentDigest: digest}
+		receipt, _ = json.Marshal(grant)
+		settlement, _ := json.Marshal(GenerationSettlement{Grant: grant, Fence: input.Fence})
+		if _, err = tx.ExecContext(ctx, `INSERT INTO generation_authorizations(id,run_id,group_id,binding_id,configuration_revision,occurrence_id,actor_id,assignment,assignment_digest,grant,state,fence,reserved_tokens,reserved_cost,settlement,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,'cancelled',?,0,0,?,?)`, grant.ID, assignment.RunID, assignment.GroupID, assignment.BindingID, assignment.Pins.ConfigurationRevision, assignment.OccurrenceID, assignment.Requester.Subject, raw, digest, receipt, input.Fence, settlement, s.timestamp()); err != nil {
+			return err
+		}
+		return s.auditEvent(ctx, tx, "evaluation-space", "generation.cancel-admission", "run", assignment.RunID, assignment.OccurrenceID, input.Fence, grant)
+	})
+	return grant, err
+}

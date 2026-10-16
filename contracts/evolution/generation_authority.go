@@ -91,3 +91,10 @@ type GenerationOutput struct {
 	Workflow Revision              `json:"workflow"`
 	Artifact ArtifactRef           `json:"artifact"`
 }
+
+// GenerationAdmissionCancellation closes a queued request even when the caller
+// never received its admission receipt. It cannot authorize execution.
+type GenerationAdmissionCancellation struct {
+	Assignment GenerationAssignment `json:"assignment"`
+	Fence      int64                `json:"fence"`
+}

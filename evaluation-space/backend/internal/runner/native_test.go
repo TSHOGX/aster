@@ -60,7 +60,7 @@ func (p *nativeProvider) Submit(ctx context.Context, call projections.ProviderCa
 	}
 	p.prompt = input.Prompt
 	out, _ := json.Marshal(workflow.Values{"value": json.RawMessage(`"model output"`)})
-	artifact := evolution.ArtifactRef{ID: "output-" + call.ID, GroupID: "group", SchemaDigest: evolution.Digest([]byte("schema")), Digest: evolution.Digest(out), Size: int64(len(out)), MediaType: "application/json", GrantID: call.Request.GrantID, PolicyRevision: 1}
+	artifact := evolution.ArtifactRef{ID: "output-" + call.RunID + "-" + call.ID, GroupID: "group", SchemaDigest: evolution.Digest([]byte("schema")), Digest: evolution.Digest(out), Size: int64(len(out)), MediaType: "application/json", GrantID: call.Request.GrantID, PolicyRevision: 1}
 	if err = p.store.SealArtifact(ctx, artifact, bytes.NewReader(out)); err != nil {
 		return projections.ProviderOutcome{}, err
 	}
@@ -177,7 +177,7 @@ func TestNativeTerminalRetryCreatesIndependentRunAndExecutes(t *testing.T) {
 	if err != nil || before.State != "completed" {
 		t.Fatal(before, err)
 	}
-	created, err := store.RetryRun(ctx, projections.RunRetry{GroupID: source.GroupID, RequestID: "native-retry", SourceRunID: source.ID, NewRunID: "native-retry-run"})
+	created, err := store.RetryRun(ctx, projections.RunRetry{GroupID: source.GroupID, RequestID: "native-retry", SourceRunID: source.ID, NewRunID: "native-retry-run"}, evolution.Principal{Issuer: "https://app", Subject: "operator", Kind: "human"})
 	if err != nil || created.State != "queued" || created.RetryOf != source.ID {
 		t.Fatal(created, err)
 	}

@@ -296,7 +296,13 @@ is active. For terminal jobs, use Refresh after the evaluator or service recover
 Completed, failed and canceled runs expose an explicit retry operation that creates
 a new queued run from the retained pins and records `retry_of`; it never rewrites
 the source run or accepts caller-supplied replacement inputs. The operation is
-group-scoped and request-replay safe.
+group-scoped and request-replay safe. The requesting account is frozen with the
+retry. It stays queued until the native worker obtains current central admission,
+including source/output authority and shared budget capacity. Admission recovery
+survives service restart and lost replies. Cancellation also closes an admission
+that has not yet returned, including after source authority is revoked. In the inspector,
+retrying a failed request after reload reuses its request ID until a successful
+response is received.
 Configuration managers can edit evaluator profiles from the Evaluation Space group
 page. The editor pins the dataset artifact, scorer, runtime, model, tools, metric
 thresholds and minimum sample/coverage requirements; publishing creates the next

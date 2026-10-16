@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -17,7 +18,7 @@ func TestRetryRunClonesTerminalPinsWithReplayAndGroupFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	source := evolution.Run{ID: "source", GroupID: "group", BindingID: "binding", Pins: evolution.RunPins{ConfigurationRevision: 3, ConfigurationDigest: evolution.Digest([]byte("config"))}, State: "failed", Handoff: "not_ready", EvaluationState: "not_requested", Budget: evolution.Budget{MaxTokens: 10, MaxAttempts: 2, TimeoutSeconds: 30, MaxArtifactBytes: 1024}}
+	source := evolution.Run{ID: "source", GroupID: "group", BindingID: "binding", Pins: evolution.RunPins{ConfigurationRevision: 3, ConfigurationDigest: evolution.Digest([]byte("config")), Base: evolution.ContentRef{LibraryID: "library", CommitID: strings.Repeat("a", 64), Profile: "authored-v1", TreeDigest: evolution.Digest([]byte("tree"))}, Output: evolution.OutputBinding{LibraryID: "library", Prefix: "skills", Profile: "authored-v1", ReservationGeneration: 1}}, State: "failed", ResultBranch: "source-result", Handoff: "submitted", EvaluationState: "not_requested", Budget: evolution.Budget{MaxTokens: 10, MaxAttempts: 2, TimeoutSeconds: 30, MaxArtifactBytes: 1024}}
 	body, err := json.Marshal(source)
 	if err != nil {
 		t.Fatal(err)
@@ -25,19 +26,38 @@ func TestRetryRunClonesTerminalPinsWithReplayAndGroupFence(t *testing.T) {
 	if _, err = s.db.ExecContext(ctx, "INSERT INTO runs(id,group_id,binding_id,configuration_revision,occurrence_id,request,body,state) VALUES(?,?,?,?,?,?,?,?)", source.ID, source.GroupID, source.BindingID, source.Pins.ConfigurationRevision, "source-occurrence", `{"source":true}`, body, source.State); err != nil {
 		t.Fatal(err)
 	}
-	created, err := s.RetryRun(ctx, RunRetry{GroupID: "group", RequestID: "retry-request", SourceRunID: "source", NewRunID: "retry-run"})
+	created, err := s.RetryRun(ctx, RunRetry{GroupID: "group", RequestID: "retry-request", SourceRunID: "source", NewRunID: "retry-run"}, evolution.Principal{Issuer: "https://app", Subject: "operator", Kind: "human"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.ID != "retry-run" || created.State != "queued" || created.RetryOf != "source" || !reflect.DeepEqual(created.Pins, source.Pins) || created.Fence != 0 {
+	if created.ID != "retry-run" || created.State != "queued" || created.RetryOf != "source" || !reflect.DeepEqual(created.Pins, source.Pins) || created.Fence != 0 || created.ResultBranch != "" || created.Handoff != "not_ready" {
 		t.Fatal("retry did not preserve terminal pins", created)
 	}
-	replay, err := s.RetryRun(ctx, RunRetry{GroupID: "group", RequestID: "retry-request", SourceRunID: "source", NewRunID: "retry-run"})
+	replay, err := s.RetryRun(ctx, RunRetry{GroupID: "group", RequestID: "retry-request", SourceRunID: "source", NewRunID: "retry-run"}, evolution.Principal{Issuer: "https://app", Subject: "operator", Kind: "human"})
 	if err != nil || replay.ID != created.ID || replay.CreatedAt != created.CreatedAt {
 		t.Fatal("retry receipt changed identity", replay, err)
 	}
-	if _, err = s.RetryRun(ctx, RunRetry{GroupID: "other", RequestID: "wrong-group", SourceRunID: "source", NewRunID: "other-run"}); err != ErrConflict {
+	if _, err = s.RetryRun(ctx, RunRetry{GroupID: "other", RequestID: "wrong-group", SourceRunID: "source", NewRunID: "other-run"}, evolution.Principal{Issuer: "https://app", Subject: "operator", Kind: "human"}); err != ErrConflict {
 		t.Fatal("cross-group retry accepted", err)
+	}
+	assignment, err := s.PendingGenerationAssignment(ctx, "group", created.ID)
+	if err != nil || assignment.RunID != created.ID || assignment.Requester.Subject != "operator" || assignment.Automatic || assignment.OccurrenceID != "retry-"+created.ID {
+		t.Fatal("missing durable admission intent", assignment, err)
+	}
+	if _, _, err = s.GenerationGrant(ctx, "group", created.ID); err != ErrNotFound {
+		t.Fatal("intent was treated as authority", err)
+	}
+	forgedAssignment := assignment
+	forgedAssignment.Requester.Subject = "substitute"
+	forgedDigest, err := forgedAssignment.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.RetainGenerationGrant(ctx, forgedAssignment, evolution.GenerationGrant{ID: "forged-grant", RunID: created.ID, GroupID: created.GroupID, AssignmentDigest: forgedDigest}); err != ErrConflict {
+		t.Fatal("pending assignment requester substituted", err)
+	}
+	if _, err = s.RetryRun(ctx, RunRetry{GroupID: "group", RequestID: "retry-request", SourceRunID: "source", NewRunID: "retry-run"}, evolution.Principal{Issuer: "https://app", Subject: "other", Kind: "human"}); err != ErrConflict {
+		t.Fatal("receipt rebound to another actor", err)
 	}
 	var state string
 	if err = s.db.QueryRowContext(ctx, "SELECT state FROM runs WHERE id=?", source.ID).Scan(&state); err != nil || state != "failed" {

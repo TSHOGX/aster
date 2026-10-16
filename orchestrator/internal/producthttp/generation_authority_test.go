@@ -32,7 +32,7 @@ func TestGenerationAuthorityIsServiceSpecificAndPrivate(t *testing.T) {
 		handler.ServeHTTP(w, r)
 		return w.Code
 	}
-	for _, action := range []string{"admit", "observe", "authority", "bind-result", "settle", "result-authority"} {
+	for _, action := range []string{"cancel-admission", "admit", "observe", "authority", "bind-result", "settle", "result-authority"} {
 		private := auth.IdentityServiceHandler()
 		for _, bad := range [][4]string{{"producer", secret, "", ""}, {"evaluation-space", "wrong", "", ""}, {"evaluation-space", secret, "ambient=x", ""}, {"evaluation-space", secret, "", "https://app"}} {
 			code := call(private, action, bad[0], bad[1], bad[2], bad[3])

@@ -56,7 +56,7 @@ func (l *lostNativeAdmission) GenerationOutput(ctx context.Context, scope evolut
 }
 
 func TestNativeGenerationRealProcesses(t *testing.T) {
-	for _, mode := range []string{"success", "sibling-failure", "lost-model-reply", "automatic", "dependencies", "dependency-failure", "backfill"} {
+	for _, mode := range []string{"success", "sibling-failure", "lost-model-reply", "automatic", "dependencies", "dependency-failure", "backfill", "browser-retry"} {
 		t.Run(mode, func(t *testing.T) { nativeGenerationProcesses(t, mode) })
 	}
 }
@@ -89,6 +89,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		return value
 	}
 	studioAddress, participantAddress, spaceAddress := address(), address(), address()
+	spaceBrowserAddress := address()
 	spaceOrigin := "http://" + spaceAddress
 	browserBackfill := mode == "backfill" && os.Getenv("ADMIN_EVOLUTION_BROWSER_TEST") == "1"
 	browserConfig := mode == "backfill" && os.Getenv("ADMIN_EVOLUTION_CONFIG_TEST") == "1"
@@ -167,7 +168,37 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	must(t, config.CheckCredentials())
 	authentication := NewAuthentication(store, Config{Identity: config})
 	publicHandler = authentication.Handler(http.NotFoundHandler())
-	central := httptest.NewServer(authentication.IdentityServiceHandler())
+	var retryAdmissionMu sync.Mutex
+	var retryAdmissionRequests [][]byte
+	identityHandler := authentication.IdentityServiceHandler()
+	central := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mode == "browser-retry" && r.URL.Path == "/api/identity/v1/generation/admit" {
+			raw, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(500)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(raw))
+			var assignment evolution.GenerationAssignment
+			if json.Unmarshal(raw, &assignment) == nil && assignment.RunID == "browser-native-retry" {
+				retryAdmissionMu.Lock()
+				retryAdmissionRequests = append(retryAdmissionRequests, raw)
+				first := len(retryAdmissionRequests) == 1
+				retryAdmissionMu.Unlock()
+				if first {
+					recorded := httptest.NewRecorder()
+					identityHandler.ServeHTTP(recorded, r)
+					if recorded.Code != 200 {
+						t.Errorf("retry central admission: %d %s", recorded.Code, recorded.Body.String())
+					}
+					w.WriteHeader(503) // Central committed; the caller cannot observe the receipt.
+					return
+				}
+			}
+		}
+		identityHandler.ServeHTTP(w, r)
+	}))
 	defer central.Close()
 
 	modelRef := evolution.Revision{ID: "native-model", Revision: 1, Digest: evolution.Digest([]byte("native-model"))}
@@ -361,7 +392,11 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	}
 
 	start(studioBinary, studioAddress, "--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evaluation-endpoint", spaceOrigin)
-	start(spaceBinary, spaceAddress, "--listen", spaceAddress, "--state-directory", spaceDirectory, "--identity-endpoint", central.URL, "--native-config", nativePath, "--studio-input-endpoint", "http://"+participantAddress)
+	spaceArgs := []string{"--listen", spaceAddress, "--state-directory", spaceDirectory, "--identity-endpoint", central.URL, "--native-config", nativePath, "--studio-input-endpoint", "http://" + participantAddress}
+	if mode == "browser-retry" {
+		spaceArgs = append(spaceArgs, "--browser-listen", spaceBrowserAddress, "--public-origin", issuer, "--frontend", central.URL)
+	}
+	start(spaceBinary, spaceAddress, spaceArgs...)
 	for _, action := range []string{"volume.read", "volume.author", "volume.review", "volume.merge", "volume.configure"} {
 		_, err = store.ApplyStudioGrant(ctx, token, product.StudioGrantCommand{RequestID: strings.ReplaceAll(action, ".", "-"), Kind: "account", SubjectID: admin.ID, LibraryID: "aster-shared-assets", Action: action, Effect: "allow"})
 		must(t, err)
@@ -715,6 +750,172 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	}
 	if len(branches)+len(failed) != len(configuration.Bindings) {
 		t.Fatal("native handoff not settled", branches)
+	}
+	if mode == "browser-retry" {
+		// Authenticate through the actual Evaluation Space PKCE/session gateway.
+		request, _ := http.NewRequestWithContext(ctx, "GET", "http://"+spaceBrowserAddress+"/evaluation-space/auth/login", nil)
+		request.Host = issuerURL.Host
+		login, err := httpClient.Do(request)
+		must(t, err)
+		login.Body.Close()
+		location, err := url.Parse(login.Header.Get("Location"))
+		must(t, err)
+		code, err := store.AdmitIdentityCode(ctx, token, "evaluation-space", issuer+"/evaluation-space/auth/callback", location.Query().Get("code_challenge"))
+		must(t, err)
+		request, _ = http.NewRequestWithContext(ctx, "GET", "http://"+spaceBrowserAddress+"/evaluation-space/auth/callback?"+url.Values{"state": {location.Query().Get("state")}, "code": {code}}.Encode(), nil)
+		request.Host = issuerURL.Host
+		for _, cookie := range login.Cookies() {
+			request.AddCookie(cookie)
+		}
+		callback, err := httpClient.Do(request)
+		must(t, err)
+		callback.Body.Close()
+		if callback.StatusCode != 303 {
+			t.Fatal("Evaluation Space session failed", callback.StatusCode)
+		}
+		spaceCookies := callback.Cookies()
+		spaceCSRF := ""
+		spaceCall := func(method, path string, input any) (int, []byte) {
+			t.Helper()
+			raw, _ := json.Marshal(input)
+			request, _ := http.NewRequestWithContext(ctx, method, "http://"+spaceBrowserAddress+"/evaluation-space/api/v1/"+path, bytes.NewReader(raw))
+			request.Host = issuerURL.Host
+			for _, cookie := range spaceCookies {
+				if cookie.MaxAge >= 0 {
+					request.AddCookie(cookie)
+				}
+			}
+			if method != "GET" {
+				request.Header.Set("Origin", issuer)
+				request.Header.Set("X-CSRF-Token", spaceCSRF)
+				request.Header.Set("Content-Type", "application/json")
+			}
+			response, err := httpClient.Do(request)
+			must(t, err)
+			defer response.Body.Close()
+			body, err := io.ReadAll(response.Body)
+			must(t, err)
+			return response.StatusCode, body
+		}
+		status, raw := spaceCall("GET", "session", nil)
+		if status != 200 {
+			t.Fatal("space session", status, string(raw))
+		}
+		var session struct {
+			CSRF string `json:"csrf"`
+		}
+		must(t, json.Unmarshal(raw, &session))
+		spaceCSRF = session.CSRF
+		runRoot := "groups/" + configuration.GroupID + "/runs/"
+		sourceID := runIDs["example-skills"]
+		status, raw = spaceCall("GET", runRoot+sourceID, nil)
+		if status != 200 {
+			t.Fatal("source read", status, string(raw))
+		}
+		var before evolution.Run
+		must(t, json.Unmarshal(raw, &before))
+		input := map[string]string{"request_id": "browser-retry-request", "source_run_id": sourceID, "new_run_id": "browser-native-retry"}
+		var retry evolution.Run
+		for i := 0; i < 2; i++ {
+			status, raw = spaceCall("POST", runRoot+sourceID+"/retry", input)
+			if status != 201 {
+				t.Fatal("browser retry", status, string(raw))
+			}
+			var next evolution.Run
+			must(t, json.Unmarshal(raw, &next))
+			if i == 1 && next.ID != retry.ID {
+				t.Fatal("retry response replay changed run")
+			}
+			retry = next
+		}
+		if retry.RetryOf != sourceID || retry.ResultBranch != "" || retry.Handoff != "not_ready" {
+			t.Fatal("retry retained source result", retry)
+		}
+		expectedPins, _ := json.Marshal(before.Pins)
+		actualPins, _ := json.Marshal(retry.Pins)
+		if !bytes.Equal(expectedPins, actualPins) {
+			t.Fatal("retry changed source pins")
+		}
+		for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
+			status, raw = spaceCall("GET", runRoot+retry.ID, nil)
+			if status != 200 {
+				t.Fatal("retry read", status, string(raw))
+			}
+			must(t, json.Unmarshal(raw, &retry))
+			if retry.Handoff == "submitted" {
+				break
+			}
+			if retry.State == "failed" {
+				t.Fatal("retry execution failed", string(raw))
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if retry.State != "completed" || retry.Handoff != "submitted" || retry.ResultBranch == "" || retry.ResultBranch == before.ResultBranch {
+			t.Fatal("retry failed to execute/handoff", retry)
+		}
+		status, raw = spaceCall("GET", runRoot+sourceID, nil)
+		if status != 200 {
+			t.Fatal("source read", status, string(raw))
+		}
+		var after evolution.Run
+		must(t, json.Unmarshal(raw, &after))
+		beforeRaw, _ := json.Marshal(before)
+		afterRaw, _ := json.Marshal(after)
+		if !bytes.Equal(beforeRaw, afterRaw) {
+			t.Fatal("retry changed source")
+		}
+		retryAdmissionMu.Lock()
+		if len(retryAdmissionRequests) < 2 {
+			t.Error("lost admission reply was not recovered")
+		}
+		for _, body := range retryAdmissionRequests {
+			if !bytes.Equal(body, retryAdmissionRequests[0]) {
+				t.Error("admission retry changed assignment")
+			}
+		}
+		retryAdmissionMu.Unlock()
+		modelMu.Lock()
+		retryCalls := calls[retry.ID]
+		modelMu.Unlock()
+		if retryCalls != 2 {
+			t.Fatal("retry did not execute fresh model calls", retryCalls)
+		}
+		// Cancel a second retry after its input grant is revoked. There may be no
+		// central admission yet; cleanup must still close it without model calls.
+		_, err = store.SetGenerationInputGrant(ctx, token, configuration.GroupID, product.GenerationInputGrantInput{RequestID: "revoke-retry-input", ExpectedRevision: 1, Artifact: artifact, SourceIDs: []string{"source"}, Enabled: false})
+		must(t, err)
+		input["request_id"], input["new_run_id"] = "cancel-pending-retry", "cancelled-native-retry"
+		status, raw = spaceCall("POST", runRoot+sourceID+"/retry", input)
+		if status != 201 {
+			t.Fatal("queue revoked retry", status, string(raw))
+		}
+		status, raw = spaceCall("POST", runRoot+input["new_run_id"]+"/control", map[string]any{"request_id": "cancel", "run_id": input["new_run_id"], "action": "cancel", "expected_fence": 0})
+		if status != 200 {
+			t.Fatal("cancel pending retry", status, string(raw))
+		}
+		db, err := sql.Open("sqlite", "file:"+spaceDirectory+"/projections.db?mode=ro")
+		must(t, err)
+		defer db.Close()
+		var settled int
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+			must(t, db.QueryRowContext(ctx, "SELECT count(*) FROM generation_settlements WHERE run_id=?", input["new_run_id"]).Scan(&settled))
+			if settled == 1 {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if settled != 1 {
+			t.Fatal("revoked pending admission did not settle cancellation")
+		}
+		modelMu.Lock()
+		cancelledCalls := calls[input["new_run_id"]]
+		modelMu.Unlock()
+		if cancelledCalls != 0 {
+			t.Fatal("cancelled pending admission executed", cancelledCalls)
+		}
+		// Restore authority for the independent source-branch review below.
+		_, err = store.SetGenerationInputGrant(ctx, token, configuration.GroupID, product.GenerationInputGrantInput{RequestID: "restore-retry-input", ExpectedRevision: 2, Artifact: artifact, SourceIDs: []string{"source"}, Enabled: true})
+		must(t, err)
 	}
 	var unchanged evolution.ContentRef
 	get("/main", &unchanged)

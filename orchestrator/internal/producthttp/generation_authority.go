@@ -41,6 +41,18 @@ func (a *Authentication) identityGeneration(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		w.WriteHeader(204)
+	case "cancel-admission":
+		input, err := evolution.Decode[evolution.GenerationAdmissionCancellation](http.MaxBytesReader(w, r.Body, evolution.MaxDocumentBytes))
+		if err != nil || input.Assignment.Requester.Issuer != a.Config.Identity.Issuer {
+			writeError(w, 400, "invalid admission cancellation")
+			return
+		}
+		grant, err := a.Store.CancelGenerationAdmission(r.Context(), input)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, 200, grant)
 	case "admit":
 		input, err := evolution.Decode[evolution.GenerationAssignment](http.MaxBytesReader(w, r.Body, evolution.MaxDocumentBytes))
 		if err != nil || input.Requester.Issuer != a.Config.Identity.Issuer {

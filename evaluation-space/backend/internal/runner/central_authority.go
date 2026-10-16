@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"aster/contracts/evolution"
@@ -11,6 +12,8 @@ import (
 )
 
 type GenerationAuthority interface {
+	CancelGenerationAdmission(context.Context, evolution.GenerationAdmissionCancellation) (evolution.GenerationGrant, error)
+	AdmitGeneration(context.Context, evolution.GenerationAssignment) (evolution.GenerationGrant, error)
 	ResolveGeneration(context.Context, evolution.GenerationGrantScope) (evolution.GenerationAssignment, error)
 	ObserveGeneration(context.Context, evolution.GenerationObservation) error
 	SettleGeneration(context.Context, evolution.GenerationGrant, int64, int64, int64) error
@@ -25,6 +28,10 @@ func (a CentralAuthority) load(ctx context.Context, run evolution.Run) (evolutio
 		return evolution.GenerationGrant{}, fmt.Errorf("central native authority required")
 	}
 	assignment, grant, err := a.Store.GenerationGrant(ctx, run.GroupID, run.ID)
+	pending := errors.Is(err, projections.ErrNotFound)
+	if pending {
+		assignment, err = a.Store.PendingGenerationAssignment(ctx, run.GroupID, run.ID)
+	}
 	if err != nil {
 		return grant, err
 	}
@@ -32,6 +39,19 @@ func (a CentralAuthority) load(ctx context.Context, run evolution.Run) (evolutio
 	expected, _ := json.Marshal(assignment.Pins)
 	if run.BatchID != assignment.BatchID || !bytes.Equal(actual, expected) || run.BindingID != assignment.BindingID || run.Budget != assignment.Budget {
 		return grant, projections.ErrConflict
+	}
+	if pending {
+		if run.State == "cancelled" {
+			grant, err = a.Central.CancelGenerationAdmission(ctx, evolution.GenerationAdmissionCancellation{Assignment: assignment, Fence: run.Fence})
+		} else {
+			grant, err = a.Central.AdmitGeneration(ctx, assignment)
+		}
+		if err != nil {
+			return grant, err
+		}
+		if err = a.Store.RetainGenerationGrant(ctx, assignment, grant); err != nil {
+			return grant, err
+		}
 	}
 	return grant, nil
 }

@@ -21,6 +21,10 @@ function attemptContext(instance: string) {
 }
 
 export function RunInspector({ group, run }: { group: string; run: string }) {
+  return <Inspector key={`${group}:${run}`} group={group} run={run} />;
+}
+
+function Inspector({ group, run }: { group: string; run: string }) {
   const tr = useT(); const router = useRouter(); const [value, setValue] = useState<Run>(); const [comparison, setComparison] = useState<Run>(); const [comparisonDebugger, setComparisonDebugger] = useState<Debugger>(); const [events, setEvents] = useState<Event[]>([]); const [attempts, setAttempts] = useState<Attempt[]>([]); const [artifacts, setArtifacts] = useState<Artifact[]>([]); const [debuggerValue, setDebuggerValue] = useState<Debugger>(); const [error, setError] = useState(""); const [stale, setStale] = useState(false); const [busy, setBusy] = useState(false); const [cursor, setCursor] = useState(0); const [experiment, setExperiment] = useState<ExperimentPreview>(); const [experimentStatus, setExperimentStatus] = useState("");
   const root = `${base}/api/v1/groups/${encodeURIComponent(group)}/runs/${encodeURIComponent(run)}`;
   async function read() {
@@ -37,7 +41,23 @@ export function RunInspector({ group, run }: { group: string; run: string }) {
   useEffect(() => { void read(); void readEvents(); void readAttempts(); void readArtifacts(); void readDebugger(); const timer = window.setInterval(() => { void read(); void readEvents(); void readAttempts(); void readArtifacts(); void readDebugger(); }, 3000); return () => window.clearInterval(timer); }, [group, run, cursor]);
   async function control(action: string) { if (!value) return; setBusy(true); try { const response = await fetch(`${root}/control`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", Origin: location.origin, "X-CSRF-Token": (await (await fetch(`${base}/api/v1/session`, { credentials: "same-origin" })).json() as { csrf: string }).csrf }, body: JSON.stringify({ request_id: crypto.randomUUID(), run_id: run, expected_fence: value.fence, action }) }); if (!response.ok) throw new Error(); await read(); } catch { setError("Run control is unavailable or the run changed. Reload before retrying."); } finally { setBusy(false); } }
   async function runFromHere() { if (!value || value.state !== "paused" || !value.pins.workflow?.id) return; setBusy(true); setExperimentStatus(""); try { const previewResponse = await fetch(`${root}/experiment-preview`, { credentials: "same-origin", cache: "no-store" }); if (!previewResponse.ok) throw new Error(); const preview = await previewResponse.json() as ExperimentPreview; setExperiment(preview); if (!preview.eligible || !preview.checkpoint?.id) return; const draftResponse = await fetch(`${base}/api/v1/groups/${encodeURIComponent(group)}/workflows/${encodeURIComponent(value.pins.workflow.id)}/draft`, { credentials: "same-origin", cache: "no-store" }); if (!draftResponse.ok) throw new Error(); const draft = await draftResponse.json() as { workflow: unknown }; const response = await fetch(`${root}/experiment`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", Origin: location.origin, "X-CSRF-Token": (await (await fetch(`${base}/api/v1/session`, { credentials: "same-origin" })).json() as { csrf: string }).csrf }, body: JSON.stringify({ id: crypto.randomUUID(), source_run_id: run, checkpoint_id: preview.checkpoint.id, workflow: draft.workflow }) }); if (!response.ok) throw new Error(); const created = await response.json() as { id: string }; setExperimentStatus(`${tr("Experiment created")}: ${created.id}`); } catch { setExperimentStatus(tr("Experiment creation is unavailable or the checkpoint is no longer eligible.")); } finally { setBusy(false); } }
-  async function retryRun() { if (!value || !["completed", "failed", "cancelled"].includes(value.state)) return; setBusy(true); try { const response = await fetch(`${root}/retry`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", Origin: location.origin, "X-CSRF-Token": (await (await fetch(`${base}/api/v1/session`, { credentials: "same-origin" })).json() as { csrf: string }).csrf }, body: JSON.stringify({ request_id: crypto.randomUUID(), source_run_id: run, new_run_id: `${run}-retry-${crypto.randomUUID().slice(0, 8)}` }) }); if (!response.ok) throw new Error(); const created = await response.json() as { id: string }; router.push(`/groups/${encodeURIComponent(group)}/runs/${encodeURIComponent(created.id)}`); } catch { setError("Run retry is unavailable or the source run changed. Reload before retrying."); } finally { setBusy(false); } }
+  async function retryRun() { if (!value || busy || !["completed", "failed", "cancelled"].includes(value.state)) return; setBusy(true); setError(""); try {
+    // Keep this operation stable after a lost reply, including a page reload.
+    const sessionResponse = await fetch(`${base}/api/v1/session`, { credentials: "same-origin", cache: "no-store" });
+    if (!sessionResponse.ok) throw new Error();
+    const session = await sessionResponse.json() as { subject: string; csrf: string };
+    const storageKey = `evaluation-retry:${session.subject}:${group}:${run}`;
+    let retryRequest: { request_id: string; source_run_id: string; new_run_id: string } | undefined;
+    const saved = sessionStorage.getItem(storageKey);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as typeof retryRequest;
+        if (parsed?.source_run_id === run && typeof parsed.request_id === "string" && typeof parsed.new_run_id === "string") retryRequest = parsed;
+      } catch { sessionStorage.removeItem(storageKey); }
+    }
+    retryRequest ??= { request_id: crypto.randomUUID(), source_run_id: run, new_run_id: crypto.randomUUID() };
+    sessionStorage.setItem(storageKey, JSON.stringify(retryRequest));
+    const response = await fetch(`${root}/retry`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": session.csrf }, body: JSON.stringify(retryRequest) }); if (!response.ok) throw new Error(); const created = await response.json() as { id: string }; sessionStorage.removeItem(storageKey); router.push(`/groups/${encodeURIComponent(group)}/runs/${encodeURIComponent(created.id)}`); } catch { setError("Run retry is unavailable. Retry to recover the same request, or check run permissions."); } finally { setBusy(false); } }
   const semanticRows = (() => {
     if (!comparisonDebugger || !debuggerValue) return [] as { instance: string; source?: Attempt; experiment?: Attempt; status: string }[];
     const source = new Map(comparisonDebugger.attempts.map(attempt => [attempt.call.instance, attempt]));
