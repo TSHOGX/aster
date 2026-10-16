@@ -11,6 +11,7 @@ import { ACTIVE_APPEARANCE_KEY, clearAppearanceBinding } from "@web/appearance";
 import { useAccountPreferences } from "@web/account-preferences";
 import { PolicyList } from "./policy-list";
 import { PolicyEditor } from "./policy-editor";
+import { StudioPermissionsEditor } from "./studio-permissions";
 import { EvolutionPermissionsEditor } from "./evolution-permissions";
 import { EvolutionConfiguration } from "./evolution-configuration";
 import { EvolutionCapture } from "./evolution-capture";
@@ -88,6 +89,7 @@ export function Administration() {
         {(!route.length || route[0] === "users" && route.length === 1) ? <UserList />
           : route[0] === "users" && route.length === 2 ? <UserEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : (route[0] === "groups" || route[0] === "policies") && route.length === 1 ? <PolicyList key={route[0]} kind={route[0]} />
+          : (route[0] === "users" || route[0] === "groups") && route.length === 3 && route[2] === "studio-permissions" ? <StudioPermissionsEditor key={`${route[0]}-${route[1]}`} kind={route[0] === "users" ? "account" : "group"} subject={route[1]} actor={identity.id} onDirty={setEditorDirty} />
           : route[0] === "groups" && route.length === 3 && route[2] === "evolution-permissions" ? <EvolutionPermissionsEditor key={route[1]} group={route[1]} actor={identity.id} onDirty={setEditorDirty} />
           : route[0] === "groups" && route.length === 3 && route[2] === "optimization" ? <EvolutionConfiguration key={route[1]} group={route[1]} onDirty={setEditorDirty} />
           : route[0] === "groups" && route.length === 3 && route[2] === "corpus" ? <EvolutionCapture key={route[1]} group={route[1]} onDirty={setEditorDirty} />

@@ -118,6 +118,7 @@ jobs:
             evaluation-space/frontend/test-results/tools
             evaluation-space/frontend/test-results/retention
             admin-frontend/test-results/evolution-live
+            admin-frontend/test-results/studio-permissions
             volumes-studio/frontend/test-results/evaluator-replacement
             volumes-studio/frontend/test-results/evaluation-policy
             volumes-studio/frontend/test-results/path-policies

@@ -38,6 +38,7 @@ case "${1:-all}" in
     EVALUATION_DYNAMIC_BROWSER_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeDynamicInspectionRealProcesses$' -count=1
     EVALUATION_TOOLS_BROWSER_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeToolInspectionRealProcesses$' -count=1
     EVALUATION_RETENTION_BROWSER_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeArtifactRetentionRealProcesses$' -count=1
+    STUDIO_TEST_EVALUATION_BROWSER=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestStudioPermissionProvisioningRealProcesses$' -count=1
     ADMIN_EVOLUTION_UPGRADE_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses/browser-retry$' -count=1
     ;;
   studio-browser)

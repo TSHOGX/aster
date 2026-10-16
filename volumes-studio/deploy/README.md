@@ -77,7 +77,12 @@ OIDC provider. Keep its loopback listener private; cross-host access requires an
 authenticated TLS tunnel. Studio sign-in requires an active, unrestricted central
 account with a library read grant, or an administrator account. Administrators can
 create libraries; read, author, review, merge and publish actions require separate
-library grants. Studio cannot grant those permissions locally.
+library grants. Configure access separately controls Volume policies. Assign these
+in Aster Administration: open the account or group, choose **Studio permissions**,
+enter the library ID, refresh, and review each allowance or denial. The built-in
+shared-assets library ID is `aster-shared-assets`. Account inspection includes
+inherited group denials; administrator status never overrides them. Studio cannot
+grant those permissions locally.
 
 Identity outages deny privileged operations rather than extending cached authority.
 Retry sign-in after service recovery. A lost callback exchange needs a fresh login.

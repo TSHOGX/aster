@@ -2,17 +2,14 @@ package product
 
 import (
 	"context"
+	"slices"
 
 	"aster/contracts/evolution"
 )
 
-func studioAction(action string) bool {
-	switch action {
-	case "volume.read", "volume.author", "volume.review", "volume.merge", "volume.publish", "volume.configure":
-		return true
-	}
-	return false
-}
+var studioActions = []string{"volume.read", "volume.author", "volume.review", "volume.merge", "volume.publish", "volume.configure"}
+
+func studioAction(action string) bool { return slices.Contains(studioActions, action) }
 
 // StudioAccess checks current account state and an explicit library grant. Being
 // an administrator does not implicitly confer content review or author authority.

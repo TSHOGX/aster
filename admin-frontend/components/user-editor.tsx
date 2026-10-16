@@ -115,6 +115,7 @@ export function UserEditor({ id, onDirty }: { id?: string; onDirty: (dirty: bool
       {operationID && <Link className="inline-link" href={`/operations/${encodeURIComponent(operationID)}`}>{tr("View suspension operation")}</Link>}
 
       <Link className="inline-link" href={`/projects?owner_id=${encodeURIComponent(user.id)}`}>{tr("Projects and Volumes")}</Link>
+      <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/studio-permissions`}>{tr("Studio permissions")}</Link>
       <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/resources`}>{tr("Resources and usage")}</Link>
       <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/configuration`}>{tr("Effective configuration")}</Link>
       <Link className="inline-link" href={`/audit?target=${encodeURIComponent(user.id)}`}>{tr("View account audit")}</Link>

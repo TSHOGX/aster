@@ -7,7 +7,7 @@ immutable versions. Aster imports a version into local storage before Projects
 can use it. Studio publication and Aster availability are separate steps.
 Studio sign-in requires an active central account with a library read grant, or an
 administrator account. Only administrators can create libraries. Read, author,
-review, merge and publish permissions are separate grants; administrator status
+review, merge, publish and configure permissions are separate grants; administrator status
 alone does not grant those actions. Ask your installation administrator to
 provision the required library permissions before editing. The catalog lists only
 libraries with a current read grant; removing that grant also removes their summaries
@@ -18,6 +18,32 @@ explicit library grants. A published version must contain root
 `AGENTS.md`; skill entries must be directories containing `SKILL.md`. The base
 version includes an empty `skills/` directory. These files mount read-only at
 `/opt/shared-assets` as system context rather than ordinary Project data.
+
+## Assign Studio permissions
+
+In **Administration → Users** or **Groups**, open the intended account or group
+and choose **Studio permissions**. Enter the library ID from its Studio URL and
+choose **Refresh permissions**. This policy lookup does not verify that the library
+exists or reveal its contents; you can provision access before the first content
+read. For the built-in shared-assets library, use `aster-shared-assets`.
+
+Review each capability separately: read, author, review, merge, publish and
+configure. Choose **Allow** or **Deny**, review the named account/group and Volume,
+then choose **Apply reviewed permission**. Read access is needed to discover and
+open the Volume. A reviewer, merger or publisher also needs their corresponding
+action; configure permits merge and evaluation policy management.
+
+Account rows show effective access from current account status and all group
+grants. An explicit denial overrides any allowance, including for administrators.
+Group rows show the group's rules; inspect individual accounts to check their
+effective access. Membership removal stops applying that group's grants. These
+permissions do not grant source evidence access, change saved Project mounts or
+deploy a version.
+
+If a response is lost, **Check original request** confirms the same change; reload
+preserves it. A revision conflict requires **Refresh permissions** and a newly
+reviewed change. Grant updates are audited. Revocation stops new authorized reads
+and actions; it does not erase earlier downloads or exports.
 
 ## Create and edit a library
 

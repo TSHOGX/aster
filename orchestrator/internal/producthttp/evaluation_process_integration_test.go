@@ -42,6 +42,7 @@ type evaluationProcessCase struct {
 	PathPolicy        bool
 	StaleMain         bool
 	Replacement       bool
+	Permissions       bool
 }
 
 func TestRequiredEvaluationRealProcesses(t *testing.T) {
@@ -58,6 +59,10 @@ func TestComparativeEvaluationRealProcesses(t *testing.T) {
 			evaluationPolicyProcesses(t, evaluationProcessCase{Mode: "required", Outcome: "pass", StaleMain: true, ReferenceStrategy: strategy, PathPolicy: strategy == "pinned_release"})
 		})
 	}
+}
+
+func TestStudioPermissionProvisioningRealProcesses(t *testing.T) {
+	evaluationPolicyProcesses(t, evaluationProcessCase{Mode: "required", Outcome: "pass", PathPolicy: true, Permissions: true})
 }
 
 func TestManualPathEvaluationRealProcesses(t *testing.T) {
@@ -521,9 +526,13 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 		spaceArgs = append(spaceArgs, "--evaluation-connections", connections)
 	}
 	start(spaceBinary, spaceAddress, spaceArgs...)
-	for _, action := range []string{"volume.read", "volume.author", "volume.review", "volume.merge", "volume.configure", "volume.publish"} {
-		_, err = store.ApplyStudioGrant(ctx, token, product.StudioGrantCommand{RequestID: strings.ReplaceAll(action, ".", "-"), Kind: "account", SubjectID: admin.ID, LibraryID: "aster-shared-assets", Action: action, Effect: "allow"})
-		must(t, err)
+	if test.Permissions && browserEnabled {
+		provisionStudioPermissionsBrowser(t, ctx, root, issuer, address(), token, admin.ID, &publicHandler)
+	} else {
+		for _, action := range []string{"volume.read", "volume.author", "volume.review", "volume.merge", "volume.configure", "volume.publish"} {
+			_, err = store.ApplyStudioGrant(ctx, token, product.StudioGrantCommand{RequestID: strings.ReplaceAll(action, ".", "-"), Kind: "account", SubjectID: admin.ID, LibraryID: "aster-shared-assets", Action: action, Effect: "allow"})
+			must(t, err)
+		}
 	}
 	if test.PathPolicy {
 		original := publicHandler
