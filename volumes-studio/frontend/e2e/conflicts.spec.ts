@@ -63,6 +63,9 @@ for (const width of [390, 1440]) test(`conflict edits and exact operations recov
   await conflicts.getByLabel("Resolution choice", { exact: true }).selectOption("text");
   // A failed storage write must not restore an older persisted draft over newer in-memory text.
   await conflicts.getByLabel("Resolved text", { exact: true }).fill("Older persisted resolution");
+  await expect(page.getByRole("button", { name: "Prepare integration", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Reload integration review", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Prepare selected composition", exact: true })).toBeDisabled();
   await page.evaluate(() => {
     const original = Storage.prototype.setItem;
     Object.assign(window, { restoreConflictStorage: () => { Storage.prototype.setItem = original; } });
@@ -72,6 +75,7 @@ for (const width of [390, 1440]) test(`conflict edits and exact operations recov
   await expect(conflicts.getByRole("alert")).toContainText("Local conflict recovery is unavailable.");
   await conflicts.getByRole("button", { name: "Reload conflict workspace", exact: true }).click();
   await expect(conflicts.getByLabel("Resolved text", { exact: true })).toHaveValue("Newer in-memory resolution");
+  await expect(page.getByRole("button", { name: "Prepare integration", exact: true })).toBeDisabled();
   await page.evaluate(() => (window as unknown as { restoreConflictStorage: () => void }).restoreConflictStorage());
   await conflicts.getByLabel("Resolved text", { exact: true }).fill("My retained resolution");
   await page.reload();

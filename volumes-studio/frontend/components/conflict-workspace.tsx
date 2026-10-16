@@ -23,7 +23,7 @@ function readRecovery(raw: string, id: string): Recovery {
   }
   return value;
 }
-export function ConflictEditor({ library, id, onComplete, onReplacement }: { library: string; id: string; onComplete: (digest: string) => void; onReplacement: () => void }) {
+export function ConflictEditor({ library, id, onComplete, onReplacement, onBlockedChange }: { library: string; id: string; onComplete: (digest: string) => void; onReplacement: () => void; onBlockedChange: (blocked: boolean) => void }) {
   const tr = useT(), studio = useStudio();
   const [workspace, setWorkspace] = useState<ConflictWorkspace>();
   const [local, setLocal] = useState<Recovery>(empty(id));
@@ -86,6 +86,10 @@ export function ConflictEditor({ library, id, onComplete, onReplacement }: { lib
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn);
   }, [local.draft, local.pending]);
+  useEffect(() => {
+    onBlockedChange(busy || !!retained.current.draft || !!retained.current.pending || malformed);
+    return () => onBlockedChange(false);
+  }, [busy, local, malformed, onBlockedChange]);
   async function inspect(path: string) {
     if (!workspace || busy || inFlight.current || local.pending || malformed) return;
     if (local.draft && path !== local.selected && await studio.ask("Choose conflict", "Discard the unsaved resolution before choosing another path?", ["Keep editing", "Discard and choose"]) !== "Discard and choose") return;

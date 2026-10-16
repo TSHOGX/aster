@@ -117,7 +117,11 @@ branch until completed or canceled; another branch can still be committed.
 2. Enter a **Commit message** and choose **Commit saved draft**. Unsaved editor
    changes are explicitly excluded from the checkpoint.
 3. Choose **Prepare integration** to combine the committed branch head with main.
-   Inspect the changed files and the **Integrated result** before approving.
+   Inspect the changed files and the **Integrated result** before approving. Each
+   file side shows its exact commit, type, size and digest, with **Download exact
+   file** for binary, oversized or text content. Directories and absent sides are
+   explicit. If a read fails, prior review evidence is cleared; **Reload integration
+   review** reloads the same pinned identity after access or connectivity returns.
    When several branches contain independent work, **Compose selected changes**
    lists each immutable branch head. Select only the paths to review together;
    omitted paths are shown as deferred and remain on their source branch. The
@@ -177,7 +181,9 @@ an integration. Saved conflict choices remain accessible through the workspace U
 Unsaved conflict text and an unconfirmed save or completion are retained in this
 browser tab for the signed-in account and exact workspace. After reloading, choose
 **Recover conflict operation** to reconcile the original request. Editing remains
-locked until it settles. If another author changed the workspace, **Reload conflict
+locked until it settles. Preparing another integration or composition and reloading
+the parent review are blocked while local conflict work is unsaved or uncertain.
+Save or explicitly discard it first. If another author changed the workspace, **Reload conflict
 workspace**, inspect **Current saved resolution**, and choose **Use current conflict
 revision** before saving your retained text. Changed main or source inputs require
 a new preparation.

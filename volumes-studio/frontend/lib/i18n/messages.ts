@@ -1,4 +1,8 @@
 export const ZH: Record<string, string> = {
+  "Save or discard local conflict work before replacing this workspace.": "替换此工作区前，请先保存或丢弃本地冲突工作。",
+  "Integration evidence is unavailable. Reload or check Volume access.": "集成证据不可用。请重新加载或检查卷访问权限。",
+  "Reload integration review": "重新加载集成审核",
+  "Integrated file comparison": "集成文件比较",
   "History is unavailable. Retry or check Volume access and the selected commits.": "历史不可用。请重试或检查卷访问权限和所选提交。",
   "Saved draft": "已保存的草稿",
   "Download saved draft file": "下载已保存的草稿文件",

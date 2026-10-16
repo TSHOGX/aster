@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { api, APIError, requestID, type Version } from "../lib/api";
+import { api, APIError, base, bytes, requestID, type Entry, type Version } from "../lib/api";
 import { branchAPI, conflictAPI, type Branch, type BranchChange, type PreparedIntegration } from "../lib/branches";
 import { currentReviews, type ReviewDecision } from "../lib/reviews";
 import { useT } from "../lib/i18n";
@@ -10,13 +10,14 @@ import { useStudio } from "./studio-provider";
 type Evaluation = {id:string;requirement_digest:string;state:string;outcome:string};
 type View = { evaluations: Evaluation[]; evaluation: string; digest: string; identity: NonNullable<PreparedIntegration["identity"]>; readiness: string; acceptance: string; accepted_commit?: string; reviews: ReviewDecision[] };
 type Change = { path: string; change: string };
-type FilePreview = { commit_id: string; text?: string; preview: string };
+type FilePreview = { commit_id: string; entry: Entry; text?: string; preview: string };
 type CompositionOption = { branch: Branch; changes: BranchChange[] };
 type CompositionSelection = { branch_id: string; head: string; selected_paths: string[]; deferred_paths?: string[] };
 export function IntegrationReview({ branch }: { branch: Branch }) {
   const tr = useT();
   const studio = useStudio();
   const [workspace, setWorkspace] = useState("");
+  const [conflictBlocked, setConflictBlocked] = useState(false);
   const [replacementWorkspace, setReplacementWorkspace] = useState("");
   const [view, setView] = useState<View>();
   const [changes, setChanges] = useState<Change[]>([]);
@@ -34,6 +35,15 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
   const [selectedComposition, setSelectedComposition] = useState<Record<string, string[]>>({});
   const [compositionResult, setCompositionResult] = useState<CompositionSelection[]>([]);
   const root = `/libraries/${encodeURIComponent(branch.library_id)}`;
+  const readRequest = useRef<AbortController>(undefined), running = useRef(false), mounted = useRef(true);
+  const [reloadRevision, setReloadRevision] = useState(0);
+  const evidenceRevision = useRef(0);
+  const unavailable = "Integration evidence is unavailable. Reload or check Volume access.";
+  const hideEvidence = (preserveWorkspace = false) => {
+    evidenceRevision.current++;
+    setView(undefined); setChanges([]); setNext(""); setFile(undefined); setComposition([]); setCompositionResult([]); setRelease(undefined); if (!preserveWorkspace) { setConflicts([]); setWorkspace(""); }
+  };
+  const beginRead = () => { readRequest.current?.abort(); const abort = new AbortController(); readRequest.current = abort; return abort; };
   const pending = useRef<{ key: string; request: string } | null>(null);
   const mutate = async <T,>(key: string, action: (request: string) => Promise<T>): Promise<T> => {
     if (pending.current && pending.current.key !== key) throw new Error(tr("Resolve the pending operation before starting another action."));
@@ -42,43 +52,52 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     catch (e) { if (e instanceof APIError && e.status < 500) pending.current = null; throw e; }
   };
   useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; readRequest.current?.abort(); };
+  }, []);
+  useEffect(() => {
+    const revision = evidenceRevision.current;
     const params = new URL(location.href).searchParams;
     const conflict = params.get("conflict");
     if (conflict) {
-      const abort = new AbortController();
-      void conflictAPI.read(branch.library_id,conflict,abort.signal).then(value=>{if(!abort.signal.aborted){setWorkspace(value.id);setConflicts(value.conflicts);}}).catch(e=>{if(!abort.signal.aborted)setError(String(e));});
+      const abort = beginRead();
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Restore only currently authorized URL-pinned evidence.
+      setBusy(true);
+      void conflictAPI.read(branch.library_id,conflict,abort.signal).then(value=>{if(!abort.signal.aborted&&revision===evidenceRevision.current){setWorkspace(value.id);setConflicts(value.conflicts);}}).catch(()=>{if(!abort.signal.aborted){hideEvidence();setError(unavailable);}}).finally(()=>{if(!abort.signal.aborted)setBusy(false);});
       return ()=>abort.abort();
     }
     const digest = params.get("integration");
     if (!digest) return;
-    const abort = new AbortController();
+    const abort = beginRead();
+    setBusy(true);setError("");setView(undefined);setChanges([]);setFile(undefined);
     void Promise.all([
       api<View>(`${root}/integrations/${encodeURIComponent(digest)}`, { signal: abort.signal }),
       api<{ changes: Change[]; next: string }>(`${root}/integrations/${encodeURIComponent(digest)}/changes`, { signal: abort.signal }),
-    ]).then(([current, page]) => { if (!abort.signal.aborted) { setView(current); setChanges(page.changes); setNext(page.next); } }).catch(e => { if (!abort.signal.aborted) setError(String(e)); });
+    ]).then(([current, page]) => { if (!abort.signal.aborted && revision === evidenceRevision.current) { setView(current); setChanges(page.changes); setNext(page.next); } }).catch(() => { if (!abort.signal.aborted) { hideEvidence(); setError(unavailable); } }).finally(() => { if (!abort.signal.aborted) setBusy(false); });
     return () => abort.abort();
-  }, [root, branch.library_id]);
+  }, [root, branch.library_id, reloadRevision]);
   useEffect(() => {
     const abort = new AbortController();
+    const revision = evidenceRevision.current;
     void (async () => {
       const page = await branchAPI.list(branch.library_id, "", abort.signal);
       const all = page.branches.some(item => item.id === branch.id) ? page.branches : [branch, ...page.branches];
       const options = await Promise.all(all.filter(item => item.head !== "" && item.head !== item.initial_base).map(async item => ({ branch: item, changes: (await branchAPI.headDiff(item, "", abort.signal)).changes })));
-      if (abort.signal.aborted) return;
+      if (abort.signal.aborted || revision !== evidenceRevision.current) return;
       setComposition(options);
       setSelectedComposition(previous => {
         const next: Record<string, string[]> = {};
         for (const option of options) next[option.branch.id] = previous[option.branch.id] ?? (option.branch.id === branch.id ? option.changes.map(change => change.path) : []);
         return next;
       });
-    })().catch(e => { if (!abort.signal.aborted) setError(String(e)); });
+    })().catch(() => { if (!abort.signal.aborted) { hideEvidence(true); setError(unavailable); } });
     return () => abort.abort();
-  }, [branch]);
+  }, [branch, reloadRevision]);
   useEffect(() => {
     if (!release || !["pending", "validating"].includes(release.state)) return;
     const abort = new AbortController();
     const timer = setTimeout(() => {
-      void api<Version>(`${root}/versions/${encodeURIComponent(release.id)}`, { signal: abort.signal }).then(value => { if (!abort.signal.aborted) setRelease(value); }).catch(e => { if (!abort.signal.aborted) setError(String(e)); });
+      void api<Version>(`${root}/versions/${encodeURIComponent(release.id)}`, { signal: abort.signal }).then(value => { if (!abort.signal.aborted) setRelease(value); }).catch(() => { if (!abort.signal.aborted) { hideEvidence(); setError(unavailable); } });
     }, 2000);
     return () => { clearTimeout(timer); abort.abort(); };
   }, [release, root]);
@@ -87,14 +106,31 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     const commit = view.accepted_commit;
     const csrf = studio.session.csrf;
     const version = await mutate(JSON.stringify(["release",commit,label,note]), request => branchAPI.release(branch.library_id,commit,label,note,request,csrf));
-    setRelease(version); studio.changed();
+    if (mounted.current) { setRelease(version); studio.changed(); }
   };
-  const run = async (action: () => Promise<void>) => { setBusy(true); setError(""); try { await action(); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
+  const run = async (action: () => Promise<void>) => {
+    if (running.current) return;
+    running.current = true; readRequest.current?.abort(); setBusy(true); setError("");
+    try { await action(); } catch (e) {
+      if (mounted.current) {
+        if (e instanceof APIError && [401,403,404].includes(e.status)) hideEvidence();
+        setError(e instanceof APIError ? String(e) : unavailable);
+      }
+    } finally { running.current = false; if (mounted.current) setBusy(false); }
+  };
   const load = async (digest: string) => {
+    if (!mounted.current) return;
     const url = new URL(location.href); url.searchParams.set("integration", digest); url.searchParams.delete("conflict"); history.replaceState(null, "", url);
-    const current = await api<View>(`${root}/integrations/${encodeURIComponent(digest)}`);
-    const page = await api<{ changes: Change[]; next: string }>(`${root}/integrations/${encodeURIComponent(digest)}/changes`);
-    setView(current); setChanges(page.changes); setNext(page.next); setFile(undefined);
+    const abort = beginRead(), revision = evidenceRevision.current;
+    if (view?.digest !== digest) setRelease(undefined);
+    setView(undefined); setChanges([]); setNext(""); setFile(undefined);
+    try {
+      const [current, page] = await Promise.all([
+        api<View>(`${root}/integrations/${encodeURIComponent(digest)}`, { signal: abort.signal }),
+        api<{ changes: Change[]; next: string }>(`${root}/integrations/${encodeURIComponent(digest)}/changes`, { signal: abort.signal }),
+      ]);
+      if (!abort.signal.aborted && revision === evidenceRevision.current) { setView(current); setChanges(page.changes); setNext(page.next); }
+    } catch (cause) { if (!abort.signal.aborted) hideEvidence(); throw cause; }
   };
   const prepare = async (rebindDigest = "") => {
     if (!studio.session) return;
@@ -103,6 +139,7 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     const policy = await api<{ revision: number }>(`${root}/merge-policy`);
     const csrf = studio.session.csrf;
     const prepared = await mutate(JSON.stringify(["prepare",current.id,current.head,main.commit_id,policy.revision,rebindDigest]), request => branchAPI.prepare(current, main, policy.revision, request, csrf, rebindDigest));
+    if (!mounted.current) return;
     setReplacementWorkspace("");
     setConflicts(prepared.conflicts);
     setWorkspace(prepared.conflict_workspace_id ?? "");
@@ -115,6 +152,7 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     if (!sources.length) return;
     const [main, policy] = await Promise.all([branchAPI.main(branch.library_id), api<{ revision: number }>(`${root}/merge-policy`)]);
     const result = await mutate(JSON.stringify(["compose", main.commit_id, policy.revision, sources]), request => branchAPI.compose(branch.library_id, main.commit_id, policy.revision, sources, request, studio.session!.csrf));
+    if (!mounted.current) return;
     setCompositionResult(result.selections);
     setConflicts(result.conflicts ?? []);
     setWorkspace(result.conflict_workspace_id ?? "");
@@ -122,12 +160,16 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
       const url = new URL(location.href); url.searchParams.set("conflict", result.conflict_workspace_id); url.searchParams.delete("integration"); history.replaceState(null, "", url);
     }
     if (result.identity) await load(result.digest);
+    else { setView(undefined); setChanges([]); setNext(""); setFile(undefined); setRelease(undefined); }
   };
   const inspect = async (change: Change) => {
     if (!view) return;
-    const read = (side: string) => api<FilePreview>(`${root}/integrations/${encodeURIComponent(view.digest)}/file?${new URLSearchParams({ side, path: change.path })}`);
-    const [main, result] = await Promise.all([change.change === "added" ? undefined : read("main"), change.change === "removed" ? undefined : read("result")]);
-    setFile({ path: change.path, main, result });
+    const abort = beginRead(), revision = evidenceRevision.current; setFile(undefined);
+    const read = (side: string) => api<FilePreview>(`${root}/integrations/${encodeURIComponent(view.digest)}/file?${new URLSearchParams({ side, path: change.path })}`, { signal: abort.signal });
+    try {
+      const [main, result] = await Promise.all([change.change === "added" ? undefined : read("main"), change.change === "removed" ? undefined : read("result")]);
+      if (!abort.signal.aborted && revision === evidenceRevision.current) setFile({ path: change.path, main, result });
+    } catch (cause) { if (!abort.signal.aborted) hideEvidence(); throw cause; }
   };
   const review = async (verdict: "approve" | "changes_requested" | "reject") => {
     if (!view || !studio.session) return;
@@ -162,8 +204,10 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
   return <section className="notice" aria-label={tr("Integration review")}>
     <h2>{tr("Integration review")}</h2>
     <p>{tr("Prepare committed changes against main. Saved but uncommitted edits are excluded.")}</p>
-    <button disabled={busy} onClick={() => void run(() => prepare())}>{tr("Prepare integration")}</button>
+    <button disabled={busy || conflictBlocked} onClick={() => void run(() => prepare())}>{tr("Prepare integration")}</button>
+    <button disabled={busy || conflictBlocked} onClick={() => { hideEvidence(); setError(""); setReloadRevision(value => value + 1); }}>{tr("Reload integration review")}</button>
     {view?.acceptance === "not_accepted" && view.identity.sources.length === 1 && !view.identity.selections?.length && <button disabled={busy} onClick={() => void run(async () => { if (await studio.ask("Rebind current policy", "Replace retained evaluation requirements with current policy? This requires a new approval.", ["Keep current requirements", "Rebind current policy"]) === "Rebind current policy") await prepare(view.digest); })}>{tr("Rebind current policy")}</button>}
+    {conflictBlocked && <p role="status">{tr("Save or discard local conflict work before replacing this workspace.")}</p>}
     {composition.length > 0 && <section aria-label={tr("Compose selected changes")}>
       <h3>{tr("Compose selected changes")}</h3>
       <p>{tr("Freeze committed paths from more than one branch into one reviewable integration. Unselected paths remain deferred.")}</p>
@@ -174,13 +218,13 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
           <code>{change.path}</code> · {tr(change.change)}
         </label>)}
       </fieldset>)}
-      <button disabled={busy || composition.every(option => (selectedComposition[option.branch.id] ?? []).length === 0)} onClick={() => void run(compose)}>{tr("Prepare selected composition")}</button>
+      <button disabled={busy || conflictBlocked || composition.every(option => (selectedComposition[option.branch.id] ?? []).length === 0)} onClick={() => void run(compose)}>{tr("Prepare selected composition")}</button>
       {compositionResult.length > 0 && <ul aria-label={tr("Composition selection result")}>{compositionResult.map(selection => <li key={selection.branch_id}><code>{selection.branch_id}</code>: {selection.selected_paths.join(", ") || tr("No paths selected")}{selection.deferred_paths?.length ? ` · ${tr("Deferred")}: ${selection.deferred_paths.join(", ")}` : ""}</li>)}</ul>}
     </section>}
-    {error && <p role="alert">{error}</p>}
+    {error && <p role="alert">{tr(error)}</p>}
     {conflicts.length > 0 && !workspace && <ul>{conflicts.map(conflict => <li key={conflict.path}><code>{conflict.path}</code> — {tr(conflict.reason)}</li>)}</ul>}
     {replacementWorkspace && <p role="status">{tr("Replacement saved to the working draft. Commit saved draft, then prepare integration again.")} <a href={`?${new URLSearchParams({ branch: branch.id, conflict: replacementWorkspace })}`}>{tr("Earlier conflict workspace")}</a></p>}
-    {workspace && <ConflictEditor key={`${branch.library_id}:${workspace}`} library={branch.library_id} id={workspace} onReplacement={() => { setReplacementWorkspace(workspace); setWorkspace(""); setConflicts([]); const url = new URL(location.href); url.searchParams.delete("conflict"); history.replaceState(null, "", url); studio.changed(); }} onComplete={digest=>{setWorkspace("");setConflicts([]);void run(()=>load(digest));}} />}
+    {workspace && <ConflictEditor key={`${branch.library_id}:${workspace}`} library={branch.library_id} id={workspace} onBlockedChange={setConflictBlocked} onReplacement={() => { setReplacementWorkspace(workspace); setWorkspace(""); setConflicts([]); const url = new URL(location.href); url.searchParams.delete("conflict"); history.replaceState(null, "", url); studio.changed(); }} onComplete={digest=>{setWorkspace("");setConflicts([]);void run(()=>load(digest));}} />}
     {view && <>
       <section aria-label={tr("Evaluation checks")}>
        <h3>{tr("Evaluation checks")}</h3>
@@ -203,9 +247,19 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
        </>}
       </section>
       <p>{tr(view.acceptance === "accepted" ? "Accepted commit" : view.readiness === "ready_for_review" ? "Ready for expert review" : "Integration needs attention")} · <code>{view.accepted_commit ?? view.identity.result.commit_id}</code></p>
-      <ul>{changes.map(change => <li key={change.path}><button disabled={busy} onClick={() => void run(() => inspect(change))}>{change.change}: {change.path}</button></li>)}</ul>
-      {next && <button disabled={busy} onClick={() => void run(async () => { const page = await api<{ changes: Change[]; next: string }>(`${root}/integrations/${encodeURIComponent(view.digest)}/changes?${new URLSearchParams({ after: next })}`); setChanges(items => [...items, ...page.changes]); setNext(page.next); })}>{tr("Load more")}</button>}
-      {file && <div><h3>{file.path}</h3>{(["main", "result"] as const).map(side => <section key={side}><h4>{tr(side === "main" ? "Main before merge" : "Integrated result")}</h4><pre>{file[side]?.text ?? tr(file[side] ? "Binary, directory or large file: text preview unavailable." : "File absent")}</pre></section>)}</div>}
+      <ul>{changes.map(change => <li key={change.path}><button disabled={busy} onClick={() => void run(() => inspect(change))}>{tr(change.change)}: {change.path}</button></li>)}</ul>
+      {next && <button disabled={busy} onClick={() => void run(async () => { const abort = beginRead(), revision = evidenceRevision.current; try { const page = await api<{ changes: Change[]; next: string }>(`${root}/integrations/${encodeURIComponent(view.digest)}/changes?${new URLSearchParams({ after: next })}`, { signal: abort.signal }); if (!abort.signal.aborted && revision === evidenceRevision.current) { setChanges(items => [...items, ...page.changes]); setNext(page.next); } } catch (cause) { if (!abort.signal.aborted) hideEvidence(); throw cause; } })}>{tr("Load more")}</button>}
+      {file && <section aria-label={tr("Integrated file comparison")}><h3>{file.path}</h3>{(["main", "result"] as const).map(side => {
+        const preview = file[side];
+        return <section key={side} aria-label={tr(side === "main" ? "Main before merge" : "Integrated result")}>
+          <h4>{tr(side === "main" ? "Main before merge" : "Integrated result")}</h4>
+          {!preview ? <p>{tr("File absent")}</p> : <>
+            <p><code>{preview.commit_id}</code></p><p>{tr(preview.entry.kind === "file" ? "File" : "Directory")} · {bytes(preview.entry.size)}</p><code>{preview.entry.digest}</code>
+            <pre>{preview.text ?? tr(preview.preview === "binary" ? "Binary file: text preview unavailable." : preview.preview === "too_large" ? "File exceeds the 1 MiB text preview limit." : "Directory")}</pre>
+            {preview.entry.kind === "file" && <a href={`${base}/api/v1${root}/commits/${preview.commit_id}/content?${new URLSearchParams({ path: file.path })}`}>{tr("Download exact file")}</a>}
+          </>}
+        </section>;
+      })}</section>}
       {view.reviews.map(review => <p key={review.id}>{review.verdict}: {review.rationale}</p>)}
       {view.acceptance === "accepted" && <section aria-label={tr("Publish accepted commit")}>
         <p>{tr("Acceptance is complete. Publishing creates a version; it does not deploy to Projects.")}</p>
