@@ -349,8 +349,13 @@ Use **Load more templates** to browse further pages. After a lost publication
 response, retry the unchanged definition to recover its exact revision.
 
 **Activate from configuration** opens the group's central configuration editor.
-Select the published template and a workflow it explicitly supports, review the
-binding changes, and activate with configuration-management permission. Publishing
+For an existing binding, use **Binding template revision** to select the published
+template. Its workflow remains selected if still supported; otherwise the first
+explicitly compatible workflow is selected. Review that choice, input mappings and
+parameters before activation. Template selection preserves output ownership, budgets
+and explicit evaluation overrides; inherited evaluation uses the selected defaults.
+A different output profile is flagged and requires a compatible template.
+Review the binding changes and activate with configuration-management permission. Publishing
 alone changes no active configuration and grants no source, model or output access.
 
 ### Publish evaluator profiles
@@ -404,8 +409,9 @@ Volume Studio first. Use **Search output libraries** to browse libraries you can
 profiles, archived libraries, ownership by another group and missing configuration
 permission explain why a choice is unavailable. The selected library shows its
 owner, accepted main, latest published version and directory reservations. Overlapping
-reservations are flagged; **Use matching reservation generation** copies the current
-generation (or the next generation for a released reservation). **Refresh output
+reservations are flagged; **Use next reservation generation** selects the next
+generation for a new activation of an active or released reservation. A pending
+reservation must be resolved before another operation can claim it. **Refresh output
 metadata** reloads current information. Activation rechecks ownership and permissions;
 choosing a library does not reserve it or convert its profile. Expand **Workflow, inputs and
 execution limits** for parameters, source/dependency/artifact input ports, triggers,
