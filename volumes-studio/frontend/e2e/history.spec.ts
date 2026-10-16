@@ -18,9 +18,19 @@ for(const width of [390,1440])test(`immutable history and snapshot comparison at
  const first=await post(`/branches/${branch.id}/commits`,{request_id:crypto.randomUUID(),expected_head:branch.head,expected_revision:2,message:"First checkpoint"});
  await post(`/branches/${branch.id}/draft/text`,{request_id:crypto.randomUUID(),expected_head:first.commit_id,expected_revision:2,path:"note.md",text:"Second immutable text"});
  const second=await post(`/branches/${branch.id}/commits`,{request_id:crypto.randomUUID(),expected_head:first.commit_id,expected_revision:3,message:"Second checkpoint"});
+ let initialArrived!:()=>void, releaseInitial!:()=>void;
+ const initialWaiting=new Promise<void>(resolve=>{initialArrived=resolve;}),initialHeld=new Promise<void>(resolve=>{releaseInitial=resolve;});
+ await page.route(`**${root}/history?**`,async route=>{
+  if(new URL(route.request().url()).searchParams.get("head")!==main.commit_id)return route.continue();
+  const response=await route.fetch();initialArrived();await initialHeld;await route.fulfill({response}).catch(()=>{});
+ });
  await page.goto(`/volumes-studio/libraries/${library.id}?branch=${branch.id}&view=history`);
  const history=page.getByRole("region",{name:"Commit history and comparison",exact:true});
+ await initialWaiting;
+ await expect(history.getByRole("button",{name:"Load branch head",exact:true})).toBeDisabled();
+ releaseInitial();
  await history.getByRole("button",{name:"Load branch head",exact:true}).click();
+ await page.unroute(`**${root}/history?**`);
  await expect(history.getByText("First checkpoint",{exact:true})).toBeVisible();
  await expect(history.getByText("Second checkpoint",{exact:true})).toBeVisible();
  await history.getByLabel("Base commit",{exact:true}).fill(first.commit_id);
@@ -45,5 +55,18 @@ for(const width of [390,1440])test(`immutable history and snapshot comparison at
   await expect(page.getByLabel("基准提交",{exact:true})).toHaveValue(first.commit_id);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
  }finally{await language("en");}
+ // Current authority failure removes loaded history, file metadata and content.
+ const access=async(effect:string,revision:number)=>expect((await page.request.post("/api/admin/studio-grants",{headers:{Origin:origin},data:{request_id:crypto.randomUUID(),kind:"account",subject_id:session.subject,library_id:library.id,action:"volume.read",effect,expected_revision:revision}})).ok()).toBe(true);
+ await access("deny",1);
+ await history.getByRole("button",{name:"Compare snapshots",exact:true}).click();
+ await expect(history.getByRole("alert")).toContainText("History is unavailable.");
+ await expect(history.getByText("First checkpoint",{exact:true})).toHaveCount(0);
+ await expect(history.getByRole("region",{name:"Snapshot file comparison",exact:true})).toHaveCount(0);
+ expect((await page.request.get(`${root}/commits/${first.commit_id}/content?path=note.md`)).status()).toBe(403);
+ await access("allow",2);
+ await history.getByRole("button",{name:"Retry",exact:true}).click();
+ await expect(history.getByText("First checkpoint",{exact:true})).toBeVisible();
+ await history.getByRole("button",{name:"note.md · changed",exact:true}).click();
+ await expect(history.getByLabel("File differences")).toContainText("Second immutable text");
  expect(errors).toEqual([]);
 });

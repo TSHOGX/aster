@@ -80,6 +80,15 @@ publishing a new version. The original version remains immutable. Scheduling is 
 ## Handle concurrent edits and recovery
 
 Before saving, Studio checks whether the target changed since editing began.
+The **Changes** view compares the exact committed head with a saved draft revision.
+Select a path to see each side's identity, file type, size and digest. Generic text
+uses the text diff regardless of filename extension. Binary files, directories and
+files above the 1 MiB preview limit show metadata instead; use **Download committed
+file** or **Download saved draft file** for file contents. An absent side is explicit,
+and a directory has no file download. The selected path survives reload. Failed or
+denied reads clear prior comparison content; use **Reload comparison** after restoring
+access or refreshing the branch revision. This view excludes unsaved editor text.
+
 A save conflict retains your text for review. Changes elsewhere in the branch do not
 automatically authorize overwriting this file. Save all stops at its first failure;
 a save acknowledges the submitted text, not additional typing made while it runs.
@@ -236,7 +245,10 @@ before/after content. Binary files, directories and files larger than the text
 preview limit show metadata; files have authenticated download links. The URL
 retains the selected history head and comparison so refresh shows the same snapshots.
 Saved draft edits are excluded until committed. Library read grants apply to history,
-comparisons and downloads, including subsequent pages.
+comparisons and downloads, including subsequent pages. Failed reads clear prior
+history, comparison metadata and file content. **Retry** reloads the pinned URL
+identities after access or connectivity is restored. History controls wait for the
+initial read so an older response cannot replace a newer selected head.
 
 ## Publish a version
 
