@@ -182,7 +182,7 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
       <section aria-label={tr("Evaluation checks")}>
        <h3>{tr("Evaluation checks")}</h3>
        {view.evaluation === "not_requested" ? <p>{tr("Evaluation is off. No benchmark result was requested.")}</p> : <>
-        <p>{tr(view.evaluation==="pass"?"Evaluation evidence passed for this exact integrated result.":"Required checks need passing evidence for this exact integrated result.")}</p>
+        <p>{tr(view.evaluation==="pass"?"Evaluation evidence passed for this exact integrated result.":view.identity.checks.some(check=>check.mode==="required")?"Required checks need passing evidence for this exact integrated result.":"Informational checks do not block approval or merge.")}</p>
         <div className="evaluation-budget">
          <label>{tr("Evaluation token limit")} <input type="number" min="1" value={tokens} onChange={event=>setTokens(event.target.value)} disabled={busy}/></label>
          <label>{tr("Evaluation cost limit (micros)")} <input type="number" min="0" value={cost} onChange={event=>setCost(event.target.value)} disabled={busy}/></label>

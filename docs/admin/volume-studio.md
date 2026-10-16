@@ -98,8 +98,10 @@ branch until completed or canceled; another branch can still be committed.
 
 The **Evaluation checks** panel shows the exact profile, evaluator, path policy and
 reference commit captured for the integrated result. Off means no benchmark was
-requested. Informational evaluation does not block expert approval; required checks
-without evidence block approval and merge. Adopted group output policies also apply
+requested. Informational evaluation remains mergeable under human approval while
+pending or after failure, error or inconclusive results. A report arriving after
+merge attaches to the original integration without changing main. Required checks
+need passing evidence before approval and merge. Adopted group output policies also apply
 to manual changes, deletes and renames in those paths. Tightening a policy requires
 repreparing; changing a binding to off does not erase checks already captured by an
 open branch's preparation. When your operator has connected Evaluation Space, set the evaluation token, cost

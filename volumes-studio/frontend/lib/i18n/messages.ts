@@ -17,6 +17,7 @@ export const ZH: Record<string, string> = {
  "Evaluation checks":"评估检查",
  "Evaluation is off. No benchmark result was requested.":"评估已关闭，未请求基准测试结果。",
  "Required checks need passing evidence for this exact integrated result.":"必需的检查需要此精确集成结果的通过证据。",
+ "Informational checks do not block approval or merge.":"参考评估不会阻止审批或合并。",
  "Required evaluation":"必需评估",
  "Informational evaluation":"参考评估",
  "Evaluation profile":"评估配置",

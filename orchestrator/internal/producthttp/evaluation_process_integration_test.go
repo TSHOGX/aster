@@ -31,7 +31,31 @@ import (
 // Uses real Studio/Evaluation Space executables, central authorization/storage,
 // offline dataset provisioning, and a deterministic evaluator that reads actual
 // assigned input bytes before producing metrics. No store mutation bypasses a gate.
+type evaluationProcessCase struct {
+	Mode, Outcome string
+}
+
 func TestRequiredEvaluationRealProcesses(t *testing.T) {
+	evaluationPolicyProcesses(t, evaluationProcessCase{Mode: "required", Outcome: "pass"})
+}
+
+func TestEvaluationPolicyRealProcesses(t *testing.T) {
+	for _, test := range []evaluationProcessCase{
+		{Mode: "disabled", Outcome: "not_requested"},
+		{Mode: "report_only", Outcome: "pending"},
+		{Mode: "report_only", Outcome: "fail"},
+		{Mode: "report_only", Outcome: "error"},
+		{Mode: "report_only", Outcome: "inconclusive"},
+		{Mode: "required", Outcome: "pending"},
+		{Mode: "required", Outcome: "fail"},
+		{Mode: "required", Outcome: "error"},
+		{Mode: "required", Outcome: "inconclusive"},
+	} {
+		t.Run(test.Mode+"/"+test.Outcome, func(t *testing.T) { evaluationPolicyProcesses(t, test) })
+	}
+}
+
+func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	root, err := filepath.Abs("../../..")
@@ -100,10 +124,10 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 	var providerMu sync.Mutex
 	submissions := map[string]*evolution.EvaluationSubmission{}
 	states := map[string]string{}
-	cancellationJourney := os.Getenv("STUDIO_TEST_EVALUATION_CANCEL") == "1"
+	cancellationJourney := test.Outcome == "pass" && os.Getenv("STUDIO_TEST_EVALUATION_CANCEL") == "1"
 	inputReads := 0
 	providerFailure := ""
-	if cancellationJourney {
+	if cancellationJourney || test.Outcome == "pending" {
 		original := publicHandler
 		publicHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/fixture/evaluation-dispatched" {
@@ -111,6 +135,15 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 				count := len(submissions)
 				providerMu.Unlock()
 				_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
+				return
+			}
+			if r.Method == "POST" && r.URL.Path == "/fixture/evaluation-release" {
+				providerMu.Lock()
+				for id := range submissions {
+					states[id] = "completed"
+				}
+				providerMu.Unlock()
+				w.WriteHeader(204)
 				return
 			}
 			original.ServeHTTP(w, r)
@@ -187,7 +220,10 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 				}
 				submissions[value.JobID] = &value
 				states[value.JobID] = "completed"
-				if cancellationJourney && len(submissions) == 1 {
+				if test.Outcome == "error" {
+					states[value.JobID] = "error"
+				}
+				if test.Outcome == "pending" || cancellationJourney && len(submissions) == 1 {
 					states[value.JobID] = "running"
 				}
 			}
@@ -212,8 +248,19 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/result") {
+			if test.Outcome == "error" {
+				states[jobID] = "error"
+			}
 			service := evolution.Revision{ID: r.Header.Get("X-Evaluation-Service-ID"), Revision: 1, Digest: r.Header.Get("X-Evaluation-Service-Digest")}
 			result := evolution.EvaluationResult{JobID: submitted.JobID, Fence: submitted.Fence, Service: service, Subject: submitted.Subject, State: states[jobID], Outcome: "fail", Metrics: []evolution.Metric{{Name: "accuracy", Unit: "ratio", Value: 1, Samples: 10, Coverage: 1}}}
+			if test.Outcome == "fail" || test.Outcome == "pending" {
+				result.Metrics[0].Value = 0
+				result.Outcome = "pass" // The service must derive failure from metrics.
+			}
+			if test.Outcome == "inconclusive" {
+				result.Metrics = []evolution.Metric{}
+				result.Outcome = "pass"
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"result": result, "usage": map[string]int64{"tokens": 10, "cost_micros": 20}})
 			return
 		}
@@ -258,24 +305,31 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 	evaluator := evolution.Service{Ref: evolution.Revision{ID: "evaluator", Revision: 1}, Kind: "evaluation", ConnectionID: "evaluator", RunnerDigest: evolution.Digest([]byte("evaluator")), Enabled: true, Capabilities: evolution.Capabilities{ProtocolVersion: 1}}
 	evaluator.Ref.Digest, err = evolution.DefinitionDigest(evaluator)
 	must(t, err)
-	provision("service", evaluator.Ref, evaluator)
-	datasetBytes := []byte(`{"expected":"Reviewed skill"}`)
-	datasetFile := filepath.Join(t.TempDir(), "dataset.json")
-	must(t, os.WriteFile(datasetFile, datasetBytes, 0600))
-	dataset := evolution.ArtifactRef{ID: "held-out", GroupID: product.StandardUsersGroup, SchemaDigest: evolution.Digest([]byte("dataset-schema")), Digest: evolution.Digest(datasetBytes), Size: int64(len(datasetBytes)), MediaType: "application/json", GrantID: "dataset-use", PolicyRevision: 1}
-	raw, _ := json.Marshal(dataset)
-	seal := exec.CommandContext(ctx, catalog, "--state-directory", spaceDirectory, "--action", "seal-artifact", "--artifact-file", datasetFile)
-	seal.Stdin = bytes.NewReader(raw)
-	if output, err := seal.CombinedOutput(); err != nil {
-		t.Fatalf("seal: %v %s", err, output)
+	if test.Mode != "disabled" {
+		provision("service", evaluator.Ref, evaluator)
+	}
+	var dataset evolution.ArtifactRef
+	if test.Mode != "disabled" {
+		datasetBytes := []byte(`{"expected":"Reviewed skill"}`)
+		datasetFile := filepath.Join(t.TempDir(), "dataset.json")
+		must(t, os.WriteFile(datasetFile, datasetBytes, 0600))
+		dataset = evolution.ArtifactRef{ID: "held-out", GroupID: product.StandardUsersGroup, SchemaDigest: evolution.Digest([]byte("dataset-schema")), Digest: evolution.Digest(datasetBytes), Size: int64(len(datasetBytes)), MediaType: "application/json", GrantID: "dataset-use", PolicyRevision: 1}
+		raw, _ := json.Marshal(dataset)
+		seal := exec.CommandContext(ctx, catalog, "--state-directory", spaceDirectory, "--action", "seal-artifact", "--artifact-file", datasetFile)
+		seal.Stdin = bytes.NewReader(raw)
+		if output, err := seal.CombinedOutput(); err != nil {
+			t.Fatalf("seal: %v %s", err, output)
+		}
 	}
 	ref := evolution.Revision{ID: "condition", Revision: 1, Digest: evolution.Digest([]byte("condition"))}
 	profile := evolution.EvaluationProfile{Ref: evolution.Revision{ID: "profile", Revision: 1}, Dataset: dataset, Scorer: ref, Runtime: ref, Model: ref, Thresholds: []evolution.MetricThreshold{{Name: "accuracy", Unit: "ratio", Operator: "gte", Value: 0.9, MinimumSamples: 10, MinimumCoverage: 1}}}
-	profile.Ref.Digest, err = evolution.DefinitionDigest(profile)
-	must(t, err)
-	provision("profile", profile.Ref, profile)
+	if test.Mode != "disabled" {
+		profile.Ref.Digest, err = evolution.DefinitionDigest(profile)
+		must(t, err)
+		provision("profile", profile.Ref, profile)
+	}
 	connections := filepath.Join(t.TempDir(), "connections.json")
-	raw, _ = json.Marshal(map[string]any{"connections": []any{map[string]string{"id": "evaluator", "endpoint": provider.URL, "client_id": "space", "secret_env": "TEST_EVALUATOR_SECRET", "input_secret_env": "TEST_EVALUATOR_INPUT_SECRET"}}})
+	raw, _ := json.Marshal(map[string]any{"connections": []any{map[string]string{"id": "evaluator", "endpoint": provider.URL, "client_id": "space", "secret_env": "TEST_EVALUATOR_SECRET", "input_secret_env": "TEST_EVALUATOR_INPUT_SECRET"}}})
 	must(t, os.WriteFile(connections, raw, 0600))
 	start := func(binary, addr string, args ...string) {
 		t.Helper()
@@ -341,7 +395,11 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 		}
 	}
 	start(studioBinary, studioAddress, "--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evaluation-endpoint", spaceOrigin, "--frontend", "http://"+frontendAddress)
-	start(spaceBinary, spaceAddress, "--listen", spaceAddress, "--state-directory", spaceDirectory, "--identity-endpoint", central.URL, "--evaluation-connections", connections, "--studio-input-endpoint", "http://"+participantAddress)
+	spaceArgs := []string{"--listen", spaceAddress, "--state-directory", spaceDirectory, "--identity-endpoint", central.URL, "--studio-input-endpoint", "http://" + participantAddress}
+	if test.Mode != "disabled" {
+		spaceArgs = append(spaceArgs, "--evaluation-connections", connections)
+	}
+	start(spaceBinary, spaceAddress, spaceArgs...)
 	for _, action := range []string{"volume.read", "volume.author", "volume.review", "volume.merge", "volume.configure"} {
 		_, err = store.ApplyStudioGrant(ctx, token, product.StudioGrantCommand{RequestID: strings.ReplaceAll(action, ".", "-"), Kind: "account", SubjectID: admin.ID, LibraryID: "aster-shared-assets", Action: action, Effect: "allow"})
 		must(t, err)
@@ -352,7 +410,11 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 	_, err = store.SetEvolutionSourcePolicy(ctx, token, product.StandardUsersGroup, product.EvolutionSourcePolicyInput{RequestID: "source", Source: source})
 	must(t, err)
 	budget := evolution.Budget{MaxTokens: 1000, MaxCostMicros: 10000, MaxAttempts: 1, TimeoutSeconds: 60, MaxArtifactBytes: 1048576}
-	configuration := evolution.Configuration{GroupID: product.StandardUsersGroup, Revision: 1, Budget: budget, Sources: []evolution.SourceBinding{source}, Bindings: []evolution.Binding{{ID: "skills", Enabled: true, Template: template.Ref, Workflow: workflowRef, Service: service.Ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: "skills/derived", Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: evolution.EvaluationPolicy{Mode: "required", Profile: &profile.Ref, Service: &evaluator.Ref, ReferenceStrategy: "none"}, Budget: budget, Trigger: "manual"}}}
+	policy := off
+	if test.Mode != "disabled" {
+		policy = evolution.EvaluationPolicy{Mode: test.Mode, Profile: &profile.Ref, Service: &evaluator.Ref, ReferenceStrategy: "none"}
+	}
+	configuration := evolution.Configuration{GroupID: product.StandardUsersGroup, Revision: 1, Budget: budget, Sources: []evolution.SourceBinding{source}, Bindings: []evolution.Binding{{ID: "skills", Enabled: true, Template: template.Ref, Workflow: workflowRef, Service: service.Ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: "skills/derived", Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: policy, Budget: budget, Trigger: "manual"}}}
 	_, err = store.ActivateEvolutionConfig(ctx, token, configuration.GroupID, product.EvolutionActivationInput{RequestID: "activate", Configuration: configuration})
 	must(t, err)
 	evalClient, err := evaluationclient.New(spaceOrigin, secret)
@@ -360,8 +422,10 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 	studioClient, err := studioclient.New("http://"+participantAddress, secret)
 	must(t, err)
 	must(t, (&product.EvolutionWorker{Store: store, Evaluation: evalClient, Studio: studioClient}).Step(ctx))
-	_, err = store.SetEvaluationDatasetGrant(ctx, token, configuration.GroupID, product.EvaluationDatasetGrantInput{RequestID: "dataset", Artifact: dataset, Service: evaluator.Ref, Enabled: true})
-	must(t, err)
+	if test.Mode != "disabled" {
+		_, err = store.SetEvaluationDatasetGrant(ctx, token, configuration.GroupID, product.EvaluationDatasetGrantInput{RequestID: "dataset", Artifact: dataset, Service: evaluator.Ref, Enabled: true})
+		must(t, err)
+	}
 	// Complete the actual Studio PKCE/session flow without a browser frontend.
 	httpClient := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	request, _ := http.NewRequestWithContext(ctx, "GET", "http://"+studioAddress+"/volumes-studio/auth/login", nil)
@@ -457,12 +521,25 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 		Identity evolution.PreparedIdentity `json:"identity"`
 	}
 	post("/integrations/prepare", map[string]any{"request_id": "prepare", "branch_id": branch.ID, "expected_head": checkpoint.Commit, "expected_main": main.CommitID, "expected_policy_revision": 1}, &prepared)
-	if len(prepared.Identity.Checks) != 1 {
-		t.Fatal("required policy missing")
+	expectedChecks := 1
+	if test.Mode == "disabled" {
+		expectedChecks = 0
 	}
-	status, _ = call("POST", libraryRoot+"/integrations/reviews", map[string]any{"request_id": "early", "prepared_digest": prepared.Digest, "verdict": "approve", "rationale": "premature"})
-	if status != 409 {
-		t.Fatal("unmeasured integration approved", status)
+	if len(prepared.Identity.Checks) != expectedChecks {
+		t.Fatal("effective policy checks", prepared.Identity.Checks)
+	}
+	if test.Mode == "required" {
+		status, _ = call("POST", libraryRoot+"/integrations/reviews", map[string]any{"request_id": "early", "prepared_digest": prepared.Digest, "verdict": "approve", "rationale": "premature"})
+		if status != 409 {
+			t.Fatal("unmeasured required integration approved", status)
+		}
+	}
+	canMerge := test.Mode != "required" || test.Outcome == "pass"
+	expectedOutcome := test.Outcome
+	if expectedOutcome == "pending" {
+		expectedOutcome = "fail"
+	} else if expectedOutcome == "error" {
+		expectedOutcome = "inconclusive"
 	}
 	if browserEnabled {
 		width := 1440
@@ -473,49 +550,102 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 		if browserName == "" {
 			browserName = "chromium"
 		}
-		raw, _ := json.Marshal(map[string]any{"backend": "http://" + studioAddress, "origin": issuer, "cookies": cookies, "central_cookie": token, "branch": branch.ID, "prepared": prepared.Digest, "width": width, "browser": browserName, "cancel_first": cancellationJourney})
-		cmd := exec.CommandContext(ctx, "node", filepath.Join(root, "volumes-studio/tests/browser/evaluation.mjs"))
+		raw, _ := json.Marshal(map[string]any{"backend": "http://" + studioAddress, "origin": issuer, "cookies": cookies, "central_cookie": token, "branch": branch.ID, "prepared": prepared.Digest, "width": width, "browser": browserName, "cancel_first": cancellationJourney, "mode": test.Mode, "outcome": test.Outcome, "evidence_directory": filepath.Join(root, "volumes-studio/frontend/test-results/evaluation-policy", fmt.Sprintf("%s-%d", browserName, width))})
+		script := "evaluation.mjs"
+		if test.Mode != "required" || test.Outcome != "pass" {
+			script = "evaluation-policy.mjs"
+		}
+		cmd := exec.CommandContext(ctx, "node", filepath.Join(root, "volumes-studio/tests/browser/"+script))
 		cmd.Stdin = bytes.NewReader(raw)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatalf("required evaluation browser: %v\n%s", err, output)
+			t.Fatalf("evaluation policy browser: %v\n%s", err, output)
 		}
 		t.Log(string(output))
 	} else {
-		var job struct {
-			ID string `json:"id"`
+		merged := false
+		merge := func() {
+			post("/integrations/reviews", map[string]any{"request_id": "approve", "prepared_digest": prepared.Digest, "verdict": "approve", "rationale": "Exact policy and evidence checked"}, nil)
+			post("/integrations/merge", map[string]any{"request_id": "merge", "prepared_digest": prepared.Digest, "expected_main": main.CommitID}, nil)
+			merged = true
 		}
-		post("/integrations/"+url.PathEscape(prepared.Digest)+"/evaluations", map[string]any{"request_id": "evaluate", "requirement_digest": prepared.Identity.Checks[0].Digest, "budget": budget, "seed": 0}, &job)
-		passed := false
-		for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); {
-			status, raw = call("POST", libraryRoot+"/evaluations/"+job.ID+"/refresh", map[string]any{})
-			if status != 200 {
-				t.Fatal(status, string(raw))
+		if test.Mode != "disabled" {
+			var job struct {
+				ID string `json:"id"`
 			}
-			var result struct {
-				Outcome string `json:"outcome"`
+			post("/integrations/"+url.PathEscape(prepared.Digest)+"/evaluations", map[string]any{"request_id": "evaluate", "requirement_digest": prepared.Identity.Checks[0].Digest, "budget": budget, "seed": 0}, &job)
+			if test.Outcome == "pending" {
+				for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
+					providerMu.Lock()
+					count := len(submissions)
+					providerMu.Unlock()
+					if count == 1 {
+						break
+					}
+					time.Sleep(50 * time.Millisecond)
+				}
+				providerMu.Lock()
+				count := len(submissions)
+				providerMu.Unlock()
+				if count != 1 {
+					t.Fatal("pending evaluator was not dispatched")
+				}
+				if test.Mode == "report_only" {
+					merge()
+				} else {
+					status, raw = call("POST", libraryRoot+"/integrations/reviews", map[string]any{"request_id": "pending-approve", "prepared_digest": prepared.Digest, "verdict": "approve"})
+					if status != 409 {
+						t.Fatal("pending required check approved", status, string(raw))
+					}
+				}
+				providerMu.Lock()
+				for id := range submissions {
+					states[id] = "completed"
+				}
+				providerMu.Unlock()
 			}
-			must(t, json.Unmarshal(raw, &result))
-			if result.Outcome == "pass" {
-				passed = true
-				break
+			settled := false
+			for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); {
+				status, raw = call("POST", libraryRoot+"/evaluations/"+job.ID+"/refresh", map[string]any{})
+				if status != 200 {
+					t.Fatal(status, string(raw))
+				}
+				var result struct {
+					State   string `json:"state"`
+					Outcome string `json:"outcome"`
+				}
+				must(t, json.Unmarshal(raw, &result))
+				if (result.State == "completed" || result.State == "error") && result.Outcome == expectedOutcome {
+					settled = true
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
 			}
-			time.Sleep(100 * time.Millisecond)
+			if !settled {
+				t.Fatal("unexpected evaluation settlement", string(raw))
+			}
 		}
-		providerMu.Lock()
-		reads, failure := inputReads, providerFailure
-		providerMu.Unlock()
-		if !passed || reads != 3 || failure != "" {
-			t.Fatal("evaluation did not consume assigned inputs", passed, reads, failure)
+		if canMerge && !merged {
+			merge()
 		}
-		post("/integrations/reviews", map[string]any{"request_id": "approve", "prepared_digest": prepared.Digest, "verdict": "approve", "rationale": "Exact evidence checked"}, nil)
-		post("/integrations/merge", map[string]any{"request_id": "merge", "prepared_digest": prepared.Digest, "expected_main": main.CommitID}, nil)
+		if !canMerge {
+			status, raw = call("POST", libraryRoot+"/integrations/reviews", map[string]any{"request_id": "failed-approve", "prepared_digest": prepared.Digest, "verdict": "approve"})
+			if status != 409 {
+				t.Fatal("nonpassing required check approved", status, string(raw))
+			}
+			status, raw = call("POST", libraryRoot+"/integrations/merge", map[string]any{"request_id": "failed-merge", "prepared_digest": prepared.Digest, "expected_main": main.CommitID})
+			if status != 409 {
+				t.Fatal("nonpassing required check merged", status, string(raw))
+			}
+		}
 	}
 	providerMu.Lock()
 	verifiedReads, providerError := inputReads, providerFailure
 	providerMu.Unlock()
 	expectedReads := 3
-	if cancellationJourney {
+	if test.Mode == "disabled" {
+		expectedReads = 0
+	} else if cancellationJourney {
 		expectedReads = 6
 	}
 	if verifiedReads != expectedReads || providerError != "" {
@@ -523,7 +653,30 @@ func TestRequiredEvaluationRealProcesses(t *testing.T) {
 	}
 	var accepted evolution.ContentRef
 	get("/main", &accepted)
-	if accepted.CommitID != prepared.Identity.Result.CommitID {
-		t.Fatal("wrong integration accepted")
+	expectedCommit := main.CommitID
+	if canMerge {
+		expectedCommit = prepared.Identity.Result.CommitID
+	}
+	if accepted.CommitID != expectedCommit {
+		t.Fatal("evaluation policy changed wrong main", accepted, canMerge)
+	}
+	var view struct {
+		Evaluation  string `json:"evaluation"`
+		Acceptance  string `json:"acceptance"`
+		Evaluations []struct {
+			State   string `json:"state"`
+			Outcome string `json:"outcome"`
+		} `json:"evaluations"`
+	}
+	get("/integrations/"+url.PathEscape(prepared.Digest), &view)
+	if test.Mode == "disabled" {
+		if view.Evaluation != "not_requested" || len(view.Evaluations) != 0 {
+			t.Fatal("disabled evaluation fabricated evidence", view)
+		}
+	} else if len(view.Evaluations) == 0 || view.Evaluations[len(view.Evaluations)-1].Outcome != expectedOutcome {
+		t.Fatal("historical evaluation outcome missing", view)
+	}
+	if canMerge && view.Acceptance != "accepted" || !canMerge && view.Acceptance != "not_accepted" {
+		t.Fatal("evaluation acceptance changed", view)
 	}
 }
