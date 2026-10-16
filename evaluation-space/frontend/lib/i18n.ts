@@ -1,6 +1,19 @@
 "use client";
 import { useTranslator } from "../../../web/i18n";
 const zh = {
+"Apply or reset the node name before changing selection.": "切换节点前，请应用或重置节点名称。",
+"Reset node name": "重置节点名称",
+"Remove this node and {count} connections?": "删除此节点及其 {count} 条连接？",
+
+"Node ID must be unique and contain letters, digits, underscores or hyphens.": "节点 ID 必须唯一，且仅包含字母、数字、下划线或连字符。",
+"Fix invalid node fields before saving or validating.": "保存或验证前，请修复无效节点字段。",
+"Recovery draft exceeds the size limit.": "恢复草稿超过大小限制。",
+"Rename node": "重命名节点",
+"Model version": "模型版本号",
+"Model digest": "模型摘要",
+"Discard unsaved workflow changes?": "放弃未保存的工作流更改？",
+"Keep recovery and reload latest": "保留恢复副本并加载最新版本",
+
 "Run evidence is unavailable. Retry or check source access.": "运行证据不可用，请重试或检查源访问权限。",
 "Source comparison is unavailable. Retry or check source access.": "源运行比较不可用，请重试或检查源访问权限。",
 "Checkpoint experiment": "检查点实验",

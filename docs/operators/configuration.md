@@ -268,15 +268,20 @@ configuration revision/status and separate management, execution and evidence
 permissions. Source evidence still requires an explicit grant for administrators.
 It does not expose the private catalog or worker APIs.
 Workflow editor routes under `/evaluation-space/groups/{group}/workflows/{workflow}`
-use the same client-bound central grant. Draft saves validate executable graph JSON
-and a separate layout object with independent revisions; conflicts retain the
-current draft until the editor reloads. Publication records an immutable workflow
+use the same client-bound central grant. Draft saves retain bounded typed graph JSON, including incomplete connections or
+unfinished node settings, and a separate layout object with independent revisions.
+Validate and Publish require a complete executable graph. Conflicts preserve local
+edits and offer a recovery copy before loading the latest draft. Publication records an immutable workflow
 revision and does not activate it for a group. `workflow.edit` is explicit and
 separate from `config.manage`, `run.start` and `source.read`.
 The workbench also exposes keyboard node editing, typed connection controls with
 duplicate and removal handling, ordered node inspection, prompt variables, model,
 tools and port documents, executable digest feedback, undo/redo and bounded
-account-local recovery. Publishing
+account-local recovery. Renaming a node updates its edges. Connection selectors
+include every node port and workflow input/output port. Malformed local fields
+remain visible across node selection and recovery and block saving/validation;
+layout-only edits preserve the validated executable digest. Prompt digests are
+computed from the frozen document submitted for save or validation. Publishing
 offers an explicit handoff to group configuration for activation; it does not
 silently change the active revision. Run detail links use
 `/evaluation-space/groups/{group}/runs/{run}`; the browser API returns only the

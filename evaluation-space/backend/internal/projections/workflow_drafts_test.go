@@ -130,3 +130,50 @@ func workflowPrompt(w evolution.Workflow) *evolution.Prompt {
 	}
 	panic("fixture is missing extract node")
 }
+
+func TestIncompleteWorkflowDraftPersistsButCannotPublish(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "space.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	raw, err := os.ReadFile("../../../../contracts/evolution/testdata/skills.valid.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := evolution.DecodeWorkflow(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges := graph.Edges
+	graph.Edges = nil
+	draft, err := s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: graph.ID, Workflow: graph})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained, err := s.WorkflowDraft(ctx, graph.ID)
+	if err != nil || len(retained.Workflow.Edges) != 0 {
+		t.Fatal("incomplete draft lost", retained, err)
+	}
+	if _, err = s.PublishWorkflowDraft(ctx, graph.ID, draft.Revision); err == nil {
+		t.Fatal("disconnected draft published")
+	}
+	graph.Edges = edges
+	repaired, err := s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: graph.ID, Workflow: graph, ExpectedRevision: draft.Revision, ExpectedLayoutRevision: draft.LayoutRevision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := s.PublishWorkflowDraft(ctx, graph.ID, repaired.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, _ := graph.Canonical()
+	if ref.Digest != evolution.Digest(canonical) {
+		t.Fatal("draft normalization changed executable identity", ref)
+	}
+	old, err := s.WorkflowDraftRevision(ctx, graph.ID, draft.Revision)
+	if err != nil || len(old.Workflow.Edges) != 0 {
+		t.Fatal("repair rewrote incomplete history", old, err)
+	}
+}

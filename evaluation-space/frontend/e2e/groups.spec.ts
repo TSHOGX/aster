@@ -143,45 +143,87 @@ test("failed reads clear stale metadata and language changes preserve navigation
   } finally { await context.close(); }
 });
 
-test("workflow workbench edits, validates, publishes and preserves layout identity", async ({ page: admin, browser }) => {
-  const { beta, user } = await provision(admin);
-  const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: "en-US", viewport: { width: 1440, height: 900 } });
-  const page = await context.newPage();
-  try {
-    await login(page, user);
-    await page.goto(`/evaluation-space/groups/${beta.id}/`);
-    await page.getByRole("link", { name: "Sign in", exact: true }).click();
-    const workflow = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8"));
-    workflow.id = `skills-${crypto.randomUUID().slice(0, 8)}`;
-    const session = await (await page.request.get("/evaluation-space/api/v1/session")).json() as { csrf: string };
-    const draftPath = `/evaluation-space/api/v1/groups/${beta.id}/workflows/${workflow.id}/draft`;
-    const seeded = await page.request.put(draftPath, { headers: { Origin: origin, "X-CSRF-Token": session.csrf }, data: { id: workflow.id, expected_revision: 0, expected_layout_revision: 0, workflow, layout: { extract: { x: 12, y: 24 } } } });
-    expect(seeded.status(), await seeded.text()).toBe(200);
-    await page.goto(`/evaluation-space/groups/${beta.id}/workflows/${workflow.id}/`);
-    await expect(page.getByRole("heading", { name: new RegExp(`Workflow editor: ${workflow.id}`), exact: true })).toBeVisible();
-    await page.getByRole("button", { name: /^extract\b/ }).click();
-    const executable = page.getByLabel("Executable workflow JSON", { exact: true });
-    const edited = JSON.parse(await executable.inputValue());
-    edited.nodes.find((node: { id: string }) => node.id === "extract").prompt.text = "Extract {{corpus}} with evidence";
-    const extract = edited.nodes.find((node: { id: string }) => node.id === "extract");
-    extract.prompt.digest = `sha256:${createHash("sha256").update(extract.prompt.text).digest("hex")}`;
-    await executable.fill(JSON.stringify(edited, null, 2));
-    await page.getByRole("button", { name: "Validate draft", exact: true }).click();
-    await page.waitForTimeout(200);
-    await expect(page.getByRole("status").filter({ hasText: "Executable digest" })).toContainText("sha256:");
-    const digest = await page.getByRole("status").filter({ hasText: "Executable digest" }).innerText();
-    await page.getByRole("button", { name: "Save draft", exact: true }).click();
-    await expect(page.getByRole("status", { name: "" }).filter({ hasText: "Draft saved." })).toBeVisible();
-    await page.getByLabel("Canvas layout JSON", { exact: true }).fill('{"extract":{"x":80,"y":120}}');
-    await page.getByRole("button", { name: "Save draft", exact: true }).click();
-    await expect(page.getByText("Draft revision 2", { exact: false })).toBeVisible();
-    await page.getByRole("button", { name: "Publish revision", exact: true }).click();
-    await expect(page.getByRole("status").filter({ hasText: "Published immutable workflow revision." })).toBeVisible();
-    expect(digest).toContain("sha256:");
-    await expect(page.locator("html")).toHaveAttribute("lang", "en");
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  } finally { await context.close(); }
-});
+for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", width: 390 }]) {
+  test(`workflow editor preserves visual edits, invalid fields and conflicts ${variant.locale}`, async ({ page: admin, browser }, info) => {
+    const { beta, user } = await provision(admin);
+    const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: variant.locale, viewport: { width: variant.width, height: 900 } });
+    const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
+    const errors: string[] = []; page.on("pageerror", error => errors.push(error.message)); page.on("dialog", dialog => dialog.accept());
+    try {
+      await login(page, user); await page.goto(`/evaluation-space/groups/${beta.id}/`);
+      await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
+      await expect(page.getByRole("region", { name: tr("Group overview", "团队概览"), exact: true }).getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
+      const workflow = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8"));
+      workflow.id = `skills-${crypto.randomUUID().slice(0, 8)}`;
+      const session = await (await page.request.get("/evaluation-space/api/v1/session")).json() as { csrf: string };
+      const draftPath = `/evaluation-space/api/v1/groups/${beta.id}/workflows/${workflow.id}/draft`;
+      const headers = { Origin: origin, "X-CSRF-Token": session.csrf };
+      const seeded = await page.request.put(draftPath, { headers, data: { id: workflow.id, expected_revision: 0, expected_layout_revision: 0, workflow, layout: { extract: { x: 12, y: 24 } } } });
+      expect(seeded.status(), await seeded.text()).toBe(200);
+      await page.goto(`/evaluation-space/groups/${beta.id}/workflows/${workflow.id}/`);
+      await page.getByRole("button", { name: /^extract\b/ }).click();
+      const prompt = page.getByLabel(tr("Prompt text", "提示词文本"), { exact: true });
+      await prompt.fill("Extract {{corpus}} with evidence");
+      const ports = page.getByLabel(tr("Input ports JSON", "输入端口 JSON"), { exact: true });
+      const save = page.getByRole("button", { name: tr("Save draft", "保存草稿"), exact: true });
+      await ports.fill("{"); await expect(ports).toHaveAttribute("aria-invalid", "true"); await expect(save).toBeDisabled();
+      await page.getByRole("button", { name: /^critic\b/ }).click();
+      await page.getByRole("button", { name: /^extract\b/ }).click(); await expect(ports).toHaveValue("{");
+      await page.getByRole("button", { name: tr("Save recovery", "保存恢复副本"), exact: true }).click();
+      await page.reload(); await page.getByRole("button", { name: tr("Restore recovery", "恢复副本"), exact: true }).click();
+      await expect(prompt).toHaveValue("Extract {{corpus}} with evidence"); await expect(ports).toHaveValue("{"); await expect(save).toBeDisabled();
+      await ports.fill(JSON.stringify(workflow.nodes[0].input_ports));
+      const validate = page.getByRole("button", { name: tr("Validate draft", "验证草稿"), exact: true });
+      const digest = page.getByRole("status").filter({ hasText: tr("Executable digest", "可执行摘要") });
+      await validate.click(); await expect(digest).toContainText("sha256:");
+      const originalDigest = await digest.innerText();
+      await save.click(); await expect(page.getByRole("status").filter({ hasText: tr("Draft saved.", "草稿已保存。") })).toBeVisible();
+      let retained = await (await page.request.get(draftPath)).json();
+      const edited = retained.workflow.nodes.find((node: { id: string }) => node.id === "extract");
+      expect(edited.prompt.text).toBe("Extract {{corpus}} with evidence");
+      expect(edited.prompt.digest).toBe(`sha256:${createHash("sha256").update(edited.prompt.text).digest("hex")}`);
+      await page.getByLabel(tr("Canvas layout JSON", "画布布局 JSON"), { exact: true }).fill('{"extract":{"x":80,"y":120}}');
+      await expect(digest).toHaveText(originalDigest); await save.click(); await expect(digest).toHaveText(originalDigest);
+      await page.getByLabel(tr("Node ID", "节点 ID"), { exact: true }).fill("gather");
+      await page.getByRole("button", { name: tr("Rename node", "重命名节点"), exact: true }).click();
+      await expect(digest).toHaveCount(0);
+      const executable = page.getByLabel(tr("Executable workflow JSON", "可执行工作流 JSON"), { exact: true });
+      const renamed = JSON.parse(await executable.inputValue());
+      expect(renamed.edges.some((edge: { from: string; to: string }) => edge.from.startsWith("extract.") || edge.to.startsWith("extract."))).toBe(false);
+      await page.getByRole("button", { name: tr("Add agent", "添加 agent"), exact: true }).click();
+      await page.getByLabel(tr("Prompt text", "提示词文本"), { exact: true }).fill("Prepare {{corpus}}");
+      await page.getByLabel(tr("Prompt variables", "提示词变量"), { exact: true }).fill("corpus");
+      await ports.fill(JSON.stringify(workflow.inputs));
+      await page.getByLabel(tr("Output ports JSON", "输出端口 JSON"), { exact: true }).fill(JSON.stringify(workflow.inputs));
+      const model = workflow.nodes[0].model_ref;
+      await page.getByLabel(tr("Model revision", "模型版本"), { exact: true }).fill(model.id);
+      await page.getByLabel(tr("Model version", "模型版本号"), { exact: true }).fill(String(model.revision));
+      await page.getByLabel(tr("Model digest", "模型摘要"), { exact: true }).fill(model.digest);
+      await page.getByRole("button", { name: `${tr("Remove connection", "删除连接")} $input.corpus → gather.corpus`, exact: true }).click();
+      const connect = async (from: string, to: string) => { await page.getByLabel(tr("From node", "源节点"), { exact: true }).selectOption(from); await page.getByLabel(tr("To node", "目标节点"), { exact: true }).selectOption(to); await page.getByRole("button", { name: tr("Connect", "连接"), exact: true }).click(); };
+      await connect("$input.corpus", "agent-node.corpus"); await connect("agent-node.corpus", "gather.corpus");
+      await validate.click(); await expect(digest).toContainText("sha256:"); await save.click();
+      await page.getByRole("button", { name: /^gather\b/ }).click();
+      retained = await (await page.request.get(draftPath)).json();
+      const concurrent = structuredClone(retained.workflow); concurrent.nodes.find((node: { id: string }) => node.id === "critic").timeout_seconds++;
+      expect((await page.request.put(draftPath, { headers, data: { id: workflow.id, expected_revision: retained.revision, expected_layout_revision: retained.layout_revision, workflow: concurrent, layout: retained.layout } })).ok()).toBe(true);
+      await prompt.fill("Local unsaved {{corpus}}"); await save.click();
+      await expect(page.getByRole("alert").filter({ hasText: tr("The draft changed elsewhere. Reload before saving.", "草稿已在其他位置更改，请重新加载后保存。") })).toBeVisible();
+      await expect(prompt).toHaveValue("Local unsaved {{corpus}}");
+      await page.getByRole("button", { name: tr("Keep recovery and reload latest", "保留恢复副本并加载最新版本"), exact: true }).click();
+      await page.getByRole("button", { name: tr("Restore recovery", "恢复副本"), exact: true }).click(); await expect(prompt).toHaveValue("Local unsaved {{corpus}}");
+      await page.getByRole("button", { name: `${tr("Remove connection", "删除连接")} build.patch → $output.patch`, exact: true }).click();
+      await save.click(); await expect(page.getByRole("status").filter({ hasText: tr("Draft saved.", "草稿已保存。") })).toBeVisible();
+      await page.getByRole("button", { name: tr("Publish revision", "发布版本"), exact: true }).click();
+      await expect(page.getByRole("alert").filter({ hasText: tr("Publishing requires workflow-edit permission and a valid saved draft.", "发布需要工作流编辑权限和有效的已保存草稿。") })).toBeVisible();
+      await connect("build.patch", "$output.patch"); await save.click();
+      await page.getByRole("button", { name: tr("Publish revision", "发布版本"), exact: true }).click();
+      await expect(page.getByRole("status").filter({ hasText: tr("Published immutable workflow revision.", "已发布不可变工作流版本。") })).toBeVisible();
+      await page.screenshot({ path: info.outputPath("visual-workflow-edits.png"), fullPage: true });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true); expect(errors).toEqual([]);
+    } finally { await context.close(); }
+  });
+}
 
 test("terminal run inspector retries into a linked immutable run", async ({ page: admin, browser }) => {
   const { beta, user } = await provision(admin);

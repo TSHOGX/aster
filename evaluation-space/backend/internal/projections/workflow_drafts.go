@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 )
 
 type WorkflowDraftInput struct {
@@ -37,6 +38,31 @@ func canonicalLayout(raw []byte) ([]byte, error) {
 	return json.Marshal(layout)
 }
 
+// Drafts may be disconnected or have unfinished node settings. Keep their typed
+// document bounded and addressable; executable validation belongs to publication.
+func canonicalWorkflowDraft(value evolution.Workflow) ([]byte, error) {
+	if value.SchemaVersion != 1 || !manifest.ValidID(value.ID) || len(value.Nodes) > 1000 || len(value.Edges) > 10000 {
+		return nil, fmt.Errorf("bounded workflow-v1 draft required")
+	}
+	seen := map[string]bool{}
+	for _, node := range value.Nodes {
+		if !manifest.ValidID(node.ID) || seen[node.ID] {
+			return nil, fmt.Errorf("unique stable draft node identities required")
+		}
+		seen[node.ID] = true
+	}
+	value.Nodes = append([]evolution.Node(nil), value.Nodes...)
+	value.Edges = append([]evolution.Edge(nil), value.Edges...)
+	value.Capabilities = append([]string(nil), value.Capabilities...)
+	sort.Slice(value.Nodes, func(i, j int) bool { return value.Nodes[i].ID < value.Nodes[j].ID })
+	sort.Slice(value.Edges, func(i, j int) bool {
+		a, b := value.Edges[i], value.Edges[j]
+		return a.From < b.From || a.From == b.From && a.To < b.To
+	})
+	sort.Strings(value.Capabilities)
+	return json.Marshal(value)
+}
+
 // SaveWorkflowDraft advances executable and layout revisions independently.
 // Both expected revisions are required to avoid overwriting concurrent edits.
 func (s *Store) SaveWorkflowDraft(ctx context.Context, input WorkflowDraftInput) (WorkflowDraft, error) {
@@ -44,7 +70,7 @@ func (s *Store) SaveWorkflowDraft(ctx context.Context, input WorkflowDraftInput)
 	if !manifest.ValidID(input.ID) || input.ExpectedRevision < 0 || input.ExpectedLayoutRevision < 0 || input.Workflow.ID != input.ID {
 		return result, fmt.Errorf("invalid workflow draft identity")
 	}
-	body, err := input.Workflow.Canonical()
+	body, err := canonicalWorkflowDraft(input.Workflow)
 	if err != nil {
 		return result, err
 	}
@@ -75,7 +101,7 @@ func (s *Store) SaveWorkflowDraft(ctx context.Context, input WorkflowDraftInput)
 	if layoutRevision == 0 || !bytes.Equal(priorLayout, layout) {
 		layoutRevision++
 	}
-	workflow, err := evolution.DecodeWorkflow(bytes.NewReader(body))
+	workflow, err := evolution.Decode[evolution.Workflow](bytes.NewReader(body))
 	if err != nil {
 		return result, err
 	}
@@ -93,7 +119,7 @@ func (s *Store) SaveWorkflowDraft(ctx context.Context, input WorkflowDraftInput)
 }
 func decodeDraft(id string, revision, layoutRevision int64, body, layout []byte) (WorkflowDraft, error) {
 	var result WorkflowDraft
-	workflow, err := evolution.DecodeWorkflow(bytes.NewReader(body))
+	workflow, err := evolution.Decode[evolution.Workflow](bytes.NewReader(body))
 	if err != nil || workflow.ID != id {
 		return result, fmt.Errorf("stored draft identity mismatch")
 	}
