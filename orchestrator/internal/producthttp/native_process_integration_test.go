@@ -64,6 +64,10 @@ func TestNativeDynamicInspectionRealProcesses(t *testing.T) {
 	nativeGenerationProcesses(t, "dynamic-inspection")
 }
 
+func TestNativeToolCheckpointRealProcesses(t *testing.T) {
+	nativeGenerationProcesses(t, "tool-checkpoint")
+}
+
 func TestNativeToolInspectionRealProcesses(t *testing.T) {
 	nativeGenerationProcesses(t, "tool-inspection")
 }
@@ -78,6 +82,7 @@ func TestNativeGenerationRealProcesses(t *testing.T) {
 	}
 }
 func nativeGenerationProcesses(t *testing.T, mode string) {
+	retryJourney := mode == "browser-retry" || mode == "tool-checkpoint"
 	dynamic := mode == "dynamic-inspection" || mode == "dynamic-budget"
 	dependent := mode == "dependencies" || mode == "dependency-failure"
 	automatic := mode == "automatic" || dependent
@@ -239,7 +244,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	draftTestAdmissionRequests := map[string][][]byte{}
 	identityHandler := authentication.IdentityServiceHandler()
 	central := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if mode == "browser-retry" && r.URL.Path == "/api/identity/v1/generation/admit" {
+		if retryJourney && r.URL.Path == "/api/identity/v1/generation/admit" {
 			raw, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Error(err)
@@ -300,9 +305,13 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 
 	modelRef := evolution.Revision{ID: "native-model", Revision: 1, Digest: evolution.Digest([]byte("native-model"))}
 	toolRef := evolution.Revision{ID: "source-lookup", Revision: 1, Digest: evolution.Digest([]byte("source-lookup-v1"))}
+	if mode == "tool-checkpoint" {
+		toolRef = evolution.Revision{ID: "append-audit", Revision: 1, Digest: evolution.Digest([]byte("append-audit-v1"))}
+	}
 	var modelMu sync.Mutex
 	responses := map[string]json.RawMessage{}
 	calls := map[string]int{}
+	toolEffects := map[string]int{}
 	pauseModelStarted, pauseModelRelease := make(chan struct{}), make(chan struct{})
 	var releasePauseOnce sync.Once
 	releasePauseModel := func() { releasePauseOnce.Do(func() { close(pauseModelRelease) }) }
@@ -374,7 +383,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			t.Error("model pin or effective prompt missing")
 		}
 		calls[runID]++
-		if mode == "browser-retry" && runID == "browser-native-retry" && calls[runID] == 1 {
+		if retryJourney && runID == "browser-native-retry" && calls[runID] == 1 {
 			close(pauseModelStarted)
 			select {
 			case <-pauseModelRelease:
@@ -420,11 +429,16 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			return
 		}
 		observedTools := []any{}
-		if mode == "tool-inspection" && submission.Call.Node.ID == "extract" {
+		if (mode == "tool-inspection" && submission.Call.Node.ID == "extract") || (mode == "tool-checkpoint" && submission.Call.Node.ID == "draft") {
 			if len(submission.Call.Node.Tools) != 1 || submission.Call.Node.Tools[0] != toolRef {
 				t.Error("tool request lost exact operator-registered pin")
 			}
-			observedTools = append(observedTools, map[string]any{"id": "lookup-episode", "tool": toolRef, "state": "succeeded", "input": map[string]string{"episode_id": "episode"}, "output": map[string]string{"text": "The task completed with verified output."}})
+			toolEffects[runID]++
+			if mode == "tool-checkpoint" {
+				observedTools = append(observedTools, map[string]any{"id": "append-record", "tool": toolRef, "state": "succeeded", "input": map[string]string{"run_id": runID}, "output": map[string]int{"sequence": toolEffects[runID]}})
+			} else {
+				observedTools = append(observedTools, map[string]any{"id": "lookup-episode", "tool": toolRef, "state": "succeeded", "input": map[string]string{"episode_id": "episode"}, "output": map[string]string{"text": "The task completed with verified output."}})
+			}
 		}
 		raw, _ := json.Marshal(map[string]any{"run_id": submission.RunID, "call_id": submission.CallID, "idempotency_key": submission.Key, "request_digest": submission.Digest, "model": modelRef, "provider_request_id": key, "state": "completed", "usage": map[string]int{"tokens": 4, "cost_micros": 7}, "outputs": outputs, "response_model": "native-fixture-v1", "tool_trace_state": "complete", "tools": observedTools})
 		if mode == "sibling-failure" && runID == "example-corrections" || mode == "dependency-failure" && submission.Call.Node.ID == "draft" {
@@ -461,7 +475,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		Schemas map[string]json.RawMessage `json:"schemas"`
 	}
 	must(t, json.Unmarshal(output, &packages))
-	if mode == "tool-inspection" {
+	if mode == "tool-inspection" || mode == "tool-checkpoint" {
 		publishToolDefinition := func(kind string, ref evolution.Revision, body any) {
 			raw, _ := json.Marshal(map[string]any{"kind": kind, "ref": ref, "body": body})
 			command := exec.CommandContext(ctx, catalog, "--state-directory", spaceDirectory)
@@ -472,13 +486,20 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		}
 		for i := range packages {
 			pkg := &packages[i]
-			if pkg.Template.Ref.ID != "example-corrections" {
+			target := "example-corrections"
+			if mode == "tool-checkpoint" {
+				target = "example-skills"
+			}
+			if pkg.Template.Ref.ID != target {
 				continue
 			}
 			for j := range pkg.Workflows {
 				graph := &pkg.Workflows[j]
+				if mode == "tool-checkpoint" && graph.Ref.ID != "example-skills" {
+					continue
+				}
 				for k := range graph.Workflow.Nodes {
-					if graph.Workflow.Nodes[k].Kind == "agent" {
+					if graph.Workflow.Nodes[k].Kind == "agent" && (mode != "tool-checkpoint" || graph.Workflow.Nodes[k].ID == "draft") {
 						graph.Workflow.Nodes[k].Tools = []evolution.Revision{toolRef}
 					}
 				}
@@ -563,7 +584,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		t.Fatalf("corpus: %v %s", err, output)
 	}
 	registeredTools := []evolution.Revision{}
-	if mode == "tool-inspection" {
+	if mode == "tool-inspection" || mode == "tool-checkpoint" {
 		registeredTools = append(registeredTools, toolRef)
 	}
 	nativePath := filepath.Join(t.TempDir(), "native.json")
@@ -620,7 +641,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 
 	start(studioBinary, studioAddress, "--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evaluation-endpoint", spaceOrigin)
 	spaceArgs := []string{"--listen", spaceAddress, "--state-directory", spaceDirectory, "--identity-endpoint", central.URL, "--native-config", nativePath, "--studio-input-endpoint", "http://" + participantAddress}
-	if mode == "browser-retry" || mode == "retention" || mode == "tool-inspection" || mode == "dynamic-inspection" {
+	if retryJourney || mode == "retention" || mode == "tool-inspection" || mode == "dynamic-inspection" {
 		frontendOrigin := central.URL
 		if browserUpgrade || browserRetention || browserTools || browserDynamic {
 			frontendOrigin = evaluationFrontend
@@ -1007,7 +1028,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		t.Fatal("native handoff not settled", branches)
 	}
 	var workflowUpgrade func(evolution.ContentRef)
-	if mode == "browser-retry" {
+	if retryJourney {
 		_, err = store.SetEvolutionGroupGrant(ctx, token, configuration.GroupID, product.EvolutionGroupGrantInput{RequestID: "retry-evidence", AccountID: admin.ID, Action: "source.read", Effect: "allow"})
 		must(t, err)
 		_, err = store.SetEvolutionGroupGrant(ctx, token, configuration.GroupID, product.EvolutionGroupGrantInput{RequestID: "experiment-authoring", AccountID: admin.ID, Action: "workflow.edit", Effect: "allow"})
@@ -1290,6 +1311,14 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		modelMu.Lock()
 		experimentCalls := calls[experiment.ID]
 		modelMu.Unlock()
+		if mode == "tool-checkpoint" {
+			modelMu.Lock()
+			sourceEffects, experimentEffects := toolEffects[retry.ID], toolEffects[experiment.ID]
+			modelMu.Unlock()
+			if sourceEffects != 1 || experimentEffects != 0 {
+				t.Fatal("checkpoint replay repeated external tool effect", sourceEffects, experimentEffects)
+			}
+		}
 		if experimentCalls != 1 {
 			t.Fatal("experiment repeated upstream draft", experimentCalls)
 		}
@@ -1331,6 +1360,14 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 				t.Fatal("retry execution failed", string(raw))
 			}
 			time.Sleep(100 * time.Millisecond)
+		}
+		if mode == "tool-checkpoint" {
+			modelMu.Lock()
+			effects := toolEffects[retry.ID]
+			modelMu.Unlock()
+			if effects != 1 {
+				t.Fatal("resume repeated external tool effect", effects)
+			}
 		}
 		if retry.State != "completed" || retry.Handoff != "submitted" || retry.ResultBranch == "" || retry.ResultBranch == before.ResultBranch {
 			t.Fatal("retry failed to execute/handoff", retry)
@@ -1592,7 +1629,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		post("/integrations/merge", map[string]any{"request_id": "merge-" + binding.ID, "prepared_digest": prepared.Digest, "expected_main": unchanged.CommitID}, nil)
 		get("/main", &unchanged)
 	}
-	if workflowUpgrade != nil {
+	if workflowUpgrade != nil && mode != "tool-checkpoint" {
 		workflowUpgrade(unchanged)
 	}
 	modelMu.Lock()
