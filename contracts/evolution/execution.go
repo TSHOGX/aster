@@ -23,6 +23,7 @@ type RunPins struct {
 	Evaluation            EvaluationPolicy       `json:"evaluation"`
 }
 type Run struct {
+	DraftTest       *GenerationDraftTest  `json:"draft_test,omitempty"`
 	Experiment      *GenerationExperiment `json:"experiment,omitempty"`
 	ID              string                `json:"id"`
 	GroupID         string                `json:"group_id"`

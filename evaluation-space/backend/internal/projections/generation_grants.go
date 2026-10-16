@@ -58,6 +58,11 @@ func (s *Store) RetainGenerationGrant(ctx context.Context, assignment evolution.
 		return err
 	}
 	expected, _ := json.Marshal(assignment.Pins)
+	actualTest, _ := json.Marshal(run.DraftTest)
+	expectedTest, _ := json.Marshal(assignment.DraftTest)
+	if !bytes.Equal(actualTest, expectedTest) {
+		return ErrConflict
+	}
 	actualExperiment, _ := json.Marshal(run.Experiment)
 	expectedExperiment, _ := json.Marshal(assignment.Experiment)
 	if !bytes.Equal(actualExperiment, expectedExperiment) {

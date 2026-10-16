@@ -7,6 +7,7 @@ import (
 )
 
 type GenerationAssignment struct {
+	DraftTest    *GenerationDraftTest  `json:"draft_test,omitempty"`
 	BatchID      string                `json:"batch_id,omitempty"`
 	RunID        string                `json:"run_id"`
 	GroupID      string                `json:"group_id"`
@@ -17,6 +18,16 @@ type GenerationAssignment struct {
 	Pins         RunPins               `json:"pins"`
 	Budget       Budget                `json:"budget"`
 	Experiment   *GenerationExperiment `json:"experiment,omitempty"`
+}
+
+// GenerationDraftTest freezes a test graph and its authorized input lineage.
+// Tests execute under shared budgets but cannot publish production results or
+// consume automatic input frontiers. Node/subgraph tests include dependencies.
+type GenerationDraftTest struct {
+	Source GenerationGrant `json:"source"`
+	Draft  Revision        `json:"draft"`
+	Kind   string          `json:"kind"`
+	NodeID string          `json:"node_id,omitempty"`
 }
 
 // GenerationExperiment binds explicit checkpoint reuse to an admitted source.
@@ -42,6 +53,23 @@ func (a GenerationAssignment) Digest() (string, error) {
 	}
 	if a.Requester.Kind != "human" || a.Requester.Issuer == "" || a.Budget.Validate() != nil || a.Pins.Base.Validate() != nil || a.Pins.Output.Validate() != nil {
 		return "", fmt.Errorf("invalid generation pins")
+	}
+	if test := a.DraftTest; test != nil {
+		if a.Automatic || a.Experiment != nil || test.Source.Validate() != nil || test.Source.RunID == a.RunID || test.Source.GroupID != a.GroupID || test.Draft.Validate() != nil || a.Pins.Workflow.Validate() != nil {
+			return "", fmt.Errorf("invalid draft test lineage")
+		}
+		switch test.Kind {
+		case "workflow":
+			if test.NodeID != "" || test.Draft != a.Pins.Workflow {
+				return "", fmt.Errorf("invalid full workflow test")
+			}
+		case "node", "subgraph":
+			if !manifest.ValidID(test.NodeID) {
+				return "", fmt.Errorf("test node required")
+			}
+		default:
+			return "", fmt.Errorf("invalid draft test kind")
+		}
 	}
 	if e := a.Experiment; e != nil {
 		if a.Automatic || e.Source.Validate() != nil || e.Source.RunID == a.RunID || e.Source.GroupID != a.GroupID || e.SourceFence < 1 || e.CheckpointFence < 1 || e.CheckpointFence >= e.SourceFence || !manifest.ValidID(e.CheckpointID) || !manifest.ValidID(e.StartNode) || e.Checkpoint.Validate() != nil || e.Checkpoint.GroupID != a.GroupID || e.Checkpoint.GrantID != e.Source.ID || a.Pins.Workflow.Validate() != nil {

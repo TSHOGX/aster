@@ -20,7 +20,7 @@ func (s *Store) GenerationOutput(ctx context.Context, scope evolution.Generation
 	if err != nil {
 		return output, err
 	}
-	if run.State != "completed" || run.Fence != scope.Fence {
+	if run.DraftTest != nil || run.State != "completed" || run.Fence != scope.Fence {
 		return output, ErrConflict
 	}
 	_, grant, err := s.GenerationGrant(ctx, scope.GroupID, scope.RunID)

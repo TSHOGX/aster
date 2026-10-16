@@ -149,6 +149,29 @@
       ],
       "type": "object"
     },
+    "GenerationDraftTest": {
+      "additionalProperties": false,
+      "properties": {
+        "draft": {
+          "$ref": "#/$defs/Revision"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/GenerationGrant"
+        }
+      },
+      "required": [
+        "source",
+        "draft",
+        "kind"
+      ],
+      "type": "object"
+    },
     "GenerationExperiment": {
       "additionalProperties": false,
       "properties": {
@@ -288,6 +311,9 @@
         "created_at": {
           "format": "date-time",
           "type": "string"
+        },
+        "draft_test": {
+          "$ref": "#/$defs/GenerationDraftTest"
         },
         "evaluation_state": {
           "type": "string"

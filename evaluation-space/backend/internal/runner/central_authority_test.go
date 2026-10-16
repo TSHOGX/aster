@@ -76,6 +76,24 @@ func TestCentralNativeAuthorityBindsClaimAndTerminalSettlement(t *testing.T) {
 	if err = authority.AuthorizeRun(ctx, run, false); err != nil {
 		t.Fatal(err)
 	}
+	changed := run
+	changed.DraftTest = &evolution.GenerationDraftTest{Source: grant, Draft: run.Pins.Workflow, Kind: "workflow"}
+	if err = authority.AuthorizeRun(ctx, changed, false); !errors.Is(err, projections.ErrConflict) {
+		t.Fatal("run changed test classification", err)
+	}
+	changedAssignment := assignment
+	sourceGrant := grant
+	sourceGrant.RunID = "source"
+	changedAssignment.DraftTest = &evolution.GenerationDraftTest{Source: sourceGrant, Draft: run.Pins.Workflow, Kind: "workflow"}
+	changedDigest, err := changedAssignment.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedGrant := grant
+	changedGrant.AssignmentDigest = changedDigest
+	if err = store.RetainGenerationGrant(ctx, changedAssignment, changedGrant); !errors.Is(err, projections.ErrConflict) {
+		t.Fatal("test grant attached to production run", err)
+	}
 	// Exercise the claim/cleanup/settlement boundary with retained exact grant.
 	lease, err := store.ClaimRun(ctx, run.ID, "worker", time.Minute)
 	if err != nil {

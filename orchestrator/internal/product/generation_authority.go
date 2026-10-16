@@ -143,6 +143,16 @@ func (s *Store) checkGenerationTree(ctx context.Context, q queryer, input evolut
 			}
 		}
 	}
+	if input.DraftTest != nil {
+		if err = s.checkGenerationDraftTest(ctx, q, input, actor, checked); err != nil {
+			return config, err
+		}
+		for _, binding := range config.Bindings {
+			if binding.ID == input.BindingID {
+				pins.Workflow = binding.Workflow
+			}
+		}
+	}
 	if pins.ValidateFor(config, input.BindingID) != nil {
 		return config, ErrInvalid
 	}
@@ -270,10 +280,10 @@ func (s *Store) AuthorizeGeneration(ctx context.Context, input evolution.Generat
 			return err
 		}
 		var active int
-		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM generation_authorizations WHERE group_id=? AND binding_id=? AND state IN('admitted','running','paused','cancelling') AND json_extract(assignment,'$.experiment') IS NULL", input.GroupID, input.BindingID).Scan(&active); err != nil {
+		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM generation_authorizations WHERE group_id=? AND binding_id=? AND state IN('admitted','running','paused','cancelling') AND json_extract(assignment,'$.experiment') IS NULL AND json_extract(assignment,'$.draft_test') IS NULL", input.GroupID, input.BindingID).Scan(&active); err != nil {
 			return err
 		}
-		if active > 0 && input.Experiment == nil {
+		if active > 0 && input.Experiment == nil && input.DraftTest == nil {
 			return ErrCapacity
 		}
 		var heldTokens, heldCost int64
@@ -343,7 +353,7 @@ func (s *Store) ResolveGeneration(ctx context.Context, scope evolution.Generatio
 		if scope.Action == "execute" && state != "admitted" && state != "running" {
 			return ErrForbidden
 		}
-		if scope.Action == "handoff" && state != "completed" {
+		if scope.Action == "handoff" && (state != "completed" || assignment.DraftTest != nil) {
 			return ErrForbidden
 		}
 		_, err = s.checkGeneration(ctx, tx, assignment, false)
@@ -401,7 +411,7 @@ func (s *Store) BindGenerationResult(ctx context.Context, grant evolution.Genera
 		if err != nil {
 			return err
 		}
-		if state != "completed" || scope.Fence != fence || scope.GroupID != assignment.GroupID || scope.RunID != assignment.RunID || scope.BindingID != assignment.BindingID || scope.Base != assignment.Pins.Base || scope.Output != assignment.Pins.Output {
+		if assignment.DraftTest != nil || state != "completed" || scope.Fence != fence || scope.GroupID != assignment.GroupID || scope.RunID != assignment.RunID || scope.BindingID != assignment.BindingID || scope.Base != assignment.Pins.Base || scope.Output != assignment.Pins.Output {
 			return ErrConflict
 		}
 		if _, err = s.checkGeneration(ctx, tx, assignment, false); err != nil {
@@ -437,7 +447,7 @@ func (s *Store) AuthorizeGenerationResult(ctx context.Context, scope evolution.R
 		if err != nil {
 			return err
 		}
-		if state != "completed" || scope.Fence != fence || patch != scope.PatchDigest || scope.BindingID != assignment.BindingID || scope.Base != assignment.Pins.Base || scope.Output != assignment.Pins.Output {
+		if assignment.DraftTest != nil || state != "completed" || scope.Fence != fence || patch != scope.PatchDigest || scope.BindingID != assignment.BindingID || scope.Base != assignment.Pins.Base || scope.Output != assignment.Pins.Output {
 			return ErrForbidden
 		}
 		_, err = s.checkGeneration(ctx, tx, assignment, false)
@@ -481,7 +491,7 @@ func (s *Store) SettleGeneration(ctx context.Context, input GenerationSettlement
 		if _, err = tx.ExecContext(ctx, "UPDATE generation_authorizations SET settlement=?,used_tokens=?,used_cost=? WHERE id=?", raw, input.Tokens, input.CostMicros, input.Grant.ID); err != nil {
 			return err
 		}
-		if state == "completed" && assignment.Experiment == nil {
+		if state == "completed" && assignment.Experiment == nil && assignment.DraftTest == nil {
 			for _, input := range assignment.Pins.Inputs {
 				var exists int
 				if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM corpus_snapshots WHERE group_id=? AND id=? AND digest=?", assignment.GroupID, input.ID, input.Digest).Scan(&exists); err != nil {

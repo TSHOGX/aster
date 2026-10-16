@@ -113,7 +113,7 @@ func (w *EvolutionDispatcher) resolveDependencies(ctx context.Context) (resultEr
 		if err != nil {
 			return err
 		}
-		if parent.BatchID != assignment.BatchID || parent.Pins.ConfigurationDigest != assignment.Pins.ConfigurationDigest || parent.Requester != assignment.Requester {
+		if parent.DraftTest != nil || parent.BatchID != assignment.BatchID || parent.Pins.ConfigurationDigest != assignment.Pins.ConfigurationDigest || parent.Requester != assignment.Requester {
 			return ErrForbidden
 		}
 		if _, err = w.Store.checkGeneration(ctx, w.Store.reader, parent, false); err != nil {
@@ -244,7 +244,7 @@ func (s *Store) checkGenerationDependencies(ctx context.Context, q queryer, a ev
 		if err != nil {
 			return err
 		}
-		if state != "completed" || len(settlement) == 0 || fence != dep.Fence || parent.BatchID != a.BatchID || parent.Pins.ConfigurationDigest != a.Pins.ConfigurationDigest || parent.Requester != a.Requester || dep.Artifact.GrantID != grant.ID || dep.Artifact.PolicyRevision != parent.Pins.SourcePolicyRevision || dep.Artifact.Size > parent.Budget.MaxArtifactBytes {
+		if parent.DraftTest != nil || state != "completed" || len(settlement) == 0 || fence != dep.Fence || parent.BatchID != a.BatchID || parent.Pins.ConfigurationDigest != a.Pins.ConfigurationDigest || parent.Requester != a.Requester || dep.Artifact.GrantID != grant.ID || dep.Artifact.PolicyRevision != parent.Pins.SourcePolicyRevision || dep.Artifact.Size > parent.Budget.MaxArtifactBytes {
 			return ErrForbidden
 		}
 		if err = q.QueryRowContext(ctx, "SELECT receipt FROM generation_dependency_artifacts WHERE run_id=? AND port=?", dep.RunID, dep.OutputPort).Scan(&receiptRaw); err != nil {
