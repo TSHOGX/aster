@@ -34,6 +34,7 @@ case "${1:-all}" in
     npm --prefix evaluation-space/frontend run build
     ADMIN_EVOLUTION_BROWSER_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses/backfill$' -count=1
     ADMIN_EVOLUTION_CONFIG_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses/backfill$' -count=1
+    EVALUATION_TOOLS_BROWSER_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeToolInspectionRealProcesses$' -count=1
     EVALUATION_RETENTION_BROWSER_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeArtifactRetentionRealProcesses$' -count=1
     ADMIN_EVOLUTION_UPGRADE_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses/browser-retry$' -count=1
     ;;

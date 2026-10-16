@@ -56,6 +56,10 @@ func (l *lostNativeAdmission) GenerationOutput(ctx context.Context, scope evolut
 	return l.client.GenerationOutput(ctx, scope)
 }
 
+func TestNativeToolInspectionRealProcesses(t *testing.T) {
+	nativeGenerationProcesses(t, "tool-inspection")
+}
+
 func TestNativeArtifactRetentionRealProcesses(t *testing.T) {
 	nativeGenerationProcesses(t, "retention")
 }
@@ -96,6 +100,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	studioAddress, participantAddress, spaceAddress := address(), address(), address()
 	spaceBrowserAddress := address()
 	spaceOrigin := "http://" + spaceAddress
+	browserTools := mode == "tool-inspection" && os.Getenv("EVALUATION_TOOLS_BROWSER_TEST") == "1"
 	browserRetention := mode == "retention" && os.Getenv("EVALUATION_RETENTION_BROWSER_TEST") == "1"
 	browserUpgrade := mode == "browser-retry" && os.Getenv("ADMIN_EVOLUTION_UPGRADE_TEST") == "1"
 	browserBackfill := mode == "backfill" && os.Getenv("ADMIN_EVOLUTION_BROWSER_TEST") == "1"
@@ -135,7 +140,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		}
 	}
 	var evaluationFrontend string
-	if browserUpgrade || browserRetention {
+	if browserUpgrade || browserRetention || browserTools {
 		frontendAddress := address()
 		evaluationFrontend = "http://" + frontendAddress
 		copyCmd := exec.CommandContext(ctx, "cp", "-r", filepath.Join(root, "evaluation-space/frontend/.next/static"), filepath.Join(root, "evaluation-space/frontend/.next/standalone/evaluation-space/frontend/.next/"))
@@ -177,7 +182,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	studioURL, _ := url.Parse("http://" + studioAddress)
 	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { host := r.In.Host; r.SetURL(studioURL); r.Out.Host = host }}
 	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if (browserUpgrade || browserRetention) && strings.HasPrefix(r.URL.Path, "/evaluation-space/") {
+		if (browserUpgrade || browserRetention || browserTools) && strings.HasPrefix(r.URL.Path, "/evaluation-space/") {
 			spaceProxy.ServeHTTP(w, r)
 			return
 		}
@@ -284,6 +289,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	defer central.Close()
 
 	modelRef := evolution.Revision{ID: "native-model", Revision: 1, Digest: evolution.Digest([]byte("native-model"))}
+	toolRef := evolution.Revision{ID: "source-lookup", Revision: 1, Digest: evolution.Digest([]byte("source-lookup-v1"))}
 	var modelMu sync.Mutex
 	responses := map[string]json.RawMessage{}
 	calls := map[string]int{}
@@ -368,7 +374,14 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			w.WriteHeader(400)
 			return
 		}
-		raw, _ := json.Marshal(map[string]any{"run_id": submission.RunID, "call_id": submission.CallID, "idempotency_key": submission.Key, "request_digest": submission.Digest, "model": modelRef, "provider_request_id": key, "state": "completed", "usage": map[string]int{"tokens": 4, "cost_micros": 7}, "outputs": outputs, "response_model": "native-fixture-v1", "tool_trace_state": "complete", "tools": []any{}})
+		observedTools := []any{}
+		if mode == "tool-inspection" && submission.Call.Node.ID == "extract" {
+			if len(submission.Call.Node.Tools) != 1 || submission.Call.Node.Tools[0] != toolRef {
+				t.Error("tool request lost exact operator-registered pin")
+			}
+			observedTools = append(observedTools, map[string]any{"id": "lookup-episode", "tool": toolRef, "state": "succeeded", "input": map[string]string{"episode_id": "episode"}, "output": map[string]string{"text": "The task completed with verified output."}})
+		}
+		raw, _ := json.Marshal(map[string]any{"run_id": submission.RunID, "call_id": submission.CallID, "idempotency_key": submission.Key, "request_digest": submission.Digest, "model": modelRef, "provider_request_id": key, "state": "completed", "usage": map[string]int{"tokens": 4, "cost_micros": 7}, "outputs": outputs, "response_model": "native-fixture-v1", "tool_trace_state": "complete", "tools": observedTools})
 		if mode == "sibling-failure" && runID == "example-corrections" || mode == "dependency-failure" && submission.Call.Node.ID == "draft" {
 			var value map[string]any
 			must(t, json.Unmarshal(raw, &value))
@@ -403,6 +416,45 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		Schemas map[string]json.RawMessage `json:"schemas"`
 	}
 	must(t, json.Unmarshal(output, &packages))
+	if mode == "tool-inspection" {
+		publishToolDefinition := func(kind string, ref evolution.Revision, body any) {
+			raw, _ := json.Marshal(map[string]any{"kind": kind, "ref": ref, "body": body})
+			command := exec.CommandContext(ctx, catalog, "--state-directory", spaceDirectory)
+			command.Stdin = bytes.NewReader(raw)
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("tool publication: %v %s", err, output)
+			}
+		}
+		for i := range packages {
+			pkg := &packages[i]
+			if pkg.Template.Ref.ID != "example-corrections" {
+				continue
+			}
+			for j := range pkg.Workflows {
+				graph := &pkg.Workflows[j]
+				for k := range graph.Workflow.Nodes {
+					if graph.Workflow.Nodes[k].Kind == "agent" {
+						graph.Workflow.Nodes[k].Tools = []evolution.Revision{toolRef}
+					}
+				}
+				raw, err := graph.Workflow.Canonical()
+				must(t, err)
+				old := graph.Ref
+				graph.Ref.Revision++
+				graph.Ref.Digest = evolution.Digest(raw)
+				publishToolDefinition("workflow", graph.Ref, graph.Workflow)
+				for k := range pkg.Template.Workflows {
+					if pkg.Template.Workflows[k] == old {
+						pkg.Template.Workflows[k] = graph.Ref
+					}
+				}
+			}
+			pkg.Template.Ref.Revision++
+			pkg.Template.Ref.Digest, err = evolution.DefinitionDigest(pkg.Template)
+			must(t, err)
+			publishToolDefinition("template", pkg.Template.Ref, pkg.Template)
+		}
+	}
 	var dependentTemplate evolution.Template
 	if dependent {
 		schema := packages[0].Template.Outputs["candidate"]
@@ -444,8 +496,12 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	if output, err = provision.CombinedOutput(); err != nil {
 		t.Fatalf("corpus: %v %s", err, output)
 	}
+	registeredTools := []evolution.Revision{}
+	if mode == "tool-inspection" {
+		registeredTools = append(registeredTools, toolRef)
+	}
 	nativePath := filepath.Join(t.TempDir(), "native.json")
-	raw, _ = json.Marshal(map[string]any{"models": []any{map[string]any{"reference": modelRef, "endpoint": model.URL, "client_id": "space", "secret_env": "TEST_EVALUATOR_SECRET", "ceiling": map[string]int{"tokens": 100, "cost_micros": 1000}}}, "schemas": map[string]any{}, "example_builders": true})
+	raw, _ = json.Marshal(map[string]any{"models": []any{map[string]any{"reference": modelRef, "endpoint": model.URL, "tools": registeredTools, "client_id": "space", "secret_env": "TEST_EVALUATOR_SECRET", "ceiling": map[string]int{"tokens": 100, "cost_micros": 1000}}}, "schemas": map[string]any{}, "example_builders": true})
 	must(t, os.WriteFile(nativePath, raw, 0600))
 	start := func(binary, addr string, args ...string) func() {
 		t.Helper()
@@ -492,9 +548,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 
 	start(studioBinary, studioAddress, "--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evaluation-endpoint", spaceOrigin)
 	spaceArgs := []string{"--listen", spaceAddress, "--state-directory", spaceDirectory, "--identity-endpoint", central.URL, "--native-config", nativePath, "--studio-input-endpoint", "http://" + participantAddress}
-	if mode == "browser-retry" || mode == "retention" {
+	if mode == "browser-retry" || mode == "retention" || mode == "tool-inspection" {
 		frontendOrigin := central.URL
-		if browserUpgrade || browserRetention {
+		if browserUpgrade || browserRetention || browserTools {
 			frontendOrigin = evaluationFrontend
 		}
 		spaceArgs = append(spaceArgs, "--browser-listen", spaceBrowserAddress, "--public-origin", issuer, "--frontend", frontendOrigin)
@@ -1462,6 +1518,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	}
 	if skillCalls != expectedSkills || correctionCalls != 1 {
 		t.Fatal("independent graph model calls", skillCalls, correctionCalls)
+	}
+	if mode == "tool-inspection" {
+		verifyNativeToolInspection(t, ctx, nativeToolInspection{Store: store, Token: token, Actor: admin.ID, Group: configuration.GroupID, Run: runIDs["example-corrections"], Repository: root, State: spaceDirectory, Origin: issuer, Browser: browserTools, Tool: toolRef})
 	}
 	if mode == "retention" {
 		verifyNativeArtifactRetention(t, ctx, nativeArtifactRetention{Store: store, Token: token, Actor: admin.ID, Group: configuration.GroupID, Run: runIDs["example-skills"], Repository: root, State: spaceDirectory, Catalog: catalog, Origin: issuer, Browser: browserRetention, Stop: stopSpace, Restart: func() { stopSpace = start(spaceBinary, spaceAddress, spaceArgs...) }})

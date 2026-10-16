@@ -659,7 +659,7 @@ branch and does not advance main or publish a version.
 Evaluation Space accepts `-native-config /absolute/path/native.json` to enable the
 native workflow worker and private generation admission API. Configure exact model
 revisions, authenticated model-service origins, credential environment references,
-and per-call token/cost ceilings. Set `example_builders` to true to register the
+per-model allowed tool revisions, and per-call token/cost ceilings. Set `example_builders` to true to register the
 versioned skills/corrections builders and their schemas:
 
 ```json
@@ -670,6 +670,7 @@ versioned skills/corrections builders and their schemas:
       "endpoint": "https://model-service.example.com",
       "client_id": "evaluation-space",
       "secret_env": "TEAM_MODEL_SECRET",
+      "tools": [],
       "ceiling": {"tokens": 10000, "cost_micros": 1000000}
     }
   ],
@@ -683,6 +684,21 @@ services must support durable lookup/idempotent submission/cancellation; an ordi
 untracked chat endpoint is insufficient. Native configuration does not accept inline
 secrets, executable file paths or arbitrary transform code. Additional schema entries
 map exact schema digests to self-contained JSON Schema objects.
+
+Each model's `tools` array lists the exact `{id, revision, digest}` references its
+adapter permits (at most 128 unique revisions). An empty or omitted array permits
+no tools. Declare the same references on workflow Agent nodes. Unsupported revisions
+fail before provider submission; changing a tool requires an explicit registry
+update and a new workflow revision. Restart Evaluation Space after changing its
+registry. The model service must enforce the assigned tool scope itself and return
+authenticated observations; this list does not install executable tools.
+
+In the run inspector, open an Agent attempt to see its pinned tools and effective
+prompt. Open its **Provider evidence** artifact to inspect the reported tool IDs,
+revisions, inputs, outputs and success/failure states alongside the actual response
+model. `tool_trace_state: omitted` means the provider did not retain tool activity;
+it is not evidence that no tools ran. Source access and artifact expiry apply to
+these observations.
 
 Configure `-studio-input-endpoint` and `STUDIO_EVALUATION_INPUT_SECRET` for private
 Studio base lookup and result submission. `EVALUATION_SPACE_STUDIO_SECRET` protects

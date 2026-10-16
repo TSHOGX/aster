@@ -1,0 +1,44 @@
+// Actual operator-registered tool request and retained authenticated observation.
+import { chromium, firefox, webkit, expect } from '../../frontend/node_modules/@playwright/test/index.mjs';
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
+let input = ''; for await (const chunk of process.stdin) input += chunk;
+const config = JSON.parse(input);
+const browser = await ({ chromium, firefox, webkit }[config.browser]).launch({ headless: true });
+const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: config.width, height: 900 } });
+try {
+  await context.addCookies([{ name: 'project_login', value: config.cookie, url: config.origin, httpOnly: true, secure: true, sameSite: 'Lax' }]);
+  const page = await context.newPage(); const errors = []; page.on('pageerror', error => errors.push(error.message));
+  const root = `${config.origin}/evaluation-space/api/v1/groups/${config.group}/runs/${config.run}`;
+  await page.goto(`${config.origin}/evaluation-space/groups/${config.group}/runs/${config.run}?attempt=${config.call}`);
+  await page.getByRole('link', { name: 'Sign in', exact: true }).click();
+  const attempt = page.locator(`#attempt-${config.call}`);
+  await expect(attempt).toHaveAttribute('open', '');
+  await expect(attempt.getByText(`${config.tool.id} @${config.tool.revision}`, { exact: true })).toBeVisible();
+  const detail = await (await page.request.get(`${root}/attempts/${config.call}`)).json();
+  expect(detail.call.node.tools).toEqual([config.tool]);
+  expect(detail.call.prompt).toContain('The task completed with verified output.');
+  const debug = await (await page.request.get(`${root}/debugger`)).json();
+  const observation = debug.provider_observations.find(value => value.call.id === config.call);
+  expect(observation.outcome.usage).toEqual({ tokens: 4, cost_micros: 7 });
+  const evidence = observation.outcome.evidence[0];
+  const trace = await (await page.request.get(`${root}/artifacts/${evidence.id}`)).json();
+  expect(trace.response_model).toBe('native-fixture-v1'); expect(trace.tool_trace_state).toBe('complete');
+  expect(trace.tools).toEqual([{ id: 'lookup-episode', tool: config.tool, state: 'succeeded', input: { episode_id: 'episode' }, output: { text: 'The task completed with verified output.' } }]);
+  await page.getByRole('link', { name: evidence.id, exact: true }).click();
+  const preview = page.getByRole('region', { name: `Artifact preview: ${evidence.id}`, exact: true });
+  await expect(preview).toContainText('lookup-episode'); await expect(preview).toContainText(config.tool.digest);
+  const account = await (await page.request.get(`${config.origin}/api/auth/session`)).json();
+  const preferences = await (await page.request.get(`${config.origin}/api/me/preferences`)).json();
+  expect((await page.request.patch(`${config.origin}/api/me/preferences`, { headers: { Origin: config.origin }, data: { expected_revision: preferences.revision, language: 'zh' } })).ok()).toBe(true);
+  await page.evaluate(id => window.dispatchEvent(new StorageEvent('storage', { key: `account-appearance:${id}` })), account.id);
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hans');
+  await expect(attempt.getByText('工具', { exact: true })).toBeVisible();
+  await page.reload(); await expect(attempt).toHaveAttribute('open', '');
+  await expect(attempt.getByText('工具', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  mkdirSync(config.evidence_directory, { recursive: true });
+  await page.screenshot({ path: path.join(config.evidence_directory, `tool-attempt-${config.width}.png`), fullPage: true });
+  expect(errors).toEqual([]);
+  process.stdout.write(`Native tool inspection passed (${config.browser}, ${config.width}px).\n`);
+} finally { await context.close(); await browser.close(); }

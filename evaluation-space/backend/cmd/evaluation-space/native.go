@@ -26,6 +26,7 @@ type nativeModelConfig struct {
 	ClientID  string               `json:"client_id"`
 	SecretEnv string               `json:"secret_env"`
 	Ceiling   projections.RunUsage `json:"ceiling"`
+	Tools     []evolution.Revision `json:"tools"`
 }
 type nativeConfig struct {
 	Models          []nativeModelConfig        `json:"models"`
@@ -63,13 +64,25 @@ func readNativeRegistry(path string, store *projections.Store) (*runner.NativeRe
 			close()
 			return nil, nil, fmt.Errorf("duplicate native model")
 		}
-		client, err := runner.NewHTTPModel(store, runner.ModelConnection{Endpoint: model.Endpoint, ClientID: model.ClientID, Secret: os.Getenv(model.SecretEnv), Model: model.Reference})
+		if len(model.Tools) > 128 {
+			close()
+			return nil, nil, fmt.Errorf("native model tool limit exceeded")
+		}
+		allowedTools := map[evolution.Revision]bool{}
+		for _, tool := range model.Tools {
+			if tool.Validate() != nil || allowedTools[tool] {
+				close()
+				return nil, nil, fmt.Errorf("invalid or duplicate native tool revision")
+			}
+			allowedTools[tool] = true
+		}
+		client, err := runner.NewHTTPModel(store, runner.ModelConnection{Endpoint: model.Endpoint, ClientID: model.ClientID, Secret: os.Getenv(model.SecretEnv), Model: model.Reference, Tools: model.Tools})
 		if err != nil {
 			close()
 			return nil, nil, err
 		}
 		clients = append(clients, client)
-		registry.Models[model.Reference] = runner.Model{Provider: client, Ceiling: model.Ceiling, Tools: map[evolution.Revision]bool{}}
+		registry.Models[model.Reference] = runner.Model{Provider: client, Ceiling: model.Ceiling, Tools: allowedTools}
 		if config.ExampleBuilders {
 			packages, err := examples.Packages(model.Reference)
 			if err != nil {
