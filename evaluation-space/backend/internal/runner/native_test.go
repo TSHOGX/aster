@@ -35,12 +35,13 @@ func (a *nativeAuthority) OutputGrant(context.Context, evolution.Run) (string, e
 }
 
 type nativeProvider struct {
-	store       *projections.Store
-	calls       int
-	lost        bool
-	allowLookup bool
-	outcome     *projections.ProviderOutcome
-	prompt      string
+	beforeSubmit func(context.Context, projections.ProviderCall) error
+	store        *projections.Store
+	calls        int
+	lost         bool
+	allowLookup  bool
+	outcome      *projections.ProviderOutcome
+	prompt       string
 }
 
 func (p *nativeProvider) Lookup(context.Context, projections.ProviderCall) (projections.ProviderOutcome, error) {
@@ -54,6 +55,11 @@ func (p *nativeProvider) Lookup(context.Context, projections.ProviderCall) (proj
 }
 func (p *nativeProvider) Submit(ctx context.Context, call projections.ProviderCall, raw []byte, _ projections.RunUsage) (projections.ProviderOutcome, error) {
 	p.calls++
+	if p.beforeSubmit != nil {
+		if err := p.beforeSubmit(ctx, call); err != nil {
+			return projections.ProviderOutcome{}, err
+		}
+	}
 	input, err := evolution.Decode[workflow.Call](bytes.NewReader(raw))
 	if err != nil {
 		return projections.ProviderOutcome{}, err

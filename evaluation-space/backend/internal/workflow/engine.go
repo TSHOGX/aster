@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"aster/contracts/evolution"
@@ -118,9 +119,13 @@ func (x *execution) graph(ctx context.Context, ref evolution.Revision, inputs Va
 		result := <-results
 		running--
 		if result.err != nil {
-			if firstErr == nil {
+			if firstErr == nil || errors.Is(firstErr, ErrPauseRequested) && !errors.Is(result.err, ErrPauseRequested) {
 				firstErr = result.err
-				cancel()
+				// A pause stops scheduling while already admitted siblings settle.
+				// Unknown/failed effects still take precedence over a pause boundary.
+				if !errors.Is(result.err, ErrPauseRequested) {
+					cancel()
+				}
 			}
 			continue
 		}
@@ -408,6 +413,7 @@ func (x *execution) mapNode(ctx context.Context, call Call, depth int) (Values, 
 	failures := make([]error, count)
 	sem := make(chan struct{}, node.Concurrency)
 	var workers sync.WaitGroup
+	var pausing atomic.Bool
 	work, cancel := context.WithCancel(ctx)
 	defer cancel()
 scheduling:
@@ -415,6 +421,10 @@ scheduling:
 		select {
 		case sem <- struct{}{}:
 		case <-work.Done():
+			break scheduling
+		}
+		if pausing.Load() {
+			<-sem
 			break scheduling
 		}
 		workers.Add(1)
@@ -426,7 +436,9 @@ scheduling:
 				input[name] = items[i]
 			}
 			outputs[i], failures[i] = x.graph(work, *node.Body, input, fmt.Sprintf("%s/attempt-%d/item-%d", call.Instance, call.Number, i), call.Instance, depth+1)
-			if failures[i] != nil && node.FailureMode == "fail_fast" {
+			if errors.Is(failures[i], ErrPauseRequested) {
+				pausing.Store(true)
+			} else if failures[i] != nil && node.FailureMode == "fail_fast" {
 				cancel()
 			}
 		}(i)
@@ -442,6 +454,14 @@ scheduling:
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
+	}
+	if pausing.Load() {
+		for _, err := range failures {
+			if err != nil && !errors.Is(err, ErrPauseRequested) {
+				return nil, nil, err
+			}
+		}
+		return nil, nil, ErrPauseRequested
 	}
 	if node.FailureMode == "fail_fast" && work.Err() != nil {
 		return nil, nil, work.Err()

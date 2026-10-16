@@ -26,7 +26,7 @@ type centralGeneration struct {
 }
 
 func (c *centralGeneration) ResolveGeneration(_ context.Context, scope evolution.GenerationGrantScope) (evolution.GenerationAssignment, error) {
-	if scope.Grant != c.grant || scope.Fence != c.fence || c.deny && scope.Action != "cleanup" {
+	if scope.Grant != c.grant || scope.Action != "read" && scope.Fence != c.fence || c.deny && scope.Action != "cleanup" {
 		return c.assignment, errors.New("denied")
 	}
 	if scope.Action == "execute" && c.state != "admitted" && c.state != "running" {
@@ -379,4 +379,173 @@ func (c *centralGeneration) CancelGenerationAdmission(ctx context.Context, input
 func (c *retryAdmissionCentral) CancelGenerationAdmission(ctx context.Context, input evolution.GenerationAdmissionCancellation) (evolution.GenerationGrant, error) {
 	c.admissions++
 	return c.centralGeneration.CancelGenerationAdmission(ctx, input)
+}
+
+type pauseObservationCentral struct {
+	centralGeneration
+	losePause bool
+}
+
+func (c *pauseObservationCentral) ObserveGeneration(ctx context.Context, input evolution.GenerationObservation) error {
+	err := c.centralGeneration.ObserveGeneration(ctx, input)
+	if err == nil && input.State == "paused" && c.losePause {
+		c.losePause = false
+		return errors.New("lost pause observation reply")
+	}
+	return err
+}
+func TestCentralNativeCooperativePauseDrainsNodeAndResumesWithoutReplay(t *testing.T) {
+	for _, losePause := range []bool{false, true} {
+		t.Run(map[bool]string{false: "acknowledged", true: "lost-observation"}[losePause], func(t *testing.T) {
+			store, _, run, executor, provider := nativeFixture(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			assignment := evolution.GenerationAssignment{RunID: run.ID, GroupID: run.GroupID, BindingID: run.BindingID, OccurrenceID: "occurrence", Requester: evolution.Principal{Issuer: "https://app", Subject: "operator", Kind: "human"}, Pins: run.Pins, Budget: run.Budget}
+			digest, err := assignment.Digest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			grant := evolution.GenerationGrant{ID: "pause-grant", RunID: run.ID, GroupID: run.GroupID, AssignmentDigest: digest}
+			if err = store.RetainGenerationGrant(ctx, assignment, grant); err != nil {
+				t.Fatal(err)
+			}
+			central := &pauseObservationCentral{centralGeneration: centralGeneration{assignment: assignment, grant: grant, state: "admitted"}, losePause: losePause}
+			authority := CentralAuthority{Store: store, Central: central}
+			executor.Authority = authority
+			started, release := make(chan struct{}), make(chan struct{})
+			provider.beforeSubmit = func(ctx context.Context, _ projections.ProviderCall) error {
+				close(started)
+				select {
+				case <-release:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			worker := Worker{Store: store, ID: "worker", Authority: authority, Executor: executor}
+			done := make(chan error, 1)
+			go func() { done <- worker.Step(ctx) }()
+			select {
+			case <-started:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			active, err := store.Run(ctx, run.GroupID, run.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			requested, err := store.ControlRun(ctx, projections.RunControl{RequestID: "pause", RunID: run.ID, ExpectedFence: active.Fence, Action: "pause"})
+			if err != nil || requested.State != "pause_requested" || requested.Fence != active.Fence {
+				t.Fatal("pause fenced admitted work", requested, err)
+			}
+			if err = store.AcknowledgeRunPause(ctx, projections.RunLease{RunID: run.ID, WorkerID: "worker", Fence: active.Fence}); !errors.Is(err, projections.ErrConflict) {
+				t.Fatal("uncertain provider work acknowledged paused", err)
+			}
+			close(release)
+			err = <-done
+			if (err != nil) != losePause {
+				t.Fatal("pause worker result", err)
+			}
+			paused, err := store.Run(ctx, run.GroupID, run.ID)
+			if err != nil || paused.State != "paused" || paused.Fence <= active.Fence {
+				t.Fatal("pause not durable", paused, err)
+			}
+			attempts, err := store.WorkflowAttempts(ctx, run.GroupID, run.ID, "", 100)
+			if err != nil || len(attempts) != 1 || attempts[0].Call.Node.ID != "agent" || attempts[0].State != "succeeded" || provider.calls != 1 {
+				t.Fatal("pause lost output or scheduled downstream work", attempts, provider.calls, err)
+			}
+			checkpoint, err := store.LatestRunCheckpoint(ctx, run.GroupID, run.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err = store.ReadWorkflowCheckpoint(ctx, run.GroupID, run.ID, checkpoint.ID); err != nil {
+				t.Fatal("pause checkpoint missing", err)
+			}
+			pending, err := store.PendingGenerationPauses(ctx, "", 10)
+			if err != nil || (len(pending) == 1) != losePause {
+				t.Fatal("pause observation recovery missing", pending, err)
+			}
+			if err = authority.ReconcilePause(ctx, paused); err != nil {
+				t.Fatal(err)
+			}
+			pending, err = store.PendingGenerationPauses(ctx, "", 10)
+			if err != nil || len(pending) != 0 || central.state != "paused" || central.fence != paused.Fence {
+				t.Fatal("pause not observed exactly", pending, central, err)
+			}
+			_, err = store.ControlRun(ctx, projections.RunControl{RequestID: "resume", RunID: run.ID, ExpectedFence: paused.Fence, Action: "resume"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			worker = Worker{Store: store, ID: "resumed", Authority: authority, Executor: executor}
+			if err = worker.Step(ctx); err != nil {
+				t.Fatal(err)
+			}
+			completed, err := store.Run(ctx, run.GroupID, run.ID)
+			if err != nil || completed.State != "completed" || provider.calls != 1 {
+				t.Fatal("resume repeated model effect", completed, provider.calls, err)
+			}
+			frozen, err := store.CheckpointWorkflowAttempts(ctx, run.GroupID, run.ID, checkpoint.ID, "", 100)
+			if err != nil || len(frozen) != 1 {
+				t.Fatal("resume changed paused checkpoint", frozen, err)
+			}
+			if err = authority.ReconcileTerminal(ctx, completed); err != nil {
+				t.Fatal(err)
+			}
+			if central.spent.Tokens != 4 || central.spent.CostMicros != 7 {
+				t.Fatal("pause/resume charged twice", central.spent)
+			}
+		})
+	}
+}
+
+func TestCentralPauseBetweenNodesRecoversObservationAfterRestart(t *testing.T) {
+	store, path, run, _, _ := nativeFixture(t)
+	ctx := context.Background()
+	assignment := evolution.GenerationAssignment{RunID: run.ID, GroupID: run.GroupID, BindingID: run.BindingID, OccurrenceID: "occurrence", Requester: evolution.Principal{Issuer: "https://app", Subject: "operator", Kind: "human"}, Pins: run.Pins, Budget: run.Budget}
+	digest, err := assignment.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant := evolution.GenerationGrant{ID: "pause-grant", RunID: run.ID, GroupID: run.GroupID, AssignmentDigest: digest}
+	if err = store.RetainGenerationGrant(ctx, assignment, grant); err != nil {
+		t.Fatal(err)
+	}
+	central := &centralGeneration{assignment: assignment, grant: grant, state: "admitted"}
+	lease, err := store.ClaimRun(ctx, run.ID, "worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority := CentralAuthority{Store: store, Central: central}
+	if err = authority.AuthorizeClaim(ctx, lease, run, false); err != nil {
+		t.Fatal(err)
+	}
+	paused, err := store.ControlRun(ctx, projections.RunControl{RequestID: "between-nodes", RunID: run.ID, Action: "pause", ExpectedFence: lease.Fence})
+	if err != nil || paused.State != "paused" {
+		t.Fatal(paused, err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = projections.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	authority.Store = store
+	pending, err := store.PendingGenerationPauses(ctx, "", 10)
+	if err != nil || len(pending) != 1 {
+		t.Fatal("control observation lost at restart", pending, err)
+	}
+	current, err := store.Run(ctx, run.GroupID, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	central.deny = true // Recording an already-durable pause is cleanup, not execution.
+	if err = authority.ReconcilePause(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	pending, err = store.PendingGenerationPauses(ctx, "", 10)
+	if err != nil || len(pending) != 0 || central.state != "paused" || central.fence != current.Fence {
+		t.Fatal("pause not delivered", pending, central, err)
+	}
 }

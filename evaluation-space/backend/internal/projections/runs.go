@@ -96,7 +96,7 @@ func (s *Store) AdmitRun(ctx context.Context, input RunAdmission) (evolution.Run
 		}
 	}
 	var active int
-	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE group_id=? AND binding_id=? AND experiment_of='' AND state IN ('queued','running','paused','cancelling')", input.GroupID, input.BindingID).Scan(&active); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE group_id=? AND binding_id=? AND experiment_of='' AND state IN ('queued','running','pause_requested','paused','cancelling')", input.GroupID, input.BindingID).Scan(&active); err != nil {
 		return result, err
 	}
 	if active != 0 {
@@ -180,7 +180,7 @@ func (s *Store) RetryRun(ctx context.Context, input RunRetry, requester evolutio
 		return result, ErrConflict
 	}
 	var active int
-	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE group_id=? AND binding_id=? AND experiment_of='' AND state IN ('queued','running','paused','cancelling')", group, binding).Scan(&active); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE group_id=? AND binding_id=? AND experiment_of='' AND state IN ('queued','running','pause_requested','paused','cancelling')", group, binding).Scan(&active); err != nil {
 		return result, err
 	}
 	if active != 0 && experiment == "" {

@@ -4,6 +4,7 @@ package runner
 import (
 	"aster/contracts/evolution"
 	"aster/evaluation-space/internal/projections"
+	"aster/evaluation-space/internal/workflow"
 	"context"
 	"errors"
 	"fmt"
@@ -130,11 +131,29 @@ func (w *Worker) Step(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if state != "completed" && state != "failed" && state != "cancelled" {
+	if state != "completed" && state != "failed" && state != "cancelled" && state != "paused" {
 		return fmt.Errorf("executor did not return terminal state")
 	}
 	if err = w.Authority.AuthorizeRun(ctx, run, cleanup); err != nil {
 		return err
 	}
-	return w.Store.SettleRun(ctx, lease, state)
+	if state != "paused" {
+		err = w.Store.SettleRun(ctx, lease, state)
+		if !errors.Is(err, workflow.ErrPauseRequested) {
+			return err
+		}
+	}
+	if err = w.Store.AcknowledgeRunPause(ctx, lease); err != nil {
+		return err
+	}
+	if observer, ok := w.Authority.(interface {
+		ReconcilePause(context.Context, evolution.Run) error
+	}); ok {
+		run, err = w.Store.Run(ctx, run.GroupID, run.ID)
+		if err != nil {
+			return err
+		}
+		return observer.ReconcilePause(ctx, run)
+	}
+	return nil
 }

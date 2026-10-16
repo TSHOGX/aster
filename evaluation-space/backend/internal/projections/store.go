@@ -58,9 +58,9 @@ CREATE TRIGGER immutable_definition BEFORE UPDATE ON catalog_definitions BEGIN S
 CREATE TRIGGER retained_definition BEFORE DELETE ON catalog_definitions BEGIN SELECT RAISE(ABORT,'retain catalog provenance'); END;
 CREATE TABLE service_states(service_id TEXT PRIMARY KEY,revision INTEGER NOT NULL CHECK(revision>0),enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));
 CREATE TABLE service_state_receipts(request_id TEXT PRIMARY KEY,request TEXT NOT NULL,revision INTEGER NOT NULL);
-CREATE TABLE runs(tokens INTEGER NOT NULL DEFAULT 0 CHECK(tokens>=0),cost_micros INTEGER NOT NULL DEFAULT 0 CHECK(cost_micros>=0),worker_id TEXT NOT NULL DEFAULT '',fence INTEGER NOT NULL DEFAULT 0 CHECK(fence>=0),lease_until INTEGER NOT NULL DEFAULT 0,id TEXT PRIMARY KEY,group_id TEXT NOT NULL,binding_id TEXT NOT NULL,configuration_revision INTEGER NOT NULL,occurrence_id TEXT NOT NULL,experiment_of TEXT NOT NULL DEFAULT '',request BLOB NOT NULL,body BLOB NOT NULL,state TEXT NOT NULL CHECK(state IN ('queued','running','paused','cancelling','completed','failed','cancelled')),UNIQUE(group_id,binding_id,configuration_revision,occurrence_id));
+CREATE TABLE runs(tokens INTEGER NOT NULL DEFAULT 0 CHECK(tokens>=0),cost_micros INTEGER NOT NULL DEFAULT 0 CHECK(cost_micros>=0),worker_id TEXT NOT NULL DEFAULT '',fence INTEGER NOT NULL DEFAULT 0 CHECK(fence>=0),lease_until INTEGER NOT NULL DEFAULT 0,id TEXT PRIMARY KEY,group_id TEXT NOT NULL,binding_id TEXT NOT NULL,configuration_revision INTEGER NOT NULL,occurrence_id TEXT NOT NULL,experiment_of TEXT NOT NULL DEFAULT '',request BLOB NOT NULL,body BLOB NOT NULL,state TEXT NOT NULL CHECK(state IN ('queued','running','pause_requested','paused','cancelling','completed','failed','cancelled')),UNIQUE(group_id,binding_id,configuration_revision,occurrence_id));
 CREATE UNIQUE INDEX experiment_binding_occurrence ON runs(group_id,binding_id,configuration_revision,occurrence_id,experiment_of);
-CREATE UNIQUE INDEX one_active_binding_run ON runs(group_id,binding_id) WHERE state IN ('queued','running','paused','cancelling') AND experiment_of='';
+CREATE UNIQUE INDEX one_active_binding_run ON runs(group_id,binding_id) WHERE state IN ('queued','running','pause_requested','paused','cancelling') AND experiment_of='';
 CREATE TRIGGER immutable_run_admission BEFORE UPDATE OF id,group_id,binding_id,configuration_revision,occurrence_id,experiment_of,request,body ON runs BEGIN SELECT RAISE(ABORT,'immutable run admission'); END;
 CREATE TRIGGER retained_run BEFORE DELETE ON runs BEGIN SELECT RAISE(ABORT,'retain run provenance'); END;
 CREATE TABLE run_control_receipts(request_id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id),request BLOB NOT NULL,result BLOB NOT NULL);
@@ -93,7 +93,8 @@ CREATE TRIGGER retained_provider_outcome BEFORE DELETE ON provider_outcomes BEGI
 CREATE TRIGGER run_state_transition BEFORE UPDATE OF state ON runs
 WHEN OLD.state<>NEW.state AND NOT (
  (OLD.state='queued' AND NEW.state IN ('running','paused','cancelled','cancelling')) OR
- (OLD.state='running' AND NEW.state IN ('paused','completed','failed','cancelled','cancelling')) OR
+ (OLD.state='running' AND NEW.state IN ('pause_requested','paused','completed','failed','cancelled','cancelling')) OR
+ (OLD.state='pause_requested' AND NEW.state IN ('paused','cancelled','cancelling')) OR
  (OLD.state='paused' AND NEW.state IN ('queued','cancelled','cancelling')) OR
  (OLD.state='cancelling' AND NEW.state='cancelled')
 )

@@ -39,7 +39,7 @@ func (s *Store) SaveRunCheckpoint(ctx context.Context, lease RunLease, value Run
 	if err = tx.QueryRowContext(ctx, "SELECT group_id,state,worker_id,fence,lease_until FROM runs WHERE id=?", value.RunID).Scan(&group, &state, &worker, &fence, &expires); err != nil {
 		return err
 	}
-	if state != "running" || worker != lease.WorkerID || fence != lease.Fence || expires <= time.Now().UnixNano() {
+	if (state != "running" && state != "pause_requested") || worker != lease.WorkerID || fence != lease.Fence || expires <= time.Now().UnixNano() {
 		return ErrConflict
 	}
 	if value.Artifact.GroupID != group {

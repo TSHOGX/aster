@@ -149,12 +149,25 @@ func runNative(ctx context.Context, store *projections.Store, central *identity.
 	transfer := handoff.Worker{Store: store, Studio: studioclient.Results{Client: studio, Store: store, Central: central}, Authority: handoffAuthority{authority}, Planner: candidatePlanner{}}
 	timer := time.NewTicker(time.Second)
 	defer timer.Stop()
-	settleCursor, handoffCursor := "", ""
+	settleCursor, handoffCursor, pauseCursor := "", "", ""
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
+		}
+		pauses, err := store.PendingGenerationPauses(ctx, pauseCursor, 10)
+		if err == nil {
+			if len(pauses) == 0 {
+				pauseCursor = ""
+			}
+			for _, item := range pauses {
+				run, err := store.Run(ctx, item.GroupID, item.RunID)
+				if err == nil {
+					_ = authority.ReconcilePause(ctx, run)
+				}
+				pauseCursor = item.RunID
+			}
 		}
 		pending, err := store.UnsettledGenerations(ctx, settleCursor, 10)
 		if err == nil {

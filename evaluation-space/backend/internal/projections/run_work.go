@@ -26,7 +26,7 @@ func (s *Store) RunnableRuns(ctx context.Context, after string, limit int) (RunW
 	if (after != "" && !manifest.ValidID(after)) || limit < 1 || limit > 100 {
 		return result, fmt.Errorf("invalid work page")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,group_id,binding_id,state FROM runs WHERE id>? AND (state='queued' OR (state IN ('running','cancelling') AND lease_until<=?)) ORDER BY id LIMIT ?`, after, time.Now().UnixNano(), limit+1)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,group_id,binding_id,state FROM runs WHERE id>? AND (state='queued' OR (state IN ('running','pause_requested','cancelling') AND lease_until<=?)) ORDER BY id LIMIT ?`, after, time.Now().UnixNano(), limit+1)
 	if err != nil {
 		return result, err
 	}

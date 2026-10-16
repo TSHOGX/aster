@@ -66,7 +66,8 @@ func (s *Store) ExecuteProviderCall(ctx context.Context, lease RunLease, call Pr
 			return zero, err
 		}
 		// Lookup and artifact reads can block. Revalidate the execution lease
-		// after them so an observed pause/cancel/takeover prevents submission.
+		// after them so cancellation/takeover prevents submission. Cooperative
+		// pause allows this already-reserved call to settle at its node boundary.
 		if _, err = s.PrepareProviderCall(ctx, lease, prepared.ID, prepared.Request); err != nil {
 			return zero, err
 		}

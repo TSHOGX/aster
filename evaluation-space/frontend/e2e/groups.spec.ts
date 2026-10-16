@@ -301,3 +301,54 @@ for (const variant of [
     } finally { await context.close(); }
   });
 }
+
+for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", width: 390 }]) {
+  test(`run inspector waits for cooperative pause ${variant.locale}`, async ({ page: admin, browser }, info) => {
+    const { beta, user } = await provision(admin);
+    const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: variant.locale, viewport: { width: variant.width, height: 900 } });
+    const page = await context.newPage();
+    const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
+    const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+    try {
+      await login(page, user);
+      await page.goto(`/evaluation-space/groups/${beta.id}/`);
+      await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
+      await expect(page.getByRole("region", { name: tr("Group overview", "团队概览"), exact: true }).getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
+      const root = `/evaluation-space/api/v1/groups/${beta.id}/runs/pause-run`;
+      const run = { id: "pause-run", state: "running", fence: 1, handoff: "not_ready", evaluation_state: "not_requested", pins: { workflow: { id: "skills", revision: 1 }, service: { id: "native", revision: 1 }, configuration_revision: 1 }, created_at: new Date().toISOString() };
+      const controls: string[] = [];
+      // UI transitions are intercepted; real draining and resume use native-process tests.
+      await page.route(`${origin}${root}`, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(run) }));
+      await page.route(`${origin}${root}/**`, route => {
+        const path = new URL(route.request().url()).pathname;
+        let body: unknown = { items: [] };
+        if (path.endsWith("/control")) {
+          const control = route.request().postDataJSON() as { action: string; expected_fence: number };
+          expect(control.expected_fence).toBe(run.fence);
+          controls.push(control.action);
+          run.state = control.action === "pause" ? "pause_requested" : "queued";
+          body = { state: run.state, fence: run.fence };
+        } else if (path.endsWith("/events")) body = { events: [], next_after: 0 };
+        else if (path.endsWith("/debugger")) body = { budget: { spent: { tokens: 0, cost_micros: 0 }, held: { tokens: 10, cost_micros: 20 }, available: { tokens: 90, cost_micros: 80 } }, attempts: [], events: [], provider_observations: [], opaque: [] };
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+      });
+      await page.goto(`/evaluation-space/groups/${beta.id}/runs/pause-run`);
+      await page.getByRole("button", { name: tr("Pause", "暂停"), exact: true }).click();
+      await expect(page.getByRole("heading", { name: `${tr("Run status", "运行状态")}: ${tr("Pausing", "正在暂停")}`, exact: true })).toBeVisible();
+      await expect(page.getByText(tr("Pause requested. Current work is finishing before the run pauses.", "已请求暂停。当前工作完成后，运行将暂停。"), { exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: tr("Pause", "暂停"), exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: tr("Resume", "继续"), exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: tr("Run from here", "从此处运行"), exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: tr("Cancel", "取消"), exact: true })).toBeEnabled();
+      await page.screenshot({ path: info.outputPath("pause-requested.png"), fullPage: true });
+      run.state = "paused"; run.fence++;
+      await page.getByRole("button", { name: tr("Refresh", "刷新"), exact: true }).click();
+      await expect(page.getByRole("button", { name: tr("Resume", "继续"), exact: true })).toBeEnabled();
+      await page.getByRole("button", { name: tr("Resume", "继续"), exact: true }).click();
+      await expect(page.getByRole("heading", { name: `${tr("Run status", "运行状态")}: ${tr("queued", "排队中")}`, exact: true })).toBeVisible();
+      expect(controls).toEqual(["pause", "resume"]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await context.close(); }
+  });
+}

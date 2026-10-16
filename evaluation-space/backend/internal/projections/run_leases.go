@@ -2,6 +2,7 @@ package projections
 
 import (
 	manifest "aster/contracts/volumemanifest"
+	"aster/evaluation-space/internal/workflow"
 	"context"
 	"database/sql"
 	"errors"
@@ -30,7 +31,7 @@ func (s *Store) ClaimRun(ctx context.Context, run, worker string, duration time.
 	defer tx.Rollback()
 	now := time.Now().UTC()
 	result.ExpiresAt = now.Add(duration)
-	err = tx.QueryRowContext(ctx, `UPDATE runs SET state=CASE WHEN state='cancelling' THEN state ELSE 'running' END,worker_id=?,fence=fence+1,lease_until=? WHERE id=? AND (state='queued' OR (state IN ('running','cancelling') AND lease_until<=?)) RETURNING fence`, worker, result.ExpiresAt.UnixNano(), run, now.UnixNano()).Scan(&result.Fence)
+	err = tx.QueryRowContext(ctx, `UPDATE runs SET state=CASE WHEN state IN ('cancelling','pause_requested') THEN state ELSE 'running' END,worker_id=?,fence=fence+1,lease_until=? WHERE id=? AND (state='queued' OR (state IN ('running','pause_requested','cancelling') AND lease_until<=?)) RETURNING fence`, worker, result.ExpiresAt.UnixNano(), run, now.UnixNano()).Scan(&result.Fence)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return result, ErrConflict
@@ -45,7 +46,7 @@ func (s *Store) RenewRun(ctx context.Context, lease RunLease, duration time.Dura
 	}
 	now := time.Now().UTC()
 	expires := now.Add(duration)
-	result, err := s.db.ExecContext(ctx, `UPDATE runs SET lease_until=? WHERE id=? AND worker_id=? AND fence=? AND state IN ('running','cancelling') AND lease_until>?`, expires.UnixNano(), lease.RunID, lease.WorkerID, lease.Fence, now.UnixNano())
+	result, err := s.db.ExecContext(ctx, `UPDATE runs SET lease_until=? WHERE id=? AND worker_id=? AND fence=? AND state IN ('running','pause_requested','cancelling') AND lease_until>?`, expires.UnixNano(), lease.RunID, lease.WorkerID, lease.Fence, now.UnixNano())
 	if err != nil {
 		return lease, err
 	}
@@ -85,6 +86,9 @@ func (s *Store) SettleRun(ctx context.Context, lease RunLease, state string) err
 	if current == state {
 		return nil
 	}
+	if current == "pause_requested" && expires > time.Now().UnixNano() {
+		return workflow.ErrPauseRequested
+	}
 	if (current != "running" && !(current == "cancelling" && state == "cancelled")) || expires <= time.Now().UnixNano() {
 		return ErrConflict
 	}
@@ -97,6 +101,38 @@ func (s *Store) SettleRun(ctx context.Context, lease RunLease, state string) err
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE runs SET state=?,lease_until=0 WHERE id=?", state, lease.RunID); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+// AcknowledgeRunPause is called only after the engine has drained admitted nodes.
+// It refuses uncertain provider work and fences the old worker at the boundary.
+func (s *Store) AcknowledgeRunPause(ctx context.Context, lease RunLease) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, _, err = liveRunBudget(ctx, tx, lease, false); err != nil {
+		return err
+	}
+	var held int
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM run_budget_reservations WHERE run_id=? AND state='held'", lease.RunID).Scan(&held); err != nil {
+		return err
+	}
+	if held != 0 {
+		return ErrConflict
+	}
+	result, err := tx.ExecContext(ctx, "UPDATE runs SET state='paused',fence=fence+1,worker_id='',lease_until=0 WHERE id=? AND state='pause_requested'", lease.RunID)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrConflict
 	}
 	return tx.Commit()
 }

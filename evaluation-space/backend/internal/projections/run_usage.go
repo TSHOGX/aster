@@ -42,7 +42,7 @@ func (s *Store) ChargeRunUsage(ctx context.Context, lease RunLease, request stri
 	if err = tx.QueryRowContext(ctx, "SELECT body,state,worker_id,fence,lease_until,tokens,cost_micros FROM runs WHERE id=?", lease.RunID).Scan(&body, &state, &worker, &fence, &expires, &total.Tokens, &total.CostMicros); err != nil {
 		return total, err
 	}
-	if state != "running" || worker != lease.WorkerID || fence != lease.Fence || expires <= time.Now().UnixNano() {
+	if (state != "running" && state != "pause_requested") || worker != lease.WorkerID || fence != lease.Fence || expires <= time.Now().UnixNano() {
 		return total, ErrConflict
 	}
 	var prior, result []byte

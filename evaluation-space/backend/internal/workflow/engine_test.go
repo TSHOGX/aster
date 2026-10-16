@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -287,5 +288,56 @@ func TestRuntimeCannotMutateFrozenGraphOrAttemptInputs(t *testing.T) {
 		if string(record.Call.Inputs["value"]) != `"original"` || record.Call.Node.OutputPorts["value"] != schema {
 			t.Fatal("adapter mutated provenance", record)
 		}
+	}
+}
+
+type pausingJournal struct {
+	Journal
+	pause bool
+}
+
+func (j *pausingJournal) Begin(ctx context.Context, call Call, maximum int) (Record, error) {
+	if j.pause && strings.Contains(call.Instance, "/item-0/") {
+		return Record{}, ErrPauseRequested
+	}
+	return j.Journal.Begin(ctx, call, maximum)
+}
+func TestMapPauseIsNotFailureOrCancellationAndResumesRetainedItems(t *testing.T) {
+	for _, mode := range []string{"fail_fast", "collect_errors"} {
+		t.Run(mode, func(t *testing.T) {
+			engine, catalog, journal, schema := setup()
+			body := add(catalog, base("body", schema, []evolution.Node{transform("work", schema)}, []evolution.Edge{{From: "$input.value", To: "work.value"}, {From: "work.value", To: "$output.value"}}))
+			node := evolution.Node{ID: "map", Kind: "map", InputPorts: map[string]string{"value": schema}, OutputPorts: map[string]string{"value": schema}, ItemInputs: map[string]string{"value": schema}, ItemOutputs: map[string]string{"value": schema}, Body: &body, MaxItems: 10, Concurrency: 2, FailureMode: mode, MaxAttempts: 1, TimeoutSeconds: 10}
+			ref := add(catalog, base("map", schema, []evolution.Node{node}, []evolution.Edge{{From: "$input.value", To: "map.value"}, {From: "map.value", To: "$output.value"}}))
+			pause := &pausingJournal{Journal: journal, pause: true}
+			engine.Journal = pause
+			var mu sync.Mutex
+			calls := map[string]int{}
+			engine.Runtime = runtimeFunc(func(ctx context.Context, call Call) (Values, error) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				mu.Lock()
+				calls[call.Instance]++
+				mu.Unlock()
+				return call.Inputs, nil
+			})
+			inputs := Values{"value": json.RawMessage(`[1,2,3]`)}
+			if _, err := engine.Execute(context.Background(), ref, inputs); !errors.Is(err, ErrPauseRequested) {
+				t.Fatal("map pause became failure/cancellation", err)
+			}
+			pause.pause = false
+			if _, err := engine.Execute(context.Background(), ref, inputs); err != nil {
+				t.Fatal(err)
+			}
+			if len(calls) != 3 {
+				t.Fatal("map did not finish every item", calls)
+			}
+			for _, count := range calls {
+				if count != 1 {
+					t.Fatal("map resume repeated a completed item", calls)
+				}
+			}
+		})
 	}
 }

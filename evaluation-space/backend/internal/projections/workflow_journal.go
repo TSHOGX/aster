@@ -75,6 +75,9 @@ func (j WorkflowJournal) Begin(ctx context.Context, call workflow.Call, maximum 
 	if !errors.Is(err, sql.ErrNoRows) {
 		return record, err
 	}
+	if run.State == "pause_requested" {
+		return record, workflow.ErrPauseRequested
+	}
 	var count int
 	var used int64
 	if err = tx.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(length(request)+length(record)),0)+(SELECT coalesce(sum(json_extract(body,'$.artifact.size')),0) FROM run_checkpoints WHERE run_id=?) FROM workflow_attempts WHERE run_id=?", j.Lease.RunID, j.Lease.RunID).Scan(&count, &used); err != nil {

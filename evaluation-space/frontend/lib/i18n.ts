@@ -1,6 +1,7 @@
 "use client";
 import { useTranslator } from "../../../web/i18n";
 const zh = {
+  "Pausing": "正在暂停", "Pause requested. Current work is finishing before the run pauses.": "已请求暂停。当前工作完成后，运行将暂停。",
   "Run retry is unavailable. Retry to recover the same request, or check run permissions.": "无法重试运行。请再次重试以恢复同一请求，或检查运行权限。",
   "Evaluation cancellation failed. Refresh and check run permissions before retrying.": "评估取消失败。请刷新并检查运行权限后重试。",
   "pass": "通过", "fail": "未通过", "inconclusive": "无法确定", "canceled": "已取消",

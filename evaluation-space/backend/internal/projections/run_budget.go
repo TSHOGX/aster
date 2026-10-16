@@ -3,6 +3,7 @@ package projections
 import (
 	"aster/contracts/evolution"
 	manifest "aster/contracts/volumemanifest"
+	"aster/evaluation-space/internal/workflow"
 	"bytes"
 	"context"
 	"database/sql"
@@ -37,6 +38,9 @@ func (s *Store) ReserveRunBudget(ctx context.Context, lease RunLease, id string,
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
+	}
+	if run.State == "pause_requested" {
+		return workflow.ErrPauseRequested
 	}
 	var held RunUsage
 	if err = tx.QueryRowContext(ctx, "SELECT coalesce(sum(tokens),0),coalesce(sum(cost_micros),0) FROM run_budget_reservations WHERE run_id=? AND state='held'", lease.RunID).Scan(&held.Tokens, &held.CostMicros); err != nil {
@@ -113,10 +117,11 @@ func liveRunBudget(ctx context.Context, tx *sql.Tx, lease RunLease, reconciliati
 	if err != nil {
 		return run, usage, err
 	}
-	if (state != "running" && !(reconciliation && state == "cancelling")) || worker != lease.WorkerID || fence != lease.Fence || expires <= time.Now().UnixNano() {
+	if (state != "running" && state != "pause_requested" && !(reconciliation && state == "cancelling")) || worker != lease.WorkerID || fence != lease.Fence || expires <= time.Now().UnixNano() {
 		return run, usage, ErrConflict
 	}
 	run, err = evolution.Decode[evolution.Run](bytes.NewReader(body))
+	run.State, run.Fence = state, fence
 	return run, usage, err
 }
 

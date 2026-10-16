@@ -22,7 +22,7 @@ type RunControlResult struct {
 }
 
 // ControlRun records an already-authorized control intent. It invalidates worker
-// authority immediately; provider-side cancellation still needs reconciliation.
+// authority immediately for cancellation; pause lets admitted nodes settle.
 func (s *Store) ControlRun(ctx context.Context, input RunControl) (RunControlResult, error) {
 	return s.controlRun(ctx, "", input)
 }
@@ -69,14 +69,22 @@ func (s *Store) controlRun(ctx context.Context, group string, input RunControl) 
 		if result.State != "queued" && result.State != "running" {
 			return result, ErrConflict
 		}
-		result.State = "paused"
+		var running, held int
+		if err = tx.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM workflow_attempts WHERE run_id=? AND state='running'),(SELECT count(*) FROM run_budget_reservations WHERE run_id=? AND state='held')", input.RunID, input.RunID).Scan(&running, &held); err != nil {
+			return result, err
+		}
+		if result.State == "running" && (running > 0 || held > 0) {
+			result.State = "pause_requested"
+		} else {
+			result.State = "paused"
+		}
 	case "resume":
 		if result.State != "paused" {
 			return result, ErrConflict
 		}
 		result.State = "queued"
 	case "cancel":
-		if result.State != "queued" && result.State != "running" && result.State != "paused" {
+		if result.State != "queued" && result.State != "running" && result.State != "pause_requested" && result.State != "paused" {
 			return result, ErrConflict
 		}
 		result.State = "cancelled"
@@ -88,8 +96,15 @@ func (s *Store) controlRun(ctx context.Context, group string, input RunControl) 
 			result.State = "cancelling"
 		}
 	}
-	result.Fence++
-	if _, err = tx.ExecContext(ctx, "UPDATE runs SET state=?,fence=?,worker_id='',lease_until=0 WHERE id=?", result.State, result.Fence, input.RunID); err != nil {
+	if result.State == "pause_requested" {
+		// Keep the current lease/fence until admitted nodes finish. Begin refuses
+		// every new attempt while terminal writes and provider reconciliation stay live.
+		_, err = tx.ExecContext(ctx, "UPDATE runs SET state=? WHERE id=?", result.State, input.RunID)
+	} else {
+		result.Fence++
+		_, err = tx.ExecContext(ctx, "UPDATE runs SET state=?,fence=?,worker_id='',lease_until=0 WHERE id=?", result.State, result.Fence, input.RunID)
+	}
+	if err != nil {
 		return result, err
 	}
 	receipt, err = json.Marshal(result)

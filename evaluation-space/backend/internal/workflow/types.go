@@ -46,6 +46,8 @@ type Catalog interface {
 	Check(context.Context, evolution.Node) error
 }
 
+var ErrPauseRequested = errors.New("workflow_pause_requested")
+
 var ErrAttemptLimit = errors.New("workflow_attempt_limit")
 var ErrUncertain = errors.New("workflow_effect_uncertain")
 

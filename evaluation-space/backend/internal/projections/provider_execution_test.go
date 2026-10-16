@@ -97,7 +97,7 @@ func TestProviderExecutionRecoversLostReplyWithoutDuplicateSubmission(t *testing
 	}
 }
 
-func TestProviderLookupCancellationPreventsSubmission(t *testing.T) {
+func TestProviderLookupControlsDrainPauseAndFenceCancellation(t *testing.T) {
 	for _, action := range []string{"pause", "cancel", "revoke"} {
 		t.Run(action, func(t *testing.T) {
 			ctx := context.Background()
@@ -120,7 +120,7 @@ func TestProviderLookupCancellationPreventsSubmission(t *testing.T) {
 				t.Fatal(err)
 			}
 			authority := &callAuthorityFixture{}
-			provider := &providerFixture{beforeLookup: func() {
+			provider := &providerFixture{outcome: ProviderOutcome{CallID: "call", ProviderRequestID: "remote-request", State: "completed", Usage: RunUsage{4, 7}, Output: &artifact}, beforeLookup: func() {
 				if action == "revoke" {
 					authority.denied = true
 					return
@@ -130,7 +130,14 @@ func TestProviderLookupCancellationPreventsSubmission(t *testing.T) {
 				}
 			}}
 			_, err = s.ExecuteProviderCall(ctx, lease, ProviderCall{ID: "call", RunID: "run", Request: artifact}, RunUsage{8, 15}, provider, authority)
-			if err != ErrConflict || provider.submitted != 0 {
+			if action == "pause" {
+				if err != nil || provider.submitted != 1 {
+					t.Fatal("admitted call did not settle at pause boundary", err, provider.submitted)
+				}
+				if err = s.AcknowledgeRunPause(ctx, lease); err != nil {
+					t.Fatal("settled call blocked pause", err)
+				}
+			} else if err != ErrConflict || provider.submitted != 0 {
 				t.Fatal("lookup race submitted new provider work", err, provider.submitted)
 			}
 		})

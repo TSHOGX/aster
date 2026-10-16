@@ -146,11 +146,59 @@ func TestWorkflowAttemptBudgetAndInputIdentity(t *testing.T) {
 		t.Fatal("attempt limit ignored", err)
 	}
 	paused, err := store.ControlRun(ctx, RunControl{RequestID: "pause", RunID: lease.RunID, ExpectedFence: lease.Fence, Action: "pause"})
-	if err != nil || paused.State != "paused" {
+	if err != nil || paused.State != "pause_requested" || paused.Fence != lease.Fence {
 		t.Fatal(paused, err)
+	}
+	if _, err = journal.Begin(ctx, call, 1); err != nil {
+		t.Fatal("admitted node cannot settle during pause", err)
+	}
+	if _, err = journal.Begin(ctx, changed, 10); !errors.Is(err, workflow.ErrPauseRequested) {
+		t.Fatal("pause scheduled new node", err)
+	}
+	if err = store.ReserveRunBudget(ctx, lease, "new-call", RunUsage{Tokens: 1}); !errors.Is(err, workflow.ErrPauseRequested) {
+		t.Fatal("pause reserved new model work", err)
+	}
+	if err = store.AcknowledgeRunPause(ctx, lease); err != nil {
+		t.Fatal(err)
 	}
 	if _, err = journal.Begin(ctx, call, 1); !errors.Is(err, ErrConflict) {
 		t.Fatal("paused checkpoint replay authorized", err)
+	}
+	// Pause can arrive after Begin but before the first provider reservation.
+	// The retained running attempt is resumed with its original identity.
+	current, err := store.Run(ctx, "group", lease.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.ControlRun(ctx, RunControl{RequestID: "resume", RunID: lease.RunID, ExpectedFence: current.Fence, Action: "resume"}); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := store.ClaimRun(ctx, lease.RunID, "resumed", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal.Lease = resumed
+	record, err := journal.Begin(ctx, call, 1)
+	if err != nil || record.State != "running" || record.Call.ID != call.ID {
+		t.Fatal("pre-reservation attempt not recovered", record, err)
+	}
+	if err = store.ReserveRunBudget(ctx, resumed, "new-call", RunUsage{Tokens: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SettleRunBudget(ctx, resumed, "new-call", RunUsage{Tokens: 1}); err != nil {
+		t.Fatal(err)
+	}
+	record.State, record.Outputs = "succeeded", workflow.Values{"result": json.RawMessage(`"resumed"`)}
+	if err = journal.Complete(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	attempts, err := store.WorkflowAttempts(ctx, "group", lease.RunID, "", 10)
+	if err != nil || len(attempts) != 1 || attempts[0].State != "succeeded" {
+		t.Fatal("resume repeated the attempt", attempts, err)
+	}
+	budget, err := store.RunBudget(ctx, "group", lease.RunID)
+	if err != nil || budget.Spent.Tokens != 1 || budget.UnsettledCalls != 0 {
+		t.Fatal("resume duplicated budget", budget, err)
 	}
 }
 

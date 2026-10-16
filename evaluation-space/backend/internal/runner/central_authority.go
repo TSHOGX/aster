@@ -60,15 +60,16 @@ func (a CentralAuthority) AuthorizeRun(ctx context.Context, run evolution.Run, c
 	if err != nil {
 		return err
 	}
-	// On queued/resumed/cancellation work, publish the local durable control fence
-	// before checking authority. Claim hooks publish the later worker lease fence.
+	// Queued/resumed work only reads current authority; its new claim publishes
+	// the execution fence. Republishing a newer paused fence on resume would
+	// conflict with the centrally acknowledged pause. Active/control observations
+	// still precede effect checks.
 	state := run.State
+	if state == "pause_requested" {
+		state = "running"
+	}
 	if state == "queued" {
-		if run.Fence > 0 {
-			state = "paused"
-		} else {
-			state = "admitted"
-		}
+		state = "admitted"
 	}
 	if state != "admitted" {
 		if err = a.Central.ObserveGeneration(ctx, evolution.GenerationObservation{Grant: grant, Fence: run.Fence, State: state}); err != nil {
@@ -76,7 +77,7 @@ func (a CentralAuthority) AuthorizeRun(ctx context.Context, run evolution.Run, c
 		}
 	}
 	action := "execute"
-	if run.State == "queued" {
+	if run.State == "queued" || run.State == "paused" {
 		action = "read"
 	}
 	if cleanup {
@@ -161,4 +162,20 @@ func (a CentralAuthority) ReconcileTerminal(ctx context.Context, run evolution.R
 		return err
 	}
 	return a.Store.AcknowledgeGenerationSettlement(ctx, run.GroupID, run.ID)
+}
+
+// ReconcilePause publishes a durable control fact even after authority revocation.
+// It does not authorize effects or release a paused run's central budget hold.
+func (a CentralAuthority) ReconcilePause(ctx context.Context, run evolution.Run) error {
+	if run.State != "paused" {
+		return projections.ErrConflict
+	}
+	grant, err := a.load(ctx, run)
+	if err != nil {
+		return err
+	}
+	if err = a.Central.ObserveGeneration(ctx, evolution.GenerationObservation{Grant: grant, Fence: run.Fence, State: "paused"}); err != nil {
+		return err
+	}
+	return a.Store.AcknowledgeGenerationPause(ctx, run.GroupID, run.ID, run.Fence)
 }

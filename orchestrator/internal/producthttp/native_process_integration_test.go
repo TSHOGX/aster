@@ -205,6 +205,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	var modelMu sync.Mutex
 	responses := map[string]json.RawMessage{}
 	calls := map[string]int{}
+	pauseModelStarted, pauseModelRelease := make(chan struct{}), make(chan struct{})
+	var releasePauseOnce sync.Once
+	releasePauseModel := func() { releasePauseOnce.Do(func() { close(pauseModelRelease) }) }
 	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		modelMu.Lock()
 		defer modelMu.Unlock()
@@ -251,6 +254,14 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			t.Error("model pin or effective prompt missing")
 		}
 		calls[runID]++
+		if mode == "browser-retry" && runID == "browser-native-retry" && calls[runID] == 1 {
+			close(pauseModelStarted)
+			select {
+			case <-pauseModelRelease:
+			case <-r.Context().Done():
+				return
+			}
+		}
 		proposal := map[string]any{"id": "verified", "title": "Verified task", "body": "Perform the task and verify the output.", "evidence_ids": []string{"episode"}, "status": "supported"}
 		var outputs any
 		switch submission.Call.Node.ID {
@@ -292,6 +303,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		_, _ = w.Write(raw)
 	}))
 	defer model.Close()
+	defer releasePauseModel()
 	spaceDirectory := t.TempDir()
 	raw, _ := json.Marshal(map[string]any{"model": modelRef})
 	provision := exec.CommandContext(ctx, catalog, "--state-directory", spaceDirectory, "--action", "examples")
@@ -752,6 +764,8 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		t.Fatal("native handoff not settled", branches)
 	}
 	if mode == "browser-retry" {
+		_, err = store.SetEvolutionGroupGrant(ctx, token, configuration.GroupID, product.EvolutionGroupGrantInput{RequestID: "retry-evidence", AccountID: admin.ID, Action: "source.read", Effect: "allow"})
+		must(t, err)
 		// Authenticate through the actual Evaluation Space PKCE/session gateway.
 		request, _ := http.NewRequestWithContext(ctx, "GET", "http://"+spaceBrowserAddress+"/evaluation-space/auth/login", nil)
 		request.Host = issuerURL.Host
@@ -835,6 +849,56 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		actualPins, _ := json.Marshal(retry.Pins)
 		if !bytes.Equal(expectedPins, actualPins) {
 			t.Fatal("retry changed source pins")
+		}
+		select {
+		case <-pauseModelStarted:
+		case <-time.After(10 * time.Second):
+			t.Fatal("retry model did not start")
+		}
+		status, raw = spaceCall("GET", runRoot+retry.ID, nil)
+		if status != 200 {
+			t.Fatal("retry before pause", status, string(raw))
+		}
+		must(t, json.Unmarshal(raw, &retry))
+		status, raw = spaceCall("POST", runRoot+retry.ID+"/control", map[string]any{"request_id": "pause-native-retry", "run_id": retry.ID, "action": "pause", "expected_fence": retry.Fence})
+		if status != 200 || !bytes.Contains(raw, []byte(`"pause_requested"`)) {
+			t.Fatal("pause did not wait for admitted work", status, string(raw))
+		}
+		releasePauseModel()
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+			status, raw = spaceCall("GET", runRoot+retry.ID, nil)
+			if status != 200 {
+				t.Fatal("pausing retry", status, string(raw))
+			}
+			must(t, json.Unmarshal(raw, &retry))
+			if retry.State == "paused" {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if retry.State != "paused" || retry.Handoff != "not_ready" {
+			t.Fatal("pause boundary not durable", retry)
+		}
+		status, raw = spaceCall("GET", runRoot+retry.ID+"/artifacts", nil)
+		if status != 200 {
+			t.Fatal("pause artifacts", status, string(raw))
+		}
+		var pauseArtifacts struct {
+			Items []evolution.ArtifactRef `json:"items"`
+		}
+		must(t, json.Unmarshal(raw, &pauseArtifacts))
+		checkpointFound := false
+		for _, artifact := range pauseArtifacts.Items {
+			if artifact.SchemaDigest == evolution.Digest([]byte("native-workflow-checkpoint-v1")) {
+				checkpointFound = true
+			}
+		}
+		if !checkpointFound {
+			t.Fatal("pause did not retain a node checkpoint", string(raw))
+		}
+		status, raw = spaceCall("POST", runRoot+retry.ID+"/control", map[string]any{"request_id": "resume-native-retry", "run_id": retry.ID, "action": "resume", "expected_fence": retry.Fence})
+		if status != 200 {
+			t.Fatal("resume retry", status, string(raw))
 		}
 		for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
 			status, raw = spaceCall("GET", runRoot+retry.ID, nil)

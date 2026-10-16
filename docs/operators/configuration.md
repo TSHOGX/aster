@@ -284,7 +284,11 @@ current group's frozen run metadata, deduplicated event cursor and authorized
 attempt records, including effective prompts, node inputs/outputs and artifact
 metadata when the current `source.read` grant permits them. Artifact bytes are
 served only through the separate current-grant download operation. Pause, resume and cancel are
-compare-and-swap controls and retain `run.start` authority. Evaluation reports use
+compare-and-swap controls and retain `run.start` authority. Pause shows **Pausing**
+while admitted work settles; new nodes and new model budget reservations stop.
+The run becomes **paused** at a durable boundary, with current usage and checkpoint
+retained. Resume continues from completed node results. Cancellation remains
+available while pausing and fences further output immediately. Evaluation reports use
 `/evaluation-space/groups/{group}/evaluations/{job}` and expose the frozen subject,
 policy mode (`report_only` or `required`), observed metrics, coverage and outcome;
 dataset bytes and evaluator credentials

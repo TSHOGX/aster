@@ -18,6 +18,9 @@ CREATE TRIGGER retained_generation_admission BEFORE DELETE ON generation_admissi
 CREATE TABLE generation_grants(run_id TEXT PRIMARY KEY REFERENCES runs(id),assignment BLOB NOT NULL,grant BLOB NOT NULL);
 CREATE TRIGGER immutable_generation_grant BEFORE UPDATE ON generation_grants BEGIN SELECT RAISE(ABORT,'immutable generation grant'); END;
 CREATE TRIGGER retained_generation_grant BEFORE DELETE ON generation_grants BEGIN SELECT RAISE(ABORT,'retain generation grant'); END;
+CREATE TABLE generation_pause_observations(run_id TEXT NOT NULL REFERENCES generation_grants(run_id),fence INTEGER NOT NULL CHECK(fence>0),PRIMARY KEY(run_id,fence));
+CREATE TRIGGER immutable_pause_observation BEFORE UPDATE ON generation_pause_observations BEGIN SELECT RAISE(ABORT,'immutable pause observation'); END;
+CREATE TRIGGER retained_pause_observation BEFORE DELETE ON generation_pause_observations BEGIN SELECT RAISE(ABORT,'retain pause observation'); END;
 CREATE TABLE generation_settlements(run_id TEXT PRIMARY KEY REFERENCES generation_grants(run_id));
 CREATE TRIGGER immutable_generation_settlement BEFORE UPDATE ON generation_settlements BEGIN SELECT RAISE(ABORT,'immutable generation settlement'); END;
 CREATE TRIGGER retained_generation_settlement BEFORE DELETE ON generation_settlements BEGIN SELECT RAISE(ABORT,'retain generation settlement'); END;
@@ -136,5 +139,31 @@ func (s *Store) UnsettledGenerations(ctx context.Context, after string, limit in
 }
 func (s *Store) AcknowledgeGenerationSettlement(ctx context.Context, group, id string) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO generation_settlements(run_id) SELECT id FROM runs WHERE id=? AND group_id=? AND state IN('completed','failed','cancelled') ON CONFLICT DO NOTHING`, id, group)
+	return err
+}
+
+// PendingGenerationPauses also discovers pauses between nodes, when there may
+// be no surviving worker to deliver the observation to the central authority.
+func (s *Store) PendingGenerationPauses(ctx context.Context, after string, limit int) ([]RunWork, error) {
+	if limit < 1 || limit > 100 {
+		return nil, fmt.Errorf("invalid pause page")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.group_id,r.binding_id,r.state FROM runs r JOIN generation_grants g ON g.run_id=r.id WHERE r.id>? AND r.state='paused' AND NOT EXISTS(SELECT 1 FROM generation_pause_observations p WHERE p.run_id=r.id AND p.fence=r.fence) ORDER BY r.id LIMIT ?`, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []RunWork{}
+	for rows.Next() {
+		var item RunWork
+		if err = rows.Scan(&item.RunID, &item.GroupID, &item.BindingID, &item.State); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+func (s *Store) AcknowledgeGenerationPause(ctx context.Context, group, id string, fence int64) error {
+	_, err := s.db.ExecContext(ctx, "INSERT INTO generation_pause_observations(run_id,fence) SELECT id,fence FROM runs WHERE id=? AND group_id=? AND fence=? AND state='paused' ON CONFLICT DO NOTHING", id, group, fence)
 	return err
 }
