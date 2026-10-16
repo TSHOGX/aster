@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { base } from "../lib/api";
@@ -11,7 +10,7 @@ type Graph = { nodes: { id: string }[] } & Record<string, unknown>;
 type Preview = { eligible: boolean; checkpoint: { id: string }; dependencies: { id: string }[]; reused: { call: { id: string; instance: string } }[]; reasons?: string[] };
 type Request = { id: string; source_run_id: string; checkpoint_id: string; start_node: string; workflow: Graph; budget: Budget };
 
-export function RunExperiment({ group, run, workflow, budget, enabled }: { group: string; run: string; workflow: string; budget: Budget; enabled: boolean }) {
+export function RunExperiment({ group, run, budget, enabled }: { group: string; run: string; budget: Budget; enabled: boolean }) {
   const tr = useT(); const router = useRouter();
   const [open, setOpen] = useState(false); const [busy, setBusy] = useState(false); const [text, setText] = useState(""); const [start, setStart] = useState("");
   const [tokens, setTokens] = useState(budget.max_tokens); const [cost, setCost] = useState(budget.max_cost_micros);
@@ -22,17 +21,18 @@ export function RunExperiment({ group, run, workflow, budget, enabled }: { group
   async function session() { const response = await fetch(`${base}/api/v1/session`, { credentials: "same-origin", cache: "no-store" }); if (!response.ok) throw new Error(); return await response.json() as { subject: string; csrf: string }; }
   const key = (subject: string) => `evaluation-experiment:${subject}:${group}:${run}`;
   async function load() {
-    setOpen(true); setBusy(true); setError(""); setPreview(undefined);
+    setOpen(true); setBusy(true); setError(""); setPreview(undefined); setRequest(undefined); setText(""); setStart("");
     try {
-      const identity = await session(); const saved = sessionStorage.getItem(key(identity.subject));
+      const identity = await session();
+      const response = await fetch(`${root}/workflow`, { credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) throw new Error(); const frozen = await response.json() as { workflow: Graph };
+      const saved = sessionStorage.getItem(key(identity.subject));
       if (saved) {
         const prior = JSON.parse(saved) as Request;
         if (prior.source_run_id !== run || !prior.id || !prior.workflow?.nodes || !prior.budget) throw new Error();
         setRequest(prior); setText(JSON.stringify(prior.workflow, null, 2)); setStart(prior.start_node); setTokens(prior.budget.max_tokens); setCost(prior.budget.max_cost_micros); return;
       }
-      const response = await fetch(`${base}/api/v1/groups/${encodeURIComponent(group)}/workflows/${encodeURIComponent(workflow)}/draft`, { credentials: "same-origin", cache: "no-store" });
-      if (!response.ok) throw new Error(); const draft = await response.json() as { workflow: Graph };
-      setText(JSON.stringify(draft.workflow, null, 2)); setStart(draft.workflow.nodes[0]?.id ?? "");
+      setText(JSON.stringify(frozen.workflow, null, 2)); setStart(frozen.workflow.nodes[0]?.id ?? "");
     } catch { setError("Experiment creation is unavailable or the checkpoint is no longer eligible."); } finally { setBusy(false); }
   }
   async function inspect() {
@@ -57,7 +57,6 @@ export function RunExperiment({ group, run, workflow, budget, enabled }: { group
   if (!open) return <button disabled={!enabled || busy} onClick={() => void load()}>{tr("Run from here")}</button>;
   return <section className="card experiment-form" aria-label={tr("Checkpoint experiment")}><h3>{tr("Checkpoint experiment")}</h3>
     <p>{tr("Choose a start node and preview the exact upstream outputs to reuse. The source remains unchanged.")}</p>
-    <Link prefetch={false} href={`/groups/${encodeURIComponent(group)}/workflows/${encodeURIComponent(workflow)}`}>{tr("Open workflow editor")}</Link>
     <fieldset disabled={busy || !!request}><label>{tr("Frozen experiment workflow")}<textarea aria-label={tr("Frozen experiment workflow")} rows={10} value={text} onChange={event => { setText(event.target.value); setPreview(undefined); }} /></label>
       <label>{tr("Start node")}<select aria-label={tr("Start node")} value={start} onChange={event => { setStart(event.target.value); setPreview(undefined); }}><option value="">{tr("Choose a node")}</option>{graph?.nodes.map(node => <option key={node.id} value={node.id}>{node.id}</option>)}</select></label>
       <label>{tr("Token budget")}<input aria-label={tr("Token budget")} type="number" min={1} max={budget.max_tokens} value={tokens} onChange={event => { setTokens(Number(event.target.value)); setPreview(undefined); }} /></label>

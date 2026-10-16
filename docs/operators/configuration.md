@@ -341,7 +341,7 @@ same source-authorized browser boundary; responses include its digest and size a
 default to a one MiB body limit (operators may request up to four MiB). Truncated
 responses are marked with `X-Artifact-Truncated: true` and are never treated as a
 complete artifact download. For a paused run, **Run from here** opens the current
-workflow draft, a start-node selector and bounded token/cost settings. Preview
+workflow copied from the source run’s frozen revision, a start-node selector and bounded token/cost settings. Preview
 lists the exact checkpoint and upstream attempts to reuse before creating an
 experiment. Changed or incomplete upstream dependencies require an earlier start
 node. The selected node and unrelated branches execute afresh. Each reused attempt

@@ -846,6 +846,20 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		}
 		var before evolution.Run
 		must(t, json.Unmarshal(raw, &before))
+		status, raw = spaceCall("GET", runRoot+sourceID+"/workflow", nil)
+		if status != 200 {
+			t.Fatal("frozen workflow read", status, string(raw))
+		}
+		var frozen struct {
+			Revision evolution.Revision `json:"revision"`
+			Workflow evolution.Workflow `json:"workflow"`
+		}
+		must(t, json.Unmarshal(raw, &frozen))
+		canonical, err := frozen.Workflow.Canonical()
+		must(t, err)
+		if frozen.Revision != before.Pins.Workflow || evolution.Digest(canonical) != before.Pins.Workflow.Digest {
+			t.Fatal("run workflow identity changed", frozen.Revision)
+		}
 		status, raw = spaceCall("GET", runRoot+sourceID+"/debugger", nil)
 		if status != 200 {
 			t.Fatal("native debugger read", status, string(raw))

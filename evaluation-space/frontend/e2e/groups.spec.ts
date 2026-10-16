@@ -423,8 +423,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       const budget = { max_tokens: 100, max_cost_micros: 100, max_attempts: 20, timeout_seconds: 60, max_artifact_bytes: 1048576 };
       const run = { id: "experiment-source", state: "paused", fence: 2, handoff: "not_ready", evaluation_state: "not_requested", budget, pins: { workflow: { id: "skills", revision: 1 } }, created_at: new Date().toISOString() };
       const workflow = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8"));
-      const requests: unknown[] = []; let created = "";
-      await page.route(`${origin}/evaluation-space/api/v1/groups/${beta.id}/workflows/skills/draft`, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ workflow }) }));
+      const requests: unknown[] = []; let created = ""; let frozenStatus = 200;
       await page.route(`${origin}${root}/**`, route => {
         const path = new URL(route.request().url()).pathname; let body: unknown = { items: [] };
         if (path.endsWith("/experiment-preview")) {
@@ -434,7 +433,8 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
           const request = route.request().postDataJSON(); requests.push(request); created = request.id;
           if (requests.length === 1) return route.fulfill({ status: 503, body: "lost response" });
           expect(requests[1]).toEqual(requests[0]); body = { id: created };
-        } else if (path.endsWith("/experiment-source")) body = run;
+        } else if (path.endsWith("/workflow")) return route.fulfill({ status: frozenStatus, contentType: "application/json", body: JSON.stringify(frozenStatus === 200 ? { workflow } : { error: "source_denied" }) });
+        else if (path.endsWith("/experiment-source")) body = run;
         else if (created && path.endsWith(`/${created}`)) body = { ...run, id: created, state: "queued", experiment_of: run.id };
         else if (path.endsWith("/events")) body = { events: [], next_after: 0 };
         else if (path.endsWith("/debugger")) body = { budget: { spent: { tokens: 0, cost_micros: 0 }, held: { tokens: 0, cost_micros: 0 }, available: { tokens: 30, cost_micros: 100 } }, attempts: [], events: [], provider_observations: [], opaque: [] };
@@ -452,6 +452,12 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       await page.getByRole("button", { name: tr("Create experiment", "创建实验"), exact: true }).click();
       await expect(page.getByRole("region", { name: tr("Checkpoint experiment", "检查点实验"), exact: true }).getByRole("alert")).toContainText(tr("Experiment creation is unavailable or the checkpoint is no longer eligible.", "实验创建不可用，或检查点已不再满足条件。"));
       await page.reload();
+      frozenStatus = 403;
+      await page.getByRole("button", { name: tr("Run from here", "从此处运行"), exact: true }).click();
+      await expect(page.getByRole("region", { name: tr("Checkpoint experiment", "检查点实验"), exact: true }).getByRole("alert")).toBeVisible();
+      await expect(page.getByLabel(tr("Frozen experiment workflow", "冻结的实验工作流"), { exact: true })).toHaveValue("");
+      await expect(page.getByRole("button", { name: tr("Recover experiment", "恢复实验"), exact: true })).toHaveCount(0);
+      await page.getByRole("button", { name: tr("Close", "关闭"), exact: true }).click(); frozenStatus = 200;
       await page.getByRole("button", { name: tr("Run from here", "从此处运行"), exact: true }).click();
       await expect(page.getByLabel(tr("Start node", "起始节点"), { exact: true })).toHaveValue("critic");
       await page.getByRole("button", { name: tr("Recover experiment", "恢复实验"), exact: true }).click();

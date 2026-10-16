@@ -62,6 +62,9 @@ func TestBrowserSurfaceSeparatesTraceAndControlAuthority(t *testing.T) {
 	if response := request("GET", "/evaluation-space/api/v1/groups/team/runs/missing", ""); response.Code != http.StatusNotFound {
 		t.Fatalf("run metadata route: %d %s", response.Code, response.Body.String())
 	}
+	if response := request("GET", "/evaluation-space/api/v1/groups/team/runs/missing/workflow", ""); response.Code != http.StatusForbidden {
+		t.Fatalf("frozen workflow bypassed source authority: %d", response.Code)
+	}
 	if response := request("GET", "/evaluation-space/api/v1/groups/team/runs/missing/events", ""); response.Code != http.StatusForbidden {
 		t.Fatalf("trace route bypassed source authority: %d", response.Code)
 	}
