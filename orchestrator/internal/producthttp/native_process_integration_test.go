@@ -397,7 +397,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	nativePath := filepath.Join(t.TempDir(), "native.json")
 	raw, _ = json.Marshal(map[string]any{"models": []any{map[string]any{"reference": modelRef, "endpoint": model.URL, "client_id": "space", "secret_env": "TEST_EVALUATOR_SECRET", "ceiling": map[string]int{"tokens": 100, "cost_micros": 1000}}}, "schemas": map[string]any{}, "example_builders": true})
 	must(t, os.WriteFile(nativePath, raw, 0600))
-	start := func(binary, addr string, args ...string) {
+	start := func(binary, addr string, args ...string) func() {
 		t.Helper()
 		logFile, err := os.Create(filepath.Join(t.TempDir(), "service.log"))
 		must(t, err)
@@ -407,21 +407,25 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		must(t, cmd.Start())
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
-		t.Cleanup(func() {
-			_ = cmd.Process.Signal(os.Interrupt)
-			select {
-			case <-done:
-			case <-time.After(5 * time.Second):
-				_ = cmd.Process.Kill()
-				<-done
-			}
-			logFile.Close()
-		})
+		var stopOnce sync.Once
+		stop := func() {
+			stopOnce.Do(func() {
+				_ = cmd.Process.Signal(os.Interrupt)
+				select {
+				case <-done:
+				case <-time.After(5 * time.Second):
+					_ = cmd.Process.Kill()
+					<-done
+				}
+				logFile.Close()
+			})
+		}
+		t.Cleanup(stop)
 		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
 			reply, err := http.Get("http://" + addr + "/probe")
 			if err == nil {
 				reply.Body.Close()
-				return
+				return stop
 			}
 			select {
 			case err := <-done:
@@ -433,6 +437,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			time.Sleep(20 * time.Millisecond)
 		}
 		t.Fatal("listener unavailable")
+		return stop
 	}
 
 	start(studioBinary, studioAddress, "--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evaluation-endpoint", spaceOrigin)
@@ -440,7 +445,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	if mode == "browser-retry" {
 		spaceArgs = append(spaceArgs, "--browser-listen", spaceBrowserAddress, "--public-origin", issuer, "--frontend", central.URL)
 	}
-	start(spaceBinary, spaceAddress, spaceArgs...)
+	stopSpace := start(spaceBinary, spaceAddress, spaceArgs...)
 	for _, action := range []string{"volume.read", "volume.author", "volume.review", "volume.merge", "volume.configure"} {
 		_, err = store.ApplyStudioGrant(ctx, token, product.StudioGrantCommand{RequestID: strings.ReplaceAll(action, ".", "-"), Kind: "account", SubjectID: admin.ID, LibraryID: "aster-shared-assets", Action: action, Effect: "allow"})
 		must(t, err)
@@ -795,6 +800,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	if len(branches)+len(failed) != len(configuration.Bindings) {
 		t.Fatal("native handoff not settled", branches)
 	}
+	var workflowUpgrade func(evolution.ContentRef)
 	if mode == "browser-retry" {
 		_, err = store.SetEvolutionGroupGrant(ctx, token, configuration.GroupID, product.EvolutionGroupGrantInput{RequestID: "retry-evidence", AccountID: admin.ID, Action: "source.read", Effect: "allow"})
 		must(t, err)
@@ -1318,6 +1324,20 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		// Restore authority for the independent source-branch review below.
 		_, err = store.SetGenerationInputGrant(ctx, token, configuration.GroupID, product.GenerationInputGrantInput{RequestID: "restore-retry-input", ExpectedRevision: 2, Artifact: artifact, SourceIDs: []string{"source"}, Enabled: true})
 		must(t, err)
+		workflowUpgrade = func(base evolution.ContentRef) {
+			var template evolution.Template
+			for _, pkg := range packages {
+				if pkg.Template.Ref.ID == "example-skills" {
+					template = pkg.Template
+				}
+			}
+			verifyNativeWorkflowUpgrade(t, ctx, nativeWorkflowUpgrade{Store: store, Token: token, Issuer: issuer, Actor: admin.ID, Catalog: catalog, Directory: spaceDirectory, SourceRun: sourceID, Offline: func(publish func()) {
+				stopSpace()
+				publish()
+				stopSpace = start(spaceBinary, spaceAddress, spaceArgs...)
+			}, Evaluation: evalClient, Studio: studioClient, Configuration: configuration, Template: template, Artifact: artifact, Browser: spaceCall, StudioBrowser: call, Private: privateCall}, base)
+		}
+
 	}
 	var unchanged evolution.ContentRef
 	get("/main", &unchanged)
@@ -1352,6 +1372,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		post("/integrations/reviews", map[string]any{"request_id": "approve-" + binding.ID, "prepared_digest": prepared.Digest, "verdict": "approve", "rationale": "Verified generated files"}, nil)
 		post("/integrations/merge", map[string]any{"request_id": "merge-" + binding.ID, "prepared_digest": prepared.Digest, "expected_main": unchanged.CommitID}, nil)
 		get("/main", &unchanged)
+	}
+	if workflowUpgrade != nil {
+		workflowUpgrade(unchanged)
 	}
 	modelMu.Lock()
 	skillCalls, correctionCalls := calls[runIDs["example-skills"]], calls[runIDs["example-corrections"]]

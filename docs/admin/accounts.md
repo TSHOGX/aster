@@ -296,7 +296,10 @@ remains recoverable when switching nodes or reloading a saved local recovery cop
 and blocks saving until corrected. Validation identifies and focuses invalid node
 settings; graph-wide edge and cycle errors focus the executable configuration. Use **Activate from configuration** after publishing
 when the group should adopt the immutable workflow revision; publication alone
-never changes the active group configuration. Run and evaluation deep links retain
+never changes the active group configuration. The selected template must explicitly
+include that workflow revision. If it does not, an operator must publish a compatible
+template revision through the [catalog provisioning procedure](../operators/configuration.md#provision-evaluation-space-catalog-revisions)
+before it can be selected. This does not upgrade other groups or earlier runs. Run and evaluation deep links retain
 the group scope; their browser views show frozen pins, deduplicated event cursors,
 authorized node attempts, effective prompts, inputs, outputs, artifact metadata,
 evaluator metrics and explicit stale or redacted states. Artifact metadata includes
