@@ -86,10 +86,19 @@ func (s *Store) SaveWorkflowDraft(ctx context.Context, group string, input Workf
 		return result, err
 	}
 	defer tx.Rollback()
+	result, err = saveWorkflowDraft(ctx, tx, group, input, body, layout)
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit()
+}
+
+func saveWorkflowDraft(ctx context.Context, tx *sql.Tx, group string, input WorkflowDraftInput, body, layout []byte) (WorkflowDraft, error) {
+	var result WorkflowDraft
 	var revision, layoutRevision int64
 	var owner string
 	var prior, priorLayout []byte
-	err = tx.QueryRowContext(ctx, "SELECT revision,body,layout_revision,layout,group_id FROM workflow_drafts WHERE id=?", input.ID).Scan(&revision, &prior, &layoutRevision, &priorLayout, &owner)
+	err := tx.QueryRowContext(ctx, "SELECT revision,body,layout_revision,layout,group_id FROM workflow_drafts WHERE id=?", input.ID).Scan(&revision, &prior, &layoutRevision, &priorLayout, &owner)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return result, err
 	}
@@ -130,7 +139,7 @@ func (s *Store) SaveWorkflowDraft(ctx context.Context, group string, input Workf
 	if _, err = tx.ExecContext(ctx, `INSERT INTO workflow_drafts(id,revision,body,layout_revision,layout,group_id) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,body=excluded.body,layout_revision=excluded.layout_revision,layout=excluded.layout`, input.ID, revision, body, layoutRevision, layout, group); err != nil {
 		return result, err
 	}
-	return result, tx.Commit()
+	return result, nil
 }
 func decodeDraft(id string, revision, layoutRevision int64, body, layout []byte) (WorkflowDraft, error) {
 	var result WorkflowDraft

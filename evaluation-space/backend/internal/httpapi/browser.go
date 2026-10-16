@@ -68,7 +68,7 @@ func BrowserAPI(client *appidentity.Client, store *projections.Store) func(appid
 	profiles := BrowserProfileAPI(client, store)
 	return func(session appidentity.Session, w http.ResponseWriter, r *http.Request) {
 		request := r.WithContext(context.WithValue(r.Context(), browserSessionKey{}, session))
-		if strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/groups/") && strings.Contains(r.URL.Path, "/workflows/") {
+		if strings.HasPrefix(r.URL.Path, "/evaluation-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/workflows/") || strings.HasSuffix(r.URL.Path, "/workflows")) {
 			workflow(session, w, r)
 			return
 		}

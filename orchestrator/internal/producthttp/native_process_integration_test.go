@@ -1136,6 +1136,31 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		if retryCalls != 2 {
 			t.Fatal("retry did not execute fresh model calls", retryCalls)
 		}
+		// Fork the exact workflow pinned by an actual completed run through browser authority.
+		forkInput := map[string]any{"id": "browser-frozen-fork", "source_run_id": sourceID}
+		for attempt := 0; attempt < 2; attempt++ {
+			status, raw = spaceCall("POST", "groups/"+configuration.GroupID+"/workflows", forkInput)
+			if status != 201 {
+				t.Fatal("frozen run fork", status, string(raw))
+			}
+			var fork struct {
+				ID       string             `json:"id"`
+				Revision int64              `json:"revision"`
+				Workflow evolution.Workflow `json:"workflow"`
+			}
+			must(t, json.Unmarshal(raw, &fork))
+			if fork.ID != "browser-frozen-fork" || fork.Revision != 1 || fork.Workflow.ID != fork.ID {
+				t.Fatal("fork identity", string(raw))
+			}
+			fork.Workflow.ID = frozen.Workflow.ID
+			actual, err := fork.Workflow.Canonical()
+			must(t, err)
+			original, err := frozen.Workflow.Canonical()
+			must(t, err)
+			if !bytes.Equal(actual, original) {
+				t.Fatal("run fork did not preserve frozen graph")
+			}
+		}
 		// Exercise owned draft tests through the browser gateway and actual worker.
 		for _, kind := range []string{"workflow", "node", "subgraph"} {
 			graph := frozen.Workflow

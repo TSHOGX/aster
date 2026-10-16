@@ -73,7 +73,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       await page.getByRole("link", { name: "Team Alpha", exact: true }).click();
       await expect(overview.getByRole("heading", { name: "Team Alpha", exact: true })).toBeVisible();
       await grant(alpha.id, "config.read", "deny", 1);
-      await overview.getByRole("button", { name: text("Refresh", "刷新"), exact: true }).click();
+      await overview.locator(":scope > .section-heading").getByRole("button", { name: text("Refresh", "刷新"), exact: true }).click();
       await expect(overview.getByRole("heading", { name: text("You no longer have access to this group.", "您已无权访问此团队。"), exact: true })).toBeVisible();
       await expect(overview.getByRole("heading", { name: "Team Alpha", exact: true })).toHaveCount(0);
       expect((await page.request.get(`/evaluation-space/api/v1/groups/${alpha.id}`)).status()).toBe(403);
@@ -104,7 +104,7 @@ test("failed reads clear stale metadata and language changes preserve navigation
     await expect(overview.getByRole("heading", { name: "Team Alpha", exact: true })).toBeVisible();
     const selectedPath = `**/evaluation-space/api/v1/groups/${alpha.id}`;
     await page.route(selectedPath, route => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"group_authority_unavailable"}' }));
-    await overview.getByRole("button", { name: "Refresh", exact: true }).click();
+    await overview.locator(":scope > .section-heading").getByRole("button", { name: "Refresh", exact: true }).click();
     await expect(overview.getByRole("heading", { name: "Group access is unavailable. Please retry.", exact: true })).toBeVisible();
     await expect(overview.getByRole("heading", { name: "Team Alpha", exact: true })).toHaveCount(0);
     await page.unroute(selectedPath);
@@ -118,7 +118,7 @@ test("failed reads clear stale metadata and language changes preserve navigation
       const response = await route.fetch(); started(); await released;
       await route.fulfill({ response }).catch(() => {});
     });
-    await overview.getByRole("button", { name: "Refresh", exact: true }).click();
+    await overview.locator(":scope > .section-heading").getByRole("button", { name: "Refresh", exact: true }).click();
     await pending;
     await page.getByRole("link", { name: "Team Beta", exact: true }).click();
     await expect(overview.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
@@ -603,6 +603,87 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    await form.getByRole("button", { name: tr("Recover draft test", "恢复草稿测试"), exact: true }).click();
    await expect(page).toHaveURL(new RegExp(`/runs/${created}/?$`)); expect(requests).toHaveLength(2); expect(requests[1]).toEqual(requests[0]);
    await expect(page.getByRole("button", { name: tr("Run from here", "从此处运行"), exact: true })).toHaveCount(0); expect(errors).toEqual([]);
+  } finally { await context.close(); }
+ });
+}
+
+for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", width: 390 }]) {
+ test(`draft creation and exact fork recover committed responses ${variant.locale}`, async ({ page: admin, browser }, info) => {
+  const { alpha, beta, user, grant } = await provision(admin);
+  const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: variant.locale, viewport: { width: variant.width, height: 900 } });
+  const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  try {
+   await login(page, user); await page.goto(`/evaluation-space/groups/${beta.id}/`);
+   await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
+   const form = page.getByRole("region", { name: tr("Workflow drafts", "工作流草稿"), exact: true });
+   await form.getByRole("button", { name: tr("New or fork draft", "新建或派生草稿"), exact: true }).click();
+   const id = `created-${crypto.randomUUID().slice(0, 8)}`;
+   await form.getByLabel(tr("New draft ID", "新草稿 ID"), { exact: true }).fill(id);
+   await form.getByRole("button", { name: tr("Create draft", "创建草稿"), exact: true }).click();
+   await expect(page).toHaveURL(new RegExp(`/workflows/${id}/$`));
+   await page.getByRole("button", { name: tr("Add transform", "添加 transform"), exact: true }).click();
+   await page.getByRole("button", { name: tr("Save draft", "保存草稿"), exact: true }).click();
+   await expect(page.getByText(tr("Draft saved.", "草稿已保存。"), { exact: true })).toBeVisible();
+   const root = `/evaluation-space/api/v1/groups/${beta.id}/workflows`;
+   const session = await (await page.request.get("/evaluation-space/api/v1/session")).json();
+   const headers = { Origin: origin, "X-CSRF-Token": session.csrf };
+   const saved = await (await page.request.get(`${root}/${id}/draft`)).json();
+   expect(saved.revision).toBe(2); expect(saved.workflow.nodes).toHaveLength(1);
+   await page.goto(`/evaluation-space/groups/${beta.id}/`);
+   await expect(form.getByRole("link", { name: id, exact: true })).toBeVisible();
+   // Commit an exact historical fork, then simulate a lost response.
+   const forkID = `fork-${crypto.randomUUID().slice(0, 8)}`;
+   const requests: unknown[] = [];
+   let drop = true;
+   await page.route(`**${root}`, async route => {
+    if (route.request().method() !== "POST") return route.continue();
+    requests.push(route.request().postDataJSON());
+    const response = await route.fetch(); expect(response.status()).toBe(201);
+    if (drop) { drop = false; return route.fulfill({ status: 503, body: '{}' }); }
+    return route.fulfill({ response });
+   });
+   await form.getByRole("button", { name: tr("New or fork draft", "新建或派生草稿"), exact: true }).click();
+   await form.getByLabel(tr("New draft ID", "新草稿 ID"), { exact: true }).fill(forkID);
+   await form.getByLabel(tr("Draft starting point", "草稿起点"), { exact: true }).selectOption("draft");
+   await form.getByLabel(tr("Source draft ID", "源草稿 ID"), { exact: true }).fill(id);
+   await form.getByLabel(tr("Source draft revision", "源草稿版本"), { exact: true }).fill("1");
+   await form.getByRole("button", { name: tr("Create draft", "创建草稿"), exact: true }).click();
+   await expect(form.getByRole("button", { name: tr("Recover draft creation", "恢复草稿创建"), exact: true })).toBeEnabled();
+   const fork = await (await page.request.get(`${root}/${forkID}/draft`)).json();
+   expect(fork.workflow.nodes ?? []).toHaveLength(0);
+   // Later edits must survive replay of the original creation receipt.
+   const edited = { ...saved.workflow, id: forkID };
+   expect((await page.request.put(`${root}/${forkID}/draft`, { headers, data: { id: forkID, expected_revision: 1, expected_layout_revision: 1, workflow: edited, layout: {} } })).status()).toBe(200);
+   await page.reload();
+   await form.getByRole("button", { name: tr("New or fork draft", "新建或派生草稿"), exact: true }).click();
+   await expect(form.getByLabel(tr("New draft ID", "新草稿 ID"), { exact: true })).toHaveValue(forkID);
+   await expect(form.getByLabel(tr("New draft ID", "新草稿 ID"), { exact: true })).toBeDisabled();
+   await grant(beta.id, "workflow.edit", "deny", 1);
+   await form.getByRole("button", { name: tr("Recover draft creation", "恢复草稿创建"), exact: true }).click();
+   await expect(form.getByLabel(tr("New draft ID", "新草稿 ID"), { exact: true })).toHaveValue("");
+   expect(requests).toHaveLength(1);
+   await grant(beta.id, "workflow.edit", "allow", 2);
+   await form.getByRole("button", { name: tr("Retry", "重试"), exact: true }).click();
+   await form.getByRole("button", { name: tr("Recover draft creation", "恢复草稿创建"), exact: true }).click();
+   await expect(page).toHaveURL(new RegExp(`/workflows/${forkID}/$`));
+   expect(requests).toHaveLength(2); expect(requests[0]).toEqual(requests[1]);
+   const recovered = await (await page.request.get(`${root}/${forkID}/draft`)).json();
+   expect(recovered.revision).toBe(2); expect(recovered.workflow.nodes).toHaveLength(1);
+   await expect(page.getByRole("button", { name: /^transform-node\b/ })).toBeVisible();
+   // Read authority filters the list, and source authority precedes run lookup.
+   const foreignRoot = `/evaluation-space/api/v1/groups/${alpha.id}/workflows`;
+   expect((await (await page.request.get(foreignRoot)).json()).items).toEqual([]);
+   await grant(alpha.id, "workflow.edit");
+   expect((await page.request.post(foreignRoot, { headers, data: { id: `foreign-${crypto.randomUUID()}`, source_draft_id: id, source_revision: 1 } })).status()).toBe(404);
+   expect((await page.request.post(root, { headers, data: { id: `run-${crypto.randomUUID()}`, source_run_id: "missing" } })).status()).toBe(403);
+   await grant(beta.id, "source.read");
+   expect((await page.request.post(root, { headers, data: { id: `run-${crypto.randomUUID()}`, source_run_id: "missing" } })).status()).toBe(404);
+   await page.goto(`/evaluation-space/groups/${beta.id}/`);
+   await expect(form.getByRole("link", { name: forkID, exact: true })).toBeVisible();
+   await page.screenshot({ path: info.outputPath("draft-list.png"), fullPage: true });
+   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+   expect(errors).toEqual([]);
   } finally { await context.close(); }
  });
 }

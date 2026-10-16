@@ -266,6 +266,20 @@ metadata. Language preferences are shared with the central application.
 its derived application sessions. Configuration editing and activation are available
 through the group administration page described below.
 
+Open **Workflow drafts** on the Evaluation Space group page to find saved drafts.
+With `workflow.edit`, choose **New or fork draft** and a fresh draft ID. Start empty,
+copy an exact saved draft revision owned by that group, or copy the workflow pinned
+by a run in that group. Run forks also require `source.read`. A draft revision fork
+copies the latest saved layout for that executable revision; a run fork starts
+without a canvas layout. Forking leaves the source unchanged. Incomplete drafts can
+be saved, but must pass validation before publication or testing.
+
+If the creation response is lost, reopen **New or fork draft** and choose
+**Recover draft creation**. The account- and group-scoped pending request survives
+reload in the same browser tab. Recovery opens the same draft and preserves any
+edits saved since creation. After an explicit rejection, choose a fresh ID and an
+accessible source revision before retrying.
+
 Workflow editors use group-scoped links under
 `/evaluation-space/groups/{group}/workflows/{workflow}`. The editor keeps executable
 JSON and canvas layout revisions separate, validates the same typed graph used by

@@ -190,6 +190,62 @@ func BrowserWorkflowAPI(client *appidentity.Client, store *projections.Store) fu
 		}
 		write(w, 201, result)
 	}
+	list := func(w http.ResponseWriter, r *http.Request) {
+		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
+		if err := authorize(r, session, "workflow.read"); err != nil {
+			workflowAuthError(w, err)
+			return
+		}
+		limit := 25
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			var err error
+			limit, err = strconv.Atoi(raw)
+			if err != nil {
+				write(w, 400, map[string]string{"error": "invalid_limit"})
+				return
+			}
+		}
+		page, err := store.WorkflowDrafts(r.Context(), r.PathValue("group"), r.URL.Query().Get("after"), limit)
+		if err != nil {
+			write(w, 422, map[string]string{"error": "draft_list_unavailable"})
+			return
+		}
+		write(w, 200, page)
+	}
+	create := func(w http.ResponseWriter, r *http.Request) {
+		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
+		if err := authorize(r, session, "workflow.edit"); err != nil {
+			workflowAuthError(w, err)
+			return
+		}
+		input, err := evolution.Decode[projections.WorkflowDraftCreation](http.MaxBytesReader(w, r.Body, 1<<16))
+		if err != nil {
+			write(w, 400, map[string]string{"error": "invalid_draft_creation"})
+			return
+		}
+		if input.SourceRunID != "" {
+			if _, err = client.EvaluationGroups(r.Context(), session, appidentity.EvaluationAccessRequest{GroupID: r.PathValue("group"), Action: "source.read", Limit: 1}); err != nil {
+				workflowAuthError(w, err)
+				return
+			}
+		}
+		result, err := store.CreateWorkflowDraft(r.Context(), r.PathValue("group"), input, evolution.Principal{Issuer: session.Issuer, Subject: session.Subject, Kind: "human"})
+		if errors.Is(err, projections.ErrNotFound) {
+			write(w, 404, map[string]string{"error": "draft_source_not_found"})
+			return
+		}
+		if errors.Is(err, projections.ErrConflict) {
+			write(w, 409, map[string]string{"error": "draft_creation_conflict"})
+			return
+		}
+		if err != nil {
+			write(w, 503, map[string]string{"error": "draft_creation_unavailable"})
+			return
+		}
+		write(w, 201, result)
+	}
+	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/workflows", list)
+	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/workflows", create)
 	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft/tests", test)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft", read)
 	mux.HandleFunc("PUT /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft", writeDraft)
