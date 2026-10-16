@@ -31,13 +31,23 @@ import (
 // Uses real Studio/Evaluation Space executables, central authorization/storage,
 // offline dataset provisioning, and a deterministic evaluator that reads actual
 // assigned input bytes before producing metrics. No store mutation bypasses a gate.
+type evaluationProcessPrepared struct {
+	Digest   string                     `json:"digest"`
+	Identity evolution.PreparedIdentity `json:"identity"`
+}
+
 type evaluationProcessCase struct {
 	Mode, Outcome string
 	PathPolicy    bool
+	StaleMain     bool
 }
 
 func TestRequiredEvaluationRealProcesses(t *testing.T) {
 	evaluationPolicyProcesses(t, evaluationProcessCase{Mode: "required", Outcome: "pass"})
+}
+
+func TestComparativeEvaluationRealProcesses(t *testing.T) {
+	evaluationPolicyProcesses(t, evaluationProcessCase{Mode: "required", Outcome: "pass", StaleMain: true})
 }
 
 func TestManualPathEvaluationRealProcesses(t *testing.T) {
@@ -258,6 +268,35 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 					providerFailure = fmt.Sprint("candidate: ", err)
 					w.WriteHeader(500)
 					return
+				}
+				if test.StaleMain {
+					if value.Subject.Reference == nil {
+						providerFailure = "comparative reference missing"
+						w.WriteHeader(500)
+						return
+					}
+					referenceRaw, err := read("reference", "")
+					var reference struct {
+						Reference evolution.ContentRef                  `json:"reference"`
+						Entries   []struct{ Path, Kind, Digest string } `json:"entries"`
+					}
+					if err != nil || json.Unmarshal(referenceRaw, &reference) != nil || reference.Reference != *value.Subject.Reference {
+						providerFailure = fmt.Sprint("reference snapshot: ", err)
+						w.WriteHeader(500)
+						return
+					}
+					digest := ""
+					for _, entry := range reference.Entries {
+						if entry.Path == "AGENTS.md" && entry.Kind == "file" {
+							digest = entry.Digest
+						}
+					}
+					referenceBody, err := read("reference", "AGENTS.md")
+					if err != nil || digest == "" || evolution.Digest(referenceBody) != digest {
+						providerFailure = fmt.Sprint("reference file: ", err)
+						w.WriteHeader(500)
+						return
+					}
 				}
 				submissions[value.JobID] = &value
 				states[value.JobID] = "completed"
@@ -480,6 +519,9 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 	if test.Mode != "disabled" {
 		policy = evolution.EvaluationPolicy{Mode: test.Mode, Profile: &profile.Ref, Service: &evaluator.Ref, ReferenceStrategy: "none"}
 	}
+	if test.StaleMain {
+		policy.ReferenceStrategy = "target_main"
+	}
 	bindingPolicy := policy
 	if test.PathPolicy {
 		bindingPolicy = off
@@ -604,10 +646,7 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 		Commit string `json:"commit_id"`
 	}
 	post("/branches/"+branch.ID+"/commits", map[string]any{"request_id": "commit", "expected_revision": 3, "expected_head": branch.Head, "message": "Reviewed skill"}, &checkpoint)
-	var prepared struct {
-		Digest   string                     `json:"digest"`
-		Identity evolution.PreparedIdentity `json:"identity"`
-	}
+	var prepared evaluationProcessPrepared
 	post("/integrations/prepare", map[string]any{"request_id": "prepare", "branch_id": branch.ID, "expected_head": checkpoint.Commit, "expected_main": main.CommitID, "expected_policy_revision": 1}, &prepared)
 	expectedChecks := 1
 	if test.Mode == "disabled" {
@@ -638,7 +677,8 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 		if browserName == "" {
 			browserName = "chromium"
 		}
-		raw, _ := json.Marshal(map[string]any{"backend": "http://" + studioAddress, "origin": issuer, "cookies": cookies, "central_cookie": token, "branch": branch.ID, "prepared": prepared.Digest, "width": width, "browser": browserName, "cancel_first": cancellationJourney, "mode": test.Mode, "outcome": test.Outcome, "evidence_directory": filepath.Join(root, "volumes-studio/frontend/test-results/evaluation-policy", fmt.Sprintf("%s-%d", browserName, width))})
+		resultFile := filepath.Join(t.TempDir(), "browser-result.json")
+		raw, _ := json.Marshal(map[string]any{"stale_main": test.StaleMain, "result_file": resultFile, "backend": "http://" + studioAddress, "origin": issuer, "cookies": cookies, "central_cookie": token, "branch": branch.ID, "prepared": prepared.Digest, "width": width, "browser": browserName, "cancel_first": cancellationJourney, "mode": test.Mode, "outcome": test.Outcome, "evidence_directory": filepath.Join(root, "volumes-studio/frontend/test-results/evaluation-policy", fmt.Sprintf("%s-%d", browserName, width))})
 		script := "evaluation.mjs"
 		if test.Mode != "required" || test.Outcome != "pass" {
 			script = "evaluation-policy.mjs"
@@ -650,6 +690,12 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 			t.Fatalf("evaluation policy browser: %v\n%s", err, output)
 		}
 		t.Log(string(output))
+		if test.StaleMain {
+			resultRaw, readErr := os.ReadFile(resultFile)
+			must(t, readErr)
+			must(t, json.Unmarshal(resultRaw, &prepared))
+			main = prepared.Identity.Main
+		}
 	} else {
 		merged := false
 		merge := func() {
@@ -713,6 +759,80 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 				t.Fatal("unexpected evaluation settlement", string(raw))
 			}
 		}
+		if test.StaleMain {
+			original := prepared
+			if original.Identity.Checks[0].Reference == nil || *original.Identity.Checks[0].Reference != main {
+				t.Fatal("first comparative reference is not frozen main")
+			}
+			post("/integrations/reviews", map[string]any{"request_id": "old-approval", "prepared_digest": original.Digest, "verdict": "approve", "rationale": "Original comparison passed"}, nil)
+			var human struct {
+				ID   string `json:"id"`
+				Head string `json:"head"`
+			}
+			post("/branches", map[string]any{"request_id": "human-branch", "name": "Concurrent human guide", "base_commit": main.CommitID}, &human)
+			post("/branches/"+human.ID+"/draft/text", map[string]any{"request_id": "human-guide", "expected_revision": 1, "expected_head": human.Head, "path": "AGENTS.md", "text": "# Human instructions\nPreserve this concurrent human edit.\n"}, nil)
+			var humanCommit struct {
+				Commit string `json:"commit_id"`
+			}
+			post("/branches/"+human.ID+"/commits", map[string]any{"request_id": "human-commit", "expected_revision": 2, "expected_head": human.Head, "message": "Human instructions"}, &humanCommit)
+			var humanPrepared evaluationProcessPrepared
+			post("/integrations/prepare", map[string]any{"request_id": "human-prepare", "branch_id": human.ID, "expected_head": humanCommit.Commit, "expected_main": main.CommitID, "expected_policy_revision": 1}, &humanPrepared)
+			if len(humanPrepared.Identity.Checks) != 0 {
+				t.Fatal("unmanaged human edit inherited unrelated policy")
+			}
+			post("/integrations/reviews", map[string]any{"request_id": "human-approve", "prepared_digest": humanPrepared.Digest, "verdict": "approve"}, nil)
+			post("/integrations/merge", map[string]any{"request_id": "human-merge", "prepared_digest": humanPrepared.Digest, "expected_main": main.CommitID}, nil)
+			status, raw = call("POST", libraryRoot+"/integrations/merge", map[string]any{"request_id": "stale-merge", "prepared_digest": original.Digest, "expected_main": main.CommitID})
+			if status != 409 {
+				t.Fatal("old passing tree/approval advanced changed main", status, string(raw))
+			}
+			get("/main", &main)
+			if main != humanPrepared.Identity.Result {
+				t.Fatal("human main was not preserved")
+			}
+			prepared = evaluationProcessPrepared{}
+			post("/integrations/prepare", map[string]any{"request_id": "reprepare", "branch_id": branch.ID, "expected_head": checkpoint.Commit, "expected_main": main.CommitID, "expected_policy_revision": 1}, &prepared)
+			if prepared.Digest == original.Digest || prepared.Identity.Result.TreeDigest == original.Identity.Result.TreeDigest || len(prepared.Identity.Checks) != 1 || prepared.Identity.Checks[0].Reference == nil || *prepared.Identity.Checks[0].Reference != main || prepared.Identity.Checks[0].Digest == original.Identity.Checks[0].Digest {
+				t.Fatal("reprepare lost integrated tree or reference identity", prepared)
+			}
+			status, raw = call("POST", libraryRoot+"/integrations/reviews", map[string]any{"request_id": "stale-result-review", "prepared_digest": prepared.Digest, "verdict": "approve"})
+			if status != 409 {
+				t.Fatal("earlier passing result approved new integrated tree", status, string(raw))
+			}
+			var newJob struct {
+				ID string `json:"id"`
+			}
+			post("/integrations/"+url.PathEscape(prepared.Digest)+"/evaluations", map[string]any{"request_id": "reevaluate", "requirement_digest": prepared.Identity.Checks[0].Digest, "budget": budget, "seed": 0}, &newJob)
+			settled := false
+			for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); {
+				status, raw = call("POST", libraryRoot+"/evaluations/"+newJob.ID+"/refresh", map[string]any{})
+				if status != 200 {
+					t.Fatal(status, string(raw))
+				}
+				var result struct{ State, Outcome string }
+				must(t, json.Unmarshal(raw, &result))
+				if result.State == "completed" && result.Outcome == "pass" {
+					settled = true
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+			if !settled {
+				t.Fatal("comparative reevaluation did not settle", string(raw))
+			}
+			var historical evaluationProcessPrepared
+			get("/integrations/"+url.PathEscape(original.Digest), &historical)
+			if historical.Identity.Result != original.Identity.Result || historical.Identity.Checks[0].Reference == nil || *historical.Identity.Checks[0].Reference != *original.Identity.Checks[0].Reference {
+				t.Fatal("old comparative evidence was rewritten")
+			}
+			providerMu.Lock()
+			newSubmission := submissions[newJob.ID]
+			count := len(submissions)
+			providerMu.Unlock()
+			if count != 2 || newSubmission == nil || newSubmission.Subject.Candidate != prepared.Identity.Result || newSubmission.Subject.Reference == nil || *newSubmission.Subject.Reference != main {
+				t.Fatal("provider did not compare exact new tree/reference")
+			}
+		}
 		if canMerge && !merged {
 			merge()
 		}
@@ -731,6 +851,9 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 	verifiedReads, providerError := inputReads, providerFailure
 	providerMu.Unlock()
 	expectedReads := 3
+	if test.StaleMain {
+		expectedReads = 10
+	}
 	if test.Mode == "disabled" {
 		expectedReads = 0
 	} else if cancellationJourney {

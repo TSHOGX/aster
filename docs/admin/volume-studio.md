@@ -97,7 +97,11 @@ branch until completed or canceled; another branch can still be committed.
    requires preparing and reviewing a new result.
 
 The **Evaluation checks** panel shows the exact profile, evaluator, path policy and
-reference commit captured for the integrated result. Off means no benchmark was
+reference commit captured for the integrated result. A target-main comparison pins
+the main commit at preparation time. If another branch merges first, prepare again:
+the new integrated tree and reference need their own passing check and approval.
+The earlier report keeps its original identities for historical inspection.
+Off means no benchmark was
 requested. Informational evaluation remains mergeable under human approval while
 pending or after failure, error or inconclusive results. A report arriving after
 merge attaches to the original integration without changing main. Required checks

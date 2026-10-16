@@ -42,6 +42,7 @@ case "${1:-all}" in
     STUDIO_TEST_EVALUATION_BROWSER=1 STUDIO_TEST_EVALUATION_CANCEL=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestRequiredEvaluationRealProcesses$' -count=1
     STUDIO_TEST_EVALUATION_BROWSER=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestEvaluationPolicyRealProcesses$' -count=1
     STUDIO_TEST_EVALUATION_BROWSER=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestManualPathEvaluationRealProcesses$' -count=1
+    STUDIO_TEST_EVALUATION_BROWSER=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestComparativeEvaluationRealProcesses$' -count=1
     ;;
   source)
     python3 scripts/check-public-docs.py
