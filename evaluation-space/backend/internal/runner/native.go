@@ -192,7 +192,7 @@ func (e *NativeExecutor) Execute(ctx context.Context, lease projections.RunLease
 	if err != nil {
 		return "", err
 	}
-	engine := workflow.Engine{Catalog: e.Registry, Runtime: nativeRuntime{e, lease, run, grant}, Journal: projections.WorkflowJournal{Store: e.Registry.Store, Lease: lease}}
+	engine := workflow.Engine{Catalog: e.Registry, Runtime: nativeRuntime{e, lease, run, grant}, Journal: projections.WorkflowJournal{Store: e.Registry.Store, Lease: lease, GrantID: grant}}
 	result, err := engine.Execute(ctx, run.Pins.Workflow, inputs)
 	if err != nil {
 		var failure workflow.NodeFailure

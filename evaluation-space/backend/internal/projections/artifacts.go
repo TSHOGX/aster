@@ -37,8 +37,17 @@ func (s *Store) SealArtifact(ctx context.Context, ref evolution.ArtifactRef, inp
 		return err
 	}
 	defer tx.Rollback()
+	if err = storeSealedArtifact(ctx, tx, ref, metadata, raw); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// storeSealedArtifact participates in the caller's transaction. The caller has
+// validated ref, metadata, exact byte length and digest before entering here.
+func storeSealedArtifact(ctx context.Context, tx *sql.Tx, ref evolution.ArtifactRef, metadata, raw []byte) error {
 	var prior []byte
-	err = tx.QueryRowContext(ctx, "SELECT metadata FROM artifacts WHERE group_id=? AND id=?", ref.GroupID, ref.ID).Scan(&prior)
+	err := tx.QueryRowContext(ctx, "SELECT metadata FROM artifacts WHERE group_id=? AND id=?", ref.GroupID, ref.ID).Scan(&prior)
 	if err == nil {
 		if !bytes.Equal(prior, metadata) {
 			return ErrConflict
@@ -61,7 +70,7 @@ func (s *Store) SealArtifact(ctx context.Context, ref evolution.ArtifactRef, inp
 	if _, err = tx.ExecContext(ctx, "INSERT INTO artifacts(group_id,id,metadata,body) VALUES(?,?,?,?)", ref.GroupID, ref.ID, metadata, raw); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 // Artifact verifies exact immutable reference identity on read. Callers must

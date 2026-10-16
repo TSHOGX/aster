@@ -99,7 +99,7 @@ func TestExamplePackagesExecuteDistinctGraphsAndPreserveHeldEvidence(t *testing.
 			if err = store.PublishDefinition(ctx, "template", raw); err != nil {
 				t.Fatal(err)
 			}
-			run := evolution.Run{ID: "run", GroupID: "group", Budget: evolution.Budget{MaxAttempts: 20, MaxTokens: 1000, MaxCostMicros: 100, MaxArtifactBytes: 1 << 20, TimeoutSeconds: 600}}
+			run := evolution.Run{Pins: evolution.RunPins{Workflow: pkg.Template.Workflows[0], SourcePolicyRevision: 1}, ID: "run", GroupID: "group", Budget: evolution.Budget{MaxAttempts: 20, MaxTokens: 1000, MaxCostMicros: 100, MaxArtifactBytes: 1 << 20, TimeoutSeconds: 600}}
 			db, err := sql.Open("sqlite", path)
 			if err != nil {
 				t.Fatal(err)
@@ -115,7 +115,7 @@ func TestExamplePackagesExecuteDistinctGraphsAndPreserveHeldEvidence(t *testing.
 				t.Fatal(err)
 			}
 			runtime := &exampleRuntime{t: t, catalog: catalog}
-			engine := workflow.Engine{Catalog: catalog, Runtime: runtime, Journal: projections.WorkflowJournal{Store: store, Lease: lease}}
+			engine := workflow.Engine{Catalog: catalog, Runtime: runtime, Journal: projections.WorkflowJournal{Store: store, Lease: lease, GrantID: "run-grant"}}
 			corpus := Corpus{Episodes: []Episode{{ID: "episode", FamilyID: "incident", FamilyKind: "declared", Outcome: "completed", Text: "Verified operation completed."}, {ID: "failed", FamilyID: "incident", FamilyKind: "declared", Outcome: "failed", Text: "The retry failed."}}}
 			input, _ := json.Marshal(corpus)
 			values, err := engine.Execute(ctx, pkg.Template.Workflows[0], workflow.Values{"corpus": input})

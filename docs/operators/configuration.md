@@ -318,7 +318,9 @@ Run inspectors can request a source-authorized debugger projection for bounded
 budget usage and retained provider observations. Providers that expose only opaque
 job evidence are labeled as such; the UI does not infer tool or internal model
 details from a terminal status. The projection also joins durable attempts, event
-records and advertised artifacts. A single artifact can be opened through the
+records and advertised artifacts. Each terminal node attempt retains a checkpoint
+with its event; the checkpoint keeps a fixed history even if the run later resumes.
+A single artifact can be opened through the
 same source-authorized browser boundary; responses include its digest and size and
 default to a one MiB body limit (operators may request up to four MiB). Truncated
 responses are marked with `X-Artifact-Truncated: true` and are never treated as a

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"aster/contracts/evolution"
@@ -26,13 +27,25 @@ CREATE TRIGGER retained_workflow_attempt BEFORE DELETE ON workflow_attempts BEGI
 `
 
 type WorkflowJournal struct {
-	Store *Store
-	Lease RunLease
+	Store   *Store
+	Lease   RunLease
+	GrantID string
 }
+
+// WorkflowCheckpoint freezes a terminal-event boundary. Attempts are retained
+// immutably, so later completion/resume cannot add records to this snapshot.
+type WorkflowCheckpoint struct {
+	RunID    string             `json:"run_id"`
+	Workflow evolution.Revision `json:"workflow"`
+	Through  int64              `json:"through"`
+}
+
+// Digest of the versioned native workflow checkpoint format identifier.
+const WorkflowCheckpointSchema = "sha256:37b41b3118e1e2bfea9435afe810bd164ce0f25f0ac36142e476c47ccd76aa76"
 
 func (j WorkflowJournal) Begin(ctx context.Context, call workflow.Call, maximum int) (workflow.Record, error) {
 	var record workflow.Record
-	if j.Store == nil || !manifest.ValidID(call.ID) || call.Workflow.Validate() != nil || call.Number < 1 || len(call.Instance) > 4096 || len(call.Parent) > 4096 || maximum < 1 {
+	if j.Store == nil || !manifest.ValidID(j.GrantID) || !manifest.ValidID(call.ID) || call.Workflow.Validate() != nil || call.Number < 1 || len(call.Instance) > 4096 || len(call.Parent) > 4096 || maximum < 1 {
 		return record, fmt.Errorf("invalid workflow attempt")
 	}
 	raw, err := json.Marshal(call)
@@ -48,6 +61,9 @@ func (j WorkflowJournal) Begin(ctx context.Context, call workflow.Call, maximum 
 	if err != nil {
 		return record, err
 	}
+	if run.Pins.Workflow.Validate() != nil || run.Pins.SourcePolicyRevision < 1 {
+		return record, fmt.Errorf("invalid workflow checkpoint provenance")
+	}
 	var prior, retained []byte
 	err = tx.QueryRowContext(ctx, "SELECT request,record FROM workflow_attempts WHERE run_id=? AND id=?", j.Lease.RunID, call.ID).Scan(&prior, &retained)
 	if err == nil {
@@ -61,7 +77,7 @@ func (j WorkflowJournal) Begin(ctx context.Context, call workflow.Call, maximum 
 	}
 	var count int
 	var used int64
-	if err = tx.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(length(request)+length(record)),0) FROM workflow_attempts WHERE run_id=?", j.Lease.RunID).Scan(&count, &used); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(length(request)+length(record)),0)+(SELECT coalesce(sum(json_extract(body,'$.artifact.size')),0) FROM run_checkpoints WHERE run_id=?) FROM workflow_attempts WHERE run_id=?", j.Lease.RunID, j.Lease.RunID).Scan(&count, &used); err != nil {
 		return record, err
 	}
 	if count >= maximum || count >= run.Budget.MaxAttempts {
@@ -81,7 +97,7 @@ func (j WorkflowJournal) Begin(ctx context.Context, call workflow.Call, maximum 
 	return record, tx.Commit()
 }
 func (j WorkflowJournal) Complete(ctx context.Context, record workflow.Record) error {
-	if j.Store == nil || record.State != "succeeded" && record.State != "failed" && record.State != "skipped" {
+	if j.Store == nil || !manifest.ValidID(j.GrantID) || record.State != "succeeded" && record.State != "failed" && record.State != "skipped" {
 		return fmt.Errorf("invalid workflow terminal state")
 	}
 	raw, err := json.Marshal(record)
@@ -113,7 +129,7 @@ func (j WorkflowJournal) Complete(ctx context.Context, record workflow.Record) e
 		return nil
 	}
 	var used int64
-	if err = tx.QueryRowContext(ctx, "SELECT coalesce(sum(length(request)+length(record)),0) FROM workflow_attempts WHERE run_id=?", j.Lease.RunID).Scan(&used); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT coalesce(sum(length(request)+length(record)),0)+(SELECT coalesce(sum(json_extract(body,'$.artifact.size')),0) FROM run_checkpoints WHERE run_id=?) FROM workflow_attempts WHERE run_id=?", j.Lease.RunID, j.Lease.RunID).Scan(&used); err != nil {
 		return err
 	}
 	if int64(len(raw)-len(prior)) > run.Budget.MaxArtifactBytes-used {
@@ -122,13 +138,43 @@ func (j WorkflowJournal) Complete(ctx context.Context, record workflow.Record) e
 	if _, err = tx.ExecContext(ctx, "UPDATE workflow_attempts SET record=?,state=? WHERE run_id=? AND id=?", raw, record.State, j.Lease.RunID, record.Call.ID); err != nil {
 		return err
 	}
-	if err = j.event(ctx, tx, record.Call.ID, "attempt-"+record.State); err != nil {
+	var through int64
+	if err = tx.QueryRowContext(ctx, "SELECT coalesce(max(sequence),0)+1 FROM run_events WHERE run_id=?", j.Lease.RunID).Scan(&through); err != nil {
+		return err
+	}
+	snapshot, err := json.Marshal(WorkflowCheckpoint{RunID: run.ID, Workflow: run.Pins.Workflow, Through: through})
+	if err != nil {
+		return err
+	}
+	if int64(len(snapshot)+len(raw)-len(prior)) > run.Budget.MaxArtifactBytes-used {
+		return ErrRunBudget
+	}
+	artifact := evolution.ArtifactRef{ID: "checkpoint-" + strings.TrimPrefix(evolution.Digest([]byte(run.ID+"\x00"+record.Call.ID)), "sha256:"), GroupID: run.GroupID, SchemaDigest: WorkflowCheckpointSchema, Digest: evolution.Digest(snapshot), Size: int64(len(snapshot)), MediaType: "application/json", GrantID: j.GrantID, PolicyRevision: run.Pins.SourcePolicyRevision}
+	if err = artifact.Validate(); err != nil {
+		return err
+	}
+	metadata, err := json.Marshal(artifact)
+	if err != nil {
+		return err
+	}
+	if err = storeSealedArtifact(ctx, tx, artifact, metadata, snapshot); err != nil {
+		return err
+	}
+	checkpoint := RunCheckpoint{ID: "node-" + record.Call.ID, RunID: run.ID, Fence: j.Lease.Fence, Artifact: artifact}
+	checkpointRaw, err := json.Marshal(checkpoint)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO run_checkpoints(run_id,id,sequence,body) SELECT ?,?,coalesce(max(sequence),0)+1,? FROM run_checkpoints WHERE run_id=?", run.ID, checkpoint.ID, checkpointRaw, run.ID); err != nil {
+		return err
+	}
+	if err = j.event(ctx, tx, record.Call.ID, "attempt-"+record.State, artifact); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
-func (j WorkflowJournal) event(ctx context.Context, tx *sql.Tx, attempt, kind string) error {
-	event := evolution.Event{ID: attempt + "-" + kind, RunID: j.Lease.RunID, AttemptID: attempt, ProducerID: j.Lease.WorkerID, Fence: j.Lease.Fence, Timestamp: time.Now().UTC(), Kind: kind, Artifacts: []evolution.ArtifactRef{}}
+func (j WorkflowJournal) event(ctx context.Context, tx *sql.Tx, attempt, kind string, artifacts ...evolution.ArtifactRef) error {
+	event := evolution.Event{ID: attempt + "-" + kind, RunID: j.Lease.RunID, AttemptID: attempt, ProducerID: j.Lease.WorkerID, Fence: j.Lease.Fence, Timestamp: time.Now().UTC(), Kind: kind, Artifacts: append([]evolution.ArtifactRef{}, artifacts...)}
 	raw, _ := json.Marshal(event)
 	_, err := tx.ExecContext(ctx, "INSERT INTO run_events(run_id,event_id,sequence,request) SELECT ?,?,coalesce(max(sequence),0)+1,? FROM run_events WHERE run_id=?", j.Lease.RunID, event.ID, raw, j.Lease.RunID)
 	return err
@@ -141,6 +187,36 @@ func (s *Store) WorkflowAttempts(ctx context.Context, group, run, after string, 
 		return nil, fmt.Errorf("invalid workflow attempt page")
 	}
 	rows, err := s.db.QueryContext(ctx, "SELECT a.record FROM workflow_attempts a JOIN runs r ON r.id=a.run_id WHERE r.group_id=? AND r.id=? AND a.id>? ORDER BY a.id LIMIT ?", group, run, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := []workflow.Record{}
+	for rows.Next() {
+		var raw []byte
+		if err = rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		record, err := evolution.Decode[workflow.Record](bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+// CheckpointWorkflowAttempts reads only attempts terminal at the frozen boundary,
+// even when the original run has since resumed. It does not grant reuse authority.
+func (s *Store) CheckpointWorkflowAttempts(ctx context.Context, group, run, checkpoint, after string, limit int) ([]workflow.Record, error) {
+	if limit < 1 || limit > 100 || after != "" && !manifest.ValidID(after) {
+		return nil, fmt.Errorf("invalid checkpoint attempt page")
+	}
+	_, snapshot, err := s.ReadWorkflowCheckpoint(ctx, group, run, checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT a.record FROM workflow_attempts a JOIN run_events e ON e.run_id=a.run_id AND e.event_id=a.id||'-attempt-'||a.state WHERE a.run_id=? AND e.sequence<=? AND a.id>? AND a.state<>'running' ORDER BY a.id LIMIT ?", run, snapshot.Through, after, limit)
 	if err != nil {
 		return nil, err
 	}

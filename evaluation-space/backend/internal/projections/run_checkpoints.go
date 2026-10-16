@@ -86,3 +86,54 @@ func (s *Store) LatestRunCheckpoint(ctx context.Context, group, run string) (Run
 	}
 	return result, nil
 }
+
+// ReadWorkflowCheckpoint verifies a node-boundary snapshot against its immutable
+// terminal event and root workflow. It rejects arbitrary input/result artifacts.
+// Callers must separately authorize current source access before exposing it.
+func (s *Store) ReadWorkflowCheckpoint(ctx context.Context, group, run, id string) (RunCheckpoint, WorkflowCheckpoint, error) {
+	var checkpoint RunCheckpoint
+	var snapshot WorkflowCheckpoint
+	if !manifest.ValidID(group) || !manifest.ValidID(run) || !manifest.ValidID(id) {
+		return checkpoint, snapshot, fmt.Errorf("invalid checkpoint scope")
+	}
+	var raw []byte
+	err := s.db.QueryRowContext(ctx, "SELECT c.body FROM run_checkpoints c JOIN runs r ON r.id=c.run_id WHERE r.group_id=? AND c.run_id=? AND c.id=?", group, run, id).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return checkpoint, snapshot, ErrNotFound
+	}
+	if err != nil {
+		return checkpoint, snapshot, err
+	}
+	checkpoint, err = evolution.Decode[RunCheckpoint](bytes.NewReader(raw))
+	if err != nil || checkpoint.ID != id || checkpoint.RunID != run || checkpoint.Artifact.GroupID != group || checkpoint.Artifact.SchemaDigest != WorkflowCheckpointSchema {
+		return RunCheckpoint{}, snapshot, ErrConflict
+	}
+	raw, err = s.Artifact(ctx, checkpoint.Artifact)
+	if err != nil {
+		return checkpoint, snapshot, err
+	}
+	snapshot, err = evolution.Decode[WorkflowCheckpoint](bytes.NewReader(raw))
+	if err != nil || snapshot.RunID != run || snapshot.Workflow.Validate() != nil || snapshot.Through < 1 {
+		return checkpoint, WorkflowCheckpoint{}, ErrConflict
+	}
+	source, err := s.Run(ctx, group, run)
+	if err != nil {
+		return checkpoint, snapshot, err
+	}
+	if source.Pins.Workflow != snapshot.Workflow || source.Pins.SourcePolicyRevision != checkpoint.Artifact.PolicyRevision {
+		return checkpoint, snapshot, ErrConflict
+	}
+	if err = s.db.QueryRowContext(ctx, "SELECT request FROM run_events WHERE run_id=? AND sequence=?", run, snapshot.Through).Scan(&raw); err != nil {
+		return checkpoint, snapshot, err
+	}
+	event, err := evolution.Decode[evolution.Event](bytes.NewReader(raw))
+	if err != nil || event.RunID != run || checkpoint.ID != "node-"+event.AttemptID || event.Fence != checkpoint.Fence || (event.Kind != "attempt-succeeded" && event.Kind != "attempt-failed" && event.Kind != "attempt-skipped") {
+		return checkpoint, snapshot, ErrConflict
+	}
+	for _, artifact := range event.Artifacts {
+		if artifact == checkpoint.Artifact {
+			return checkpoint, snapshot, nil
+		}
+	}
+	return checkpoint, snapshot, ErrConflict
+}

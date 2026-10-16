@@ -21,7 +21,8 @@ func journalFixture(t *testing.T) (*Store, string, RunLease, workflow.Call) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close() })
-	run := evolution.Run{ID: "run", GroupID: "group", Budget: evolution.Budget{MaxAttempts: 10, MaxTokens: 100, MaxCostMicros: 100, MaxArtifactBytes: 1 << 20, TimeoutSeconds: 60}}
+	ref := evolution.Revision{ID: "workflow", Revision: 1, Digest: evolution.Digest([]byte("workflow"))}
+	run := evolution.Run{Pins: evolution.RunPins{Workflow: ref, SourcePolicyRevision: 1}, ID: "run", GroupID: "group", Budget: evolution.Budget{MaxAttempts: 10, MaxTokens: 100, MaxCostMicros: 100, MaxArtifactBytes: 1 << 20, TimeoutSeconds: 60}}
 	body, _ := json.Marshal(run)
 	if _, err = store.db.ExecContext(ctx, `INSERT INTO runs(id,group_id,binding_id,configuration_revision,occurrence_id,request,body,state) VALUES('run','group','binding',1,'occurrence','{}',?,'queued')`, body); err != nil {
 		t.Fatal(err)
@@ -30,14 +31,13 @@ func journalFixture(t *testing.T) (*Store, string, RunLease, workflow.Call) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := evolution.Revision{ID: "workflow", Revision: 1, Digest: evolution.Digest([]byte("workflow"))}
 	call := workflow.Call{ID: "attempt", Instance: "root/agent", Number: 1, Workflow: ref, Node: evolution.Node{ID: "agent", Kind: "agent", MaxAttempts: 1, TimeoutSeconds: 10}, Inputs: workflow.Values{"corpus": json.RawMessage(`"authorized evidence"`)}, Prompt: "Read authorized evidence"}
 	return store, path, lease, call
 }
 func TestWorkflowCheckpointAndEventAreAtomicAndFenceRecoveredWorkers(t *testing.T) {
 	store, path, lease, call := journalFixture(t)
 	ctx := context.Background()
-	journal := WorkflowJournal{store, lease}
+	journal := WorkflowJournal{Store: store, Lease: lease, GrantID: "run-grant"}
 	record, err := journal.Begin(ctx, call, 10)
 	if err != nil || record.State != "running" {
 		t.Fatal(record, err)
@@ -63,7 +63,7 @@ func TestWorkflowCheckpointAndEventAreAtomicAndFenceRecoveredWorkers(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	journal = WorkflowJournal{store, next}
+	journal = WorkflowJournal{Store: store, Lease: next, GrantID: "run-grant"}
 	recovered, err := journal.Begin(ctx, call, 10)
 	if err != nil || recovered.State != "running" || recovered.Call.ID != record.Call.ID {
 		t.Fatal("attempt rebound after restart", recovered, err)
@@ -74,6 +74,13 @@ func TestWorkflowCheckpointAndEventAreAtomicAndFenceRecoveredWorkers(t *testing.
 	}
 	if err = journal.Complete(ctx, record); err == nil {
 		t.Fatal("fault not exercised")
+	}
+	if _, err = store.LatestRunCheckpoint(ctx, "group", "run"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("checkpoint escaped rolled-back terminal event", err)
+	}
+	var artifactCount, usedBytes int64
+	if err = store.db.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM artifacts),used_bytes FROM artifact_store_quota WHERE id=1").Scan(&artifactCount, &usedBytes); err != nil || artifactCount != 0 || usedBytes != 0 {
+		t.Fatal("checkpoint bytes/quota escaped rollback", artifactCount, usedBytes, err)
 	}
 	recovered, err = journal.Begin(ctx, call, 10)
 	if err != nil || recovered.State != "running" {
@@ -96,6 +103,13 @@ func TestWorkflowCheckpointAndEventAreAtomicAndFenceRecoveredWorkers(t *testing.
 	if err != nil || len(records) != 1 || string(records[0].Outputs["result"]) != `"validated"` {
 		t.Fatal(records, err)
 	}
+	checkpoint, snapshot, err := store.ReadWorkflowCheckpoint(ctx, "group", "run", "node-attempt")
+	if err != nil || snapshot.Through != 2 || snapshot.Workflow != call.Workflow || checkpoint.Artifact.GrantID != "run-grant" || checkpoint.Fence != next.Fence || len(events.Events[1].Artifacts) != 1 || events.Events[1].Artifacts[0] != checkpoint.Artifact {
+		t.Fatal("terminal snapshot identity missing", checkpoint, snapshot, err)
+	}
+	if _, _, err = store.ReadWorkflowCheckpoint(ctx, "foreign", "run", checkpoint.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatal("checkpoint crossed group", err)
+	}
 	foreign, err := store.WorkflowAttempts(ctx, "foreign", "run", "", 100)
 	if err != nil || len(foreign) != 0 {
 		t.Fatal(foreign, err)
@@ -107,11 +121,18 @@ func TestWorkflowCheckpointAndEventAreAtomicAndFenceRecoveredWorkers(t *testing.
 	if _, err = store.db.ExecContext(ctx, "DELETE FROM workflow_attempts"); err == nil {
 		t.Fatal("attempt history deleted")
 	}
+	if err = store.SaveRunCheckpoint(ctx, next, RunCheckpoint{ID: "not-a-node-checkpoint", RunID: "run", Fence: next.Fence, Artifact: checkpoint.Artifact}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = store.ReadWorkflowCheckpoint(ctx, "group", "run", "not-a-node-checkpoint"); !errors.Is(err, ErrConflict) {
+		t.Fatal("unbound checkpoint accepted as a workflow snapshot", err)
+	}
+
 }
 func TestWorkflowAttemptBudgetAndInputIdentity(t *testing.T) {
 	store, _, lease, call := journalFixture(t)
 	ctx := context.Background()
-	journal := WorkflowJournal{store, lease}
+	journal := WorkflowJournal{Store: store, Lease: lease, GrantID: "run-grant"}
 	if _, err := journal.Begin(ctx, call, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -130,5 +151,67 @@ func TestWorkflowAttemptBudgetAndInputIdentity(t *testing.T) {
 	}
 	if _, err = journal.Begin(ctx, call, 1); !errors.Is(err, ErrConflict) {
 		t.Fatal("paused checkpoint replay authorized", err)
+	}
+}
+
+func TestWorkflowCheckpointFreezesAttemptsAcrossPauseAndResume(t *testing.T) {
+	store, _, lease, call := journalFixture(t)
+	ctx := context.Background()
+	journal := WorkflowJournal{Store: store, Lease: lease, GrantID: "run-grant"}
+	record, err := journal.Begin(ctx, call, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.State = "succeeded"
+	record.Outputs = workflow.Values{"result": json.RawMessage(`"first output"`)}
+	if err = journal.Complete(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := store.LatestRunCheckpoint(ctx, "group", "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, err := store.ControlRun(ctx, RunControl{RequestID: "pause", RunID: "run", ExpectedFence: lease.Fence, Action: "pause"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.ControlRun(ctx, RunControl{RequestID: "resume", RunID: "run", ExpectedFence: paused.Fence, Action: "resume"}); err != nil {
+		t.Fatal(err)
+	}
+	lease, err = store.ClaimRun(ctx, "run", "resumed", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal.Lease = lease
+	call.ID, call.Instance, call.Node.ID = "later", "root/later", "later"
+	record, err = journal.Begin(ctx, call, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A running attempt is not part of the earlier checkpoint, nor is its later
+	// terminal result. The snapshot is stable even though source execution resumes.
+	for _, state := range []string{"running", "failed"} {
+		if state == "failed" {
+			record.State, record.ErrorCode = state, "known_failure"
+			if err = journal.Complete(ctx, record); err != nil {
+				t.Fatal(err)
+			}
+		}
+		frozen, err := store.CheckpointWorkflowAttempts(ctx, "group", "run", checkpoint.ID, "", 100)
+		if err != nil || len(frozen) != 1 || frozen[0].Call.ID != "attempt" || string(frozen[0].Outputs["result"]) != `"first output"` {
+			t.Fatal("checkpoint advanced with source", frozen, err)
+		}
+	}
+	latest, err := store.LatestRunCheckpoint(ctx, "group", "run")
+	if err != nil || latest.ID == checkpoint.ID {
+		t.Fatal("latest checkpoint did not advance", latest, err)
+	}
+	all, err := store.CheckpointWorkflowAttempts(ctx, "group", "run", latest.ID, "", 100)
+	if err != nil || len(all) != 2 || all[1].State != "failed" {
+		t.Fatal("failure history absent", all, err)
+	}
+	page, err := store.CheckpointWorkflowAttempts(ctx, "group", "run", latest.ID, "attempt", 1)
+	if err != nil || len(page) != 1 || page[0].Call.ID != "later" {
+		t.Fatal("snapshot cursor failed", page, err)
 	}
 }
