@@ -132,7 +132,13 @@ branch until completed or canceled; another branch can still be committed.
    A confirmed publication stays linked in the review URL; reloading checks that
    version without repeating merge or creating another publication.
    When several branches contain independent work, **Compose selected changes**
-   lists each immutable branch head. Select only the paths to review together;
+   lists immutable branch heads. **More source branches** continues the branch
+   catalog; **Load committed paths** opens another branch's first bounded page and
+   **More committed paths** continues that exact head. The loaded/total count shows
+   when paths remain unseen. **Select loaded paths** and **Clear selected paths**
+   affect only the displayed branch. Newly loaded paths are not selected automatically.
+   If a source head changes or a page read fails, reload current evidence before
+   continuing. Select only the paths to review together;
    omitted paths are shown as deferred and remain on their source branch. This
    selection survives reload. **Original source history** opens the frozen source;
    **Selected candidate history** opens the commit used for the selected changes.

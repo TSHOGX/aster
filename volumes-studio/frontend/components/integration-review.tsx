@@ -12,7 +12,8 @@ type Evaluation = {id:string;requirement_digest:string;state:string;outcome:stri
 type View = { evaluations: Evaluation[]; evaluation: string; digest: string; identity: NonNullable<PreparedIntegration["identity"]>; readiness: string; acceptance: string; accepted_commit?: string; reviews: ReviewDecision[] };
 type Change = { path: string; change: string };
 type FilePreview = { commit_id: string; entry: Entry; text?: string; preview: string };
-type CompositionOption = { branch: Branch; changes: BranchChange[] };
+type CompositionOption = { branch: Branch; changes: BranchChange[]; next: string; total?: number };
+const compositionKey = (branch: Branch) => `${branch.id}:${branch.head}`;
 export function IntegrationReview({ branch }: { branch: Branch }) {
   const tr = useT();
   const studio = useStudio();
@@ -32,6 +33,8 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
   const [tokens,setTokens]=useState("10000"),[cost,setCost]=useState("1000000"),[timeout,setTimeoutSeconds]=useState("60");
   const [release, setRelease] = useState<Version>();
   const [composition, setComposition] = useState<CompositionOption[]>([]);
+  const [compositionNext, setCompositionNext] = useState("");
+  const [compositionLoading, setCompositionLoading] = useState(true);
   const [selectedComposition, setSelectedComposition] = useState<Record<string, string[]>>({});
   const compositionResult = view?.identity.selections ?? [];
   const root = `/libraries/${encodeURIComponent(branch.library_id)}`;
@@ -42,7 +45,7 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
   const unavailable = "Integration evidence is unavailable. Reload or check Volume access.";
   const hideEvidence = (preserveWorkspace = false) => {
     evidenceRevision.current++; setRecoveryReady(false);
-    setView(undefined); setChanges([]); setNext(""); setFile(undefined); setComposition([]); setRelease(undefined); if (!preserveWorkspace) { setConflicts([]); setWorkspace(""); }
+    setView(undefined); setChanges([]); setNext(""); setFile(undefined); setComposition([]); setCompositionNext(""); setRelease(undefined); if (!preserveWorkspace) { setConflicts([]); setWorkspace(""); }
   };
   const beginRead = () => { readRequest.current?.abort(); const abort = new AbortController(); readRequest.current = abort; return abort; };
   const retained = useRef<IntegrationCommand>(undefined), hydrated = useRef(false);
@@ -106,22 +109,23 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     return () => abort.abort();
   }, [root, branch.library_id, reloadRevision]);
   useEffect(() => {
-    const abort = new AbortController();
-    const revision = evidenceRevision.current;
+    const abort = new AbortController(), revision = evidenceRevision.current;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Replace the scoped composition catalog when its selected immutable head changes.
+    setCompositionLoading(true); setComposition([]); setCompositionNext("");
     void (async () => {
       const page = await branchAPI.list(branch.library_id, "", abort.signal);
-      const all = page.branches.some(item => item.id === branch.id) ? page.branches : [branch, ...page.branches];
-      const options = await Promise.all(all.filter(item => item.head !== "" && item.head !== item.initial_base).map(async item => ({ branch: item, changes: (await branchAPI.headDiff(item, "", abort.signal)).changes })));
+      const selected = page.branches.find(item => item.id === branch.id) ?? await branchAPI.read(branch.library_id, branch.id, abort.signal);
+      const all = page.branches.some(item => item.id === selected.id) ? page.branches : [selected, ...page.branches];
+      const selectedPage = selected.head !== selected.initial_base ? await branchAPI.headDiff(selected, "", abort.signal) : undefined;
       if (abort.signal.aborted || revision !== evidenceRevision.current) return;
-      setComposition(options);
-      setSelectedComposition(previous => {
-        const next: Record<string, string[]> = {};
-        for (const option of options) next[option.branch.id] = previous[option.branch.id] ?? (option.branch.id === branch.id ? option.changes.map(change => change.path) : []);
-        return next;
-      });
-    })().catch(() => { if (!abort.signal.aborted) { hideEvidence(true); setError(unavailable); } });
+      const options: CompositionOption[] = all.filter(item => item.head && item.head !== item.initial_base).map(item => item.id === selected.id && selectedPage
+        ? { branch: item, changes: selectedPage.changes, next: selectedPage.next, total: selectedPage.total }
+        : { branch: item, changes: [], next: "" });
+      setComposition(options); setCompositionNext(page.next);
+      setSelectedComposition(previous => Object.fromEntries(options.map(option => [compositionKey(option.branch), previous[compositionKey(option.branch)] ?? (option.branch.id === branch.id ? option.changes.map(change => change.path) : [])])));
+    })().catch(() => { if (!abort.signal.aborted) { hideEvidence(true); setError(unavailable); } }).finally(() => { if (!abort.signal.aborted) setCompositionLoading(false); });
     return () => abort.abort();
-  }, [branch, reloadRevision]);
+  }, [branch.library_id, branch.id, branch.head, reloadRevision]);
   useEffect(() => {
     if (!release || !["pending", "validating"].includes(release.state)) return;
     const abort = new AbortController();
@@ -214,8 +218,26 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     if (!mounted.current) return;
     await start("prepare", rebindDigest, { branch_id: current.id, expected_head: current.head, expected_main: main.commit_id, expected_policy_revision: policy.revision, ...(rebindDigest ? { rebind_prepared_digest: rebindDigest } : {}) });
   };
+  async function loadCompositionPaths(option: CompositionOption) {
+    const abort = beginRead(), revision = evidenceRevision.current;
+    try {
+      const page = await branchAPI.headDiff(option.branch, option.next, abort.signal);
+      if (abort.signal.aborted || revision !== evidenceRevision.current) return;
+      setComposition(items => items.map(item => compositionKey(item.branch) === compositionKey(option.branch)
+        ? { ...item, changes: [...item.changes, ...page.changes], total: page.total, next: page.next } : item));
+    } catch (cause) { if (!abort.signal.aborted) hideEvidence(true); throw cause; }
+  }
+  async function loadCompositionBranches() {
+    const abort = beginRead(), revision = evidenceRevision.current;
+    try {
+      const page = await branchAPI.list(branch.library_id, compositionNext, abort.signal);
+      if (abort.signal.aborted || revision !== evidenceRevision.current) return;
+      setComposition(items => [...items, ...page.branches.filter(item => item.head && item.head !== item.initial_base && !items.some(old => old.branch.id === item.id)).map(item => ({ branch: item, changes: [], next: "" }))]);
+      setCompositionNext(page.next);
+    } catch (cause) { if (!abort.signal.aborted) hideEvidence(true); throw cause; }
+  }
   const compose = async () => {
-    const sources = composition.filter(option => (selectedComposition[option.branch.id] ?? []).length > 0).map(option => ({ branch_id: option.branch.id, expected_head: option.branch.head, selected_paths: selectedComposition[option.branch.id] ?? [] }));
+    const sources = composition.filter(option => (selectedComposition[compositionKey(option.branch)] ?? []).length > 0).map(option => ({ branch_id: option.branch.id, expected_head: option.branch.head, selected_paths: selectedComposition[compositionKey(option.branch)] ?? [] }));
     if (!sources.length) return;
     const [main, policy] = await Promise.all([branchAPI.main(branch.library_id), api<{ revision: number }>(`${root}/merge-policy`)]);
     if (!mounted.current) return;
@@ -260,17 +282,27 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     <button disabled={busy || conflictBlocked} onClick={() => { hideEvidence(); setError(""); setReloadRevision(value => value + 1); }}>{tr("Reload integration review")}</button>
     {view?.acceptance === "not_accepted" && view.identity.sources.length === 1 && !view.identity.selections?.length && <button disabled={mutationBlocked} onClick={() => void run(async () => { if (await studio.ask("Rebind current policy", "Replace retained evaluation requirements with current policy? This requires a new approval.", ["Keep current requirements", "Rebind current policy"]) === "Rebind current policy") await prepare(view.digest); })}>{tr("Rebind current policy")}</button>}
     {conflictBlocked && <p role="status">{tr("Save or discard local conflict work before replacing this workspace.")}</p>}
-    {composition.length > 0 && <section aria-label={tr("Compose selected changes")}>
+    {(composition.length > 0 || compositionNext || compositionLoading) && <section aria-label={tr("Compose selected changes")}>
       <h3>{tr("Compose selected changes")}</h3>
       <p>{tr("Freeze committed paths from more than one branch into one reviewable integration. Unselected paths remain deferred.")}</p>
+      {compositionLoading && <p role="status">{tr("Loading…")}</p>}
       {composition.map(option => <fieldset key={option.branch.id}>
         <legend>{option.branch.name}</legend>
-        {option.changes.length === 0 ? <p>{tr("No committed changes")}</p> : option.changes.map(change => <label key={change.path}>
-          <input type="checkbox" disabled={mutationBlocked} checked={(selectedComposition[option.branch.id] ?? []).includes(change.path)} onChange={event => setSelectedComposition(previous => ({ ...previous, [option.branch.id]: event.target.checked ? [...(previous[option.branch.id] ?? []), change.path] : (previous[option.branch.id] ?? []).filter(path => path !== change.path) }))} />
+        <p>{tr("Committed head")}: <code>{option.branch.head}</code></p>
+        {option.total !== undefined && <>
+          <p>{tr("Showing {loaded} of {total} committed paths.", {loaded: option.changes.length, total: option.total})} {tr("Selected paths")}: {(selectedComposition[compositionKey(option.branch)] ?? []).length}</p>
+          <button disabled={mutationBlocked || compositionLoading} onClick={() => setSelectedComposition(previous => ({...previous, [compositionKey(option.branch)]: option.changes.map(change => change.path)}))}>{tr("Select loaded paths")}</button>
+          <button disabled={mutationBlocked || compositionLoading} onClick={() => setSelectedComposition(previous => ({...previous, [compositionKey(option.branch)]: []}))}>{tr("Clear selected paths")}</button>
+        </>}
+        {option.total === 0 ? <p>{tr("No committed changes")}</p> : option.changes.map(change => <label key={change.path}>
+          <input type="checkbox" disabled={mutationBlocked} checked={(selectedComposition[compositionKey(option.branch)] ?? []).includes(change.path)} onChange={event => setSelectedComposition(previous => ({ ...previous, [compositionKey(option.branch)]: event.target.checked ? [...(previous[compositionKey(option.branch)] ?? []), change.path] : (previous[compositionKey(option.branch)] ?? []).filter(path => path !== change.path) }))} />
           <code>{change.path}</code> · {tr(change.change)}
         </label>)}
+        {(option.total === undefined || option.next) && <button disabled={busy || compositionLoading} onClick={() => void run(() => loadCompositionPaths(option))}>{tr(option.total === undefined ? "Load committed paths" : "More committed paths")}</button>}
       </fieldset>)}
-      <button disabled={mutationBlocked || conflictBlocked || composition.every(option => (selectedComposition[option.branch.id] ?? []).length === 0)} onClick={() => void run(compose)}>{tr("Prepare selected composition")}</button>
+      {compositionNext && <button disabled={busy || compositionLoading} onClick={() => void run(loadCompositionBranches)}>{tr("More source branches")}</button>}
+      <p>{tr("Only selected paths enter this composition. Newly loaded paths are not selected automatically.")}</p>
+      <button disabled={mutationBlocked || compositionLoading || conflictBlocked || composition.every(option => (selectedComposition[compositionKey(option.branch)] ?? []).length === 0)} onClick={() => void run(compose)}>{tr("Prepare selected composition")}</button>
     </section>}
     {compositionResult.length > 0 && <ul aria-label={tr("Composition selection result")}>{compositionResult.map(selection => <li key={selection.branch_id}>
         <p><code>{selection.branch_id}</code></p>

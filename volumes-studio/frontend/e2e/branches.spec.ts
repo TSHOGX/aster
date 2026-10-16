@@ -180,6 +180,7 @@ for (const width of [390, 1440]) test(`browser composes selected paths and later
   const composition = page.getByRole("region", { name: "Compose selected changes", exact: true });
   await expect(composition).toBeVisible();
   await expect(composition.getByText("selected.txt", { exact: true })).toBeVisible();
+  await composition.locator("fieldset").filter({ hasText: "Deferred source" }).getByRole("button", {name:"Load committed paths",exact:true}).click();
   await expect(composition.getByText("other.txt", { exact: true })).toBeVisible();
   const firstSet = composition.locator("fieldset").filter({ hasText: "Selected source" });
   await firstSet.getByRole("checkbox").nth(0).uncheck();
@@ -203,6 +204,8 @@ for (const width of [390, 1440]) test(`browser composes selected paths and later
   const original = lineage.locator("li").filter({ hasText: first.id });
   await original.getByRole("link", {name:"Selected candidate history",exact:true}).press("Enter");
   await expect(page.getByLabel("History head", {exact:true})).toHaveValue(selection.candidate_commit);
+  // Let the destination finish its initial reads before another full-document navigation.
+  await page.waitForLoadState("networkidle");
   await original.getByRole("link", {name:"Original source history",exact:true}).press("Enter");
   await expect(page.getByLabel("History head", {exact:true})).toHaveValue(firstCheckpoint.commit_id);
   expect(new URL(page.url()).searchParams.get("integration")).toBe(digest);

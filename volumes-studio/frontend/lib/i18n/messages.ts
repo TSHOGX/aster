@@ -1,4 +1,11 @@
 export const ZH: Record<string, string> = {
+  "Showing {loaded} of {total} committed paths.": "已显示 {total} 条已提交路径中的 {loaded} 条。",
+  "Select loaded paths": "选择已加载路径",
+  "Clear selected paths": "清除已选路径",
+  "Load committed paths": "加载已提交路径",
+  "More committed paths": "更多已提交路径",
+  "More source branches": "更多源分支",
+  "Only selected paths enter this composition. Newly loaded paths are not selected automatically.": "只有已选路径会进入此组合。新加载的路径不会自动选中。",
   "Selected paths": "已选路径",
   "Original source history": "原始源分支历史",
   "Selected candidate history": "已选候选历史",
