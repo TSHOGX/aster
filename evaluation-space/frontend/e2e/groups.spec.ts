@@ -315,7 +315,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
       await expect(page.getByRole("region", { name: tr("Group overview", "团队概览"), exact: true }).getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
       const root = `/evaluation-space/api/v1/groups/${beta.id}/runs/pause-run`;
-      const run = { id: "pause-run", state: "running", fence: 1, handoff: "not_ready", evaluation_state: "not_requested", pins: { workflow: { id: "skills", revision: 1 }, service: { id: "native", revision: 1 }, configuration_revision: 1 }, created_at: new Date().toISOString() };
+      const run = { budget: { max_tokens: 100, max_cost_micros: 100, max_attempts: 10, timeout_seconds: 60, max_artifact_bytes: 1048576 }, id: "pause-run", state: "running", fence: 1, handoff: "not_ready", evaluation_state: "not_requested", pins: { workflow: { id: "skills", revision: 1 }, service: { id: "native", revision: 1 }, configuration_revision: 1 }, created_at: new Date().toISOString() };
       const controls: string[] = [];
       // UI transitions are intercepted; real draining and resume use native-process tests.
       await page.route(`${origin}${root}`, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(run) }));
@@ -349,6 +349,58 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       expect(controls).toEqual(["pause", "resume"]);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       expect(errors).toEqual([]);
+    } finally { await context.close(); }
+  });
+}
+
+for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", width: 390 }]) {
+  test(`checkpoint experiment preview and lost response recovery ${variant.locale}`, async ({ page: admin, browser }, info) => {
+    const { beta, user } = await provision(admin);
+    const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: variant.locale, viewport: { width: variant.width, height: 900 } });
+    const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
+    const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+    try {
+      await login(page, user); await page.goto(`/evaluation-space/groups/${beta.id}/`);
+      await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
+      await expect(page.getByRole("region", { name: tr("Group overview", "团队概览"), exact: true }).getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
+      const root = `/evaluation-space/api/v1/groups/${beta.id}/runs`;
+      const budget = { max_tokens: 100, max_cost_micros: 100, max_attempts: 20, timeout_seconds: 60, max_artifact_bytes: 1048576 };
+      const run = { id: "experiment-source", state: "paused", fence: 2, handoff: "not_ready", evaluation_state: "not_requested", budget, pins: { workflow: { id: "skills", revision: 1 } }, created_at: new Date().toISOString() };
+      const workflow = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8"));
+      const requests: unknown[] = []; let created = "";
+      await page.route(`${origin}/evaluation-space/api/v1/groups/${beta.id}/workflows/skills/draft`, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ workflow }) }));
+      await page.route(`${origin}${root}/**`, route => {
+        const path = new URL(route.request().url()).pathname; let body: unknown = { items: [] };
+        if (path.endsWith("/experiment-preview")) {
+          const request = route.request().postDataJSON(); expect(request.start_node).toBe("critic"); expect(request.budget.max_tokens).toBe(30);
+          body = { eligible: true, checkpoint: { id: "node-extract" }, dependencies: [{ id: "sealed-corpus" }, { id: "sealed-checkpoint" }], reused: [{ call: { id: "extract-attempt", instance: "root/extract" } }] };
+        } else if (path.endsWith("/experiment")) {
+          const request = route.request().postDataJSON(); requests.push(request); created = request.id;
+          if (requests.length === 1) return route.fulfill({ status: 503, body: "lost response" });
+          expect(requests[1]).toEqual(requests[0]); body = { id: created };
+        } else if (path.endsWith("/experiment-source")) body = run;
+        else if (created && path.endsWith(`/${created}`)) body = { ...run, id: created, state: "queued", experiment_of: run.id };
+        else if (path.endsWith("/events")) body = { events: [], next_after: 0 };
+        else if (path.endsWith("/debugger")) body = { budget: { spent: { tokens: 0, cost_micros: 0 }, held: { tokens: 0, cost_micros: 0 }, available: { tokens: 30, cost_micros: 100 } }, attempts: [], events: [], provider_observations: [], opaque: [] };
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+      });
+      await page.goto(`/evaluation-space/groups/${beta.id}/runs/experiment-source`);
+      await page.getByRole("button", { name: tr("Run from here", "从此处运行"), exact: true }).click();
+      await page.getByLabel(tr("Start node", "起始节点"), { exact: true }).selectOption("critic");
+      await page.getByLabel(tr("Token budget", "令牌预算"), { exact: true }).fill("30");
+      await expect(page.getByRole("button", { name: tr("Create experiment", "创建实验"), exact: true })).toBeDisabled();
+      await page.getByRole("button", { name: tr("Preview checkpoint reuse", "预览检查点复用"), exact: true }).click();
+      await expect(page.getByText(`root/extract · ${tr("Reused from checkpoint", "复用自检查点")}`, { exact: true })).toBeVisible();
+      await page.screenshot({ path: info.outputPath("checkpoint-reuse-preview.png"), fullPage: true });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.getByRole("button", { name: tr("Create experiment", "创建实验"), exact: true }).click();
+      await expect(page.getByRole("region", { name: tr("Checkpoint experiment", "检查点实验"), exact: true }).getByRole("alert")).toContainText(tr("Experiment creation is unavailable or the checkpoint is no longer eligible.", "实验创建不可用，或检查点已不再满足条件。"));
+      await page.reload();
+      await page.getByRole("button", { name: tr("Run from here", "从此处运行"), exact: true }).click();
+      await expect(page.getByLabel(tr("Start node", "起始节点"), { exact: true })).toHaveValue("critic");
+      await page.getByRole("button", { name: tr("Recover experiment", "恢复实验"), exact: true }).click();
+      await expect(page).toHaveURL(new RegExp(`/runs/${created}/?$`));
+      expect(requests).toHaveLength(2); expect(errors).toEqual([]);
     } finally { await context.close(); }
   });
 }

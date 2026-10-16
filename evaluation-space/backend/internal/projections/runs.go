@@ -216,7 +216,7 @@ func (s *Store) RetryRun(ctx context.Context, input RunRetry, requester evolutio
 	if _, err = tx.ExecContext(ctx, "INSERT INTO runs(id,group_id,binding_id,configuration_revision,occurrence_id,experiment_of,request,body,state) VALUES(?,?,?,?,?,?,?,?,?)", result.ID, group, binding, configurationRevision, retryOccurrence, experiment, rawRequest, newBody, result.State); err != nil {
 		return result, err
 	}
-	assignment := evolution.GenerationAssignment{BatchID: result.BatchID, RunID: result.ID, GroupID: group, BindingID: binding, OccurrenceID: retryOccurrence, Requester: requester, Pins: result.Pins, Budget: result.Budget}
+	assignment := evolution.GenerationAssignment{BatchID: result.BatchID, RunID: result.ID, GroupID: group, BindingID: binding, OccurrenceID: retryOccurrence, Requester: requester, Pins: result.Pins, Budget: result.Budget, Experiment: result.Experiment}
 	if _, err = assignment.Digest(); err != nil {
 		return result, err
 	}

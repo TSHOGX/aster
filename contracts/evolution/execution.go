@@ -23,20 +23,21 @@ type RunPins struct {
 	Evaluation            EvaluationPolicy       `json:"evaluation"`
 }
 type Run struct {
-	ID              string    `json:"id"`
-	GroupID         string    `json:"group_id"`
-	BindingID       string    `json:"binding_id"`
-	BatchID         string    `json:"batch_id,omitempty"`
-	Pins            RunPins   `json:"pins"`
-	State           string    `json:"state"`
-	Handoff         string    `json:"handoff"`
-	EvaluationState string    `json:"evaluation_state"`
-	ResultBranch    string    `json:"result_branch"`
-	Fence           int64     `json:"fence"`
-	Budget          Budget    `json:"budget"`
-	RetryOf         string    `json:"retry_of,omitempty"`
-	ExperimentOf    string    `json:"experiment_of,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	Experiment      *GenerationExperiment `json:"experiment,omitempty"`
+	ID              string                `json:"id"`
+	GroupID         string                `json:"group_id"`
+	BindingID       string                `json:"binding_id"`
+	BatchID         string                `json:"batch_id,omitempty"`
+	Pins            RunPins               `json:"pins"`
+	State           string                `json:"state"`
+	Handoff         string                `json:"handoff"`
+	EvaluationState string                `json:"evaluation_state"`
+	ResultBranch    string                `json:"result_branch"`
+	Fence           int64                 `json:"fence"`
+	Budget          Budget                `json:"budget"`
+	RetryOf         string                `json:"retry_of,omitempty"`
+	ExperimentOf    string                `json:"experiment_of,omitempty"`
+	CreatedAt       time.Time             `json:"created_at"`
 }
 type Attempt struct {
 	ID                string        `json:"id"`

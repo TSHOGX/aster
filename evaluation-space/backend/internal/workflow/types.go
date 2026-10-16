@@ -25,11 +25,17 @@ type Call struct {
 	Prompt   string             `json:"prompt"`
 }
 type Record struct {
-	Call      Call     `json:"call"`
-	State     string   `json:"state"`
-	Outputs   Values   `json:"outputs"`
-	Inactive  []string `json:"inactive"`
-	ErrorCode string   `json:"error_code"`
+	Call       Call         `json:"call"`
+	State      string       `json:"state"`
+	Outputs    Values       `json:"outputs"`
+	Inactive   []string     `json:"inactive"`
+	ErrorCode  string       `json:"error_code"`
+	ReusedFrom *ReuseSource `json:"reused_from,omitempty"`
+}
+type ReuseSource struct {
+	RunID        string `json:"run_id"`
+	CheckpointID string `json:"checkpoint_id"`
+	AttemptID    string `json:"attempt_id"`
 }
 type Journal interface {
 	Begin(context.Context, Call, int) (Record, error)

@@ -192,7 +192,19 @@ func (e *NativeExecutor) Execute(ctx context.Context, lease projections.RunLease
 	if err != nil {
 		return "", err
 	}
-	engine := workflow.Engine{Catalog: e.Registry, Runtime: nativeRuntime{e, lease, run, grant}, Journal: projections.WorkflowJournal{Store: e.Registry.Store, Lease: lease, GrantID: grant}}
+	journal := projections.WorkflowJournal{Store: e.Registry.Store, Lease: lease, GrantID: grant}
+	engine := workflow.Engine{Catalog: e.Registry, Runtime: nativeRuntime{e, lease, run, grant}, Journal: journal}
+	if run.Experiment != nil {
+		records, err := e.Registry.Store.ExperimentReuse(ctx, run)
+		if err != nil {
+			return "", err
+		}
+		selected := map[string]workflow.Record{}
+		for _, record := range records {
+			selected[record.Call.Instance] = record
+		}
+		engine.Journal = experimentJournal{WorkflowJournal: journal, authority: e.Authority, run: run, records: selected}
+	}
 	result, err := engine.Execute(ctx, run.Pins.Workflow, inputs)
 	if errors.Is(err, workflow.ErrPauseRequested) {
 		return "paused", nil

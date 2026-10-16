@@ -290,28 +290,72 @@ func TestNativeRunRejectsRevokedInputsBeforeModelWork(t *testing.T) {
 	}
 }
 
-func TestPausedCheckpointExperimentRunsThroughNativeWorker(t *testing.T) {
+func TestPausedCheckpointExperimentReusesNativeOutputThroughCentralAdmission(t *testing.T) {
 	store, _, run, executor, provider := nativeFixture(t)
 	ctx := context.Background()
-	lease, err := store.ClaimRun(ctx, run.ID, "source-worker", time.Minute)
+	requester := evolution.Principal{Issuer: "https://app", Subject: "operator", Kind: "human"}
+	assignment := evolution.GenerationAssignment{RunID: run.ID, GroupID: run.GroupID, BindingID: run.BindingID, OccurrenceID: "source", Requester: requester, Pins: run.Pins, Budget: run.Budget}
+	digest, err := assignment.Digest()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.SaveRunCheckpoint(ctx, lease, projections.RunCheckpoint{ID: "paused-checkpoint", RunID: run.ID, Fence: lease.Fence, Artifact: run.Pins.Inputs[0]}); err != nil {
+	grant := evolution.GenerationGrant{ID: "run-grant", RunID: run.ID, GroupID: run.GroupID, AssignmentDigest: digest}
+	if err = store.RetainGenerationGrant(ctx, assignment, grant); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.ControlRun(ctx, projections.RunControl{RequestID: "pause-source", RunID: run.ID, ExpectedFence: lease.Fence, Action: "pause"}); err != nil {
+	provider.beforeSubmit = func(ctx context.Context, _ projections.ProviderCall) error {
+		source, err := store.Run(ctx, run.GroupID, run.ID)
+		if err != nil {
+			return err
+		}
+		_, err = store.ControlRun(ctx, projections.RunControl{RequestID: "pause-source", RunID: run.ID, ExpectedFence: source.Fence, Action: "pause"})
+		return err
+	}
+	worker := Worker{Store: store, ID: "source-worker", Authority: executor.Authority, Executor: executor}
+	if err = worker.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.Run(ctx, run.GroupID, run.ID)
+	if err != nil || source.State != "paused" || provider.calls != 1 {
+		t.Fatal(source, err, provider.calls)
+	}
+	checkpoint, err := store.LatestRunCheckpoint(ctx, run.GroupID, run.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	graph, err := store.Workflow(ctx, run.Pins.Workflow)
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := store.CreateRunExperiment(ctx, projections.RunExperimentRequest{ID: "experiment", GroupID: run.GroupID, SourceRunID: run.ID, CheckpointID: "paused-checkpoint", Workflow: graph})
-	if err != nil || created.ExperimentOf != run.ID || created.State != "queued" {
-		t.Fatal(created, err)
+	editedRef := evolution.Revision{ID: "edited-builder", Revision: 1, Digest: evolution.Digest([]byte("edited-builder"))}
+	graph.Nodes[1].ImplementationRef = &editedRef
+	executor.Registry.Transforms[editedRef] = func(_ context.Context, call workflow.Call) (workflow.Values, error) {
+		var text string
+		_ = json.Unmarshal(call.Inputs["value"], &text)
+		raw, _ := json.Marshal("edited " + text)
+		return workflow.Values{"value": raw}, nil
 	}
-	worker := Worker{Store: store, ID: "experiment-worker", Authority: executor.Authority, Executor: executor}
+	created, err := store.CreateRunExperiment(ctx, projections.RunExperimentRequest{ID: "experiment", GroupID: run.GroupID, SourceRunID: run.ID, CheckpointID: checkpoint.ID, StartNode: "build", Workflow: graph}, requester)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := store.PendingGenerationAssignment(ctx, run.GroupID, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err = pending.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	experimentGrant := evolution.GenerationGrant{ID: "experiment-grant", RunID: created.ID, GroupID: created.GroupID, AssignmentDigest: digest}
+	central := &retryAdmissionCentral{centralGeneration: centralGeneration{assignment: pending, grant: experimentGrant, state: "admitted"}, loseReply: true}
+	authority := CentralAuthority{Store: store, Central: central}
+	executor.Authority = authority
+	worker = Worker{Store: store, ID: "experiment-worker", Authority: authority, Executor: executor}
+	if err = worker.Step(ctx); err == nil {
+		t.Fatal("lost admission reply ignored")
+	}
+	worker = Worker{Store: store, ID: "recovered-worker", Authority: authority, Executor: executor}
 	if err = worker.Step(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -319,8 +363,51 @@ func TestPausedCheckpointExperimentRunsThroughNativeWorker(t *testing.T) {
 	if err != nil || current.State != "completed" || provider.calls != 1 {
 		t.Fatal(current, err, provider.calls)
 	}
-	source, err := store.Run(ctx, run.GroupID, run.ID)
-	if err != nil || source.State != "paused" || source.ExperimentOf != "" {
+	attempts, err := store.WorkflowAttempts(ctx, run.GroupID, created.ID, "", 100)
+	if err != nil || len(attempts) != 2 {
+		t.Fatal(attempts, err)
+	}
+	reused := 0
+	for _, record := range attempts {
+		if record.ReusedFrom != nil {
+			reused++
+			if record.Call.Node.ID != "agent" || record.ReusedFrom.RunID != run.ID || record.ReusedFrom.CheckpointID != checkpoint.ID {
+				t.Fatal(record)
+			}
+		}
+	}
+	if reused != 1 {
+		t.Fatal("explicit reuse provenance missing", attempts)
+	}
+	final, err := store.LatestRunCheckpoint(ctx, run.GroupID, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := store.Artifact(ctx, final.Artifact)
+	if err != nil || string(raw) != `{"value":"edited model output"}` {
+		t.Fatal(string(raw), err)
+	}
+	if err = authority.ReconcileTerminal(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	if central.spent != (projections.RunUsage{}) {
+		t.Fatal("reused output charged as fresh model work", central.spent)
+	}
+	retry, err := store.RetryRun(ctx, projections.RunRetry{RequestID: "retry-experiment", GroupID: run.GroupID, SourceRunID: created.ID, NewRunID: "retried-experiment"}, requester)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryAssignment, err := store.PendingGenerationAssignment(ctx, run.GroupID, retry.ID)
+	if err != nil || retryAssignment.Experiment == nil || *retryAssignment.Experiment != *created.Experiment || retry.RetryOf != created.ID {
+		t.Fatal("experiment retry lost admission lineage", retryAssignment, err)
+	}
+
+	original, err := store.WorkflowAttempts(ctx, run.GroupID, run.ID, "", 100)
+	if err != nil || len(original) != 1 || original[0].ReusedFrom != nil {
+		t.Fatal("source history changed", original, err)
+	}
+	source, err = store.Run(ctx, run.GroupID, run.ID)
+	if err != nil || source.State != "paused" || source.Pins.Workflow != run.Pins.Workflow {
 		t.Fatal(source, err)
 	}
 }

@@ -170,6 +170,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	publicHandler = authentication.Handler(http.NotFoundHandler())
 	var retryAdmissionMu sync.Mutex
 	var retryAdmissionRequests [][]byte
+	var experimentAdmissionRequests [][]byte
 	identityHandler := authentication.IdentityServiceHandler()
 	central := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if mode == "browser-retry" && r.URL.Path == "/api/identity/v1/generation/admit" {
@@ -181,6 +182,21 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			}
 			r.Body = io.NopCloser(bytes.NewReader(raw))
 			var assignment evolution.GenerationAssignment
+			if json.Unmarshal(raw, &assignment) == nil && assignment.RunID == "browser-native-experiment" {
+				retryAdmissionMu.Lock()
+				experimentAdmissionRequests = append(experimentAdmissionRequests, raw)
+				first := len(experimentAdmissionRequests) == 1
+				retryAdmissionMu.Unlock()
+				if first {
+					recorded := httptest.NewRecorder()
+					identityHandler.ServeHTTP(recorded, r)
+					if recorded.Code != 200 {
+						t.Errorf("experiment central admission: %d %s", recorded.Code, recorded.Body.String())
+					}
+					w.WriteHeader(503)
+					return
+				}
+			}
 			if json.Unmarshal(raw, &assignment) == nil && assignment.RunID == "browser-native-retry" {
 				retryAdmissionMu.Lock()
 				retryAdmissionRequests = append(retryAdmissionRequests, raw)
@@ -766,6 +782,8 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	if mode == "browser-retry" {
 		_, err = store.SetEvolutionGroupGrant(ctx, token, configuration.GroupID, product.EvolutionGroupGrantInput{RequestID: "retry-evidence", AccountID: admin.ID, Action: "source.read", Effect: "allow"})
 		must(t, err)
+		_, err = store.SetEvolutionGroupGrant(ctx, token, configuration.GroupID, product.EvolutionGroupGrantInput{RequestID: "experiment-authoring", AccountID: admin.ID, Action: "workflow.edit", Effect: "allow"})
+		must(t, err)
 		// Authenticate through the actual Evaluation Space PKCE/session gateway.
 		request, _ := http.NewRequestWithContext(ctx, "GET", "http://"+spaceBrowserAddress+"/evaluation-space/auth/login", nil)
 		request.Host = issuerURL.Host
@@ -896,6 +914,117 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		if !checkpointFound {
 			t.Fatal("pause did not retain a node checkpoint", string(raw))
 		}
+		var edited evolution.Workflow
+		for _, pkg := range packages {
+			for _, published := range pkg.Workflows {
+				if published.Ref == retry.Pins.Workflow {
+					edited = published.Workflow
+				}
+			}
+		}
+		for i := range edited.Nodes {
+			if edited.Nodes[i].ID == "revise" {
+				edited.Nodes[i].TimeoutSeconds--
+			}
+		}
+		experimentInput := map[string]any{"id": "browser-native-experiment", "source_run_id": retry.ID, "start_node": "revise", "workflow": edited}
+		status, raw = spaceCall("POST", runRoot+retry.ID+"/experiment-preview", experimentInput)
+		if status != 200 {
+			t.Fatal("experiment preview", status, string(raw))
+		}
+		var preview struct {
+			Eligible   bool `json:"eligible"`
+			Checkpoint struct {
+				ID string `json:"id"`
+			} `json:"checkpoint"`
+			Reused []struct {
+				Call struct {
+					Node evolution.Node `json:"node"`
+				} `json:"call"`
+			} `json:"reused"`
+		}
+		must(t, json.Unmarshal(raw, &preview))
+		if !preview.Eligible || len(preview.Reused) != 1 || preview.Reused[0].Call.Node.ID != "draft" {
+			t.Fatal("checkpoint reuse preview", string(raw))
+		}
+		experimentInput["checkpoint_id"] = preview.Checkpoint.ID
+		var experiment evolution.Run
+		for i := 0; i < 2; i++ {
+			status, raw = spaceCall("POST", runRoot+retry.ID+"/experiment", experimentInput)
+			if status != 201 {
+				t.Fatal("experiment creation", status, string(raw))
+			}
+			must(t, json.Unmarshal(raw, &experiment))
+			if experiment.Experiment == nil || experiment.ExperimentOf != retry.ID || experiment.RetryOf != "" {
+				t.Fatal("experiment lineage", experiment)
+			}
+		}
+		for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); {
+			status, raw = spaceCall("GET", runRoot+experiment.ID, nil)
+			if status != 200 {
+				t.Fatal("experiment read", status, string(raw))
+			}
+			must(t, json.Unmarshal(raw, &experiment))
+			if experiment.Handoff == "submitted" {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if experiment.State != "completed" || experiment.Handoff != "submitted" || experiment.ResultBranch == "" || experiment.ResultBranch == before.ResultBranch {
+			t.Fatal("experiment not handed off", experiment)
+		}
+		status, raw = spaceCall("GET", runRoot+experiment.ID+"/attempts?limit=100", nil)
+		if status != 200 {
+			t.Fatal(status, string(raw))
+		}
+		var experimentAttempts struct {
+			Items []struct {
+				ReusedFrom *struct {
+					RunID        string `json:"run_id"`
+					CheckpointID string `json:"checkpoint_id"`
+				} `json:"reused_from"`
+			} `json:"items"`
+		}
+		must(t, json.Unmarshal(raw, &experimentAttempts))
+		reused := 0
+		for _, attempt := range experimentAttempts.Items {
+			if attempt.ReusedFrom != nil {
+				reused++
+				if attempt.ReusedFrom.RunID != retry.ID || attempt.ReusedFrom.CheckpointID != preview.Checkpoint.ID {
+					t.Fatal("wrong reused provenance", attempt)
+				}
+			}
+		}
+		if reused != 1 {
+			t.Fatal("reuse not recorded", string(raw))
+		}
+		modelMu.Lock()
+		experimentCalls := calls[experiment.ID]
+		modelMu.Unlock()
+		if experimentCalls != 1 {
+			t.Fatal("experiment repeated upstream draft", experimentCalls)
+		}
+		status, raw = spaceCall("GET", runRoot+retry.ID, nil)
+		if status != 200 {
+			t.Fatal(status, string(raw))
+		}
+		var stillPaused evolution.Run
+		must(t, json.Unmarshal(raw, &stillPaused))
+		expectedPaused, _ := json.Marshal(retry)
+		actualPaused, _ := json.Marshal(stillPaused)
+		if !bytes.Equal(expectedPaused, actualPaused) {
+			t.Fatal("experiment mutated paused source")
+		}
+		retryAdmissionMu.Lock()
+		if len(experimentAdmissionRequests) < 2 {
+			t.Error("lost experiment admission was not recovered")
+		}
+		for _, body := range experimentAdmissionRequests {
+			if !bytes.Equal(body, experimentAdmissionRequests[0]) {
+				t.Error("experiment admission changed")
+			}
+		}
+		retryAdmissionMu.Unlock()
 		status, raw = spaceCall("POST", runRoot+retry.ID+"/control", map[string]any{"request_id": "resume-native-retry", "run_id": retry.ID, "action": "resume", "expected_fence": retry.Fence})
 		if status != 200 {
 			t.Fatal("resume retry", status, string(raw))

@@ -37,6 +37,11 @@ func (a CentralAuthority) load(ctx context.Context, run evolution.Run) (evolutio
 	}
 	actual, _ := json.Marshal(run.Pins)
 	expected, _ := json.Marshal(assignment.Pins)
+	actualExperiment, _ := json.Marshal(run.Experiment)
+	expectedExperiment, _ := json.Marshal(assignment.Experiment)
+	if !bytes.Equal(actualExperiment, expectedExperiment) {
+		return grant, projections.ErrConflict
+	}
 	if run.BatchID != assignment.BatchID || !bytes.Equal(actual, expected) || run.BindingID != assignment.BindingID || run.Budget != assignment.Budget {
 		return grant, projections.ErrConflict
 	}

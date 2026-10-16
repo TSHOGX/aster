@@ -1,6 +1,22 @@
 "use client";
 import { useTranslator } from "../../../web/i18n";
 const zh = {
+"Checkpoint experiment": "检查点实验",
+"Choose a start node and preview the exact upstream outputs to reuse. The source remains unchanged.": "选择起始节点并预览将复用的上游输出。源运行保持不变。",
+"Open workflow editor": "打开工作流编辑器",
+"Frozen experiment workflow": "冻结的实验工作流",
+"Start node": "起始节点",
+"Choose a node": "选择节点",
+"Token budget": "令牌预算",
+"Cost budget (micros)": "成本预算（微单位）",
+"Preview checkpoint reuse": "预览检查点复用",
+"Reused from checkpoint": "复用自检查点",
+"No upstream outputs will be reused.": "不会复用上游输出。",
+"An experiment request is pending. Retry recovers the same experiment.": "实验请求待确认。重试会恢复同一实验。",
+"Recover experiment": "恢复实验",
+"Create experiment": "创建实验",
+"Close": "关闭",
+
   "Pausing": "正在暂停", "Pause requested. Current work is finishing before the run pauses.": "已请求暂停。当前工作完成后，运行将暂停。",
   "Run retry is unavailable. Retry to recover the same request, or check run permissions.": "无法重试运行。请再次重试以恢复同一请求，或检查运行权限。",
   "Evaluation cancellation failed. Refresh and check run permissions before retrying.": "评估取消失败。请刷新并检查运行权限后重试。",

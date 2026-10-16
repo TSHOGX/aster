@@ -149,6 +149,62 @@
       ],
       "type": "object"
     },
+    "GenerationExperiment": {
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "checkpoint_fence": {
+          "type": "integer"
+        },
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/GenerationGrant"
+        },
+        "source_fence": {
+          "type": "integer"
+        },
+        "start_node": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "source_fence",
+        "checkpoint_id",
+        "checkpoint_fence",
+        "checkpoint",
+        "start_node"
+      ],
+      "type": "object"
+    },
+    "GenerationGrant": {
+      "additionalProperties": false,
+      "properties": {
+        "assignment_digest": {
+          "type": "string"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "run_id",
+        "group_id",
+        "assignment_digest"
+      ],
+      "type": "object"
+    },
     "OutputBinding": {
       "additionalProperties": false,
       "properties": {
@@ -235,6 +291,9 @@
         },
         "evaluation_state": {
           "type": "string"
+        },
+        "experiment": {
+          "$ref": "#/$defs/GenerationExperiment"
         },
         "experiment_of": {
           "type": "string"

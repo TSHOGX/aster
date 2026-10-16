@@ -328,9 +328,22 @@ A single artifact can be opened through the
 same source-authorized browser boundary; responses include its digest and size and
 default to a one MiB body limit (operators may request up to four MiB). Truncated
 responses are marked with `X-Artifact-Truncated: true` and are never treated as a
-complete artifact download. Paused run experiments keep the source run immutable;
-their comparison view aligns attempt paths and reports nested loop/map context,
-including changed, added and removed attempts. A report page distinguishes a
+complete artifact download. For a paused run, **Run from here** opens the current
+workflow draft, a start-node selector and bounded token/cost settings. Preview
+lists the exact checkpoint and upstream attempts to reuse before creating an
+experiment. Changed or incomplete upstream dependencies require an earlier start
+node. The selected node and unrelated branches execute afresh. Each reused attempt
+links to its original run, checkpoint and attempt; the comparison view aligns
+attempt paths and reports nested loop/map context, including changed, added and
+removed attempts.
+
+Experiments require explicit workflow-edit and source-evidence access in addition
+to run permission. Their edited workflow is frozen, the source remains unchanged,
+and results go to a separate Studio branch. Both the paused source and experiment
+retain budget reservations, so the group ceiling must cover both. Current source
+permissions remain required during execution and output handoff. Experiments do
+not advance automatic corpus-consumption frontiers. If a creation reply is lost,
+reopen **Run from here** and use **Recover experiment** to recover the same request. A report page distinguishes a
 pending result from a temporary read failure and only exposes retained report
 artifacts; held-out answers never appear in reports or prompts.
 Frontend credentials and cookies are stripped before proxying. Application sessions
