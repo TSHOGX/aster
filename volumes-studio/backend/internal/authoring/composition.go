@@ -30,10 +30,11 @@ type ComposeInput struct {
 }
 
 type CompositionSelection struct {
-	BranchID      string   `json:"branch_id"`
-	Head          string   `json:"head"`
-	SelectedPaths []string `json:"selected_paths"`
-	DeferredPaths []string `json:"deferred_paths,omitempty"`
+	CandidateCommit string   `json:"candidate_commit"`
+	BranchID        string   `json:"branch_id"`
+	Head            string   `json:"head"`
+	SelectedPaths   []string `json:"selected_paths"`
+	DeferredPaths   []string `json:"deferred_paths,omitempty"`
 }
 
 type CompositionResult struct {
@@ -42,12 +43,11 @@ type CompositionResult struct {
 }
 
 type compositionSource struct {
-	branch      Branch
-	base        history.Snapshot
-	full        history.Snapshot
-	selected    history.Snapshot
-	selection   CompositionSelection
-	selectedSet map[string]bool
+	branch    Branch
+	base      history.Snapshot
+	full      history.Snapshot
+	selected  history.Snapshot
+	selection CompositionSelection
 }
 
 // ComposeMerge prepares one same-Volume integration from multiple immutable
@@ -124,14 +124,14 @@ func (s *Store) ComposeMerge(ctx context.Context, a Actor, library string, input
 		if branchErr != nil {
 			return result, branchErr
 		}
-		selected, selection, selectedSet, branchErr := selectedDelta(base, full, branch, requested.SelectedPaths)
+		selected, selection, branchErr := selectedDelta(base, full, branch, requested.SelectedPaths)
 		if branchErr != nil {
 			return result, branchErr
 		}
 		if len(selection.SelectedPaths) == 0 {
 			continue
 		}
-		sources = append(sources, compositionSource{branch: branch, base: base, full: full, selected: selected, selection: selection, selectedSet: selectedSet})
+		sources = append(sources, compositionSource{branch: branch, base: base, full: full, selected: selected, selection: selection})
 	}
 	if len(sources) == 0 {
 		return result, ErrInvalid
@@ -184,13 +184,42 @@ func (s *Store) ComposeMerge(ctx context.Context, a Actor, library string, input
 	if err = s.validateProfileContent(descriptor); err != nil {
 		return result, err
 	}
+	for i := range sources {
+		source := &sources[i]
+		source.selection.CandidateCommit = source.branch.Head
+		if len(source.selection.DeferredPaths) > 0 {
+			// The full head must not become an ancestor of accepted main: doing so
+			// would make ordinary reprepare treat deferred changes as consumed.
+			locations := map[string]string{}
+			for _, entry := range source.base.Entries {
+				locations[entry.Path+"\x00"+entry.Digest] = source.branch.InitialBase
+			}
+			for _, entry := range source.full.Entries {
+				locations[entry.Path+"\x00"+entry.Digest] = source.branch.Head
+			}
+			if err = s.materializeSnapshot(ctx, repo, library, source.selected, locations); err != nil {
+				return result, err
+			}
+			byPath := map[string]manifest.Entry{}
+			for _, entry := range source.selected.Entries {
+				byPath[entry.Path] = entry
+			}
+			source.selection.CandidateCommit, err = repo.Commit(ctx, source.selected, []string{source.branch.InitialBase}, "Select changes from branch "+source.branch.ID+" at "+source.branch.Head, func(path string) (io.ReadCloser, error) {
+				return os.OpenFile(s.blobPath(byPath[path].Digest), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+			})
+			if err != nil {
+				return result, err
+			}
+		}
+	}
+
 	byPath := map[string]manifest.Entry{}
 	for _, entry := range current.Entries {
 		byPath[entry.Path] = entry
 	}
 	parents := []string{main}
 	for _, source := range sources {
-		parents = append(parents, source.branch.Head)
+		parents = append(parents, source.selection.CandidateCommit)
 	}
 	commit, err := repo.Commit(ctx, current, parents, "Prepare composed integration", func(path string) (io.ReadCloser, error) {
 		return os.OpenFile(s.blobPath(byPath[path].Digest), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
@@ -250,9 +279,9 @@ func (s *Store) ComposeMerge(ctx context.Context, a Actor, library string, input
 	return result, nil
 }
 
-func selectedDelta(base, full history.Snapshot, branch Branch, requested []string) (history.Snapshot, CompositionSelection, map[string]bool, error) {
+func selectedDelta(base, full history.Snapshot, branch Branch, requested []string) (history.Snapshot, CompositionSelection, error) {
 	if base.Profile != full.Profile || branch.InitialBase == "" {
-		return history.Snapshot{}, CompositionSelection{}, nil, ErrInvalid
+		return history.Snapshot{}, CompositionSelection{}, ErrInvalid
 	}
 	changes := compareEntries(base.Entries, full.Entries)
 	changed := map[string]bool{}
@@ -262,7 +291,7 @@ func selectedDelta(base, full history.Snapshot, branch Branch, requested []strin
 	selectedRoots := append([]string{}, requested...)
 	for _, path := range selectedRoots {
 		if manifest.ValidPath(path, true) != nil {
-			return history.Snapshot{}, CompositionSelection{}, nil, ErrInvalid
+			return history.Snapshot{}, CompositionSelection{}, ErrInvalid
 		}
 	}
 	if len(selectedRoots) == 0 {
@@ -280,7 +309,7 @@ func selectedDelta(base, full history.Snapshot, branch Branch, requested []strin
 		}
 	}
 	if len(selectedSet) == 0 {
-		return history.Snapshot{}, CompositionSelection{}, nil, ErrInvalid
+		return history.Snapshot{}, CompositionSelection{}, ErrInvalid
 	}
 	baseEntries := map[string]manifest.Entry{}
 	fullEntries := map[string]manifest.Entry{}
@@ -304,7 +333,7 @@ func selectedDelta(base, full history.Snapshot, branch Branch, requested []strin
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
 	selected := history.Snapshot{Profile: base.Profile, Entries: entries}
 	if err := selected.Validate(); err != nil {
-		return history.Snapshot{}, CompositionSelection{}, nil, err
+		return history.Snapshot{}, CompositionSelection{}, err
 	}
 	selectedPaths := make([]string, 0, len(selectedSet))
 	deferred := make([]string, 0, len(changed)-len(selectedSet))
@@ -317,13 +346,13 @@ func selectedDelta(base, full history.Snapshot, branch Branch, requested []strin
 	}
 	sort.Strings(selectedPaths)
 	sort.Strings(deferred)
-	return selected, CompositionSelection{BranchID: branch.ID, Head: branch.Head, SelectedPaths: selectedPaths, DeferredPaths: deferred}, selectedSet, nil
+	return selected, CompositionSelection{BranchID: branch.ID, Head: branch.Head, SelectedPaths: selectedPaths, DeferredPaths: deferred}, nil
 }
 
 func identitySelectionsFromSources(sources []compositionSource) []evolution.PreparedSelection {
 	result := make([]evolution.PreparedSelection, 0, len(sources))
 	for _, source := range sources {
-		result = append(result, evolution.PreparedSelection{BranchID: source.selection.BranchID, Head: source.selection.Head, SelectedPaths: append([]string{}, source.selection.SelectedPaths...), DeferredPaths: append([]string{}, source.selection.DeferredPaths...)})
+		result = append(result, evolution.PreparedSelection{CandidateCommit: source.selection.CandidateCommit, BranchID: source.selection.BranchID, Head: source.selection.Head, SelectedPaths: append([]string{}, source.selection.SelectedPaths...), DeferredPaths: append([]string{}, source.selection.DeferredPaths...)})
 	}
 	return result
 }
@@ -331,7 +360,7 @@ func identitySelectionsFromSources(sources []compositionSource) []evolution.Prep
 func selectionsFromSources(sources []compositionSource) []CompositionSelection {
 	result := make([]CompositionSelection, 0, len(sources))
 	for _, source := range sources {
-		result = append(result, CompositionSelection{BranchID: source.selection.BranchID, Head: source.selection.Head, SelectedPaths: append([]string{}, source.selection.SelectedPaths...), DeferredPaths: append([]string{}, source.selection.DeferredPaths...)})
+		result = append(result, CompositionSelection{CandidateCommit: source.selection.CandidateCommit, BranchID: source.selection.BranchID, Head: source.selection.Head, SelectedPaths: append([]string{}, source.selection.SelectedPaths...), DeferredPaths: append([]string{}, source.selection.DeferredPaths...)})
 	}
 	return result
 }

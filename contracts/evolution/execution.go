@@ -166,10 +166,11 @@ type PreparedIdentity struct {
 // integration. Deferred changes remain linked to their source branch instead
 // of being silently represented as part of the integrated result.
 type PreparedSelection struct {
-	BranchID      string   `json:"branch_id"`
-	Head          string   `json:"head"`
-	SelectedPaths []string `json:"selected_paths"`
-	DeferredPaths []string `json:"deferred_paths,omitempty"`
+	CandidateCommit string   `json:"candidate_commit"`
+	BranchID        string   `json:"branch_id"`
+	Head            string   `json:"head"`
+	SelectedPaths   []string `json:"selected_paths"`
+	DeferredPaths   []string `json:"deferred_paths,omitempty"`
 }
 type Branch struct {
 	ID            string     `json:"id"`

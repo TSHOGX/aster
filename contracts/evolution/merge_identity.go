@@ -47,7 +47,7 @@ func (c CheckRequirement) Validate() error {
 }
 
 // ApprovalDigest binds the complete integration result, ordered Git parents and
-// current policy. Check order is cosmetic; source order defines merge parents.
+// current policy. Check order is cosmetic; source order defines candidate-parent order.
 func (p PreparedIdentity) ApprovalDigest() (string, error) {
 	if !manifest.ValidID(p.LibraryID) || p.PolicyRevision < 1 || !manifest.ValidDigest(p.PolicyDigest) || len(p.Sources) == 0 {
 		return "", fmt.Errorf("incomplete prepared identity")
@@ -73,15 +73,22 @@ func (p PreparedIdentity) ApprovalDigest() (string, error) {
 		return "", fmt.Errorf("prepared selections do not cover sources")
 	}
 	selections := map[string]bool{}
+	selectedHeads := map[string]bool{}
+	candidates := map[string]bool{p.Main.CommitID: true}
 	for i := range p.Selections {
 		selection := &p.Selections[i]
-		if !manifest.ValidID(selection.BranchID) || !ObjectID(selection.Head) || !sourceHeads[selection.Head] || len(selection.SelectedPaths) == 0 {
+		if !manifest.ValidID(selection.BranchID) || !ObjectID(selection.Head) || !sourceHeads[selection.Head] || !ObjectID(selection.CandidateCommit) || len(selection.SelectedPaths) == 0 {
 			return "", fmt.Errorf("invalid prepared selection")
 		}
-		if selections[selection.BranchID] {
+		if selections[selection.BranchID] || selectedHeads[selection.Head] || candidates[selection.CandidateCommit] {
 			return "", fmt.Errorf("duplicate prepared selection")
 		}
 		selections[selection.BranchID] = true
+		selectedHeads[selection.Head] = true
+		candidates[selection.CandidateCommit] = true
+		if (len(selection.DeferredPaths) == 0) != (selection.CandidateCommit == selection.Head) || len(selection.DeferredPaths) > 0 && sourceHeads[selection.CandidateCommit] {
+			return "", fmt.Errorf("selected candidate ancestry does not match deferred work")
+		}
 		seenPaths := map[string]bool{}
 		for _, path := range selection.SelectedPaths {
 			if manifest.ValidPath(path, true) != nil || seenPaths[path] {
@@ -125,4 +132,23 @@ func (p PreparedIdentity) ApprovalDigest() (string, error) {
 		return "", err
 	}
 	return Digest(raw), nil
+}
+
+// ParentCommits returns the actual Git parents of a validated prepared identity.
+// Source provenance keeps the full head; partial selections consume only their
+// candidate, leaving the original source eligible for later preparation.
+func (p PreparedIdentity) ParentCommits() []string {
+	candidates := map[string]string{}
+	for _, selection := range p.Selections {
+		candidates[selection.Head] = selection.CandidateCommit
+	}
+	parents := []string{p.Main.CommitID}
+	for _, source := range p.Sources {
+		parent := source.CommitID
+		if candidate, ok := candidates[parent]; ok {
+			parent = candidate
+		}
+		parents = append(parents, parent)
+	}
+	return parents
 }

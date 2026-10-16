@@ -13,7 +13,6 @@ type View = { evaluations: Evaluation[]; evaluation: string; digest: string; ide
 type Change = { path: string; change: string };
 type FilePreview = { commit_id: string; entry: Entry; text?: string; preview: string };
 type CompositionOption = { branch: Branch; changes: BranchChange[] };
-type CompositionSelection = { branch_id: string; head: string; selected_paths: string[]; deferred_paths?: string[] };
 export function IntegrationReview({ branch }: { branch: Branch }) {
   const tr = useT();
   const studio = useStudio();
@@ -34,7 +33,7 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
   const [release, setRelease] = useState<Version>();
   const [composition, setComposition] = useState<CompositionOption[]>([]);
   const [selectedComposition, setSelectedComposition] = useState<Record<string, string[]>>({});
-  const [compositionResult, setCompositionResult] = useState<CompositionSelection[]>([]);
+  const compositionResult = view?.identity.selections ?? [];
   const root = `/libraries/${encodeURIComponent(branch.library_id)}`;
   const readRequest = useRef<AbortController>(undefined), running = useRef(false), mounted = useRef(true);
   const [reloadRevision, setReloadRevision] = useState(0);
@@ -43,7 +42,7 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
   const unavailable = "Integration evidence is unavailable. Reload or check Volume access.";
   const hideEvidence = (preserveWorkspace = false) => {
     evidenceRevision.current++; setRecoveryReady(false);
-    setView(undefined); setChanges([]); setNext(""); setFile(undefined); setComposition([]); setCompositionResult([]); setRelease(undefined); if (!preserveWorkspace) { setConflicts([]); setWorkspace(""); }
+    setView(undefined); setChanges([]); setNext(""); setFile(undefined); setComposition([]); setRelease(undefined); if (!preserveWorkspace) { setConflicts([]); setWorkspace(""); }
   };
   const beginRead = () => { readRequest.current?.abort(); const abort = new AbortController(); readRequest.current = abort; return abort; };
   const retained = useRef<IntegrationCommand>(undefined), hydrated = useRef(false);
@@ -180,8 +179,8 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
       return;
     }
     if (command.action === "prepare" || command.action === "compose") {
-      const prepared = result as PreparedIntegration & { selections?: CompositionSelection[] };
-      setReplacementWorkspace(""); setCompositionResult(prepared.selections ?? []);
+      const prepared = result as PreparedIntegration;
+      setReplacementWorkspace("");
       setConflicts(prepared.conflicts ?? []); setWorkspace(prepared.conflict_workspace_id ?? "");
       url.searchParams.delete("publication");
       if (prepared.conflict_workspace_id) { url.searchParams.set("conflict", prepared.conflict_workspace_id); url.searchParams.delete("integration"); }
@@ -219,7 +218,9 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     const sources = composition.filter(option => (selectedComposition[option.branch.id] ?? []).length > 0).map(option => ({ branch_id: option.branch.id, expected_head: option.branch.head, selected_paths: selectedComposition[option.branch.id] ?? [] }));
     if (!sources.length) return;
     const [main, policy] = await Promise.all([branchAPI.main(branch.library_id), api<{ revision: number }>(`${root}/merge-policy`)]);
-    if (mounted.current) await start("compose", "", { expected_main: main.commit_id, expected_policy_revision: policy.revision, branches: sources });
+    if (!mounted.current) return;
+    setView(undefined); setChanges([]); setNext(""); setFile(undefined); setRelease(undefined);
+    await start("compose", "", { expected_main: main.commit_id, expected_policy_revision: policy.revision, branches: sources });
   };
   const inspect = async (change: Change) => {
     if (!view) return;
@@ -270,8 +271,15 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
         </label>)}
       </fieldset>)}
       <button disabled={mutationBlocked || conflictBlocked || composition.every(option => (selectedComposition[option.branch.id] ?? []).length === 0)} onClick={() => void run(compose)}>{tr("Prepare selected composition")}</button>
-      {compositionResult.length > 0 && <ul aria-label={tr("Composition selection result")}>{compositionResult.map(selection => <li key={selection.branch_id}><code>{selection.branch_id}</code>: {selection.selected_paths.join(", ") || tr("No paths selected")}{selection.deferred_paths?.length ? ` · ${tr("Deferred")}: ${selection.deferred_paths.join(", ")}` : ""}</li>)}</ul>}
     </section>}
+    {compositionResult.length > 0 && <ul aria-label={tr("Composition selection result")}>{compositionResult.map(selection => <li key={selection.branch_id}>
+        <p><code>{selection.branch_id}</code></p>
+        <p>{tr("Selected paths")}: {selection.selected_paths.join(", ")}</p>
+        <p>{tr("Deferred")}: {selection.deferred_paths?.join(", ") || tr("None")}</p>
+        <p><a href={`?${new URLSearchParams({ branch: selection.branch_id, view: "history", history_head: selection.head, integration: view!.digest })}`}>{tr("Original source history")}</a> · <code>{selection.head}</code></p>
+        <p><a href={`?${new URLSearchParams({ branch: selection.branch_id, view: "history", history_head: selection.candidate_commit, integration: view!.digest })}`}>{tr("Selected candidate history")}</a> · <code>{selection.candidate_commit}</code></p>
+        {!!selection.deferred_paths?.length && <p>{tr("Deferred changes remain on the original branch. Prepare that branch again to review them separately.")}</p>}
+      </li>)}</ul>}
     {error && <p role="alert">{tr(error)}</p>}{storageError && <p role="alert">{tr(storageError)}</p>}
     {recoveryReady && <>
       {invalidRecovery && <p role="alert">{tr("Local integration recovery is invalid. Discard it before starting another operation.")}</p>}

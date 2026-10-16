@@ -32,3 +32,38 @@ func TestApprovalBindsIntegratedIdentity(t *testing.T) {
 		t.Fatal("cross-library parent accepted")
 	}
 }
+
+func TestPartialSelectionBindsCandidateAncestryAndSourceProvenance(t *testing.T) {
+	p := preparedFixture()
+	candidate := strings.Repeat("d", 64)
+	p.Selections = []PreparedSelection{{BranchID: "source", Head: p.Sources[0].CommitID, CandidateCommit: candidate, SelectedPaths: []string{"selected"}, DeferredPaths: []string{"deferred"}}}
+	digest, err := p.ApprovalDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parents := p.ParentCommits()
+	if len(parents) != 2 || parents[0] != p.Main.CommitID || parents[1] != candidate {
+		t.Fatal("full source was used as parent", parents)
+	}
+	q := p
+	q.Selections = append([]PreparedSelection{}, p.Selections...)
+	q.Selections[0].CandidateCommit = strings.Repeat("e", 64)
+	changed, err := q.ApprovalDigest()
+	if err != nil || changed == digest {
+		t.Fatal("candidate not bound to approval", err)
+	}
+	for _, candidate := range []string{"", p.Main.CommitID, p.Sources[0].CommitID} {
+		q.Selections[0].CandidateCommit = candidate
+		if _, err := q.ApprovalDigest(); err == nil {
+			t.Fatal("invalid partial candidate accepted", candidate)
+		}
+	}
+	q.Selections[0].CandidateCommit = p.Sources[0].CommitID
+	q.Selections[0].DeferredPaths = nil
+	if _, err := q.ApprovalDigest(); err != nil {
+		t.Fatal("full selection should retain source ancestry", err)
+	}
+	if q.ParentCommits()[1] != p.Sources[0].CommitID {
+		t.Fatal("full source ancestry lost")
+	}
+}

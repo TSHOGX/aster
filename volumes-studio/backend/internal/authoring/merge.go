@@ -96,11 +96,12 @@ func (s *Store) Merge(ctx context.Context, a Actor, library string, input MergeI
 	if err != nil {
 		return result, err
 	}
-	if len(parents) != len(prepared.Sources)+1 || parents[0] != prepared.Main.CommitID {
+	expectedParents := prepared.ParentCommits()
+	if len(parents) != len(expectedParents) {
 		return result, ErrInvalid
 	}
-	for i, source := range prepared.Sources {
-		if parents[i+1] != source.CommitID {
+	for i, expected := range expectedParents {
+		if parents[i] != expected {
 			return result, ErrInvalid
 		}
 	}

@@ -133,7 +133,11 @@ branch until completed or canceled; another branch can still be committed.
    version without repeating merge or creating another publication.
    When several branches contain independent work, **Compose selected changes**
    lists each immutable branch head. Select only the paths to review together;
-   omitted paths are shown as deferred and remain on their source branch. The
+   omitted paths are shown as deferred and remain on their source branch. This
+   selection survives reload. **Original source history** opens the frozen source;
+   **Selected candidate history** opens the commit used for the selected changes.
+   After accepting a partial selection, prepare the original branch again to review
+   its deferred changes separately, with fresh checks and approval. The
    prepared result freezes every selected head and path, so later branch edits do
    not change the review.
 4. If conflicts appear, open each path in **Resolve merge conflicts**. Compare the

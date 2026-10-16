@@ -172,6 +172,9 @@
         "branch_id": {
           "type": "string"
         },
+        "candidate_commit": {
+          "type": "string"
+        },
         "deferred_paths": {
           "items": {
             "type": "string"
@@ -195,6 +198,7 @@
         }
       },
       "required": [
+        "candidate_commit",
         "branch_id",
         "head",
         "selected_paths"

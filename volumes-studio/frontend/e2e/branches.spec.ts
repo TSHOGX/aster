@@ -146,7 +146,9 @@ test("non-admin experts enter with scoped grants and cannot create or merge libr
   } finally {await context.close();}
 });
 
-test("browser composes selected committed paths across branches", async ({ page }) => {
+for (const width of [390, 1440]) test(`browser composes selected paths and later accepts deferred work at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 1000 });
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   const login = await page.request.post(`${origin}/api/auth/login`, { headers: { Origin: origin }, data: { username: "studio-admin", password: "browser-fixture-password" } });
   expect(login.ok()).toBeTruthy();
   await page.goto("/volumes-studio/");
@@ -156,7 +158,7 @@ test("browser composes selected committed paths across branches", async ({ page 
   const created = await page.request.post("/volumes-studio/api/v1/libraries", { headers, data: { request_id: crypto.randomUUID(), name: `Composition ${crypto.randomUUID()}` } });
   expect(created.ok(), await created.text()).toBeTruthy();
   const library = await created.json();
-  for (const action of ["volume.read", "volume.author", "volume.review", "volume.merge"]) {
+  for (const action of ["volume.read", "volume.author", "volume.review", "volume.merge", "volume.publish"]) {
     const grant = await page.request.post("/api/admin/studio-grants", { headers: { Origin: origin }, data: { request_id: crypto.randomUUID(), kind: "account", subject_id: session.subject, library_id: library.id, action, effect: "allow", expected_revision: 0 } });
     expect(grant.ok(), await grant.text()).toBeTruthy();
   }
@@ -184,10 +186,61 @@ test("browser composes selected committed paths across branches", async ({ page 
   const secondSet = composition.locator("fieldset").filter({ hasText: "Deferred source" });
   await secondSet.getByRole("checkbox").check();
   await composition.getByRole("button", { name: "Prepare selected composition", exact: true }).click();
-  await expect(composition.getByRole("list", { name: "Composition selection result", exact: true })).toContainText("keep.txt");
+  await expect(page.getByRole("list", { name: "Composition selection result", exact: true })).toContainText("keep.txt");
   await expect(page.getByText("Ready for expert review", { exact: false })).toBeVisible();
   expect(firstCheckpoint.commit_id).toMatch(/^[a-f0-9]{64}$/);
   expect(secondCheckpoint.commit_id).toMatch(/^[a-f0-9]{64}$/);
+  const review = page.getByRole("region", { name: "Integration review", exact: true });
+  const digest = new URL(page.url()).searchParams.get("integration")!;
+  const get = async (suffix: string) => { const response = await page.request.get(root + suffix); expect(response.ok(), await response.text()).toBe(true); return response.json(); };
+  const prepared = await get(`/integrations/${encodeURIComponent(digest)}`);
+  const selection = prepared.identity.selections.find((item: {branch_id:string}) => item.branch_id === first.id);
+  expect(selection.head).toBe(firstCheckpoint.commit_id); expect(selection.candidate_commit).not.toBe(selection.head);
+  expect(selection.deferred_paths).toEqual(["keep.txt"]);
+  await page.reload();
+  const lineage = page.getByRole("list", { name: "Composition selection result", exact: true });
+  await expect(lineage).toContainText("keep.txt");
+  const original = lineage.locator("li").filter({ hasText: first.id });
+  await original.getByRole("link", {name:"Selected candidate history",exact:true}).press("Enter");
+  await expect(page.getByLabel("History head", {exact:true})).toHaveValue(selection.candidate_commit);
+  await original.getByRole("link", {name:"Original source history",exact:true}).press("Enter");
+  await expect(page.getByLabel("History head", {exact:true})).toHaveValue(firstCheckpoint.commit_id);
+  expect(new URL(page.url()).searchParams.get("integration")).toBe(digest);
+  const account = await (await page.request.get("/api/auth/session")).json();
+  const language = async (value: string) => {
+    const previous = await (await page.request.get("/api/me/preferences")).json();
+    expect((await page.request.patch("/api/me/preferences", { headers: { Origin: origin }, data: { expected_revision: previous.revision, language: value } })).ok()).toBe(true);
+    await page.evaluate(id => window.dispatchEvent(new StorageEvent("storage", {key:`account-appearance:${id}`})), account.id);
+    await expect(page.locator("html")).toHaveAttribute("lang", value === "zh" ? "zh-Hans" : "en");
+  };
+  await language("zh");
+  await expect(page.getByRole("link", {name:"原始源分支历史",exact:true}).first()).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await page.screenshot({path:test.info().outputPath(`partial-lineage-${width}.png`),fullPage:true});
+  await language("en");
+  await review.getByLabel("Review rationale", {exact:true}).fill("Accept selected changes; keep.txt remains deferred.");
+  await review.getByRole("button", {name:"Approve integration",exact:true}).click();
+  await review.getByRole("button", {name:"Merge approved integration",exact:true}).click();
+  await expect(review).toContainText("Acceptance is complete.");
+  const partialMain = (await get("/main")).commit_id;
+  expect((await page.request.get(`${root}/commits/${partialMain}/content?path=keep.txt`)).status()).toBe(404);
+  await review.getByRole("button", {name:"Prepare integration",exact:true}).click();
+  await expect(review.getByRole("button", {name:"added: keep.txt",exact:true})).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("integration")).not.toBe(digest);
+  await expect(review.getByRole("button", {name:"Merge approved integration",exact:true})).toBeDisabled();
+  await review.getByRole("button", {name:"Approve integration",exact:true}).click();
+  await review.getByRole("button", {name:"Merge approved integration",exact:true}).click();
+  await expect(review).toContainText("Acceptance is complete.");
+  const accepted = (await get("/main")).commit_id;
+  for (const [path, content] of Object.entries({"keep.txt":"defer this path","selected.txt":"select this path","other.txt":"other source"})) {
+    const response = await page.request.get(`${root}/commits/${accepted}/content?path=${path}`);
+    expect(response.ok()).toBe(true); expect(await response.text()).toBe(content);
+  }
+  const historical = await get(`/integrations/${encodeURIComponent(digest)}`);
+  expect(historical.identity).toEqual(prepared.identity);
+  expect(historical.reviews).toHaveLength(1);
+  expect(errors).toEqual([]);
+
 });
 
 test("browser explicitly rebinds a stale prepared policy", async ({ page }) => {

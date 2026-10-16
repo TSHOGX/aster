@@ -42,11 +42,16 @@ type evaluationProcessCase struct {
 	PathPolicy        bool
 	StaleMain         bool
 	Replacement       bool
+	PartialSelection  bool
 	Permissions       bool
 }
 
 func TestRequiredEvaluationRealProcesses(t *testing.T) {
 	evaluationPolicyProcesses(t, evaluationProcessCase{Mode: "required", Outcome: "pass"})
+}
+
+func TestPartialCompositionEvaluationRealProcesses(t *testing.T) {
+	evaluationPolicyProcesses(t, evaluationProcessCase{Mode: "required", Outcome: "pass", PartialSelection: true})
 }
 
 func TestEvaluationReplacementRealProcesses(t *testing.T) {
@@ -712,9 +717,21 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 	var checkpoint struct {
 		Commit string `json:"commit_id"`
 	}
-	post("/branches/"+branch.ID+"/commits", map[string]any{"request_id": "commit", "expected_revision": 3, "expected_head": branch.Head, "message": "Reviewed skill"}, &checkpoint)
+	draftRevision := 3
+	if test.PartialSelection {
+		post("/branches/"+branch.ID+"/draft/text", map[string]any{"request_id": "deferred", "expected_revision": draftRevision, "expected_head": branch.Head, "path": "deferred.txt", "text": "Deferred source work"}, nil)
+		draftRevision++
+	}
+	post("/branches/"+branch.ID+"/commits", map[string]any{"request_id": "commit", "expected_revision": draftRevision, "expected_head": branch.Head, "message": "Reviewed skill"}, &checkpoint)
 	var prepared evaluationProcessPrepared
-	post("/integrations/prepare", map[string]any{"request_id": "prepare", "branch_id": branch.ID, "expected_head": checkpoint.Commit, "expected_main": main.CommitID, "expected_policy_revision": 1}, &prepared)
+	if test.PartialSelection {
+		post("/integrations/compose", map[string]any{"request_id": "partial", "expected_main": main.CommitID, "expected_policy_revision": 1, "branches": []any{map[string]any{"branch_id": branch.ID, "expected_head": checkpoint.Commit, "selected_paths": []string{"skills/derived"}}}}, &prepared)
+		if len(prepared.Identity.Selections) != 1 || prepared.Identity.Selections[0].CandidateCommit == checkpoint.Commit || prepared.Identity.Selections[0].Head != checkpoint.Commit || len(prepared.Identity.Selections[0].DeferredPaths) != 1 || prepared.Identity.Selections[0].DeferredPaths[0] != "deferred.txt" {
+			t.Fatal("partial identity lost original source or candidate ancestry", prepared)
+		}
+	} else {
+		post("/integrations/prepare", map[string]any{"request_id": "prepare", "branch_id": branch.ID, "expected_head": checkpoint.Commit, "expected_main": main.CommitID, "expected_policy_revision": 1}, &prepared)
+	}
 	expectedChecks := 1
 	if test.Mode == "disabled" {
 		expectedChecks = 0
@@ -938,6 +955,17 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 	}
 	var accepted evolution.ContentRef
 	get("/main", &accepted)
+	if test.PartialSelection {
+		status, _ := call("GET", libraryRoot+"/commits/"+accepted.CommitID+"/content?path=deferred.txt", nil)
+		if status != 404 {
+			t.Fatal("deferred content entered accepted partial result", status)
+		}
+		status, raw := call("GET", libraryRoot+"/commits/"+checkpoint.Commit+"/content?path=deferred.txt", nil)
+		if status != 200 || string(raw) != "Deferred source work" {
+			t.Fatal("original deferred source was lost", status, string(raw))
+		}
+	}
+
 	expectedCommit := main.CommitID
 	if canMerge {
 		expectedCommit = prepared.Identity.Result.CommitID

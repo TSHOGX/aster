@@ -71,7 +71,7 @@ func TestComposeMergeSelectsChangesAcrossBranchesAndBindsDeferredWork(t *testing
 		t.Fatal("deferred change entered composed tree")
 	}
 	parents, err := repo.Parents(ctx, prepared.Identity.Result.CommitID)
-	if err != nil || len(parents) != 3 || parents[1] != first.Head || parents[2] != second.Head {
+	if err != nil || len(parents) != 3 || parents[1] == first.Head || parents[1] != prepared.Identity.Selections[0].CandidateCommit || parents[2] != second.Head {
 		t.Fatal("composed commit parents lost", parents, err)
 	}
 	replayed, err := s.ComposeMerge(ctx, testActor, l.ID, ComposeInput{

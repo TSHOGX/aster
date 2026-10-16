@@ -1,4 +1,8 @@
 export const ZH: Record<string, string> = {
+  "Selected paths": "已选路径",
+  "Original source history": "原始源分支历史",
+  "Selected candidate history": "已选候选历史",
+  "Deferred changes remain on the original branch. Prepare that branch again to review them separately.": "延后更改保留在原始分支上。再次准备该分支可单独审核这些更改。",
   "Check integration request fields before continuing.": "继续前请检查集成请求字段。",
   "Local integration recovery is invalid. Discard it before starting another operation.": "本地集成恢复记录无效。开始其他操作前，请先丢弃该记录。",
   "Pending integration operation": "待确认的集成操作",
@@ -226,7 +230,6 @@ export const ZH: Record<string, string> = {
   "No committed changes": "没有已提交的更改",
   "Prepare selected composition": "准备选定的组合",
   "Composition selection result": "组合选择结果",
-  "No paths selected": "未选择路径",
   "Deferred": "延后",
 
   "Commit saved draft": "提交已保存的草稿",
