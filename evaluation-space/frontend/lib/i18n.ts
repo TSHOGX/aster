@@ -92,7 +92,7 @@ const zh = {
   "Select a group": "选择团队", "Each group keeps its own configuration and permissions.": "每个团队分别管理自己的配置和权限。",
   "Configuration": "配置", "Open configuration": "打开配置", "Desired revision": "期望版本", "Active revision": "生效版本", "Automatic optimization": "自动优化",
   "On": "开启", "Off": "关闭", "Not configured": "尚未配置", "Draft": "草稿", "Activating": "正在激活", "Active": "已生效", "Activation failed": "激活失败", "Discarding": "正在放弃", "Discarded": "已放弃",
-  "Edit and publish workflows": "编辑和发布工作流",
+  "Edit and publish workflows": "编辑和发布工作流", "Capability": "能力", "Effective access": "有效访问", "Skip to main content": "跳转到主要内容",
   "Recent runs": "最近运行", "Recent evaluations": "最近评估", "No runs yet.": "尚无运行。", "No evaluations yet.": "尚无评估。", "Runs are unavailable. Retry when the service is restored.": "运行服务不可用，请在服务恢复后重试。", "Evaluations are unavailable. Retry when the service is restored.": "评估服务不可用，请在服务恢复后重试。", "Your permissions": "您的权限", "Read configuration": "读取配置", "Manage configuration": "管理配置", "Operate runs": "操作运行", "Read source evidence": "读取源证据",
   "Allowed": "允许", "Not granted": "未授权", "Configuration access does not grant source evidence access.": "配置访问权限不包含源证据访问权限。",
   "No active configuration. Ask a configuration manager to complete setup.": "尚无生效配置。请联系配置管理员完成设置。",

@@ -382,6 +382,31 @@ for (const variant of [
   });
 }
 
+test("role matrix and keyboard skip link remain usable on a narrow viewport", async ({ page: admin, browser }) => {
+  const { beta, user } = await provision(admin);
+  const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: "en-US", viewport: { width: 390, height: 900 } });
+  const page = await context.newPage();
+  try {
+    await login(page, user);
+    await page.goto(`/evaluation-space/groups/${beta.id}/`);
+    await page.getByRole("link", { name: "Sign in", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
+    await page.keyboard.press("Tab");
+    const skip = page.getByRole("link", { name: "Skip to main content", exact: true });
+    await expect(skip).toBeFocused();
+    await skip.press("Enter");
+    await expect(page.locator("#main-content")).toBeFocused();
+    const matrix = page.locator("section[aria-labelledby='permissions-heading']").getByRole("table");
+    await expect(matrix.getByRole("row")).toHaveCount(6);
+    await expect(matrix.getByRole("row", { name: "Read configuration Allowed" })).toBeVisible();
+    await expect(matrix.getByRole("row", { name: "Manage configuration Allowed" })).toBeVisible();
+    await expect(matrix.getByRole("row", { name: "Edit and publish workflows Allowed" })).toBeVisible();
+    await expect(matrix.getByRole("row", { name: "Operate runs Allowed" })).toBeVisible();
+    await expect(matrix.getByRole("row", { name: "Read source evidence Not granted" })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  } finally { await context.close(); }
+});
+
 for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", width: 390 }]) {
   test(`run inspector waits for cooperative pause ${variant.locale}`, async ({ page: admin, browser }, info) => {
     const { beta, user } = await provision(admin);
