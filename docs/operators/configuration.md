@@ -268,7 +268,10 @@ configuration revision/status and separate management, execution and evidence
 permissions. Source evidence still requires an explicit grant for administrators.
 It does not expose the private catalog or worker APIs.
 Workflow editor routes under `/evaluation-space/groups/{group}/workflows/{workflow}`
-use the same client-bound central grant. Draft saves retain bounded typed graph JSON, including incomplete connections or
+use the same client-bound central grant. Drafts belong to the group that creates
+them; read, history, save and publication require that group. Workflow IDs are
+globally stable: editing a catalog workflow starts a new draft with a fresh ID,
+and cannot claim or overwrite another group’s draft. Draft saves retain bounded typed graph JSON, including incomplete connections or
 unfinished node settings, and a separate layout object with independent revisions.
 Validate and Publish require a complete executable graph. Validation reports the
 affected field and selects its node for correction; it does not execute the graph

@@ -26,23 +26,23 @@ func TestWorkflowDraftCASAndPublishSeparation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	draft, err := s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, Workflow: workflow})
+	draft, err := s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: workflow.ID, Workflow: workflow})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if draft.Revision != 1 {
 		t.Fatal(draft)
 	}
-	if _, err = s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 0, Workflow: workflow}); err != ErrConflict {
+	if _, err = s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 0, Workflow: workflow}); err != ErrConflict {
 		t.Fatal("stale draft", err)
 	}
 	workflowPrompt(workflow).Text = "changed {{corpus}}"
 	workflowPrompt(workflow).Digest = evolution.Digest([]byte(workflowPrompt(workflow).Text))
-	next, err := s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 1, ExpectedLayoutRevision: 1, Workflow: workflow})
+	next, err := s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 1, ExpectedLayoutRevision: 1, Workflow: workflow})
 	if err != nil || next.Revision != 2 {
 		t.Fatal(next, err)
 	}
-	read, err := s.WorkflowDraft(ctx, workflow.ID)
+	read, err := s.WorkflowDraft(ctx, "team", workflow.ID)
 	if err != nil || read.Revision != 2 || workflowPrompt(read.Workflow).Text != "changed {{corpus}}" {
 		t.Fatal(read, err)
 	}
@@ -66,11 +66,11 @@ func TestWorkflowLayoutRevisionDoesNotChangeExecutableContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, Layout: json.RawMessage(`{"x":1}`), Workflow: workflow})
+	_, err = s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: workflow.ID, Layout: json.RawMessage(`{"x":1}`), Workflow: workflow})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 1, ExpectedLayoutRevision: 1, Layout: json.RawMessage(`{"x":2}`), Workflow: workflow})
+	second, err := s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 1, ExpectedLayoutRevision: 1, Layout: json.RawMessage(`{"x":2}`), Workflow: workflow})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,10 +80,10 @@ func TestWorkflowLayoutRevisionDoesNotChangeExecutableContent(t *testing.T) {
 	if string(second.Layout) != `{"x":2}` {
 		t.Fatal(string(second.Layout))
 	}
-	if _, err = s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 1, ExpectedLayoutRevision: 1, Layout: json.RawMessage(`{"x":3}`), Workflow: workflow}); err != ErrConflict {
+	if _, err = s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 1, ExpectedLayoutRevision: 1, Layout: json.RawMessage(`{"x":3}`), Workflow: workflow}); err != ErrConflict {
 		t.Fatal("layout stale CAS", err)
 	}
-	ref, err := s.PublishWorkflowDraft(ctx, workflow.ID, second.Revision)
+	ref, err := s.PublishWorkflowDraft(ctx, "team", workflow.ID, second.Revision)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,11 +109,11 @@ func TestWorkflowLayoutStrictBoundedObject(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, layout := range []json.RawMessage{json.RawMessage(`[]`), json.RawMessage(`{"x":1,"x":2}`), json.RawMessage(strings.Repeat("x", evolution.MaxDocumentBytes))} {
-		if _, err = s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, Layout: layout, Workflow: workflow}); err == nil {
+		if _, err = s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: workflow.ID, Layout: layout, Workflow: workflow}); err == nil {
 			t.Fatal("invalid layout accepted")
 		}
 	}
-	if _, err = s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, Workflow: workflow}); err != nil {
+	if _, err = s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: workflow.ID, Workflow: workflow}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.db.ExecContext(ctx, "DELETE FROM workflow_draft_revisions WHERE id=?", workflow.ID); err == nil {
@@ -148,23 +148,23 @@ func TestIncompleteWorkflowDraftPersistsButCannotPublish(t *testing.T) {
 	}
 	edges := graph.Edges
 	graph.Edges = nil
-	draft, err := s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: graph.ID, Workflow: graph})
+	draft, err := s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: graph.ID, Workflow: graph})
 	if err != nil {
 		t.Fatal(err)
 	}
-	retained, err := s.WorkflowDraft(ctx, graph.ID)
+	retained, err := s.WorkflowDraft(ctx, "team", graph.ID)
 	if err != nil || len(retained.Workflow.Edges) != 0 {
 		t.Fatal("incomplete draft lost", retained, err)
 	}
-	if _, err = s.PublishWorkflowDraft(ctx, graph.ID, draft.Revision); err == nil {
+	if _, err = s.PublishWorkflowDraft(ctx, "team", graph.ID, draft.Revision); err == nil {
 		t.Fatal("disconnected draft published")
 	}
 	graph.Edges = edges
-	repaired, err := s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: graph.ID, Workflow: graph, ExpectedRevision: draft.Revision, ExpectedLayoutRevision: draft.LayoutRevision})
+	repaired, err := s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: graph.ID, Workflow: graph, ExpectedRevision: draft.Revision, ExpectedLayoutRevision: draft.LayoutRevision})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref, err := s.PublishWorkflowDraft(ctx, graph.ID, repaired.Revision)
+	ref, err := s.PublishWorkflowDraft(ctx, "team", graph.ID, repaired.Revision)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestIncompleteWorkflowDraftPersistsButCannotPublish(t *testing.T) {
 	if ref.Digest != evolution.Digest(canonical) {
 		t.Fatal("draft normalization changed executable identity", ref)
 	}
-	old, err := s.WorkflowDraftRevision(ctx, graph.ID, draft.Revision)
+	old, err := s.WorkflowDraftRevision(ctx, "team", graph.ID, draft.Revision)
 	if err != nil || len(old.Workflow.Edges) != 0 {
 		t.Fatal("repair rewrote incomplete history", old, err)
 	}

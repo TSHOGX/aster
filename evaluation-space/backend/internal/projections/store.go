@@ -45,8 +45,9 @@ CREATE TRIGGER IF NOT EXISTS retained_projection BEFORE DELETE ON projections BE
 CREATE TABLE workflow_draft_revisions(id TEXT NOT NULL,revision INTEGER NOT NULL CHECK(revision>0),body BLOB NOT NULL,layout_revision INTEGER NOT NULL,layout BLOB NOT NULL,PRIMARY KEY(id,revision,layout_revision));
 CREATE TRIGGER immutable_workflow_draft_history_revision BEFORE UPDATE ON workflow_draft_revisions BEGIN SELECT RAISE(ABORT,'immutable workflow draft revision'); END;
 CREATE TRIGGER retained_workflow_draft_revision BEFORE DELETE ON workflow_draft_revisions BEGIN SELECT RAISE(ABORT,'retain workflow draft history'); END;
-CREATE TABLE workflow_drafts(id TEXT PRIMARY KEY,revision INTEGER NOT NULL CHECK(revision>0),body BLOB NOT NULL,layout_revision INTEGER NOT NULL DEFAULT 0,layout BLOB NOT NULL DEFAULT '{}');
-CREATE TRIGGER immutable_workflow_draft_revision BEFORE UPDATE OF id ON workflow_drafts BEGIN SELECT RAISE(ABORT,'immutable workflow draft identity'); END;
+CREATE TABLE workflow_drafts(id TEXT PRIMARY KEY,group_id TEXT NOT NULL,revision INTEGER NOT NULL CHECK(revision>0),body BLOB NOT NULL,layout_revision INTEGER NOT NULL DEFAULT 0,layout BLOB NOT NULL DEFAULT '{}');
+CREATE TRIGGER immutable_workflow_draft_revision BEFORE UPDATE OF id,group_id ON workflow_drafts BEGIN SELECT RAISE(ABORT,'immutable workflow draft identity'); END;
+CREATE TRIGGER retained_workflow_draft_owner BEFORE DELETE ON workflow_drafts BEGIN SELECT RAISE(ABORT,'retain workflow ownership'); END;
 CREATE TABLE workflow_draft_publications(id TEXT NOT NULL,draft_revision INTEGER NOT NULL,revision INTEGER NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(id,draft_revision),UNIQUE(id,revision));
 CREATE TRIGGER immutable_draft_publication BEFORE UPDATE ON workflow_draft_publications BEGIN SELECT RAISE(ABORT,'immutable draft publication'); END;
 CREATE TRIGGER retained_draft_publication BEFORE DELETE ON workflow_draft_publications BEGIN SELECT RAISE(ABORT,'retain draft publication'); END;

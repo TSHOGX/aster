@@ -24,11 +24,11 @@ func TestPublishWorkflowDraftPinsNextImmutableRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	draft, err := s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, Workflow: workflow})
+	draft, err := s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: workflow.ID, Workflow: workflow})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref, err := s.PublishWorkflowDraft(ctx, workflow.ID, draft.Revision)
+	ref, err := s.PublishWorkflowDraft(ctx, "team", workflow.ID, draft.Revision)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,16 +36,16 @@ func TestPublishWorkflowDraftPinsNextImmutableRevision(t *testing.T) {
 		t.Fatal(ref)
 	}
 	firstRef := ref
-	if replay, e := s.PublishWorkflowDraft(ctx, workflow.ID, draft.Revision); e != nil || replay != ref {
+	if replay, e := s.PublishWorkflowDraft(ctx, "team", workflow.ID, draft.Revision); e != nil || replay != ref {
 		t.Fatal("stale draft republished", err)
 	}
 	workflowPrompt(workflow).Text = "changed {{corpus}}"
 	workflowPrompt(workflow).Digest = evolution.Digest([]byte(workflowPrompt(workflow).Text))
-	next, err := s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: draft.Revision, ExpectedLayoutRevision: draft.LayoutRevision, Workflow: workflow})
+	next, err := s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: draft.Revision, ExpectedLayoutRevision: draft.LayoutRevision, Workflow: workflow})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref, err = s.PublishWorkflowDraft(ctx, workflow.ID, next.Revision)
+	ref, err = s.PublishWorkflowDraft(ctx, "team", workflow.ID, next.Revision)
 	if err != nil || ref.Revision != 2 {
 		t.Fatal(ref, err)
 	}
@@ -78,7 +78,7 @@ func TestWorkflowPublicationConcurrentReplayAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	draft, err := s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, Workflow: workflow})
+	draft, err := s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: workflow.ID, Workflow: workflow})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestWorkflowPublicationConcurrentReplayAndRestart(t *testing.T) {
 	results := make(chan outcome, 2)
 	for i := 0; i < 2; i++ {
 		go func() {
-			ref, err := s.PublishWorkflowDraft(ctx, workflow.ID, draft.Revision)
+			ref, err := s.PublishWorkflowDraft(ctx, "team", workflow.ID, draft.Revision)
 			results <- outcome{ref, err}
 		}()
 	}
@@ -97,7 +97,7 @@ func TestWorkflowPublicationConcurrentReplayAndRestart(t *testing.T) {
 	if first.err != nil || second.err != nil || first.ref != second.ref {
 		t.Fatal(first, second)
 	}
-	layout, err := s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 1, ExpectedLayoutRevision: 1, Layout: []byte(`{"x":5}`), Workflow: workflow})
+	layout, err := s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 1, ExpectedLayoutRevision: 1, Layout: []byte(`{"x":5}`), Workflow: workflow})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestWorkflowPublicationConcurrentReplayAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	replay, err := s.PublishWorkflowDraft(ctx, workflow.ID, 1)
+	replay, err := s.PublishWorkflowDraft(ctx, "team", workflow.ID, 1)
 	if err != nil || replay != first.ref {
 		t.Fatal(replay, err)
 	}
@@ -121,7 +121,7 @@ func TestWorkflowPublicationConcurrentReplayAndRestart(t *testing.T) {
 	}
 	workflowPrompt(workflow).Text = "changed {{corpus}}"
 	workflowPrompt(workflow).Digest = evolution.Digest([]byte(workflowPrompt(workflow).Text))
-	draft, err = s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 1, ExpectedLayoutRevision: 2, Layout: layout.Layout, Workflow: workflow})
+	draft, err = s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 1, ExpectedLayoutRevision: 2, Layout: layout.Layout, Workflow: workflow})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,10 +130,10 @@ func TestWorkflowPublicationConcurrentReplayAndRestart(t *testing.T) {
 	}
 	workflowPrompt(workflow).Text = "changed again {{corpus}}"
 	workflowPrompt(workflow).Digest = evolution.Digest([]byte(workflowPrompt(workflow).Text))
-	if _, err = s.SaveWorkflowDraft(ctx, WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 2, ExpectedLayoutRevision: 2, Layout: layout.Layout, Workflow: workflow}); err != nil {
+	if _, err = s.SaveWorkflowDraft(ctx, "team", WorkflowDraftInput{ID: workflow.ID, ExpectedRevision: 2, ExpectedLayoutRevision: 2, Layout: layout.Layout, Workflow: workflow}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.PublishWorkflowDraft(ctx, workflow.ID, 2); err != ErrConflict {
+	if _, err = s.PublishWorkflowDraft(ctx, "team", workflow.ID, 2); err != ErrConflict {
 		t.Fatal("stale unpublished draft accepted", err)
 	}
 }

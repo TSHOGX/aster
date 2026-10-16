@@ -30,7 +30,7 @@ func BrowserWorkflowAPI(client *appidentity.Client, store *projections.Store) fu
 			workflowAuthError(w, err)
 			return
 		}
-		draft, err := store.WorkflowDraft(r.Context(), r.PathValue("workflow"))
+		draft, err := store.WorkflowDraft(r.Context(), r.PathValue("group"), r.PathValue("workflow"))
 		if errors.Is(err, projections.ErrNotFound) {
 			write(w, 404, map[string]string{"error": "draft_not_found"})
 			return
@@ -52,9 +52,13 @@ func BrowserWorkflowAPI(client *appidentity.Client, store *projections.Store) fu
 			write(w, 400, map[string]string{"error": "invalid_workflow_draft"})
 			return
 		}
-		draft, err := store.SaveWorkflowDraft(r.Context(), value)
+		draft, err := store.SaveWorkflowDraft(r.Context(), r.PathValue("group"), value)
 		if errors.Is(err, projections.ErrConflict) {
 			write(w, 409, map[string]string{"error": "draft_conflict"})
+			return
+		}
+		if errors.Is(err, projections.ErrNotFound) {
+			write(w, 404, map[string]string{"error": "draft_not_found"})
 			return
 		}
 		if err != nil {
@@ -74,7 +78,7 @@ func BrowserWorkflowAPI(client *appidentity.Client, store *projections.Store) fu
 			write(w, 400, map[string]string{"error": "invalid_revision"})
 			return
 		}
-		draft, err := store.WorkflowDraftRevision(r.Context(), r.PathValue("workflow"), n)
+		draft, err := store.WorkflowDraftRevision(r.Context(), r.PathValue("group"), r.PathValue("workflow"), n)
 		if errors.Is(err, projections.ErrNotFound) {
 			write(w, 404, map[string]string{"error": "draft_not_found"})
 			return
@@ -98,7 +102,7 @@ func BrowserWorkflowAPI(client *appidentity.Client, store *projections.Store) fu
 			write(w, 400, map[string]string{"error": "invalid_publish_request"})
 			return
 		}
-		ref, err := store.PublishWorkflowDraft(r.Context(), r.PathValue("workflow"), value.Revision)
+		ref, err := store.PublishWorkflowDraft(r.Context(), r.PathValue("group"), r.PathValue("workflow"), value.Revision)
 		if errors.Is(err, projections.ErrConflict) {
 			write(w, 409, map[string]string{"error": "draft_conflict"})
 			return

@@ -145,7 +145,7 @@ test("failed reads clear stale metadata and language changes preserve navigation
 
 for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", width: 390 }]) {
   test(`workflow editor preserves visual edits, invalid fields and conflicts ${variant.locale}`, async ({ page: admin, browser }, info) => {
-    const { beta, user } = await provision(admin);
+    const { alpha, beta, user, grant } = await provision(admin);
     const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: variant.locale, viewport: { width: variant.width, height: 900 } });
     const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
     const errors: string[] = []; page.on("pageerror", error => errors.push(error.message)); page.on("dialog", dialog => dialog.accept());
@@ -160,6 +160,12 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       const headers = { Origin: origin, "X-CSRF-Token": session.csrf };
       const seeded = await page.request.put(draftPath, { headers, data: { id: workflow.id, expected_revision: 0, expected_layout_revision: 0, workflow, layout: { extract: { x: 12, y: 24 } } } });
       expect(seeded.status(), await seeded.text()).toBe(200);
+      const foreignDraft = `/evaluation-space/api/v1/groups/${alpha.id}/workflows/${workflow.id}/draft`;
+      expect((await page.request.get(foreignDraft)).status()).toBe(404);
+      expect((await page.request.get(`${foreignDraft}/revisions/1`)).status()).toBe(404);
+      await grant(alpha.id, "workflow.edit");
+      expect((await page.request.put(foreignDraft, { headers, data: { id: workflow.id, expected_revision: 1, expected_layout_revision: 1, workflow, layout: {} } })).status()).toBe(404);
+      expect((await page.request.post(`${foreignDraft}/publish`, { headers, data: { revision: 1 } })).status()).toBe(404);
       await page.goto(`/evaluation-space/groups/${beta.id}/workflows/${workflow.id}/`);
       await page.getByRole("button", { name: /^extract\b/ }).click();
       const prompt = page.getByLabel(tr("Prompt text", "提示词文本"), { exact: true });
@@ -225,6 +231,8 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       await connect("build.patch", "$output.patch"); await save.click();
       await page.getByRole("button", { name: tr("Publish revision", "发布版本"), exact: true }).click();
       await expect(page.getByRole("status").filter({ hasText: tr("Published immutable workflow revision.", "已发布不可变工作流版本。") })).toBeVisible();
+      const publishedDraft = await (await page.request.get(draftPath)).json();
+      expect((await page.request.post(`${foreignDraft}/publish`, { headers, data: { revision: publishedDraft.revision } })).status()).toBe(404);
       await page.screenshot({ path: info.outputPath("visual-workflow-edits.png"), fullPage: true });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true); expect(errors).toEqual([]);
     } finally { await context.close(); }

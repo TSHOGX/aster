@@ -65,9 +65,9 @@ func canonicalWorkflowDraft(value evolution.Workflow) ([]byte, error) {
 
 // SaveWorkflowDraft advances executable and layout revisions independently.
 // Both expected revisions are required to avoid overwriting concurrent edits.
-func (s *Store) SaveWorkflowDraft(ctx context.Context, input WorkflowDraftInput) (WorkflowDraft, error) {
+func (s *Store) SaveWorkflowDraft(ctx context.Context, group string, input WorkflowDraftInput) (WorkflowDraft, error) {
 	var result WorkflowDraft
-	if !manifest.ValidID(input.ID) || input.ExpectedRevision < 0 || input.ExpectedLayoutRevision < 0 || input.Workflow.ID != input.ID {
+	if !manifest.ValidID(group) || !manifest.ValidID(input.ID) || input.ExpectedRevision < 0 || input.ExpectedLayoutRevision < 0 || input.Workflow.ID != input.ID {
 		return result, fmt.Errorf("invalid workflow draft identity")
 	}
 	body, err := canonicalWorkflowDraft(input.Workflow)
@@ -87,10 +87,25 @@ func (s *Store) SaveWorkflowDraft(ctx context.Context, input WorkflowDraftInput)
 	}
 	defer tx.Rollback()
 	var revision, layoutRevision int64
+	var owner string
 	var prior, priorLayout []byte
-	err = tx.QueryRowContext(ctx, "SELECT revision,body,layout_revision,layout FROM workflow_drafts WHERE id=?", input.ID).Scan(&revision, &prior, &layoutRevision, &priorLayout)
+	err = tx.QueryRowContext(ctx, "SELECT revision,body,layout_revision,layout,group_id FROM workflow_drafts WHERE id=?", input.ID).Scan(&revision, &prior, &layoutRevision, &priorLayout, &owner)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return result, err
+	}
+	if revision != 0 && owner != group {
+		return result, ErrNotFound
+	}
+	if revision == 0 {
+		// Catalog identities cannot be claimed by a group draft. Fork the
+		// executable under a fresh stable ID before editing it.
+		var exists bool
+		if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM workflow_revisions WHERE id=?)", input.ID).Scan(&exists); err != nil {
+			return result, err
+		}
+		if exists {
+			return result, ErrConflict
+		}
 	}
 	if revision != input.ExpectedRevision || layoutRevision != input.ExpectedLayoutRevision {
 		return result, ErrConflict
@@ -112,7 +127,7 @@ func (s *Store) SaveWorkflowDraft(ctx context.Context, input WorkflowDraftInput)
 	if _, err = tx.ExecContext(ctx, "INSERT INTO workflow_draft_revisions(id,revision,body,layout_revision,layout) VALUES(?,?,?,?,?)", input.ID, revision, body, layoutRevision, layout); err != nil {
 		return result, err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO workflow_drafts(id,revision,body,layout_revision,layout) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,body=excluded.body,layout_revision=excluded.layout_revision,layout=excluded.layout`, input.ID, revision, body, layoutRevision, layout); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workflow_drafts(id,revision,body,layout_revision,layout,group_id) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,body=excluded.body,layout_revision=excluded.layout_revision,layout=excluded.layout`, input.ID, revision, body, layoutRevision, layout, group); err != nil {
 		return result, err
 	}
 	return result, tx.Commit()
@@ -129,13 +144,13 @@ func decodeDraft(id string, revision, layoutRevision int64, body, layout []byte)
 	}
 	return WorkflowDraft{ID: id, Revision: revision, LayoutRevision: layoutRevision, Workflow: workflow, Layout: normalized}, nil
 }
-func (s *Store) WorkflowDraft(ctx context.Context, id string) (WorkflowDraft, error) {
-	if !manifest.ValidID(id) {
+func (s *Store) WorkflowDraft(ctx context.Context, group, id string) (WorkflowDraft, error) {
+	if !manifest.ValidID(group) || !manifest.ValidID(id) {
 		return WorkflowDraft{}, fmt.Errorf("invalid workflow identity")
 	}
 	var revision, layoutRevision int64
 	var body, layout []byte
-	err := s.db.QueryRowContext(ctx, "SELECT revision,body,layout_revision,layout FROM workflow_drafts WHERE id=?", id).Scan(&revision, &body, &layoutRevision, &layout)
+	err := s.db.QueryRowContext(ctx, "SELECT revision,body,layout_revision,layout FROM workflow_drafts WHERE id=? AND group_id=?", id, group).Scan(&revision, &body, &layoutRevision, &layout)
 	if errors.Is(err, sql.ErrNoRows) {
 		return WorkflowDraft{}, ErrNotFound
 	}
@@ -147,13 +162,13 @@ func (s *Store) WorkflowDraft(ctx context.Context, id string) (WorkflowDraft, er
 
 // WorkflowDraftRevision retrieves executable history with its latest retained
 // layout. Layout edits never modify executable content at this revision.
-func (s *Store) WorkflowDraftRevision(ctx context.Context, id string, revision int64) (WorkflowDraft, error) {
-	if !manifest.ValidID(id) || revision < 1 {
+func (s *Store) WorkflowDraftRevision(ctx context.Context, group, id string, revision int64) (WorkflowDraft, error) {
+	if !manifest.ValidID(group) || !manifest.ValidID(id) || revision < 1 {
 		return WorkflowDraft{}, fmt.Errorf("invalid draft revision")
 	}
 	var layoutRevision int64
 	var body, layout []byte
-	err := s.db.QueryRowContext(ctx, "SELECT body,layout_revision,layout FROM workflow_draft_revisions WHERE id=? AND revision=? ORDER BY layout_revision DESC LIMIT 1", id, revision).Scan(&body, &layoutRevision, &layout)
+	err := s.db.QueryRowContext(ctx, "SELECT body,layout_revision,layout FROM workflow_draft_revisions WHERE id=? AND revision=? AND EXISTS(SELECT 1 FROM workflow_drafts d WHERE d.id=workflow_draft_revisions.id AND d.group_id=?) ORDER BY layout_revision DESC LIMIT 1", id, revision, group).Scan(&body, &layoutRevision, &layout)
 	if errors.Is(err, sql.ErrNoRows) {
 		return WorkflowDraft{}, ErrNotFound
 	}
@@ -165,9 +180,9 @@ func (s *Store) WorkflowDraftRevision(ctx context.Context, id string, revision i
 
 // PublishWorkflowDraft atomically checks the selected draft and records its
 // immutable publication. Replays return the same published reference.
-func (s *Store) PublishWorkflowDraft(ctx context.Context, id string, draftRevision int64) (evolution.Revision, error) {
+func (s *Store) PublishWorkflowDraft(ctx context.Context, group, id string, draftRevision int64) (evolution.Revision, error) {
 	var ref evolution.Revision
-	if !manifest.ValidID(id) || draftRevision < 1 {
+	if !manifest.ValidID(group) || !manifest.ValidID(id) || draftRevision < 1 {
 		return ref, fmt.Errorf("invalid draft publication")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -175,6 +190,16 @@ func (s *Store) PublishWorkflowDraft(ctx context.Context, id string, draftRevisi
 		return ref, err
 	}
 	defer tx.Rollback()
+	var owner string
+	if err = tx.QueryRowContext(ctx, "SELECT group_id FROM workflow_drafts WHERE id=?", id).Scan(&owner); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ref, ErrNotFound
+		}
+		return ref, err
+	}
+	if owner != group {
+		return ref, ErrNotFound
+	}
 	ref.ID = id
 	err = tx.QueryRowContext(ctx, "SELECT revision,digest FROM workflow_draft_publications WHERE id=? AND draft_revision=?", id, draftRevision).Scan(&ref.Revision, &ref.Digest)
 	if err == nil {
