@@ -116,8 +116,13 @@ branch until completed or canceled; another branch can still be committed.
    not change the review.
 4. If conflicts appear, open each path in **Resolve merge conflicts**. Compare the
    common ancestor, main and branch. Choose a side, delete the path or write
-   resolved text, then **Save resolution**. Complete every choice and choose
-   **Prepare resolved integration**. The new result needs its own approval.
+   resolved text, then **Save resolution**. **Resolution result** previews the
+   selected choice. Each side identifies its exact commit; files show size/digest
+   and **Download exact file**, including binary files and text above the 1 MiB
+   preview limit. Choosing a directory includes its complete subtree; nested
+   conflict choices must agree. Deleting a path removes its descendants.
+   Complete every choice and choose **Prepare resolved integration**. The new
+   result needs its own approval.
 5. A qualified reviewer chooses **Approve integration**. A merger then chooses
    **Merge approved integration**. A changed main, source head or review policy
    requires preparing and reviewing a new result.

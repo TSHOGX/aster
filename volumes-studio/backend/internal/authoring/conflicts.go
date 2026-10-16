@@ -1,11 +1,9 @@
 package authoring
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
-	"unicode/utf8"
 
 	manifest "aster/contracts/volumemanifest"
 	"volume-studio/backend/internal/history"
@@ -251,44 +249,10 @@ func (s *Store) ConflictFile(ctx context.Context, a Actor, library, id, side, pa
 	if !allowed {
 		return file, ErrInvalid
 	}
-	repo, err := s.historyRepository(ctx, library)
-	if err != nil {
-		return file, err
-	}
-	snapshot, err := repo.Snapshot(ctx, commit)
-	if err != nil {
-		return file, err
-	}
-	file.CommitID = commit
-	for _, entry := range snapshot.Entries {
-		if entry.Path == path {
-			file.Entry = entry
-			break
-		}
-	}
-	if file.Entry.Path == "" {
+	file, err = s.CommitFile(ctx, a, library, commit, path)
+	if err == ErrNotFound && file.CommitID == commit {
 		file.Preview = "absent"
 		return file, nil
 	}
-	if file.Entry.Kind == "directory" {
-		file.Preview = "directory"
-		return file, nil
-	}
-	size, _ := manifest.ParseSize(file.Entry.Size)
-	if size > MaxTextBytes {
-		file.Preview = "too_large"
-		return file, nil
-	}
-	raw, err := repo.ReadFile(ctx, commit, path)
-	if err != nil {
-		return file, err
-	}
-	if !utf8.Valid(raw) || bytes.IndexByte(raw, 0) >= 0 {
-		file.Preview = "binary"
-		return file, nil
-	}
-	text := string(raw)
-	file.Text = &text
-	file.Preview = "text"
-	return file, nil
+	return file, err
 }

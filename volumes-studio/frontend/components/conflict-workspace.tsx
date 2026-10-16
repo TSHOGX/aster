@@ -1,10 +1,10 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { api, APIError, requestID } from "../lib/api";
+import { api, APIError, base, bytes, requestID, type Entry } from "../lib/api";
 import { conflictAPI, type ConflictWorkspace, type PreparedIntegration } from "../lib/branches";
 import { useT } from "../lib/i18n";
 import { useStudio } from "./studio-provider";
-type Preview = { text?: string; preview: string; commit_id: string };
+type Preview = { text?: string; preview: string; commit_id: string; entry: Entry };
 type Choice = "main" | "branch" | "delete" | "text";
 type Draft = { path: string; choice: Choice; text: string; expected_revision: number };
 type Command = { action: "save"; request_id: string; draft: Draft } | { action: "complete"; request_id: string; expected_revision: number };
@@ -132,6 +132,16 @@ export function ConflictEditor({ library, id, onComplete }: { library: string; i
     try { sessionStorage.removeItem(key); setStorageError(""); } catch { setStorageError("Local conflict recovery is unavailable. Keep this tab open until the operation is confirmed."); return; }
     retained.current = empty(id); storageDirty.current = false; setMalformed(false); await reload();
   }
+  function renderPreview(preview: Preview) {
+    return <>
+      <p><code>{preview.commit_id}</code></p>
+      {preview.entry?.kind && <p>{tr(preview.entry.kind === "file" ? "File" : "Directory")} · {bytes(preview.entry.size)}{preview.entry.digest && <> · <code>{preview.entry.digest}</code></>}</p>}
+      <pre>{preview.text ?? tr(preview.preview === "absent" ? "File absent" : preview.preview === "binary" ? "Binary file: text preview unavailable." : preview.preview === "too_large" ? "File exceeds the 1 MiB text preview limit." : "Directory")}</pre>
+      {preview.entry?.kind === "file" && <a href={`${base}/api/v1/libraries/${encodeURIComponent(library)}/commits/${encodeURIComponent(preview.commit_id)}/content?${new URLSearchParams({ path: local.selected })}`}>{tr("Download exact file")}</a>}
+      {preview.entry?.kind === "directory" && <p>{tr("Choosing this side includes the complete directory subtree. Nested conflict choices must agree.")}</p>}
+    </>;
+  }
+  const result = choice === "main" ? previews[1] : choice === "branch" ? previews[2] : undefined;
   const blocked = busy || !!local.pending || malformed || workspace?.stale || workspace?.state !== "open";
   return <section aria-label={tr("Resolve merge conflicts")}>
     <h3>{tr("Resolve merge conflicts")}</h3><button disabled={busy} onClick={() => void reload()}>{tr("Reload conflict workspace")}</button>
@@ -143,10 +153,14 @@ export function ConflictEditor({ library, id, onComplete }: { library: string; i
       {local.pending && <button disabled={busy} onClick={() => void submit(local.pending!)}>{tr("Recover conflict operation")}</button>}
       {(local.draft || local.pending || malformed) && <button disabled={busy} onClick={() => void discard()}>{tr("Discard conflict recovery")}</button>}
       <ul>{workspace.conflicts.map(item => <li key={item.path}><button disabled={busy || !!local.pending || malformed} onClick={() => void inspect(item.path)}>{item.path}</button> — {workspace.resolutions.some(saved => saved.path === item.path) ? tr("Resolution saved") : tr("Unresolved")}</li>)}</ul>
-      {local.selected && <><h4>{local.selected}</h4><div className="conflict-sides">{previews.map((preview, i) => <section key={i}><h4>{tr(["Common ancestor", "Main before merge", "Branch candidate"][i])}</h4><pre>{preview.text ?? tr(preview.preview)}</pre></section>)}</div>
+      {local.selected && <><h4>{local.selected}</h4><div className="conflict-sides">{previews.map((preview, i) => <section key={i}><h4>{tr(["Common ancestor", "Main before merge", "Branch candidate"][i])}</h4>{renderPreview(preview)}</section>)}</div>
         {conflict && <><p role="alert">{tr("Conflict workspace changed. Reload, review the current resolution, and explicitly use its revision before saving.")}</p><details><summary>{tr("Current saved resolution")}</summary><pre>{JSON.stringify(workspace.resolutions.find(saved => saved.path === local.selected) ?? null, null, 2)}</pre></details><button disabled={blocked} onClick={() => persist({ ...local, draft: { ...local.draft!, expected_revision: workspace.revision } })}>{tr("Use current conflict revision")}</button></>}
         <label>{tr("Resolution choice")} <select aria-label={tr("Resolution choice")} value={choice} disabled={blocked} onChange={event => edit(event.target.value as Choice, text)}><option value="main">{tr("Use main")}</option><option value="branch">{tr("Use branch")}</option><option value="delete">{tr("Delete path")}</option><option value="text">{tr("Write resolved text")}</option></select></label>
         {choice === "text" && <label>{tr("Resolved text")} <textarea aria-label={tr("Resolved text")} value={text} maxLength={1 << 20} onChange={event => edit(choice, event.target.value)} disabled={blocked} /></label>}
+        <section aria-label={tr("Resolution result")}><h4>{tr("Resolution result")}</h4>
+          {choice === "delete" ? <p>{tr("This path and its descendants will be removed.")}</p> : choice === "text" ? <pre>{text}</pre> : result && renderPreview(result)}
+          <p>{tr(local.draft ? "This choice is unsaved. Save it before preparing the resolved integration." : "The complete resolved tree still requires preparation and fresh review.")}</p>
+        </section>
         <button disabled={blocked || conflict} onClick={() => { const draft = local.draft ?? { path: local.selected, choice, text: choice === "text" ? text : "", expected_revision: workspace.revision }; const next = { ...local, draft }; retained.current = next; setLocal(next); void submit({ action: "save", request_id: requestID(), draft }); }}>{tr("Save resolution")}</button>
       </>}
       <button disabled={blocked || !!local.draft || workspace.resolutions.length !== workspace.conflicts.length} onClick={() => void submit({ action: "complete", request_id: requestID(), expected_revision: workspace.revision })}>{tr("Prepare resolved integration")}</button>
