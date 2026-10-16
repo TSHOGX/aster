@@ -41,6 +41,7 @@ for (const width of [390, 1440]) test(`conflict edits and exact operations recov
   await post("/integrations/reviews", { prepared_digest: prepared.digest, verdict: "approve" });
   await post("/integrations/merge", { prepared_digest: prepared.digest, expected_main: main.commit_id });
   await page.goto(`/volumes-studio/libraries/${library.id}?branch=${candidate.id}`);
+  await expect(page.getByRole("button", { name: "Prepare integration", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "Prepare integration", exact: true }).press("Enter");
   const conflicts = page.getByRole("region", { name: "Resolve merge conflicts", exact: true });
   await conflicts.getByRole("button", { name: "lesson.md", exact: true }).press("Enter");

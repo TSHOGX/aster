@@ -1,4 +1,4 @@
-import { api, type Entry, type Library, type Version } from "./api";
+import { api, type Entry, type Library } from "./api";
 
 export type ContentRef = {
   library_id: string;
@@ -71,26 +71,7 @@ export const branchAPI = {
     api<Checkpoint>(`${branchRoot(branch.library_id, branch.id)}/commits`, {
       method: "POST", body: JSON.stringify({ request_id: request, expected_revision: branch.draft_revision, expected_head: branch.head, message }),
     }, csrf),
-  prepare: (branch: Branch, main: ContentRef, policyRevision: number, request: string, csrf: string, rebindPreparedDigest = "") =>
-    api<PreparedIntegration>(`${libraryRoot(branch.library_id)}/integrations/prepare`, {
-      method: "POST", body: JSON.stringify({ request_id: request, branch_id: branch.id, expected_head: branch.head, expected_main: main.commit_id, expected_policy_revision: policyRevision, ...(rebindPreparedDigest ? { rebind_prepared_digest: rebindPreparedDigest } : {}) }),
-    }, csrf),
-  compose: (library: string, expectedMain: string, policyRevision: number, branches: { branch_id: string; expected_head: string; selected_paths: string[] }[], request: string, csrf: string) =>
-    api<PreparedIntegration & { selections: { branch_id: string; head: string; selected_paths: string[]; deferred_paths?: string[] }[] }>(`${libraryRoot(library)}/integrations/compose`, {
-      method: "POST", body: JSON.stringify({ request_id: request, expected_main: expectedMain, expected_policy_revision: policyRevision, branches }),
-    }, csrf),
-  review: (library: string, digest: string, verdict: "approve" | "changes_requested" | "reject", rationale: string, request: string, csrf: string) =>
-    api(`${libraryRoot(library)}/integrations/reviews`, {
-      method: "POST", body: JSON.stringify({ request_id: request, prepared_digest: digest, verdict, rationale }),
-    }, csrf),
-  merge: (library: string, digest: string, expectedMain: string, request: string, csrf: string) =>
-    api<{ operation_id: string; accepted_commit: string; prepared_digest: string }>(`${libraryRoot(library)}/integrations/merge`, {
-      method: "POST", body: JSON.stringify({ request_id: request, prepared_digest: digest, expected_main: expectedMain }),
-    }, csrf),
-  release: (library: string, commit: string, label: string, note: string, request: string, csrf: string) =>
-    api<Version>(`${libraryRoot(library)}/versions`, {
-      method: "POST", body: JSON.stringify({ request_id: request, accepted_commit: commit, label, note }),
-    }, csrf),
+
 };
 
 export type ConflictWorkspace = {

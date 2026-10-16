@@ -294,6 +294,16 @@ code {
   white-space: pre-wrap;
   flex-shrink: 0;
 }
+.notice.integration-review {
+  display: block;
+  white-space: normal;
+}
+.integration-review > button {
+  margin: 0 8px 8px 0;
+}
+.integration-review > section {
+  margin-block: 12px;
+}
 .notice.error {
   background: var(--danger-soft);
 }

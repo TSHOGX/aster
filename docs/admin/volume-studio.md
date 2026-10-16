@@ -122,6 +122,15 @@ branch until completed or canceled; another branch can still be committed.
    file** for binary, oversized or text content. Directories and absent sides are
    explicit. If a read fails, prior review evidence is cleared; **Reload integration
    review** reloads the same pinned identity after access or connectivity returns.
+   If preparation, composition, review, merge, evaluation request or publication is
+   unconfirmed, **Recover integration operation** resends its exact original request,
+   including after reloading this tab. Other mutations stay locked until it settles.
+   Recovery is scoped to the signed-in account, Volume and branch and appears only
+   after current access is checked. **Discard integration recovery** explicitly
+   abandons the local request; the server operation may already have succeeded.
+   If browser storage is unavailable, keep the tab open until recovery confirms it.
+   A confirmed publication stays linked in the review URL; reloading checks that
+   version without repeating merge or creating another publication.
    When several branches contain independent work, **Compose selected changes**
    lists each immutable branch head. Select only the paths to review together;
    omitted paths are shown as deferred and remain on their source branch. The

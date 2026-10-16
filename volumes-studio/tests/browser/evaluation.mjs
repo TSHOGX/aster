@@ -15,6 +15,7 @@ try {
   })).filter(cookie => cookie.value));
   await context.addCookies([{name:'project_login',value:config.central_cookie,domain:new URL(config.origin).hostname,path:'/',secure:true,httpOnly:true,sameSite:'Lax'}]);
   const page = await context.newPage();
+  page.on('dialog', dialog => dialog.accept());
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`${config.origin}/volumes-studio/libraries/aster-shared-assets?branch=${config.branch}&integration=${encodeURIComponent(config.prepared)}`);
@@ -41,9 +42,32 @@ try {
   await expect(translated.getByLabel('评估令牌上限',{exact:true})).toHaveValue('1000');
   await expect(translated.getByRole('button',{name:'请求评估',exact:true})).toBeVisible();
   await language('en');
+  const evaluationRoute = '**/integrations/*/evaluations';
+  const evaluationBodies = []; let lostEvaluation = false;
+  await page.route(evaluationRoute, async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    evaluationBodies.push(route.request().postData());
+    if (!lostEvaluation) {
+      const response = await route.fetch(); expect(response.ok(), await response.text()).toBe(true);
+      lostEvaluation = true; return route.abort('failed');
+    }
+    return route.continue();
+  });
   await checks.getByRole('button', { name: 'Request evaluation', exact: true }).click();
-  await expect(checks.getByRole('button', { name: 'Refresh evaluation', exact: true })).toBeVisible();
+  await expect(page.getByRole('alert').filter({hasText:'Integration operation is unconfirmed.'})).toBeVisible();
+  await expect(checks.getByLabel('Evaluation token limit', {exact:true})).toBeDisabled();
+  await language('zh');
+  await expect(page.getByRole('button', {name:'恢复集成操作',exact:true})).toBeEnabled();
+  await language('en');
+  await page.reload();
+  await expect(page.getByRole('button', {name:'Recover integration operation',exact:true})).toBeEnabled();
+  await page.getByRole('button', {name:'Recover integration operation',exact:true}).press('Enter');
+  await expect(page.getByRole('button', {name:'Recover integration operation',exact:true})).toHaveCount(0);
+  expect(evaluationBodies).toHaveLength(2); expect(evaluationBodies[0]).toBe(evaluationBodies[1]);
+  expect(JSON.parse(evaluationBodies[1]).budget.max_tokens).toBe(1000);
+  await page.unroute(evaluationRoute);
   if (config.cancel_first) {
+    await expect(checks.getByRole('button', { name: 'Refresh evaluation', exact: true })).toBeVisible();
     await expect.poll(async()=> (await (await page.request.get(`${config.origin}/fixture/evaluation-dispatched`)).json()).count).toBe(1);
     await checks.getByRole('button',{name:'Cancel evaluation',exact:true}).click();
     await page.getByRole('dialog',{name:'Cancel evaluation',exact:true}).getByRole('button',{name:'Cancel evaluation',exact:true}).click();

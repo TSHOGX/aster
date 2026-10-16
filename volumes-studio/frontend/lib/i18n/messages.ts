@@ -1,4 +1,10 @@
 export const ZH: Record<string, string> = {
+  "Check integration request fields before continuing.": "继续前请检查集成请求字段。",
+  "Local integration recovery is invalid. Discard it before starting another operation.": "本地集成恢复记录无效。开始其他操作前，请先丢弃该记录。",
+  "Pending integration operation": "待确认的集成操作",
+  "Integration operation is unconfirmed. Recover the original request before starting another action.": "集成操作尚未确认。开始其他操作前，请先恢复原始请求。",
+  "Recover integration operation": "恢复集成操作",
+  "Discard integration recovery": "丢弃集成恢复记录",
   "Save or discard local conflict work before replacing this workspace.": "替换此工作区前，请先保存或丢弃本地冲突工作。",
   "Integration evidence is unavailable. Reload or check Volume access.": "集成证据不可用。请重新加载或检查卷访问权限。",
   "Reload integration review": "重新加载集成审核",
