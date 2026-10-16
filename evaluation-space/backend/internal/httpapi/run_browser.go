@@ -49,9 +49,10 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 			workflowAuthError(w, err)
 			return
 		}
-		limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
-		if r.URL.Query().Get("limit") == "" {
-			limit = 25
+		limit := 25
+		var err error
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			limit, err = strconv.Atoi(raw)
 		}
 		if err != nil || limit < 1 || limit > 50 {
 			write(w, 400, map[string]string{"error": "invalid_limit"})
@@ -74,6 +75,10 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 		var err error
 		if raw := r.URL.Query().Get("after"); raw != "" {
 			after, err = strconv.ParseInt(raw, 10, 64)
+			if err != nil {
+				write(w, 400, map[string]string{"error": "invalid_cursor"})
+				return
+			}
 		}
 		if raw := r.URL.Query().Get("limit"); raw != "" {
 			limit, err = strconv.Atoi(raw)
@@ -99,9 +104,10 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 			workflowAuthError(w, err)
 			return
 		}
-		limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
-		if r.URL.Query().Get("limit") == "" {
-			limit = 50
+		limit := 50
+		var err error
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			limit, err = strconv.Atoi(raw)
 		}
 		if err != nil || limit < 1 || limit > 100 {
 			write(w, 400, map[string]string{"error": "invalid_limit"})
