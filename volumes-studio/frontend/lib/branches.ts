@@ -103,8 +103,4 @@ export type ConflictWorkspace = {
 export const conflictAPI = {
   read: (library: string, workspace: string, signal?: AbortSignal) =>
     api<ConflictWorkspace>(`${libraryRoot(library)}/conflicts/${encodeURIComponent(workspace)}`, { signal }),
-  save: (workspace: ConflictWorkspace, path: string, choice: "main" | "branch" | "delete" | "text", text: string, request: string, csrf: string) =>
-    api<{revision: number; affected: number}>(`${libraryRoot(workspace.library_id)}/conflicts/${encodeURIComponent(workspace.id)}/resolutions`, { method: "POST", body: JSON.stringify({ request_id: request, expected_revision: workspace.revision, path, choice, text }) }, csrf),
-  complete: (workspace: ConflictWorkspace, request: string, csrf: string) =>
-    api<PreparedIntegration>(`${libraryRoot(workspace.library_id)}/conflicts/${encodeURIComponent(workspace.id)}/complete`, { method: "POST", body: JSON.stringify({ request_id: request, expected_revision: workspace.revision }) }, csrf),
 };

@@ -153,6 +153,21 @@ check status without exposing dataset contents.
 
 Main advances only after acceptance. Reviewers can also request changes or reject
 an integration. Saved conflict choices remain accessible through the workspace URL.
+Unsaved conflict text and an unconfirmed save or completion are retained in this
+browser tab for the signed-in account and exact workspace. After reloading, choose
+**Recover conflict operation** to reconcile the original request. Editing remains
+locked until it settles. If another author changed the workspace, **Reload conflict
+workspace**, inspect **Current saved resolution**, and choose **Use current conflict
+revision** before saving your retained text. Changed main or source inputs require
+a new preparation.
+
+Failed or denied reads clear displayed conflict content. Reload after access is
+restored to recover the local draft. If local storage is unavailable, keep the tab
+open until the operation is confirmed; a full page reload may lose unsaved recovery.
+**Discard conflict recovery** removes the local draft and request only. It cannot
+undo a server operation that already succeeded. A malformed recovery must be
+discarded before starting another operation. If completion succeeds but its result
+cannot be loaded, reload the integration URL to retrieve it without completing again.
 For an open, single-branch integration, a user with author and reviewer authority
 can choose **Rebind current policy** and confirm replacement of retained evaluation
 requirements. Studio creates a new prepared identity requiring fresh approval while

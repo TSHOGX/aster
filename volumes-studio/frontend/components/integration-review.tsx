@@ -90,10 +90,10 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
   };
   const run = async (action: () => Promise<void>) => { setBusy(true); setError(""); try { await action(); } catch (e) { setError(String(e)); } finally { setBusy(false); } };
   const load = async (digest: string) => {
+    const url = new URL(location.href); url.searchParams.set("integration", digest); url.searchParams.delete("conflict"); history.replaceState(null, "", url);
     const current = await api<View>(`${root}/integrations/${encodeURIComponent(digest)}`);
     const page = await api<{ changes: Change[]; next: string }>(`${root}/integrations/${encodeURIComponent(digest)}/changes`);
     setView(current); setChanges(page.changes); setNext(page.next); setFile(undefined);
-    const url = new URL(location.href); url.searchParams.set("integration", digest); url.searchParams.delete("conflict"); history.replaceState(null, "", url);
   };
   const prepare = async (rebindDigest = "") => {
     if (!studio.session) return;
@@ -176,8 +176,8 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
       {compositionResult.length > 0 && <ul aria-label={tr("Composition selection result")}>{compositionResult.map(selection => <li key={selection.branch_id}><code>{selection.branch_id}</code>: {selection.selected_paths.join(", ") || tr("No paths selected")}{selection.deferred_paths?.length ? ` · ${tr("Deferred")}: ${selection.deferred_paths.join(", ")}` : ""}</li>)}</ul>}
     </section>}
     {error && <p role="alert">{error}</p>}
-    {conflicts.length > 0 && <ul>{conflicts.map(conflict => <li key={conflict.path}><code>{conflict.path}</code> — {tr(conflict.reason)}</li>)}</ul>}
-    {workspace && <ConflictEditor library={branch.library_id} id={workspace} onComplete={digest=>{setWorkspace("");setConflicts([]);void run(()=>load(digest));}} />}
+    {conflicts.length > 0 && !workspace && <ul>{conflicts.map(conflict => <li key={conflict.path}><code>{conflict.path}</code> — {tr(conflict.reason)}</li>)}</ul>}
+    {workspace && <ConflictEditor key={`${branch.library_id}:${workspace}`} library={branch.library_id} id={workspace} onComplete={digest=>{setWorkspace("");setConflicts([]);void run(()=>load(digest));}} />}
     {view && <>
       <section aria-label={tr("Evaluation checks")}>
        <h3>{tr("Evaluation checks")}</h3>
