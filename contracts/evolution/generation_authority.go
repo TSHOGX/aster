@@ -7,15 +7,28 @@ import (
 )
 
 type GenerationAssignment struct {
-	BatchID      string    `json:"batch_id,omitempty"`
-	RunID        string    `json:"run_id"`
-	GroupID      string    `json:"group_id"`
-	BindingID    string    `json:"binding_id"`
-	OccurrenceID string    `json:"occurrence_id"`
-	Requester    Principal `json:"requester"`
-	Automatic    bool      `json:"automatic"`
-	Pins         RunPins   `json:"pins"`
-	Budget       Budget    `json:"budget"`
+	BatchID      string                `json:"batch_id,omitempty"`
+	RunID        string                `json:"run_id"`
+	GroupID      string                `json:"group_id"`
+	BindingID    string                `json:"binding_id"`
+	OccurrenceID string                `json:"occurrence_id"`
+	Requester    Principal             `json:"requester"`
+	Automatic    bool                  `json:"automatic"`
+	Pins         RunPins               `json:"pins"`
+	Budget       Budget                `json:"budget"`
+	Experiment   *GenerationExperiment `json:"experiment,omitempty"`
+}
+
+// GenerationExperiment binds explicit checkpoint reuse to an admitted source.
+// The trusted execution service verifies the sealed checkpoint and semantic
+// reuse plan; central authority checks lineage, current access and shared budget.
+type GenerationExperiment struct {
+	Source          GenerationGrant `json:"source"`
+	SourceFence     int64           `json:"source_fence"`
+	CheckpointID    string          `json:"checkpoint_id"`
+	CheckpointFence int64           `json:"checkpoint_fence"`
+	Checkpoint      ArtifactRef     `json:"checkpoint"`
+	StartNode       string          `json:"start_node"`
 }
 
 func (a GenerationAssignment) Digest() (string, error) {
@@ -29,6 +42,11 @@ func (a GenerationAssignment) Digest() (string, error) {
 	}
 	if a.Requester.Kind != "human" || a.Requester.Issuer == "" || a.Budget.Validate() != nil || a.Pins.Base.Validate() != nil || a.Pins.Output.Validate() != nil {
 		return "", fmt.Errorf("invalid generation pins")
+	}
+	if e := a.Experiment; e != nil {
+		if a.Automatic || e.Source.Validate() != nil || e.Source.RunID == a.RunID || e.Source.GroupID != a.GroupID || e.SourceFence < 1 || e.CheckpointFence < 1 || e.CheckpointFence >= e.SourceFence || !manifest.ValidID(e.CheckpointID) || !manifest.ValidID(e.StartNode) || e.Checkpoint.Validate() != nil || e.Checkpoint.GroupID != a.GroupID || e.Checkpoint.GrantID != e.Source.ID || a.Pins.Workflow.Validate() != nil {
+			return "", fmt.Errorf("invalid experiment lineage")
+		}
 	}
 	raw, err := json.Marshal(a)
 	if err != nil || len(raw) > MaxDocumentBytes {

@@ -127,7 +127,23 @@ func (s *Store) checkGenerationTree(ctx context.Context, q queryer, input evolut
 		return config, err
 	}
 	config, err = evolution.Decode[evolution.Configuration](bytes.NewReader(raw))
-	if err != nil || input.Pins.ValidateFor(config, input.BindingID) != nil {
+	if err != nil {
+		return config, err
+	}
+	pins := input.Pins
+	if input.Experiment != nil {
+		if err = s.checkGenerationExperiment(ctx, q, input, actor, admission, checked); err != nil {
+			return config, err
+		}
+		// Only the executable workflow may differ from the admitted binding.
+		// Every other pin is checked against both the parent and configuration.
+		for _, binding := range config.Bindings {
+			if binding.ID == input.BindingID {
+				pins.Workflow = binding.Workflow
+			}
+		}
+	}
+	if pins.ValidateFor(config, input.BindingID) != nil {
 		return config, ErrInvalid
 	}
 	if admission {
@@ -254,10 +270,10 @@ func (s *Store) AuthorizeGeneration(ctx context.Context, input evolution.Generat
 			return err
 		}
 		var active int
-		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM generation_authorizations WHERE group_id=? AND binding_id=? AND state IN('admitted','running','paused','cancelling')", input.GroupID, input.BindingID).Scan(&active); err != nil {
+		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM generation_authorizations WHERE group_id=? AND binding_id=? AND state IN('admitted','running','paused','cancelling') AND json_extract(assignment,'$.experiment') IS NULL", input.GroupID, input.BindingID).Scan(&active); err != nil {
 			return err
 		}
-		if active > 0 {
+		if active > 0 && input.Experiment == nil {
 			return ErrCapacity
 		}
 		var heldTokens, heldCost int64
@@ -465,7 +481,7 @@ func (s *Store) SettleGeneration(ctx context.Context, input GenerationSettlement
 		if _, err = tx.ExecContext(ctx, "UPDATE generation_authorizations SET settlement=?,used_tokens=?,used_cost=? WHERE id=?", raw, input.Tokens, input.CostMicros, input.Grant.ID); err != nil {
 			return err
 		}
-		if state == "completed" {
+		if state == "completed" && assignment.Experiment == nil {
 			for _, input := range assignment.Pins.Inputs {
 				var exists int
 				if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM corpus_snapshots WHERE group_id=? AND id=? AND digest=?", assignment.GroupID, input.ID, input.Digest).Scan(&exists); err != nil {

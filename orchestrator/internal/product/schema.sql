@@ -2024,7 +2024,7 @@ CREATE TABLE generation_authorizations(
  settlement BLOB,created_at TEXT NOT NULL,
  UNIQUE(group_id,binding_id,configuration_revision,occurrence_id)
 );
-CREATE UNIQUE INDEX one_active_generation_authorization ON generation_authorizations(group_id,binding_id) WHERE state IN('admitted','running','paused','cancelling');
+CREATE UNIQUE INDEX one_active_generation_authorization ON generation_authorizations(group_id,binding_id) WHERE state IN('admitted','running','paused','cancelling') AND json_extract(assignment,'$.experiment') IS NULL;
 CREATE TRIGGER immutable_generation_assignment BEFORE UPDATE OF id,run_id,group_id,binding_id,configuration_revision,occurrence_id,actor_id,assignment,assignment_digest,grant,reserved_tokens,reserved_cost,created_at ON generation_authorizations BEGIN SELECT RAISE(ABORT,'immutable generation assignment'); END;
 CREATE TRIGGER monotonic_generation_fence BEFORE UPDATE OF fence ON generation_authorizations WHEN NEW.fence<OLD.fence BEGIN SELECT RAISE(ABORT,'generation fence cannot decrease'); END;
 CREATE TRIGGER terminal_generation_authority BEFORE UPDATE OF state,fence ON generation_authorizations WHEN OLD.state IN('completed','failed','cancelled') AND (NEW.state<>OLD.state OR NEW.fence<>OLD.fence) BEGIN SELECT RAISE(ABORT,'terminal generation identity'); END;
