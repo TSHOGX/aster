@@ -1,6 +1,27 @@
 "use client";
 import { useTranslator } from "../../../web/i18n";
 const zh = {
+"Test saved draft": "测试已保存草稿",
+"Draft test": "草稿测试",
+"Tests use exact source inputs and fresh model calls. Partial tests include required ancestors. Tests do not create Studio branches or production evaluations.": "测试使用源运行的精确输入并发起新的模型调用。局部测试包含必要的上游节点。测试不会创建 Studio 分支或生产评估。",
+"Save all changes before starting a new draft test.": "开始新的草稿测试前，请保存所有更改。",
+"Choose a source run": "选择源运行",
+"Load more source runs": "加载更多源运行",
+"Test scope": "测试范围",
+"Full workflow": "完整工作流",
+"Single node and dependencies": "单节点及其依赖",
+"Subgraph and dependencies": "子图及其依赖",
+"Test node": "测试节点",
+"Timeout (seconds)": "超时（秒）",
+"Artifact budget (bytes)": "产物预算（字节）",
+"A draft test request is pending. Recovery uses the same saved revision, scope and budget.": "草稿测试请求待确认。恢复将使用相同的已保存版本、范围和预算。",
+"Recover draft test": "恢复草稿测试",
+"Start draft test": "开始草稿测试",
+"Draft testing is unavailable. Check workflow, run and source permissions, then retry.": "草稿测试不可用。请检查工作流、运行和源访问权限后重试。",
+"Draft test rejected. Check the saved revision, graph, source inputs and budget before trying again.": "草稿测试被拒绝。请检查已保存版本、图、源输入及预算后重试。",
+"Draft test response is unavailable. Recover the pending request before starting another test.": "草稿测试响应不可用。请先恢复待确认请求，再开始其他测试。",
+"not_applicable": "不适用",
+
 "Apply or reset the node name before changing selection.": "切换节点前，请应用或重置节点名称。",
 "Reset node name": "重置节点名称",
 "Remove this node and {count} connections?": "删除此节点及其 {count} 条连接？",

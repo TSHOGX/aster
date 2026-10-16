@@ -283,10 +283,23 @@ evaluator metrics and explicit stale or redacted states. Artifact metadata inclu
 identity, digest, size and media kind; bytes still require a separate current grant.
 They never expose dataset bytes or service credentials.
 
+Use **Test saved draft** after saving a complete, valid graph. Select an admitted
+source run from the same group, choose the full workflow, a node, or a subgraph
+container, and set the test budget within the source run's limits. Node and
+container tests execute their required ancestors with fresh model calls. The
+source input ports and schemas must match the draft. Testing requires
+`workflow.edit`, `run.start` and `source.read`; it does not activate the draft.
+Tests have their own runs and evidence, share group capacity, and never create
+Studio branches, production evaluations or consumable dependency outputs.
+After a lost response, use **Recover draft test** to recover the same saved
+revision, scope and budget. The pending request survives a page reload in the
+same browser session. The inspector identifies the test scope and source run.
+
 Terminal runs also offer **Retry as new run**. The server copies the source run's
 frozen pins and budget into a fresh queued run with `retry_of` lineage; the source
 run and its evidence remain unchanged. The action requires `run.start`, rejects a
-different group scope, and is safe to replay after a lost response.
+different group scope, and is safe to replay after a lost response. Retrying a
+draft test preserves its test restrictions and rechecks the testing permissions.
 
 ### Edit and activate group optimization
 

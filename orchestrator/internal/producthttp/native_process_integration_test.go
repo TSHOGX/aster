@@ -171,6 +171,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	var retryAdmissionMu sync.Mutex
 	var retryAdmissionRequests [][]byte
 	var experimentAdmissionRequests [][]byte
+	draftTestAdmissionRequests := map[string][][]byte{}
 	identityHandler := authentication.IdentityServiceHandler()
 	central := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if mode == "browser-retry" && r.URL.Path == "/api/identity/v1/generation/admit" {
@@ -182,6 +183,21 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			}
 			r.Body = io.NopCloser(bytes.NewReader(raw))
 			var assignment evolution.GenerationAssignment
+			if json.Unmarshal(raw, &assignment) == nil && assignment.DraftTest != nil {
+				retryAdmissionMu.Lock()
+				draftTestAdmissionRequests[assignment.RunID] = append(draftTestAdmissionRequests[assignment.RunID], raw)
+				first := len(draftTestAdmissionRequests[assignment.RunID]) == 1
+				retryAdmissionMu.Unlock()
+				if first {
+					recorded := httptest.NewRecorder()
+					identityHandler.ServeHTTP(recorded, r)
+					if recorded.Code != 200 {
+						t.Errorf("draft test admission: %d %s", recorded.Code, recorded.Body.String())
+					}
+					w.WriteHeader(503)
+					return
+				}
+			}
 			if json.Unmarshal(raw, &assignment) == nil && assignment.RunID == "browser-native-experiment" {
 				retryAdmissionMu.Lock()
 				experimentAdmissionRequests = append(experimentAdmissionRequests, raw)
@@ -1119,6 +1135,99 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		modelMu.Unlock()
 		if retryCalls != 2 {
 			t.Fatal("retry did not execute fresh model calls", retryCalls)
+		}
+		// Exercise owned draft tests through the browser gateway and actual worker.
+		for _, kind := range []string{"workflow", "node", "subgraph"} {
+			graph := frozen.Workflow
+			graph.ID = "browser-draft-" + kind
+			nodeID := ""
+			if kind == "node" {
+				nodeID = "draft"
+			}
+			if kind == "subgraph" {
+				nodeID = "container"
+				graph.Nodes = []evolution.Node{{ID: nodeID, Kind: "subgraph", InputPorts: graph.Inputs, OutputPorts: graph.Outputs, Body: &before.Pins.Workflow, MaxDepth: 4, MaxAttempts: 1, TimeoutSeconds: graph.Limits.TimeoutSeconds}}
+				graph.Edges = []evolution.Edge{}
+				for port := range graph.Inputs {
+					graph.Edges = append(graph.Edges, evolution.Edge{From: "$input." + port, To: nodeID + "." + port})
+				}
+				for port := range graph.Outputs {
+					graph.Edges = append(graph.Edges, evolution.Edge{From: nodeID + "." + port, To: "$output." + port})
+				}
+			}
+			draftRoot := "groups/" + configuration.GroupID + "/workflows/" + graph.ID + "/draft"
+			status, raw = spaceCall("PUT", draftRoot, map[string]any{"id": graph.ID, "expected_revision": 0, "expected_layout_revision": 0, "workflow": graph, "layout": map[string]any{}})
+			if status != 200 {
+				t.Fatal("test draft save", status, string(raw))
+			}
+			testInput := map[string]any{"id": "browser-draft-test-" + kind, "draft_id": graph.ID, "revision": 1, "source_run_id": sourceID, "kind": kind, "budget": before.Budget}
+			if nodeID != "" {
+				testInput["node_id"] = nodeID
+			}
+			var testRun evolution.Run
+			for replay := 0; replay < 2; replay++ {
+				status, raw = spaceCall("POST", draftRoot+"/tests", testInput)
+				if status != 201 {
+					t.Fatal("draft test create", status, string(raw))
+				}
+				must(t, json.Unmarshal(raw, &testRun))
+			}
+			for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); {
+				status, raw = spaceCall("GET", runRoot+testRun.ID, nil)
+				if status != 200 {
+					t.Fatal("draft test read", status, string(raw))
+				}
+				must(t, json.Unmarshal(raw, &testRun))
+				if testRun.State == "completed" || testRun.State == "failed" {
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+			if testRun.State != "completed" || testRun.DraftTest == nil || testRun.DraftTest.Kind != kind || testRun.Handoff != "not_applicable" || testRun.EvaluationState != "not_applicable" || testRun.ResultBranch != "" {
+				t.Fatal("draft test terminal result", testRun)
+			}
+			modelMu.Lock()
+			testCalls := calls[testRun.ID]
+			modelMu.Unlock()
+			expectedCalls := 2
+			if kind == "node" {
+				expectedCalls = 1
+			}
+			if testCalls != expectedCalls {
+				t.Fatal("draft test did not execute fresh scope", kind, testCalls)
+			}
+			status, raw = spaceCall("GET", runRoot+testRun.ID+"/attempts?limit=100", nil)
+			if status != 200 {
+				t.Fatal(status, string(raw))
+			}
+			var attempts struct {
+				Items []struct {
+					ReusedFrom json.RawMessage `json:"reused_from"`
+				} `json:"items"`
+			}
+			must(t, json.Unmarshal(raw, &attempts))
+			if len(attempts.Items) == 0 {
+				t.Fatal("missing test attempts")
+			}
+			for _, attempt := range attempts.Items {
+				if len(attempt.ReusedFrom) > 0 && string(attempt.ReusedFrom) != "null" {
+					t.Fatal("test reused source attempt")
+				}
+			}
+			if _, err = evalClient.GenerationOutput(ctx, evolution.GenerationOutputScope{GroupID: testRun.GroupID, RunID: testRun.ID, Fence: testRun.Fence, Port: "candidate"}); err == nil {
+				t.Fatal("draft test output promoted")
+			}
+			retryAdmissionMu.Lock()
+			requests := draftTestAdmissionRequests[testRun.ID]
+			if len(requests) < 2 {
+				t.Error("lost draft test admission not recovered")
+			}
+			for _, request := range requests {
+				if !bytes.Equal(request, requests[0]) {
+					t.Error("draft test admission changed")
+				}
+			}
+			retryAdmissionMu.Unlock()
 		}
 		// Cancel a second retry after its input grant is revoked. There may be no
 		// central admission yet; cleanup must still close it without model calls.

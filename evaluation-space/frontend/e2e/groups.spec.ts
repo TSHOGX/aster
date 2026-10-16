@@ -555,3 +555,54 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
     } finally { await context.close(); }
   });
 }
+
+for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", width: 390 }]) {
+ test(`draft test scopes and lost response recovery ${variant.locale}`, async ({ page: admin, browser }, info) => {
+  const { beta, user, grant } = await provision(admin); await grant(beta.id, "source.read");
+  const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: variant.locale, viewport: { width: variant.width, height: 900 } });
+  const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  try {
+   await login(page, user); await page.goto(`/evaluation-space/groups/${beta.id}/`);
+   await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
+   await expect(page.getByRole("region", { name: tr("Group overview", "团队概览"), exact: true })).toBeVisible();
+   const workflow = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8")); workflow.id = `draft-test-${crypto.randomUUID().slice(0, 8)}`;
+   const session = await (await page.request.get("/evaluation-space/api/v1/session")).json();
+   const draftPath = `/evaluation-space/api/v1/groups/${beta.id}/workflows/${workflow.id}/draft`;
+   const headers = { Origin: origin, "X-CSRF-Token": session.csrf };
+   expect((await page.request.put(draftPath, { headers, data: { id: workflow.id, expected_revision: 0, expected_layout_revision: 0, workflow, layout: {} } })).status()).toBe(200);
+   const budget = { max_tokens: 100, max_cost_micros: 100, max_attempts: 20, timeout_seconds: 60, max_artifact_bytes: 1048576 };
+   const root = `/evaluation-space/api/v1/groups/${beta.id}/runs`; let created = ""; const requests: Record<string, unknown>[] = [];
+   await page.route(`${origin}${root}*`, route => route.fulfill({ json: { items: [{ id: "source", budget }], next_after: "source", has_more: false } }));
+   await page.route(`${origin}${root}/**`, route => {
+    const path = new URL(route.request().url()).pathname;
+    const body = path.endsWith("/events") ? { events: [], next_after: 0 } : path.endsWith("/debugger") ? { budget: { spent: { tokens: 0, cost_micros: 0 }, held: { tokens: 0, cost_micros: 0 } }, counts: { attempts: 0, events: 0, provider_observations: 0 }, provider_observations: [], opaque: [] } : path.endsWith(`/${created}`) ? { id: created, state: "queued", fence: 0, handoff: "not_applicable", evaluation_state: "not_applicable", pins: {}, budget, created_at: new Date().toISOString(), draft_test: { kind: "node", node_id: "extract", source: { run_id: "source" }, draft: { id: workflow.id, revision: 1 } } } : { items: [], has_more: false };
+    return route.fulfill({ json: body });
+   });
+   await page.route(`${origin}${draftPath}/tests`, route => { const input = route.request().postDataJSON(); requests.push(input); created = input.id; return requests.length === 1 ? route.fulfill({ status: 503, body: "lost response" }) : route.fulfill({ status: 201, json: { id: created } }); });
+   await page.goto(`/evaluation-space/groups/${beta.id}/workflows/${workflow.id}/`);
+   await page.getByRole("button", { name: tr("Test saved draft", "测试已保存草稿"), exact: true }).click();
+   const form = page.getByRole("region", { name: tr("Draft test", "草稿测试"), exact: true });
+   await form.getByLabel(tr("Source run", "源运行"), { exact: true }).selectOption("source");
+   await form.getByLabel(tr("Test scope", "测试范围"), { exact: true }).selectOption("subgraph");
+   await expect(form.getByRole("button", { name: tr("Start draft test", "开始草稿测试"), exact: true })).toBeDisabled();
+   await form.getByLabel(tr("Test scope", "测试范围"), { exact: true }).selectOption("node");
+   await form.getByLabel(tr("Test node", "测试节点"), { exact: true }).selectOption("extract");
+   await form.getByLabel(tr("Token budget", "令牌预算"), { exact: true }).fill("101");
+   await expect(form.getByRole("button", { name: tr("Start draft test", "开始草稿测试"), exact: true })).toBeDisabled();
+   await form.getByLabel(tr("Token budget", "令牌预算"), { exact: true }).fill("30");
+   await page.screenshot({ path: info.outputPath("draft-test.png"), fullPage: true });
+   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+   await form.getByRole("button", { name: tr("Start draft test", "开始草稿测试"), exact: true }).focus(); await form.getByRole("button", { name: tr("Start draft test", "开始草稿测试"), exact: true }).click();
+   await expect(form.getByRole("button", { name: tr("Recover draft test", "恢复草稿测试"), exact: true })).toBeEnabled();
+   await page.reload(); await grant(beta.id, "source.read", "deny", 1);
+   await page.getByRole("button", { name: tr("Test saved draft", "测试已保存草稿"), exact: true }).click();
+   await expect(form.getByRole("alert")).toBeVisible(); await expect(form.getByRole("button", { name: tr("Recover draft test", "恢复草稿测试"), exact: true })).toHaveCount(0);
+   await grant(beta.id, "source.read", "allow", 2); await form.getByRole("button", { name: tr("Retry", "重试"), exact: true }).click();
+   await expect(form.getByLabel(tr("Token budget", "令牌预算"), { exact: true })).toHaveValue("30");
+   await form.getByRole("button", { name: tr("Recover draft test", "恢复草稿测试"), exact: true }).click();
+   await expect(page).toHaveURL(new RegExp(`/runs/${created}/?$`)); expect(requests).toHaveLength(2); expect(requests[1]).toEqual(requests[0]);
+   await expect(page.getByRole("button", { name: tr("Run from here", "从此处运行"), exact: true })).toHaveCount(0); expect(errors).toEqual([]);
+  } finally { await context.close(); }
+ });
+}

@@ -279,6 +279,14 @@ or charge a model budget. Conflicts preserve local
 edits and offer a recovery copy before loading the latest draft. Publication records an immutable workflow
 revision and does not activate it for a group. `workflow.edit` is explicit and
 separate from `config.manage`, `run.start` and `source.read`.
+**Test saved draft** requires all three execution-related grants: `workflow.edit`,
+`run.start` and `source.read`. It freezes the saved graph and selected scope with
+a durable admission request. The worker rechecks central authority before effects
+and verifies the scope against the frozen draft. Tests retain the source run's
+exact input and configuration pins, reserve shared capacity, and cannot enter
+production handoff or evaluation. Partial tests retain inactive output states;
+nested workflows still require their declared outputs. Unknown server failures
+retain the pending request for recovery instead of creating another test.
 The workbench also exposes keyboard node editing, typed connection controls with
 duplicate and removal handling, ordered node inspection, prompt variables, model,
 tools and port documents, executable digest feedback, undo/redo and bounded

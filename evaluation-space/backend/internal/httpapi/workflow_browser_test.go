@@ -87,3 +87,53 @@ func TestBrowserWorkflowDraftBoundaryRejectsAmbientCredentials(t *testing.T) {
 	}
 
 }
+
+func TestDraftTestBrowserRequiresEveryPermissionBeforeReadingSource(t *testing.T) {
+	for _, denied := range []string{"workflow.edit", "run.start", "source.read", ""} {
+		t.Run(denied, func(t *testing.T) {
+			calls := []string{}
+			central := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var input appidentity.EvaluationWorkflowAccessRequest
+				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+					t.Error(err)
+					w.WriteHeader(400)
+					return
+				}
+				calls = append(calls, input.Action)
+				if input.Action == denied {
+					w.WriteHeader(403)
+					return
+				}
+				if strings.HasSuffix(r.URL.Path, "workflow-access") {
+					_ = json.NewEncoder(w).Encode(appidentity.EvaluationWorkflowAccess{Subject: "member", GroupID: "team", Allowed: true, ExpiresAt: time.Now().Add(time.Minute)})
+				} else {
+					_ = json.NewEncoder(w).Encode(appidentity.EvaluationAccess{Subject: "member", Items: []appidentity.EvaluationGroup{{ID: "team"}}, ExpiresAt: time.Now().Add(time.Minute)})
+				}
+			}))
+			defer central.Close()
+			client, err := appidentity.NewClient(appidentity.Config{Issuer: "https://app", Endpoint: central.URL, ClientID: "evaluation-space", ClientSecret: strings.Repeat("s", 32)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			store, err := projections.Open(context.Background(), filepath.Join(t.TempDir(), "space.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			api := BrowserAPI(client, store)
+			request := httptest.NewRequest("POST", "/evaluation-space/api/v1/groups/team/workflows/missing/draft/tests", strings.NewReader(`{"id":"test","draft_id":"missing","source_run_id":"source","revision":1,"kind":"workflow","budget":{"max_tokens":10,"max_cost_micros":10,"max_attempts":2,"timeout_seconds":30,"max_artifact_bytes":1024}}`))
+			response := httptest.NewRecorder()
+			api(appidentity.Session{Issuer: "https://app", Subject: "member", Grant: strings.Repeat("g", 43)}, response, request)
+			expected := 403
+			if denied == "" {
+				expected = 404
+			}
+			if response.Code != expected {
+				t.Fatal(response.Code, response.Body.String(), calls)
+			}
+			if denied == "" && len(calls) != 3 {
+				t.Fatal("missing permission check", calls)
+			}
+		})
+	}
+}

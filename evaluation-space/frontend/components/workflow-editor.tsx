@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { base, type Session } from "../lib/api";
 import { useT } from "../lib/i18n";
+import { WorkflowDraftTest } from "./workflow-draft-test";
 
 type JSONMap = Record<string, unknown>;
 type Workflow = JSONMap & { id?: string; nodes?: JSONMap[]; edges?: JSONMap[] };
@@ -244,5 +245,5 @@ function Editor({ group, workflow }: { group: string; workflow: string }) {
     </div>
     {invalidFields.length > 0 && <p role="alert">{tr("Fix invalid node fields before saving or validating.")} {invalidFields.join(", ")}</p>}
     {showConfig && <section className="editor-grid config-editors"><label>{tr("Executable workflow JSON")}<textarea data-field="workflow" aria-describedby={validationField ? "workflow-field-error" : undefined} aria-label={tr("Executable workflow JSON")} value={text} onChange={event => { remember(); setText(event.target.value); setFieldDrafts({}); }} spellCheck={false} /></label><label>{tr("Canvas layout JSON")}<textarea aria-label={tr("Canvas layout JSON")} value={layout} onChange={event => { setPast(items => [...items.slice(-19), snapshot()]); setFuture([]); setLayout(event.target.value); setDirty(true); }} spellCheck={false} /></label></section>}
-  </fieldset></main>;
+  </fieldset>{draft && <WorkflowDraftTest group={group} draft={workflow} revision={draft.revision} nodes={nodes.map(node => ({ id: String(node.id), kind: String(node.kind) }))} saved={!busy && !dirty && invalidFields.length === 0} />}</main>;
 }

@@ -146,6 +146,51 @@ func BrowserWorkflowAPI(client *appidentity.Client, store *projections.Store) fu
 		}
 		write(w, 200, map[string]any{"valid": true, "digest": evolution.Digest(canonical), "paid_execution": false})
 	}
+	test := func(w http.ResponseWriter, r *http.Request) {
+		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
+		if err := authorize(r, session, "workflow.edit"); err != nil {
+			workflowAuthError(w, err)
+			return
+		}
+		for _, action := range []string{"run.start", "source.read"} {
+			if _, err := client.EvaluationGroups(r.Context(), session, appidentity.EvaluationAccessRequest{GroupID: r.PathValue("group"), Action: action, Limit: 1}); err != nil {
+				workflowAuthError(w, err)
+				return
+			}
+		}
+		value, err := evolution.Decode[projections.WorkflowDraftTestRequest](http.MaxBytesReader(w, r.Body, 1<<16))
+		if err != nil || value.DraftID != r.PathValue("workflow") || value.GroupID != "" && value.GroupID != r.PathValue("group") {
+			write(w, 400, map[string]string{"error": "invalid_draft_test"})
+			return
+		}
+		value.GroupID = r.PathValue("group")
+		result, err := store.CreateWorkflowDraftTest(r.Context(), value, evolution.Principal{Issuer: session.Issuer, Subject: session.Subject, Kind: "human"})
+		if errors.Is(err, projections.ErrNotFound) {
+			write(w, 404, map[string]string{"error": "draft_test_source_not_found"})
+			return
+		}
+		if errors.Is(err, projections.ErrConflict) {
+			write(w, 409, map[string]string{"error": "draft_test_conflict"})
+			return
+		}
+		if err != nil {
+			response := map[string]any{"error": "draft_test_rejected"}
+			var field evolution.FieldError
+			if errors.As(err, &field) {
+				response["fields"] = []evolution.FieldError{field}
+				write(w, 422, response)
+				return
+			}
+			if errors.Is(err, projections.ErrRunBudget) {
+				write(w, 422, response)
+				return
+			}
+			write(w, 503, map[string]string{"error": "draft_test_unavailable"})
+			return
+		}
+		write(w, 201, result)
+	}
+	mux.HandleFunc("POST /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft/tests", test)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft", read)
 	mux.HandleFunc("PUT /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft", writeDraft)
 	mux.HandleFunc("GET /evaluation-space/api/v1/groups/{group}/workflows/{workflow}/draft/revisions/{revision}", revision)
