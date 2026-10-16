@@ -1,4 +1,11 @@
 export const ZH: Record<string, string> = {
+  "Upload replacement": "上传替换文件",
+  "Upload a replacement to this path in the working branch draft. Then commit the draft and prepare a new integration; existing conflict choices remain on this workspace.": "将替换文件上传到工作分支草稿中的此路径。然后提交草稿并准备新的集成；现有冲突选择将保留在此工作区。",
+  "Replace this directory explicitly in branch authoring before uploading a file.": "上传文件前，请先在分支编辑中明确替换此目录。",
+  "Replacement file": "替换文件",
+  "Replacement upload is not confirmed. Inspect Upload tasks and recover it before committing.": "替换上传尚未确认。请检查上传任务并恢复后再提交。",
+  "Replacement saved to the working draft. Commit saved draft, then prepare integration again.": "替换文件已保存到工作草稿。请提交已保存的草稿，然后重新准备集成。",
+  "Earlier conflict workspace": "之前的冲突工作区",
   "File": "文件",
   "Directory": "目录",
   "Binary file: text preview unavailable.": "二进制文件：无法显示文本预览。",

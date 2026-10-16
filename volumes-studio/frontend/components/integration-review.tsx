@@ -17,6 +17,7 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
   const tr = useT();
   const studio = useStudio();
   const [workspace, setWorkspace] = useState("");
+  const [replacementWorkspace, setReplacementWorkspace] = useState("");
   const [view, setView] = useState<View>();
   const [changes, setChanges] = useState<Change[]>([]);
   const [next, setNext] = useState("");
@@ -102,6 +103,7 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     const policy = await api<{ revision: number }>(`${root}/merge-policy`);
     const csrf = studio.session.csrf;
     const prepared = await mutate(JSON.stringify(["prepare",current.id,current.head,main.commit_id,policy.revision,rebindDigest]), request => branchAPI.prepare(current, main, policy.revision, request, csrf, rebindDigest));
+    setReplacementWorkspace("");
     setConflicts(prepared.conflicts);
     setWorkspace(prepared.conflict_workspace_id ?? "");
     if(prepared.conflict_workspace_id){const url=new URL(location.href);url.searchParams.set("conflict",prepared.conflict_workspace_id);url.searchParams.delete("integration");history.replaceState(null,"",url);}
@@ -177,7 +179,8 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     </section>}
     {error && <p role="alert">{error}</p>}
     {conflicts.length > 0 && !workspace && <ul>{conflicts.map(conflict => <li key={conflict.path}><code>{conflict.path}</code> — {tr(conflict.reason)}</li>)}</ul>}
-    {workspace && <ConflictEditor key={`${branch.library_id}:${workspace}`} library={branch.library_id} id={workspace} onComplete={digest=>{setWorkspace("");setConflicts([]);void run(()=>load(digest));}} />}
+    {replacementWorkspace && <p role="status">{tr("Replacement saved to the working draft. Commit saved draft, then prepare integration again.")} <a href={`?${new URLSearchParams({ branch: branch.id, conflict: replacementWorkspace })}`}>{tr("Earlier conflict workspace")}</a></p>}
+    {workspace && <ConflictEditor key={`${branch.library_id}:${workspace}`} library={branch.library_id} id={workspace} onReplacement={() => { setReplacementWorkspace(workspace); setWorkspace(""); setConflicts([]); const url = new URL(location.href); url.searchParams.delete("conflict"); history.replaceState(null, "", url); studio.changed(); }} onComplete={digest=>{setWorkspace("");setConflicts([]);void run(()=>load(digest));}} />}
     {view && <>
       <section aria-label={tr("Evaluation checks")}>
        <h3>{tr("Evaluation checks")}</h3>

@@ -121,6 +121,13 @@ branch until completed or canceled; another branch can still be committed.
    and **Download exact file**, including binary files and text above the 1 MiB
    preview limit. Choosing a directory includes its complete subtree; nested
    conflict choices must agree. Deleting a path removes its descendants.
+   To supply new bytes, select a **Replacement file**. Studio uploads it to the
+   displayed path in the working branch draft, regardless of its local filename.
+   Confirm replacement of the existing file. After it is saved, **Commit saved
+   draft** and **Prepare integration** again; the new conflict workspace includes
+   those bytes. The earlier workspace preserves its frozen inputs and choices.
+   A source directory must be replaced explicitly in branch authoring first.
+   Incomplete uploads stay in **Upload tasks** for recovery and block committing.
    Complete every choice and choose **Prepare resolved integration**. The new
    result needs its own approval.
 5. A qualified reviewer chooses **Approve integration**. A merger then chooses

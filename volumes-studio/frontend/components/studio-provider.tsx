@@ -630,6 +630,7 @@ function useStudioController(session: Session | null) {
   };
   const upload = async (library: string, parent: string, files: File[]) => {
     const branch = selectedBranch(library).id;
+    const tasks: Task[] = [];
     for (const file of files) {
       const path = [parent, file.webkitRelativePath || file.name]
         .filter(Boolean)
@@ -644,9 +645,11 @@ function useStudioController(session: Session | null) {
         file,
       };
       model.current.tasks.push(task);
+      tasks.push(task);
       notify();
       await uploadOne(task);
     }
+    return tasks;
   };
   const logout = async () => {
     for (const b of model.current.buffers.filter(b => !b.version))

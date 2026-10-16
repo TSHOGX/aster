@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { api, APIError, base, bytes, requestID, type Entry } from "../lib/api";
-import { conflictAPI, type ConflictWorkspace, type PreparedIntegration } from "../lib/branches";
+import { branchAPI, conflictAPI, type ConflictWorkspace, type PreparedIntegration } from "../lib/branches";
 import { useT } from "../lib/i18n";
 import { useStudio } from "./studio-provider";
 type Preview = { text?: string; preview: string; commit_id: string; entry: Entry };
@@ -23,7 +23,7 @@ function readRecovery(raw: string, id: string): Recovery {
   }
   return value;
 }
-export function ConflictEditor({ library, id, onComplete }: { library: string; id: string; onComplete: (digest: string) => void }) {
+export function ConflictEditor({ library, id, onComplete, onReplacement }: { library: string; id: string; onComplete: (digest: string) => void; onReplacement: () => void }) {
   const tr = useT(), studio = useStudio();
   const [workspace, setWorkspace] = useState<ConflictWorkspace>();
   const [local, setLocal] = useState<Recovery>(empty(id));
@@ -127,6 +127,27 @@ export function ConflictEditor({ library, id, onComplete }: { library: string; i
       } else setError("Conflict operation is unconfirmed. Recover the original request before making another change.");
     } finally { inFlight.current = false; if (!abort.signal.aborted) setBusy(false); }
   }
+  async function uploadReplacement(file: File) {
+    if (!workspace || busy || inFlight.current || local.draft || local.pending || workspace.stale || malformed || workspace.state !== "open") return;
+    inFlight.current = true; setBusy(true); setError("");
+    active.current?.abort(); const abort = new AbortController(); active.current = abort;
+    try {
+      const branch = await branchAPI.read(library, workspace.branch_id, abort.signal);
+      if (abort.signal.aborted) return;
+      if (branch.head !== workspace.source_commit || studio.model.branches[library]?.id !== branch.id) {
+        setError("Inputs changed. Prepare a new integration before resolving."); return;
+      }
+      const slash = local.selected.lastIndexOf("/");
+      const name = local.selected.slice(slash + 1), parent = slash < 0 ? "" : local.selected.slice(0, slash);
+      const tasks = await studio.upload(library, parent, [new File([file], name, { type: file.type, lastModified: file.lastModified })]);
+      if (abort.signal.aborted) return;
+      if (tasks.length !== 1 || tasks[0].state !== "Complete") {
+        setError("Replacement upload is not confirmed. Inspect Upload tasks and recover it before committing."); return;
+      }
+      onReplacement();
+    } catch { if (!abort.signal.aborted) setError("Replacement upload is not confirmed. Inspect Upload tasks and recover it before committing."); }
+    finally { inFlight.current = false; if (!abort.signal.aborted) setBusy(false); }
+  }
   async function discard() {
     if (await studio.ask("Discard conflict recovery", "An uncertain operation may already have succeeded. Discard the local request and resolution?", ["Keep editing", "Discard"]) !== "Discard") return;
     try { sessionStorage.removeItem(key); setStorageError(""); } catch { setStorageError("Local conflict recovery is unavailable. Keep this tab open until the operation is confirmed."); return; }
@@ -160,6 +181,12 @@ export function ConflictEditor({ library, id, onComplete }: { library: string; i
         <section aria-label={tr("Resolution result")}><h4>{tr("Resolution result")}</h4>
           {choice === "delete" ? <p>{tr("This path and its descendants will be removed.")}</p> : choice === "text" ? <pre>{text}</pre> : result && renderPreview(result)}
           <p>{tr(local.draft ? "This choice is unsaved. Save it before preparing the resolved integration." : "The complete resolved tree still requires preparation and fresh review.")}</p>
+        </section>
+        <section aria-label={tr("Upload replacement")}>
+          <p>{tr("Upload a replacement to this path in the working branch draft. Then commit the draft and prepare a new integration; existing conflict choices remain on this workspace.")}</p>
+          <p><code>{local.selected}</code></p>
+          {previews[2]?.entry?.kind === "directory" && <p>{tr("Replace this directory explicitly in branch authoring before uploading a file.")}</p>}
+          <label>{tr("Replacement file")} <input aria-label={tr("Replacement file")} type="file" disabled={blocked || !!local.draft || previews[2]?.entry?.kind === "directory"} onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadReplacement(file); }} /></label>
         </section>
         <button disabled={blocked || conflict} onClick={() => { const draft = local.draft ?? { path: local.selected, choice, text: choice === "text" ? text : "", expected_revision: workspace.revision }; const next = { ...local, draft }; retained.current = next; setLocal(next); void submit({ action: "save", request_id: requestID(), draft }); }}>{tr("Save resolution")}</button>
       </>}
