@@ -331,6 +331,24 @@ run and its evidence remain unchanged. The action requires `run.start`, rejects 
 different group scope, and is safe to replay after a lost response. Retrying a
 draft test preserves its test restrictions and rechecks the testing permissions.
 
+### Publish evaluator profiles
+
+In an Evaluation Space group, **Evaluator profile editor** requires configuration
+management permission. Choose an existing profile or enter a new definition with
+its dataset, scorer, runtime, model, tools, metric units, thresholds and minimum
+samples/coverage. Use a new ID with revision 1, or increment the revision when
+editing an existing profile. The server calculates the profile's own digest;
+referenced revisions still need their exact digests. Profile revision histories
+belong to the dataset's group and cannot move between groups.
+
+Use **Load more profiles** for additional catalog pages. Publication creates an
+immutable revision; existing runs and reports keep their original conditions.
+After a lost publication response, retry the unchanged definition to recover the
+same revision. Refreshing or selecting another profile asks before discarding
+unsaved changes. Failed or denied reads clear the previous document and choices;
+refresh after access or service recovery. Publication does not activate a group
+policy: select the revision in the group's configuration when ready to adopt it.
+
 ### Edit and activate group optimization
 
 Open **Groups → select a group → Automatic optimization**. A configuration draft

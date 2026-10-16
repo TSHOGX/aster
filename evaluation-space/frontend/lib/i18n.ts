@@ -1,6 +1,10 @@
 "use client";
 import { useTranslator } from "../../../web/i18n";
 const zh = {
+"Discard unsaved profile changes?": "放弃未保存的评估配置更改？",
+"Loading profiles…": "正在加载评估配置…",
+"Load more profiles": "加载更多评估配置",
+"Choose a new ID with revision 1, or increment the revision to publish edits. The server computes the profile digest; referenced digests remain required.": "选择新 ID 并使用版本 1，或递增版本号以发布修改。服务器计算配置摘要；引用的摘要仍为必填项。",
 "Test saved draft": "测试已保存草稿",
 "Draft test": "草稿测试",
 "Tests use exact source inputs and fresh model calls. Partial tests include required ancestors. Tests do not create Studio branches or production evaluations.": "测试使用源运行的精确输入并发起新的模型调用。局部测试包含必要的上游节点。测试不会创建 Studio 分支或生产评估。",

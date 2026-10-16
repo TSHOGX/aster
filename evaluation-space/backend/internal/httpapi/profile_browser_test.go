@@ -6,22 +6,25 @@ import (
 	"aster/evaluation-space/internal/projections"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestBrowserProfileEditorPublishesImmutableGroupScopedRevision(t *testing.T) {
+	var denied atomic.Bool
 	central := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/identity/v1/evaluation-space-access" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		var input appidentity.EvaluationAccessRequest
-		if json.NewDecoder(r.Body).Decode(&input) != nil || input.Action != "config.manage" {
+		if json.NewDecoder(r.Body).Decode(&input) != nil || input.Action != "config.manage" || denied.Load() {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
@@ -63,4 +66,83 @@ func TestBrowserProfileEditorPublishesImmutableGroupScopedRevision(t *testing.T)
 	if foreignResponse.Code != http.StatusForbidden {
 		t.Fatal("foreign profile leaked", foreignResponse.Code)
 	}
+	session := appidentity.Session{Issuer: "https://app", Subject: "member", Grant: strings.Repeat("g", 43)}
+	call := func(method, path string, body any, code int) []byte {
+		t.Helper()
+		raw, _ := json.Marshal(body)
+		response := httptest.NewRecorder()
+		api(session, response, httptest.NewRequest(method, "/evaluation-space/api/v1/groups/"+path, strings.NewReader(string(raw))))
+		if response.Code != code {
+			t.Fatalf("%s %s: %d %s", method, path, response.Code, response.Body.String())
+		}
+		return response.Body.Bytes()
+	}
+	var page projections.CatalogPage
+	if err := json.Unmarshal(call("GET", "team/profiles", nil, 200), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Revisions) != 1 || page.Revisions[0] != profile.Ref || page.HasMore {
+		t.Fatal(page)
+	}
+	for _, cursor := range []string{"after_revision=bad", "after_revision=-1", "after_revision=1", "after_id=profile", "after_id=bad/id&after_revision=1"} {
+		call("GET", "team/profiles?"+cursor, nil, 400)
+	}
+	// Browser authors may omit only the self-digest, not referenced digests.
+	var author map[string]any
+	if err := json.Unmarshal(body, &author); err != nil {
+		t.Fatal(err)
+	}
+	delete(author["ref"].(map[string]any), "digest")
+	call("POST", "team/profiles", author, 201)
+	// Authoring computes the canonical digest; retries preserve the same identity.
+	original := profile
+	profile.Ref.Revision = 2
+	profile.Thresholds[0].MinimumSamples = 7
+	var next evolution.Revision
+	if err := json.Unmarshal(call("POST", "team/profiles", profile, 201), &next); err != nil {
+		t.Fatal(err)
+	}
+	expected, _ := evolution.DefinitionDigest(profile)
+	if next.Digest != expected || next.Digest == original.Ref.Digest {
+		t.Fatal(next)
+	}
+	call("POST", "team/profiles", profile, 201)
+	profile.Thresholds[0].MinimumSamples = 8
+	call("POST", "team/profiles", profile, 409)
+	profile.Ref.Revision = 3
+	profile.Dataset.GroupID = "other"
+	call("POST", "other/profiles", profile, 409)
+	call("GET", "team/profiles/profile/1?digest="+original.Ref.Digest, nil, 200)
+	// More than one catalog page, interspersed with entries from another group.
+	for i := 0; i < 55; i++ {
+		profile.Ref = evolution.Revision{ID: fmt.Sprintf("entry-%03d", i), Revision: 1}
+		profile.Dataset.GroupID = "team"
+		call("POST", "team/profiles", profile, 201)
+		profile.Ref.ID = fmt.Sprintf("entry-%03d-foreign", i)
+		profile.Dataset.GroupID = "other"
+		call("POST", "other/profiles", profile, 201)
+	}
+	if err := json.Unmarshal(call("GET", "team/profiles", nil, 200), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Revisions) != 50 || !page.HasMore {
+		t.Fatal(page)
+	}
+	after := fmt.Sprintf("team/profiles?after_id=%s&after_revision=%d", page.NextID, page.NextRevision)
+	if err := json.Unmarshal(call("GET", after, nil, 200), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Revisions) != 7 || page.HasMore {
+		t.Fatal(page)
+	}
+	for _, ref := range page.Revisions {
+		if strings.Contains(ref.ID, "foreign") {
+			t.Fatal("foreign profile listed", ref)
+		}
+	}
+	denied.Store(true)
+	call("GET", "team/profiles", nil, 403)
+	call("GET", "team/profiles/profile/1?digest="+original.Ref.Digest, nil, 403)
+	call("POST", "other/profiles", profile, 403)
+
 }

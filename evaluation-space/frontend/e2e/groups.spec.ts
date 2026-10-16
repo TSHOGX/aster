@@ -811,3 +811,110 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
   } finally { await context.close(); }
  });
 }
+
+for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", width: 390 }]) {
+  test(`profile publication, pagination and revoked reads ${variant.locale} ${variant.width}`, async ({ page: admin, browser }) => {
+    const { alpha, beta, user, grant } = await provision(admin);
+    const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: variant.locale, viewport: { width: variant.width, height: 900 } });
+    const page = await context.newPage();
+    const text = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
+    const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+    const digest = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
+    const ref = (id: string) => ({ id, revision: 1, digest: digest(id) });
+    const profile = { ref: { id: `profile-${crypto.randomUUID()}`, revision: 1 }, dataset: { id: "dataset", group_id: beta.id, digest: digest("dataset"), schema_digest: digest("schema"), grant_id: "grant", policy_revision: 1, size: 4, media_type: "application/json" }, scorer: ref("scorer"), runtime: ref("runtime"), model: ref("model"), tools: [], thresholds: [{ name: "accuracy", unit: "ratio", operator: "gte", value: .9, minimum_samples: 10, minimum_coverage: .8 }], fixed_model_required: true };
+    const root = `/evaluation-space/api/v1/groups/${beta.id}/profiles`;
+    try {
+      await login(page, user);
+      await page.goto(`/evaluation-space/groups/${beta.id}/`);
+      await page.getByRole("link", { name: text("Sign in", "登录"), exact: true }).click();
+      const editor = page.locator("section.card").filter({ has: page.getByRole("heading", { name: text("Evaluator profile editor", "评估器配置编辑器"), exact: true }) });
+      const input = editor.getByRole("textbox", { name: text("Profile JSON", "配置 JSON"), exact: true });
+      const select = editor.getByLabel(text("Existing profile", "现有配置"), { exact: true });
+      const publish = editor.getByRole("button", { name: text("Publish profile revision", "发布配置版本"), exact: true });
+      const refresh = editor.getByRole("button", { name: text("Refresh", "刷新"), exact: true });
+      await expect(input).toBeEnabled();
+      await expect(editor.getByRole("alert")).toHaveCount(0);
+      await input.fill(JSON.stringify(profile));
+      await publish.click();
+      await expect(editor.getByRole("status")).toContainText(`${profile.ref.id} @1`);
+      const canonical = JSON.parse(await input.inputValue());
+      expect(canonical.ref.digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+      const session = await (await page.request.get("/evaluation-space/api/v1/session")).json();
+      const headers = { Origin: origin, "X-CSRF-Token": session.csrf };
+      const first = await (await page.request.get(`${root}/${profile.ref.id}/1?digest=${canonical.ref.digest}`)).json();
+      expect(first.thresholds[0].minimum_samples).toBe(10);
+      // Lose the response only after the real server commits the revision.
+      canonical.ref.revision = 2; canonical.thresholds[0].minimum_samples = 20;
+      await input.fill(JSON.stringify(canonical));
+      await page.route(`**${root}`, async route => {
+        if (route.request().method() !== "POST") return route.continue();
+        const response = await route.fetch(); expect(response.status()).toBe(201);
+        await route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"lost_reply"}' });
+      });
+      await publish.click();
+      await expect(editor.getByRole("alert")).toBeVisible();
+      expect(JSON.parse(await input.inputValue()).ref.revision).toBe(2);
+      await page.unroute(`**${root}`);
+      await publish.click();
+      await expect(editor.getByRole("status")).toContainText(`${profile.ref.id} @2`);
+      expect((await (await page.request.get(`${root}/${profile.ref.id}/1?digest=${first.ref.digest}`)).json()).thresholds[0].minimum_samples).toBe(10);
+      for (let i = 0; i < 51; i++) {
+        const response = await page.request.post(root, { headers, data: { ...profile, ref: { id: `paged-${String(i).padStart(3, "0")}-${crypto.randomUUID()}`, revision: 1 } } });
+        expect(response.status(), await response.text()).toBe(201);
+      }
+      await refresh.click();
+      await expect(select.locator("option")).toHaveCount(51);
+      const more = editor.getByRole("button", { name: text("Load more profiles", "加载更多评估配置"), exact: true });
+      for (let pages = 0; pages < 10 && await more.count(); pages++) {
+        await more.click();
+        await expect(input).toBeEnabled();
+      }
+      await expect(more).toHaveCount(0);
+      expect(await select.locator("option").count()).toBeGreaterThanOrEqual(54);
+      const choices = await select.locator("option").evaluateAll(options => options.map(option => (option as HTMLOptionElement).value));
+      expect(new Set(choices).size).toBe(choices.length);
+      await select.selectOption(`${profile.ref.id}:2`);
+      await expect(input).toHaveValue(/"minimum_samples": 20/);
+      // A superseded detail response cannot replace a refreshed selection.
+      let releaseDetail!: () => void;
+      const held = new Promise<void>(resolve => { releaseDetail = resolve; });
+      let detailArrived!: () => void;
+      const arrived = new Promise<void>(resolve => { detailArrived = resolve; });
+      let detailFinished!: () => void;
+      const finished = new Promise<void>(resolve => { detailFinished = resolve; });
+      await page.route(`**${root}/${profile.ref.id}/1?*`, async route => {
+        const response = await route.fetch();
+        detailArrived(); await held;
+        await route.fulfill({ response }); detailFinished();
+      });
+      await select.selectOption(`${profile.ref.id}:1`); await arrived;
+      await refresh.click(); await expect(input).not.toHaveValue("");
+      const refreshed = await input.inputValue();
+      releaseDetail(); await finished;
+      await page.unroute(`**${root}/${profile.ref.id}/1?*`);
+      await expect(input).toHaveValue(refreshed);
+      for (let pages = 0; pages < 10 && await more.count(); pages++) {
+        await more.click(); await expect(input).toBeEnabled();
+      }
+      await page.route(`**${root}/${profile.ref.id}/1?*`, route => route.fulfill({ status: 403, contentType: "application/json", body: '{}' }));
+      await select.selectOption(`${profile.ref.id}:1`);
+      await expect(input).toHaveValue("");
+      await expect(select.locator("option")).toHaveCount(1);
+      await expect(editor.getByRole("alert")).toContainText(text("Profile detail is unavailable", "评估配置详情不可用"));
+      await page.unroute(`**${root}/${profile.ref.id}/1?*`);
+      await refresh.click();
+      await expect(input).not.toHaveValue("");
+      await grant(beta.id, "config.manage", "deny", 1);
+      await refresh.click();
+      await expect(editor.getByRole("alert")).toContainText(text("Evaluator profiles are unavailable", "评估器配置不可用"));
+      await expect(input).toHaveValue("");
+      await expect(select.locator("option")).toHaveCount(1);
+      expect((await page.request.get(root)).status()).toBe(403);
+      expect((await page.request.get(`${root}/${profile.ref.id}/1?digest=${first.ref.digest}`)).status()).toBe(403);
+      expect((await page.request.post(root, { headers, data: profile })).status()).toBe(403);
+      expect((await page.request.get(`/evaluation-space/api/v1/groups/${alpha.id}/profiles`)).status()).toBe(403);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await context.close(); }
+  });
+}

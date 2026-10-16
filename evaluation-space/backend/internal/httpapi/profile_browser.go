@@ -3,6 +3,7 @@ package httpapi
 import (
 	"aster/contracts/appidentity"
 	"aster/contracts/evolution"
+	manifest "aster/contracts/volumemanifest"
 	"aster/evaluation-space/internal/projections"
 	"bytes"
 	"context"
@@ -11,6 +12,21 @@ import (
 	"net/http"
 	"strconv"
 )
+
+type profileAuthoringInput struct {
+	Ref struct {
+		ID       string `json:"id"`
+		Revision int64  `json:"revision"`
+		Digest   string `json:"digest,omitempty"`
+	} `json:"ref"`
+	Dataset            evolution.ArtifactRef       `json:"dataset"`
+	Scorer             evolution.Revision          `json:"scorer"`
+	Runtime            evolution.Revision          `json:"runtime"`
+	Model              evolution.Revision          `json:"model"`
+	Tools              []evolution.Revision        `json:"tools"`
+	Thresholds         []evolution.MetricThreshold `json:"thresholds"`
+	FixedModelRequired bool                        `json:"fixed_model_required"`
+}
 
 // BrowserProfileAPI is the group-scoped evaluator profile editor boundary.
 // Profiles are immutable catalog entries: editing always publishes the next
@@ -33,11 +49,13 @@ func BrowserProfileAPI(client *appidentity.Client, store *projections.Store) fun
 			workflowAuthError(w, err)
 			return
 		}
-		afterRevision, err := strconv.ParseInt(r.URL.Query().Get("after_revision"), 10, 64)
-		if r.URL.Query().Get("after_revision") == "" {
-			afterRevision = 0
+		var afterRevision int64
+		var err error
+		if cursor := r.URL.Query().Get("after_revision"); cursor != "" {
+			afterRevision, err = strconv.ParseInt(cursor, 10, 64)
 		}
-		if err != nil {
+		afterID := r.URL.Query().Get("after_id")
+		if err != nil || afterRevision < 0 || (afterID == "" && afterRevision != 0) || (afterID != "" && (!manifest.ValidID(afterID) || afterRevision < 1)) {
 			write(w, 400, map[string]string{"error": "invalid_cursor"})
 			return
 		}
@@ -81,9 +99,16 @@ func BrowserProfileAPI(client *appidentity.Client, store *projections.Store) fun
 			workflowAuthError(w, err)
 			return
 		}
-		profile, err := evolution.Decode[evolution.EvaluationProfile](http.MaxBytesReader(w, r.Body, evolution.MaxDocumentBytes))
-		if err != nil || profile.Dataset.GroupID != r.PathValue("group") {
+		input, err := evolution.Decode[profileAuthoringInput](http.MaxBytesReader(w, r.Body, evolution.MaxDocumentBytes))
+		if err != nil || input.Dataset.GroupID != r.PathValue("group") {
 			write(w, 400, map[string]string{"error": "invalid_profile"})
+			return
+		}
+		profile := evolution.EvaluationProfile{Ref: evolution.Revision{ID: input.Ref.ID, Revision: input.Ref.Revision}, Dataset: input.Dataset, Scorer: input.Scorer, Runtime: input.Runtime, Model: input.Model, Tools: input.Tools, Thresholds: input.Thresholds, FixedModelRequired: input.FixedModelRequired}
+		// Authoring clients submit fields; the server owns the canonical self-digest.
+		profile.Ref.Digest, err = evolution.DefinitionDigest(profile)
+		if err != nil {
+			write(w, 422, map[string]string{"error": "profile_rejected"})
 			return
 		}
 		body, marshalErr := json.Marshal(profile)

@@ -63,6 +63,21 @@ func (s *Store) PublishDefinition(ctx context.Context, kind string, body []byte)
 		return err
 	}
 	defer tx.Rollback()
+	if profile, ok := value.(evolution.EvaluationProfile); ok {
+		var first []byte
+		err = tx.QueryRowContext(ctx, "SELECT body FROM catalog_definitions WHERE kind='profile' AND id=? ORDER BY revision LIMIT 1", ref.ID).Scan(&first)
+		if err == nil {
+			owner, decodeErr := evolution.Decode[evolution.EvaluationProfile](bytes.NewReader(first))
+			if decodeErr != nil {
+				return decodeErr
+			}
+			if owner.Dataset.GroupID != profile.Dataset.GroupID {
+				return ErrConflict
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+	}
 	var prior string
 	err = tx.QueryRowContext(ctx, "SELECT digest FROM catalog_definitions WHERE kind=? AND id=? AND revision=?", kind, ref.ID, ref.Revision).Scan(&prior)
 	if err == nil {
