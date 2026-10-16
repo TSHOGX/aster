@@ -49,7 +49,7 @@ func (s *Store) PrepareHandoff(ctx context.Context, group string, patch evolutio
 	if err != nil {
 		return result, err
 	}
-	if state != "completed" || patch.Fence != fence || patch.Base != run.Pins.Base || patch.Validate(run.Pins.Output) != nil {
+	if run.DraftTest != nil || state != "completed" || patch.Fence != fence || patch.Base != run.Pins.Base || patch.Validate(run.Pins.Output) != nil {
 		return result, ErrConflict
 	}
 	for _, entry := range patch.Entries {
@@ -142,7 +142,7 @@ func (s *Store) PendingHandoffs(ctx context.Context, after string, limit int) ([
 	if limit < 1 || limit > 100 {
 		return nil, fmt.Errorf("invalid handoff work page")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.group_id,r.binding_id,r.state FROM runs r JOIN generation_grants g ON g.run_id=r.id WHERE r.id>? AND r.state='completed' AND NOT EXISTS(SELECT 1 FROM run_handoffs h WHERE h.run_id=r.id AND h.state IN('submitted','no_change')) ORDER BY r.id LIMIT ?`, after, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.group_id,r.binding_id,r.state FROM runs r JOIN generation_grants g ON g.run_id=r.id WHERE r.id>? AND r.state='completed' AND json_extract(r.body,'$.draft_test') IS NULL AND NOT EXISTS(SELECT 1 FROM run_handoffs h WHERE h.run_id=r.id AND h.state IN('submitted','no_change')) ORDER BY r.id LIMIT ?`, after, limit)
 	if err != nil {
 		return nil, err
 	}

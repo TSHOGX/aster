@@ -50,7 +50,7 @@ func (w Worker) Step(ctx context.Context, group, id string) error {
 	if err != nil {
 		return err
 	}
-	if run.State != "completed" {
+	if run.DraftTest != nil || run.State != "completed" {
 		return projections.ErrConflict
 	}
 	if err = w.Authority.Check(ctx, run); err != nil {

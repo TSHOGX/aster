@@ -160,6 +160,11 @@ func (e *NativeExecutor) Execute(ctx context.Context, lease projections.RunLease
 	if err != nil {
 		return "", err
 	}
+	if run.DraftTest != nil {
+		if err = e.Registry.Store.VerifyDraftTestScope(ctx, run); err != nil {
+			return "", err
+		}
+	}
 	if len(run.Pins.InputPorts) != len(graph.Inputs) {
 		return "failed", nil
 	}
@@ -205,7 +210,12 @@ func (e *NativeExecutor) Execute(ctx context.Context, lease projections.RunLease
 		}
 		engine.Journal = experimentJournal{WorkflowJournal: journal, authority: e.Authority, run: run, records: selected}
 	}
-	result, err := engine.Execute(ctx, run.Pins.Workflow, inputs)
+	var result any
+	if run.DraftTest != nil && run.DraftTest.Kind != "workflow" {
+		result, err = engine.ExecuteDraftScope(ctx, run.Pins.Workflow, inputs)
+	} else {
+		result, err = engine.Execute(ctx, run.Pins.Workflow, inputs)
+	}
 	if errors.Is(err, workflow.ErrPauseRequested) {
 		return "paused", nil
 	}
@@ -227,6 +237,9 @@ func (e *NativeExecutor) Execute(ctx context.Context, lease projections.RunLease
 		return "failed", nil
 	}
 	schemas, _ := json.Marshal(graph.Outputs)
+	if run.DraftTest != nil && run.DraftTest.Kind != "workflow" {
+		schemas, _ = json.Marshal(map[string]any{"kind": "draft-scope-result-v1", "ports": graph.Outputs})
+	}
 	artifact := evolution.ArtifactRef{ID: "result-" + strings.TrimPrefix(evolution.Digest([]byte(run.ID)), "sha256:"), GroupID: run.GroupID, SchemaDigest: evolution.Digest(schemas), Digest: evolution.Digest(raw), Size: int64(len(raw)), MediaType: "application/json", GrantID: grant, PolicyRevision: run.Pins.SourcePolicyRevision}
 	if err = e.Authority.AuthorizeArtifact(ctx, run, artifact); err != nil {
 		return "", err

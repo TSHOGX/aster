@@ -22,10 +22,12 @@ type Engine struct {
 	Journal Journal
 }
 type execution struct {
-	engine      *Engine
-	compiled    *compiled
-	maxAttempts int
-	slots       chan struct{}
+	engine            *Engine
+	compiled          *compiled
+	maxAttempts       int
+	slots             chan struct{}
+	allowInactiveRoot bool
+	inactiveRoot      []string
 }
 type nodeResult struct {
 	id       string
@@ -34,19 +36,37 @@ type nodeResult struct {
 	err      error
 }
 
+// DraftScopeResult preserves inactive output identity without inventing values.
+type DraftScopeResult struct {
+	Outputs  Values   `json:"outputs"`
+	Inactive []string `json:"inactive"`
+}
+
 func (e *Engine) Execute(ctx context.Context, ref evolution.Revision, inputs Values) (Values, error) {
+	result, err := e.execute(ctx, ref, inputs, false)
+	return result.Outputs, err
+}
+
+// ExecuteDraftScope permits inactive outputs only at the partial test root.
+// Nested graphs retain their required-output semantics.
+func (e *Engine) ExecuteDraftScope(ctx context.Context, ref evolution.Revision, inputs Values) (DraftScopeResult, error) {
+	return e.execute(ctx, ref, inputs, true)
+}
+
+func (e *Engine) execute(ctx context.Context, ref evolution.Revision, inputs Values, partial bool) (DraftScopeResult, error) {
 	if e.Catalog == nil || e.Runtime == nil || e.Journal == nil {
-		return nil, fmt.Errorf("workflow dependencies required")
+		return DraftScopeResult{}, fmt.Errorf("workflow dependencies required")
 	}
 	compiled, err := compile(ctx, ref, e.Catalog)
 	if err != nil {
-		return nil, err
+		return DraftScopeResult{}, err
 	}
 	root := compiled.workflows[ref]
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(root.Limits.TimeoutSeconds)*time.Second)
 	defer cancel()
-	execution := &execution{engine: e, compiled: compiled, maxAttempts: root.Limits.MaxTotalAttempts, slots: make(chan struct{}, root.Limits.MaxParallelNodes)}
-	return execution.graph(ctx, ref, inputs, "root", "", 0)
+	execution := &execution{engine: e, compiled: compiled, maxAttempts: root.Limits.MaxTotalAttempts, slots: make(chan struct{}, root.Limits.MaxParallelNodes), allowInactiveRoot: partial, inactiveRoot: []string{}}
+	outputs, err := execution.graph(ctx, ref, inputs, "root", "", 0)
+	return DraftScopeResult{Outputs: outputs, Inactive: execution.inactiveRoot}, err
 }
 func (x *execution) graph(ctx context.Context, ref evolution.Revision, inputs Values, instance, parent string, depth int) (Values, error) {
 	if depth > 16 {
@@ -143,14 +163,23 @@ func (x *execution) graph(ctx context.Context, ref evolution.Revision, inputs Va
 		return nil, firstErr
 	}
 	outputs := Values{}
+	off := map[string]bool{}
 	for name := range w.Outputs {
 		source := incoming["$output."+name]
 		if inactive[source] {
+			if x.allowInactiveRoot && instance == "root" {
+				off[name] = true
+				x.inactiveRoot = append(x.inactiveRoot, name)
+				continue
+			}
 			return nil, NodeFailure{instance, "required_output_inactive"}
 		}
 		outputs[name] = values[source]
 	}
-	if err := x.compiled.validate(w.Outputs, outputs, nil); err != nil {
+	if instance == "root" {
+		sort.Strings(x.inactiveRoot)
+	}
+	if err := x.compiled.validate(w.Outputs, outputs, off); err != nil {
 		return nil, err
 	}
 	return outputs, nil

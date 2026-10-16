@@ -36,6 +36,10 @@ func (s *Store) Run(ctx context.Context, group, id string) (evolution.Run, error
 	}
 	result.State = state
 	result.Fence = fence
+	if result.DraftTest != nil {
+		result.Handoff, result.EvaluationState, result.ResultBranch = "not_applicable", "not_applicable", ""
+		return result, nil
+	}
 	handoff, err := s.Handoff(ctx, group, id)
 	if err == nil {
 		result.Handoff = handoff.State

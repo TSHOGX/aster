@@ -73,6 +73,9 @@ func (s *Store) PreviewRunExperiment(ctx context.Context, input RunExperimentReq
 	if err != nil {
 		return result, err
 	}
+	if source.DraftTest != nil {
+		return result, ErrConflict
+	}
 	result.Source = source
 	if source.State != "paused" {
 		result.Reasons = append(result.Reasons, "source_run_not_paused")

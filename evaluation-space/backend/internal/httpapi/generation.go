@@ -101,7 +101,7 @@ func (a *GenerationAPI) serve(w http.ResponseWriter, r *http.Request, action str
 	}
 	if action == "admit" {
 		assignment, err := evolution.Decode[evolution.GenerationAssignment](http.MaxBytesReader(w, r.Body, evolution.MaxDocumentBytes))
-		if err != nil {
+		if err != nil || assignment.DraftTest != nil || assignment.Experiment != nil {
 			write(w, 400, map[string]string{"error": "invalid_assignment"})
 			return
 		}

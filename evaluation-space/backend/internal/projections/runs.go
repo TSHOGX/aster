@@ -96,7 +96,7 @@ func (s *Store) AdmitRun(ctx context.Context, input RunAdmission) (evolution.Run
 		}
 	}
 	var active int
-	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE group_id=? AND binding_id=? AND experiment_of='' AND state IN ('queued','running','pause_requested','paused','cancelling')", input.GroupID, input.BindingID).Scan(&active); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE group_id=? AND binding_id=? AND experiment_of='' AND json_extract(body,'$.draft_test') IS NULL AND state IN ('queued','running','pause_requested','paused','cancelling')", input.GroupID, input.BindingID).Scan(&active); err != nil {
 		return result, err
 	}
 	if active != 0 {
@@ -179,11 +179,15 @@ func (s *Store) RetryRun(ctx context.Context, input RunRetry, requester evolutio
 	if input.NewRunID == input.SourceRunID {
 		return result, ErrConflict
 	}
-	var active int
-	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE group_id=? AND binding_id=? AND experiment_of='' AND state IN ('queued','running','pause_requested','paused','cancelling')", group, binding).Scan(&active); err != nil {
+	result, err = evolution.Decode[evolution.Run](bytes.NewReader(body))
+	if err != nil {
 		return result, err
 	}
-	if active != 0 && experiment == "" {
+	var active int
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE group_id=? AND binding_id=? AND experiment_of='' AND json_extract(body,'$.draft_test') IS NULL AND state IN ('queued','running','pause_requested','paused','cancelling')", group, binding).Scan(&active); err != nil {
+		return result, err
+	}
+	if active != 0 && experiment == "" && result.DraftTest == nil {
 		return result, ErrBindingBusy
 	}
 	var exists int
@@ -193,10 +197,6 @@ func (s *Store) RetryRun(ctx context.Context, input RunRetry, requester evolutio
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return result, err
 	}
-	result, err = evolution.Decode[evolution.Run](bytes.NewReader(body))
-	if err != nil {
-		return result, err
-	}
 	result.ID = input.NewRunID
 	result.State = "queued"
 	result.Fence = 0
@@ -204,6 +204,9 @@ func (s *Store) RetryRun(ctx context.Context, input RunRetry, requester evolutio
 	result.ResultBranch = ""
 	result.Handoff = "not_ready"
 	result.EvaluationState = evaluationState(result.Pins.Evaluation.Mode)
+	if result.DraftTest != nil {
+		result.Handoff, result.EvaluationState = "not_applicable", "not_applicable"
+	}
 	result.CreatedAt = time.Now().UTC()
 	newBody, err := json.Marshal(result)
 	if err != nil {
@@ -216,7 +219,7 @@ func (s *Store) RetryRun(ctx context.Context, input RunRetry, requester evolutio
 	if _, err = tx.ExecContext(ctx, "INSERT INTO runs(id,group_id,binding_id,configuration_revision,occurrence_id,experiment_of,request,body,state) VALUES(?,?,?,?,?,?,?,?,?)", result.ID, group, binding, configurationRevision, retryOccurrence, experiment, rawRequest, newBody, result.State); err != nil {
 		return result, err
 	}
-	assignment := evolution.GenerationAssignment{BatchID: result.BatchID, RunID: result.ID, GroupID: group, BindingID: binding, OccurrenceID: retryOccurrence, Requester: requester, Pins: result.Pins, Budget: result.Budget, Experiment: result.Experiment}
+	assignment := evolution.GenerationAssignment{BatchID: result.BatchID, RunID: result.ID, GroupID: group, BindingID: binding, OccurrenceID: retryOccurrence, Requester: requester, Pins: result.Pins, Budget: result.Budget, Experiment: result.Experiment, DraftTest: result.DraftTest}
 	if _, err = assignment.Digest(); err != nil {
 		return result, err
 	}

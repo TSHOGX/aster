@@ -93,8 +93,11 @@ func (a CentralAuthority) AuthorizeRun(ctx context.Context, run evolution.Run, c
 	if cleanup {
 		action = "cleanup"
 	}
-	if run.State == "completed" {
+	if run.State == "completed" && !cleanup {
 		action = "handoff"
+		if run.DraftTest != nil {
+			action = "read"
+		}
 	}
 	_, err = a.Central.ResolveGeneration(ctx, evolution.GenerationGrantScope{Grant: grant, Action: action, Fence: run.Fence})
 	if err != nil {
