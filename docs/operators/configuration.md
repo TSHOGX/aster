@@ -288,7 +288,11 @@ compare-and-swap controls and retain `run.start` authority. Evaluation reports u
 `/evaluation-space/groups/{group}/evaluations/{job}` and expose the frozen subject,
 policy mode (`report_only` or `required`), observed metrics, coverage and outcome;
 dataset bytes and evaluator credentials
-remain private. A report can be canceled while it is queued or running.
+remain private. A report can be canceled while it is queued or running. Failed
+cancellation displays an error so the operator can refresh and retry. Report
+refreshes clear the previous outcome and download links; a failed or denied read
+cannot leave old evidence visible. A missing result is pending only while the job
+is active. For terminal jobs, use Refresh after the evaluator or service recovers.
 Completed, failed and canceled runs expose an explicit retry operation that creates
 a new queued run from the retained pins and records `retry_of`; it never rewrites
 the source run or accepts caller-supplied replacement inputs. The operation is

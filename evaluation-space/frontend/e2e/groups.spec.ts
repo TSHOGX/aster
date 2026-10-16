@@ -209,3 +209,84 @@ test("terminal run inspector retries into a linked immutable run", async ({ page
     await expect(page.getByRole("link", { name: "terminal-run", exact: true })).toBeVisible();
   } finally { await context.close(); }
 });
+
+for (const variant of [
+  { locale: "en-US", width: 1440, mode: "report_only" },
+  { locale: "zh-CN", width: 390, mode: "required" },
+]) {
+  test(`evaluation report lifecycle and revocation ${variant.mode} ${variant.locale}`, async ({ page: admin, browser }, info) => {
+    const { beta, user } = await provision(admin);
+    const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: variant.locale, viewport: { width: variant.width, height: 900 } });
+    const page = await context.newPage();
+    const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
+    const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+    try {
+      await login(page, user);
+      await page.goto(`/evaluation-space/groups/${beta.id}/`);
+      await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
+      await expect(page.getByRole("region", { name: tr("Group overview", "团队概览"), exact: true }).getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
+      const root = `/evaluation-space/api/v1/groups/${beta.id}/evaluations/job-report`;
+      const job = { id: "job-report", state: "running", fence: 1, policy_mode: variant.mode, profile: { ref: { id: "profile", revision: 2 } }, subject: { candidate: { tree_digest: "sha256:candidate" } }, created_at: new Date().toISOString() };
+      const completion = { result: { state: "completed", outcome: "pass", subject: { dataset: { id: "held-out", digest: "sha256:dataset" }, scorer: { id: "scorer", revision: 1 }, runtime: { id: "runtime", revision: 1 }, model: { id: "model", revision: 1 }, tools: [] }, metrics: [{ name: "accuracy", unit: "ratio", value: 1, samples: 10, coverage: 1 }], reports: [{ id: "report-artifact", size: 12, digest: "sha256:report" }] }, usage: { spent: { tokens: 2, cost_micros: 3 }, held: { tokens: 0, cost_micros: 0 } } };
+      let jobStatus = 200, resultStatus = 404;
+      // These intercepted responses test UI lifecycle only. Worker assessment,
+      // held-out authorization and merge policy have separate service tests.
+      await page.route(`${origin}${root}`, route => route.fulfill({ status: jobStatus, contentType: "application/json", body: JSON.stringify(jobStatus === 200 ? job : { error: "access_denied" }) }));
+      await page.route(`${origin}${root}/result`, route => route.fulfill({ status: resultStatus, contentType: "application/json", body: JSON.stringify(resultStatus === 200 ? completion : { error: "result_unavailable" }) }));
+      await page.route(`${origin}${root}/cancel`, route => route.fulfill({ status: 403, contentType: "application/json", body: '{"error":"access_denied"}' }));
+      await page.goto(`/evaluation-space/groups/${beta.id}/evaluations/job-report`);
+      await expect(page.getByText(tr("Policy mode", "策略模式"), { exact: true })).toBeVisible();
+      await expect(page.getByText(variant.mode === "required" ? tr("required", "必需") : tr("report_only", "仅报告"), { exact: true })).toBeVisible();
+      const pending = page.getByText(tr("No settled report yet. The evaluator may still be running.", "尚无已结算报告，评估器可能仍在运行。"), { exact: true });
+      const unavailable = page.getByText(tr("Settled report is temporarily unavailable. Retry after the evaluator or service recovers.", "已结算报告暂时不可用，请在评估器或服务恢复后重试。"), { exact: true });
+      const refresh = page.getByRole("button", { name: tr("Refresh", "刷新"), exact: true });
+      const download = page.getByRole("link", { name: tr("Open bounded report", "打开有界报告"), exact: true });
+      await expect(pending).toBeVisible();
+      await page.getByRole("button", { name: tr("Cancel evaluation", "取消评估"), exact: true }).click();
+      await expect(page.getByRole("alert").filter({ hasText: tr("Evaluation cancellation failed.", "评估取消失败。") })).toBeVisible();
+      resultStatus = 200; job.state = "completed";
+      for (const [outcome, zh] of [["pass", "通过"], ["fail", "未通过"], ["inconclusive", "无法确定"]]) {
+        completion.result.outcome = outcome;
+        await refresh.click();
+        await expect(page.getByRole("heading", { name: `${tr("Outcome", "结果")}: ${tr(outcome, zh)}`, exact: true })).toBeVisible();
+        await expect(download).toHaveAttribute("href", `${root}/reports/report-artifact?max_bytes=1048576`);
+        await expect(pending).toHaveCount(0);
+      }
+      await expect(page.getByText(tr("Held-out answers never appear in reports or prompts; only retained report artifacts are downloadable.", "保留集答案不会出现在报告或提示词中；只能下载已保留的报告工件。"), { exact: true })).toBeVisible();
+      await page.screenshot({ path: info.outputPath("evaluation-report.png"), fullPage: true });
+      for (const status of [503, 403, 404]) {
+        resultStatus = status;
+        await refresh.click();
+        await expect(unavailable).toBeVisible();
+        await expect(download).toHaveCount(0);
+        await expect(page.getByRole("heading", { name: /^Outcome:|^结果:/ })).toHaveCount(0);
+        await expect(pending).toHaveCount(0); // A terminal job's absent report is not still running.
+      }
+      resultStatus = 200;
+      await refresh.click(); await expect(download).toBeVisible();
+      // An older successful result cannot restore evidence after a newer denial.
+      let release!: () => void, started!: () => void, delivered!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; });
+      const waiting = new Promise<void>(resolve => { started = resolve; });
+      const finished = new Promise<void>(resolve => { delivered = resolve; });
+      await page.route(`${origin}${root}/result`, async route => {
+        started(); await held;
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(completion) }).catch(() => {});
+        delivered();
+      }, { times: 1 });
+      await refresh.click(); await waiting;
+      jobStatus = 403;
+      await refresh.click();
+      await expect(page.getByText(tr("Evaluation report is unavailable. Retry or check group access.", "无法获取评估报告，请重试或检查团队访问权限。"), { exact: true })).toBeVisible();
+      await expect(page.getByText("sha256:candidate", { exact: true })).toHaveCount(0);
+      await expect(download).toHaveCount(0);
+      release(); await finished;
+      await expect(download).toHaveCount(0);
+      jobStatus = 200;
+      await page.getByRole("button", { name: tr("Retry", "重试"), exact: true }).click();
+      await expect(download).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await context.close(); }
+  });
+}
