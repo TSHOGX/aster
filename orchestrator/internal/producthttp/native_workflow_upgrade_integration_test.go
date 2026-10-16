@@ -169,36 +169,9 @@ func verifyNativeWorkflowUpgrade(t *testing.T, ctx context.Context, f nativeWork
 	}
 	var v2 evolution.Revision
 	var template2 evolution.Template
-	runBrowser := func(phase string) {
-		t.Helper()
-		workerCtx, stop := context.WithCancel(ctx)
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			worker := &product.EvolutionWorker{Store: f.Store, Evaluation: f.Evaluation, Studio: f.Studio}
-			for {
-				if err := worker.Step(workerCtx); err != nil && !errors.Is(err, context.Canceled) {
-					t.Log("upgrade activation pending", err)
-				}
-				select {
-				case <-workerCtx.Done():
-					return
-				case <-time.After(50 * time.Millisecond):
-				}
-			}
-		}()
-		cmd := exec.CommandContext(ctx, "node", "node_modules/@playwright/test/cli.js", "test", "--config", "playwright.evolution.config.ts")
-		cmd.Dir = filepath.Join(f.Repository, "admin-frontend")
-		cmd.Env = append(os.Environ(), "ADMIN_EVOLUTION_URL="+f.Issuer, "ADMIN_EVOLUTION_TOKEN="+f.Token, "ADMIN_EVOLUTION_UPGRADE_PHASE="+phase, "ADMIN_EVOLUTION_SOURCE_RUN="+assignment.RunID)
-		output, err := cmd.CombinedOutput()
-		stop()
-		<-done
-		if err != nil {
-			t.Fatalf("upgrade browser %s: %v\n%s", phase, err, output)
-		}
-	}
+
 	if f.BrowserUpgrade {
-		runBrowser("publish")
+		runNativeEvolutionBrowser(t, ctx, f, "publish", assignment.RunID)
 		var catalog struct {
 			Revisions []evolution.Revision `json:"revisions"`
 		}
@@ -248,7 +221,7 @@ func verifyNativeWorkflowUpgrade(t *testing.T, ctx context.Context, f nativeWork
 	selected.Bindings[bindingIndex].Template = template2.Ref
 	var upgraded product.EvolutionGroupConfig
 	if f.BrowserUpgrade {
-		runBrowser("activate")
+		runNativeEvolutionBrowser(t, ctx, f, "activate", assignment.RunID)
 		upgraded, err = f.Store.EvolutionConfig(ctx, f.Token, selected.GroupID)
 		must(t, err)
 		if upgraded.State != "active" || upgraded.ActiveRevision != selected.Revision {
@@ -340,4 +313,34 @@ func verifyNativeWorkflowUpgrade(t *testing.T, ctx context.Context, f nativeWork
 	if after.State != "completed" || after.Pins.Workflow != v2 {
 		t.Fatal("new run did not execute v2", after)
 	}
+}
+
+func runNativeEvolutionBrowser(t *testing.T, ctx context.Context, f nativeWorkflowUpgrade, phase, sourceRun string) []byte {
+	t.Helper()
+	workerCtx, stop := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		worker := &product.EvolutionWorker{Store: f.Store, Evaluation: f.Evaluation, Studio: f.Studio}
+		for {
+			if err := worker.Step(workerCtx); err != nil && !errors.Is(err, context.Canceled) {
+				t.Log("upgrade activation pending", err)
+			}
+			select {
+			case <-workerCtx.Done():
+				return
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	}()
+	cmd := exec.CommandContext(ctx, "node", "node_modules/@playwright/test/cli.js", "test", "--config", "playwright.evolution.config.ts")
+	cmd.Dir = filepath.Join(f.Repository, "admin-frontend")
+	cmd.Env = append(os.Environ(), "ADMIN_EVOLUTION_URL="+f.Issuer, "ADMIN_EVOLUTION_TOKEN="+f.Token, "ADMIN_EVOLUTION_UPGRADE_PHASE="+phase, "ADMIN_EVOLUTION_SOURCE_RUN="+sourceRun)
+	output, err := cmd.CombinedOutput()
+	stop()
+	<-done
+	if err != nil {
+		t.Fatalf("upgrade browser %s: %v\n%s", phase, err, output)
+	}
+	return output
 }

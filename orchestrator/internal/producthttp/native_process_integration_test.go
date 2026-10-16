@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -242,7 +243,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 					return
 				}
 			}
-			if json.Unmarshal(raw, &assignment) == nil && assignment.RunID == "browser-native-experiment" {
+			if json.Unmarshal(raw, &assignment) == nil && assignment.Experiment != nil {
 				retryAdmissionMu.Lock()
 				experimentAdmissionRequests = append(experimentAdmissionRequests, raw)
 				first := len(experimentAdmissionRequests) == 1
@@ -1065,9 +1066,23 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			t.Fatal("checkpoint reuse preview", string(raw))
 		}
 		experimentInput["checkpoint_id"] = preview.Checkpoint.ID
+		var experimentBody any = experimentInput
+		if browserUpgrade {
+			output := runNativeEvolutionBrowser(t, ctx, nativeWorkflowUpgrade{Repository: root, Store: store, Token: token, Issuer: issuer, Evaluation: evalClient, Studio: studioClient}, "experiment", retry.ID)
+			const marker = "NATIVE_EXPERIMENT_REQUEST="
+			_, tail, found := strings.Cut(string(output), marker)
+			if !found || len(strings.Fields(tail)) == 0 {
+				t.Fatalf("browser did not return experiment identity: %s", output)
+			}
+			request, err := base64.StdEncoding.DecodeString(strings.Fields(tail)[0])
+			must(t, err)
+			// Preserve opaque JSON schema bytes across exact request replay.
+			// Decoding through map[string]any reorders nested schema members.
+			experimentBody = json.RawMessage(request)
+		}
 		var experiment evolution.Run
 		for i := 0; i < 2; i++ {
-			status, raw = spaceCall("POST", runRoot+retry.ID+"/experiment", experimentInput)
+			status, raw = spaceCall("POST", runRoot+retry.ID+"/experiment", experimentBody)
 			if status != 201 {
 				t.Fatal("experiment creation", status, string(raw))
 			}

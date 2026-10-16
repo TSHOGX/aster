@@ -352,7 +352,9 @@ job evidence are labeled as such; the UI does not infer tool or internal model
 details from a terminal status. The projection also joins durable attempts, event
 records and advertised artifacts. Failed or denied evidence reads clear previously
 displayed attempts, artifacts and comparisons; retry after access or service recovery.
-Event reconnects resume from the last successful cursor without duplicating entries. Each terminal node attempt retains a checkpoint
+Polling advances an event cursor without duplicating entries. After a failed or
+denied read clears the visible evidence, recovery reloads the retained event history
+under current authority. Each terminal node attempt retains a checkpoint
 with its event; the checkpoint keeps a fixed history even if the run later resumes.
 A single artifact can be opened through the
 same source-authorized browser boundary; responses include its digest and size and
