@@ -293,7 +293,10 @@ silently change the active revision. Run detail links use
 current group's frozen run metadata, deduplicated event cursor and authorized
 attempt records, including effective prompts, node inputs/outputs and artifact
 metadata when the current `source.read` grant permits them. Artifact metadata is
-paginated; use **Load more artifacts** to continue. It includes retained provider
+paginated; use **Load more artifacts** to continue. Node attempts and provider
+observations have separate load-more controls. Debugger totals include every
+retained record; semantic comparison waits until both attempt lists are fully
+loaded and uses the latest attempt number for each execution path. It includes retained provider
 requests, outputs and evidence, plus workflow events and checkpoints. Direct
 artifact downloads resolve the exact run advertisement independently of list pages. Artifact bytes are
 served only through the separate current-grant download operation. Pause, resume and cancel are

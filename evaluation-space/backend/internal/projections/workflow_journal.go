@@ -185,28 +185,44 @@ func (j WorkflowJournal) event(ctx context.Context, tx *sql.Tx, attempt, kind st
 
 // WorkflowAttempts contains sensitive inputs/prompts. Callers must authorize
 // trace access; it is not a public metadata projection.
+type WorkflowAttemptPage struct {
+	Items     []workflow.Record `json:"items"`
+	NextAfter string            `json:"next_after"`
+	HasMore   bool              `json:"has_more"`
+}
+
 func (s *Store) WorkflowAttempts(ctx context.Context, group, run, after string, limit int) ([]workflow.Record, error) {
+	page, err := s.WorkflowAttemptPage(ctx, group, run, after, limit)
+	return page.Items, err
+}
+
+func (s *Store) WorkflowAttemptPage(ctx context.Context, group, run, after string, limit int) (WorkflowAttemptPage, error) {
+	result := WorkflowAttemptPage{Items: []workflow.Record{}, NextAfter: after}
 	if limit < 1 || limit > 100 || after != "" && !manifest.ValidID(after) {
-		return nil, fmt.Errorf("invalid workflow attempt page")
+		return result, fmt.Errorf("invalid workflow attempt page")
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT a.record FROM workflow_attempts a JOIN runs r ON r.id=a.run_id WHERE r.group_id=? AND r.id=? AND a.id>? ORDER BY a.id LIMIT ?", group, run, after, limit)
+	rows, err := s.db.QueryContext(ctx, "SELECT a.record FROM workflow_attempts a JOIN runs r ON r.id=a.run_id WHERE r.group_id=? AND r.id=? AND a.id>? ORDER BY a.id LIMIT ?", group, run, after, limit+1)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	defer rows.Close()
-	records := []workflow.Record{}
 	for rows.Next() {
+		if len(result.Items) == limit {
+			result.HasMore = true
+			break
+		}
 		var raw []byte
 		if err = rows.Scan(&raw); err != nil {
-			return nil, err
+			return result, err
 		}
 		record, err := evolution.Decode[workflow.Record](bytes.NewReader(raw))
 		if err != nil {
-			return nil, err
+			return result, err
 		}
-		records = append(records, record)
+		result.Items = append(result.Items, record)
+		result.NextAfter = record.Call.ID
 	}
-	return records, rows.Err()
+	return result, rows.Err()
 }
 
 // CheckpointWorkflowAttempts reads only attempts terminal at the frozen boundary,

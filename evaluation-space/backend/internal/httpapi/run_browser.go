@@ -115,12 +115,12 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 			write(w, 422, map[string]string{"error": "run_unavailable"})
 			return
 		}
-		records, err := store.WorkflowAttempts(r.Context(), r.PathValue("group"), r.PathValue("run"), r.URL.Query().Get("after"), limit)
+		page, err := store.WorkflowAttemptPage(r.Context(), r.PathValue("group"), r.PathValue("run"), r.URL.Query().Get("after"), limit)
 		if err != nil {
 			write(w, 422, map[string]string{"error": "attempts_unavailable"})
 			return
 		}
-		write(w, 200, map[string]any{"items": records})
+		write(w, 200, page)
 	}
 	artifacts := func(w http.ResponseWriter, r *http.Request) {
 		session := r.Context().Value(browserSessionKey{}).(appidentity.Session)
@@ -214,7 +214,16 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 			workflowAuthError(w, err)
 			return
 		}
-		value, err := store.RunDebugger(r.Context(), r.PathValue("group"), r.PathValue("run"))
+		limit := 100
+		var err error
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			limit, err = strconv.Atoi(raw)
+		}
+		if err != nil || limit < 1 || limit > 100 {
+			write(w, 400, map[string]string{"error": "invalid_limit"})
+			return
+		}
+		value, err := store.RunDebugger(r.Context(), r.PathValue("group"), r.PathValue("run"), r.URL.Query().Get("after"), limit)
 		if errors.Is(err, projections.ErrNotFound) {
 			write(w, 404, map[string]string{"error": "run_not_found"})
 			return

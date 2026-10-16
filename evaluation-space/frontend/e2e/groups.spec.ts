@@ -254,7 +254,7 @@ test("terminal run inspector retries into a linked immutable run", async ({ page
     await page.route(`${origin}${root}/terminal-run`, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(run) }));
     await page.route(`${origin}${root}/retry-run`, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(retry) }));
     for (const suffix of ["events?after=0&limit=100", "attempts?limit=100", "artifacts", "debugger"]) {
-      await page.route(`${origin}${root}/terminal-run/${suffix}`, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(suffix === "events?after=0&limit=100" ? { events: [], next_after: 0 } : suffix === "attempts?limit=100" || suffix === "artifacts" ? { items: [] } : { budget: { spent: { tokens: 0, cost_micros: 0 }, held: { tokens: 0, cost_micros: 0 }, available: { tokens: 0, cost_micros: 0 } }, attempts: [], events: [], provider_observations: [], opaque: [] }) }));
+      await page.route(`${origin}${root}/terminal-run/${suffix}`, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(suffix === "events?after=0&limit=100" ? { events: [], next_after: 0 } : suffix === "attempts?limit=100" || suffix === "artifacts" ? { items: [] } : { budget: { spent: { tokens: 0, cost_micros: 0 }, held: { tokens: 0, cost_micros: 0 }, available: { tokens: 0, cost_micros: 0 } }, counts: { attempts: 0, events: 0, provider_observations: 0 }, next_after: "", has_more: false, provider_observations: [], opaque: [] }) }));
     }
     const requests: unknown[] = [];
     await page.route(`${origin}${root}/terminal-run/retry`, async route => {
@@ -385,7 +385,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
           run.state = control.action === "pause" ? "pause_requested" : "queued";
           body = { state: run.state, fence: run.fence };
         } else if (path.endsWith("/events")) body = { events: [], next_after: 0 };
-        else if (path.endsWith("/debugger")) body = { budget: { spent: { tokens: 0, cost_micros: 0 }, held: { tokens: 10, cost_micros: 20 }, available: { tokens: 90, cost_micros: 80 } }, attempts: [], events: [], provider_observations: [], opaque: [] };
+        else if (path.endsWith("/debugger")) body = { budget: { spent: { tokens: 0, cost_micros: 0 }, held: { tokens: 10, cost_micros: 20 }, available: { tokens: 90, cost_micros: 80 } }, counts: { attempts: 0, events: 0, provider_observations: 0 }, next_after: "", has_more: false, provider_observations: [], opaque: [] };
         return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
       });
       await page.goto(`/evaluation-space/groups/${beta.id}/runs/pause-run`);
@@ -437,7 +437,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
         else if (path.endsWith("/experiment-source")) body = run;
         else if (created && path.endsWith(`/${created}`)) body = { ...run, id: created, state: "queued", experiment_of: run.id };
         else if (path.endsWith("/events")) body = { events: [], next_after: 0 };
-        else if (path.endsWith("/debugger")) body = { budget: { spent: { tokens: 0, cost_micros: 0 }, held: { tokens: 0, cost_micros: 0 }, available: { tokens: 30, cost_micros: 100 } }, attempts: [], events: [], provider_observations: [], opaque: [] };
+        else if (path.endsWith("/debugger")) body = { budget: { spent: { tokens: 0, cost_micros: 0 }, held: { tokens: 0, cost_micros: 0 }, available: { tokens: 30, cost_micros: 100 } }, counts: { attempts: 0, events: 0, provider_observations: 0 }, next_after: "", has_more: false, provider_observations: [], opaque: [] };
         return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
       });
       await page.goto(`/evaluation-space/groups/${beta.id}/runs/experiment-source`);
@@ -482,14 +482,15 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       const attempt = { call: { id: "attempt", instance: "root/extract", number: 1, node: { id: "extract", kind: "agent" }, inputs: { corpus: "sensitive-input" }, prompt: "sensitive-prompt" }, state: "succeeded", outputs: { result: "sensitive-output" } };
       const artifact = { id: "sensitive-artifact", size: 10, digest: "sha256:sensitive", media_type: "application/json" };
       const event = { id: "event", sequence: 1, kind: "attempt-succeeded", attempt_id: "attempt", timestamp: new Date().toISOString(), artifacts: [artifact] };
-      const debug = { budget: { spent: { tokens: 2, cost_micros: 3 }, held: { tokens: 0, cost_micros: 0 }, available: { tokens: 98, cost_micros: 97 } }, attempts: [attempt], events: [event], provider_observations: [], opaque: [] };
+      const observation = { call: { id: "provider-001", idempotency_key: "provider-001", request: { id: artifact.id, digest: artifact.digest, size: artifact.size } }, outcome: { state: "completed", provider_request_id: "request", usage: { tokens: 1, cost_micros: 1 } } };
+      const debug = { budget: { spent: { tokens: 2, cost_micros: 3 }, held: { tokens: 0, cost_micros: 0 }, available: { tokens: 98, cost_micros: 97 } }, counts: { attempts: 2, events: 1, provider_observations: 2 }, next_after: "provider-001", has_more: true, provider_observations: [observation], opaque: [] };
       let status = 200, evidenceStatus = 200; const cursors: string[] = [];
       await page.route(`${origin}${runs}/**`, route => {
         const url = new URL(route.request().url()); let body: unknown = run; let code = status;
         if (url.pathname.endsWith("/events")) { cursors.push(url.searchParams.get("after")!); body = { events: [event, event], next_after: 1 }; code = evidenceStatus; }
-        else if (url.pathname.endsWith("/attempts")) { body = { items: [attempt] }; code = evidenceStatus; }
+        else if (url.pathname.endsWith("/attempts")) { body = url.searchParams.has("after") ? { items: [{ ...attempt, call: { ...attempt.call, id: "attempt-two", instance: "root/critic" } }], next_after: "attempt-two", has_more: false } : { items: [attempt], next_after: "attempt", has_more: true }; code = evidenceStatus; }
         else if (url.pathname.endsWith("/artifacts")) { body = url.searchParams.has("after") ? { items: [], next_after: "", has_more: false } : { items: [artifact], next_after: "sensitive-artifact", has_more: true }; code = evidenceStatus; }
-        else if (url.pathname.endsWith("/debugger")) { body = debug; code = evidenceStatus; }
+        else if (url.pathname.endsWith("/debugger")) { body = url.searchParams.has("after") ? { ...debug, has_more: false, next_after: "provider-002", provider_observations: [{ ...observation, call: { ...observation.call, id: "provider-002" } }] } : debug; code = evidenceStatus; }
         else if (url.pathname.endsWith("/source-run")) body = { ...run, id: "source-run", experiment_of: undefined };
         return route.fulfill({ status: code, contentType: "application/json", body: JSON.stringify(code === 200 ? body : { error: "unavailable" }) });
       });
@@ -500,8 +501,14 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       await expect(page.getByRole("button", { name: tr("Load more artifacts", "加载更多工件"), exact: true })).toBeVisible();
       await page.getByRole("button", { name: tr("Load more artifacts", "加载更多工件"), exact: true }).click();
       await expect(page.getByRole("button", { name: tr("Load more artifacts", "加载更多工件"), exact: true })).toHaveCount(0);
+      await expect(page.getByText(tr("Load all attempt pages to compare execution paths.", "加载全部尝试页面后才能比较执行路径。"), { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: tr("Load more attempts", "加载更多尝试"), exact: true }).click();
+      await expect(page.locator("summary").filter({ hasText: "root/critic" })).toBeVisible();
+      await expect(page.getByText(tr("Load all attempt pages to compare execution paths.", "加载全部尝试页面后才能比较执行路径。"), { exact: true })).toHaveCount(0);
+      await page.getByRole("button", { name: tr("Load more provider observations", "加载更多提供商观察记录"), exact: true }).click();
+      await expect(page.getByText("provider-002", { exact: true })).toBeVisible();
       await page.locator("summary").filter({ hasText: "root/extract" }).click();
-      await expect(page.getByText("sensitive-prompt", { exact: true })).toBeVisible();
+      await expect(page.locator("details").filter({ has: page.locator("summary").filter({ hasText: "root/extract" }) }).getByText("sensitive-prompt", { exact: true })).toBeVisible();
       await expect.poll(() => cursors.includes("1")).toBe(true);
       await expect(page.locator("time")).toHaveCount(1); // Duplicate delivery is one timeline event.
       for (const code of [403, 503]) {
