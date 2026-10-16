@@ -163,32 +163,48 @@ func (s *Store) checkEvaluationAssignment(ctx context.Context, q queryer, input 
 	if input.Budget.MaxTokens > ceiling.MaxTokens || input.Budget.MaxCostMicros > ceiling.MaxCostMicros || input.Budget.MaxAttempts > ceiling.MaxAttempts || input.Budget.MaxArtifactBytes > ceiling.MaxArtifactBytes || input.Budget.TimeoutSeconds > ceiling.TimeoutSeconds {
 		return ceiling, ErrCapacity
 	}
-	// Captured requirements may refer to an older, actually activated policy.
-	// They may not borrow the contents of a merely proposed configuration.
-	var raw []byte
-	if err = q.QueryRowContext(ctx, `SELECT r.body FROM evolution_configuration_revisions r JOIN evolution_operation_states o ON o.operation_id=r.operation_id WHERE r.group_id=? AND r.revision=? AND o.state='active'`, input.GroupID, check.PolicyRevision).Scan(&raw); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	studioPolicy := check.PolicyID == evolution.VolumePathPolicyID(input.GroupID, input.Prepared.LibraryID, check.Path) || check.PolicyID == evolution.VolumePathPolicyID(input.GroupID, input.Prepared.LibraryID, "")
+	if studioPolicy {
+		// Only the authenticated Studio service submits preparations. Studio owns
+		// manual path policy history; central owns the group budget and use grants.
+		owned := false
+		for _, binding := range active.Bindings {
+			if binding.Output.LibraryID == input.Prepared.LibraryID {
+				owned = true
+				break
+			}
+		}
+		if !owned {
 			return ceiling, ErrForbidden
 		}
-		return ceiling, err
-	}
-	config, err := evolution.Decode[evolution.Configuration](bytes.NewReader(raw))
-	if err != nil || config.Validate() != nil {
-		return ceiling, ErrInvalid
-	}
-	if err = authorizeEvolutionSources(ctx, q, config); err != nil {
-		return ceiling, err
-	}
-	found := false
-	for _, binding := range config.Bindings {
-		policy := binding.Evaluation
-		if evolution.BindingPolicyID(input.GroupID, binding.ID) == check.PolicyID && binding.Output.LibraryID == input.Prepared.LibraryID && binding.Output.Prefix == check.Path && policy.Mode == check.Mode && policy.Profile != nil && *policy.Profile == check.Profile && policy.Service != nil && *policy.Service == check.Service && policy.ReferenceStrategy == check.ReferenceStrategy {
-			found = true
-			break
+	} else {
+		// Captured requirements may refer to an older, actually activated policy.
+		// They may not borrow the contents of a merely proposed configuration.
+		var raw []byte
+		if err = q.QueryRowContext(ctx, `SELECT r.body FROM evolution_configuration_revisions r JOIN evolution_operation_states o ON o.operation_id=r.operation_id WHERE r.group_id=? AND r.revision=? AND o.state='active'`, input.GroupID, check.PolicyRevision).Scan(&raw); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ceiling, ErrForbidden
+			}
+			return ceiling, err
 		}
-	}
-	if !found {
-		return ceiling, ErrForbidden
+		config, err := evolution.Decode[evolution.Configuration](bytes.NewReader(raw))
+		if err != nil || config.Validate() != nil {
+			return ceiling, ErrInvalid
+		}
+		if err = authorizeEvolutionSources(ctx, q, config); err != nil {
+			return ceiling, err
+		}
+		found := false
+		for _, binding := range config.Bindings {
+			policy := binding.Evaluation
+			if evolution.BindingPolicyID(input.GroupID, binding.ID) == check.PolicyID && binding.Output.LibraryID == input.Prepared.LibraryID && binding.Output.Prefix == check.Path && policy.Mode == check.Mode && policy.Profile != nil && *policy.Profile == check.Profile && policy.Service != nil && *policy.Service == check.Service && policy.ReferenceStrategy == check.ReferenceStrategy {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return ceiling, ErrForbidden
+		}
 	}
 	var artifact, service []byte
 	var enabled bool

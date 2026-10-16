@@ -1406,3 +1406,10 @@ dd {
 .evaluation-budget { display: flex; flex-wrap: wrap; gap: .5rem; }
 .evaluation-budget label { display: grid; flex: 1 1 10rem; min-width: 0; }
 .evaluation-budget input { width: 100%; min-width: 0; }
+
+.path-policy-editor { overflow: auto; padding: 1rem; min-width: 0; overflow-wrap: anywhere; }
+.path-policy-editor fieldset { min-width: 0; margin-block: .75rem; border: 1px solid var(--border); border-radius: .4rem; }
+.path-policy-editor label { display: grid; gap: .25rem; margin-block: .75rem; min-width: 0; }
+.path-policy-editor input, .path-policy-editor select { width: 100%; min-width: 0; max-width: 100%; }
+.path-policy-editor button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; margin: .25rem; }
+.path-policy-editor pre { white-space: pre-wrap; overflow-wrap: anywhere; }

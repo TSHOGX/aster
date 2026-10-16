@@ -38,6 +38,11 @@ func (s *Store) PrepareMerge(ctx context.Context, a Actor, library string, input
 	if err := s.authorizeLibrary(ctx, a, library, "volume.author"); err != nil {
 		return result, err
 	}
+	if input.RebindPreparedDigest != "" {
+		if err := s.authorizeLibrary(ctx, a, library, "volume.review"); err != nil {
+			return result, err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.poisoned {
@@ -80,6 +85,48 @@ func (s *Store) PrepareMerge(ctx context.Context, a Actor, library string, input
 	if main != input.ExpectedMain || main == b.Head {
 		return result, ErrConflict
 	}
+	retain := input.RebindPreparedDigest == ""
+	if !retain {
+		if !manifest.ValidDigest(input.RebindPreparedDigest) {
+			return result, ErrInvalid
+		}
+		var oldLibrary string
+		var oldRaw []byte
+		if err = s.db.QueryRowContext(ctx, "SELECT library_id,identity FROM prepared_merges WHERE digest=?", input.RebindPreparedDigest).Scan(&oldLibrary, &oldRaw); err != nil {
+			return result, normalizeDB(err)
+		}
+		if oldLibrary != library {
+			return result, ErrConflict
+		}
+		var oldIdentity evolution.PreparedIdentity
+		if json.Unmarshal(oldRaw, &oldIdentity) != nil {
+			return result, ErrInvalid
+		}
+		oldDigest, err := oldIdentity.ApprovalDigest()
+		if err != nil || oldDigest != input.RebindPreparedDigest {
+			return result, ErrInvalid
+		}
+		if len(oldIdentity.Selections) != 0 {
+			return result, ErrConflict
+		}
+		var count, accepted int
+		if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM prepared_sources WHERE prepared_digest=?", input.RebindPreparedDigest).Scan(&count); err != nil {
+			return result, err
+		}
+		if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM merge_operations WHERE prepared_digest=?", input.RebindPreparedDigest).Scan(&accepted); err != nil {
+			return result, err
+		}
+		if count != 1 || accepted != 0 {
+			return result, ErrConflict
+		}
+		var sourceBranch, sourceHead string
+		if err = s.db.QueryRowContext(ctx, "SELECT branch_id,head FROM prepared_sources WHERE prepared_digest=? ORDER BY branch_id LIMIT 1", input.RebindPreparedDigest).Scan(&sourceBranch, &sourceHead); err != nil {
+			return result, normalizeDB(err)
+		}
+		if sourceBranch != b.ID || sourceHead != b.Head {
+			return result, ErrConflict
+		}
+	}
 	base, err := repo.MergeBase(ctx, main, b.Head)
 	if err != nil {
 		return result, err
@@ -115,29 +162,10 @@ func (s *Store) PrepareMerge(ctx context.Context, a Actor, library string, input
 		}
 		return result, nil
 	}
-	retain := input.RebindPreparedDigest == ""
-	if !retain {
-		if !manifest.ValidDigest(input.RebindPreparedDigest) {
-			return result, ErrInvalid
-		}
-		var oldLibrary string
-		if err = s.db.QueryRowContext(ctx, "SELECT library_id FROM prepared_merges WHERE digest=?", input.RebindPreparedDigest).Scan(&oldLibrary); err != nil {
-			return result, normalizeDB(err)
-		}
-		if oldLibrary != library {
-			return result, ErrConflict
-		}
-		var sourceBranch, sourceHead string
-		if err = s.db.QueryRowContext(ctx, "SELECT branch_id,head FROM prepared_sources WHERE prepared_digest=? ORDER BY branch_id LIMIT 1", input.RebindPreparedDigest).Scan(&sourceBranch, &sourceHead); err != nil {
-			return result, normalizeDB(err)
-		}
-		if sourceBranch != b.ID || sourceHead != b.Head {
-			return result, ErrConflict
-		}
-	}
-	return s.persistPrepared(ctx, a, library, input.RequestID, body, b, main, revision, policy, tree, merged, "", retain)
+
+	return s.persistPrepared(ctx, a, library, input.RequestID, body, b, main, revision, policy, tree, merged, "", input.RebindPreparedDigest)
 }
-func (s *Store) persistPrepared(ctx context.Context, a Actor, library, request, body string, b Branch, main string, revision int64, policy string, tree history.Snapshot, merged map[string][]byte, workspace string, retainChecks ...bool) (PreparedResult, error) {
+func (s *Store) persistPrepared(ctx context.Context, a Actor, library, request, body string, b Branch, main string, revision int64, policy string, tree history.Snapshot, merged map[string][]byte, workspace, rebind string) (PreparedResult, error) {
 	var result PreparedResult
 	result.Conflicts = []history.Conflict{}
 	repo, err := s.historyRepository(ctx, library)
@@ -190,7 +218,12 @@ func (s *Store) persistPrepared(ctx context.Context, a Actor, library, request, 
 	for _, e := range tree.Entries {
 		byPath[e.Path] = e
 	}
-	commit, err := repo.Commit(ctx, tree, []string{main, b.Head}, "Prepare reviewed integration", func(p string) (io.ReadCloser, error) {
+	retain := rebind == ""
+	message := "Prepare reviewed integration"
+	if !retain {
+		message = "Rebind integration policy " + request
+	}
+	commit, err := repo.Commit(ctx, tree, []string{main, b.Head}, message, func(p string) (io.ReadCloser, error) {
 		return os.OpenFile(s.blobPath(byPath[p].Digest), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	})
 	if err != nil {
@@ -199,11 +232,7 @@ func (s *Store) persistPrepared(ctx context.Context, a Actor, library, request, 
 	ref := func(id string, snapshot history.Snapshot) evolution.ContentRef {
 		return evolution.ContentRef{LibraryID: library, CommitID: id, Profile: snapshot.Profile, TreeDigest: snapshot.TreeDigest()}
 	}
-	retain := true
-	if len(retainChecks) > 0 {
-		retain = retainChecks[0]
-	}
-	checks, err := s.preparedBindingChecks(ctx, library, b, ref(main, mainTree), tree, retain)
+	checks, err := s.preparedEvaluationChecks(ctx, library, b, ref(main, mainTree), tree, retain)
 	if err != nil {
 		return result, err
 	}
@@ -225,7 +254,17 @@ func (s *Store) persistPrepared(ctx context.Context, a Actor, library, request, 
 	if _, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO prepared_sources VALUES(?,?,?)", result.Digest, b.ID, b.Head); err != nil {
 		return result, err
 	}
-	if err = s.record(ctx, tx, a, request, body, "merge.prepare", library, revision, result); err != nil {
+	action := "merge.prepare"
+	if !retain {
+		action = "merge.policy_rebind"
+		if _, err = tx.ExecContext(ctx, "INSERT INTO prepared_policy_rebinds VALUES(?,?)", result.Digest, rebind); err != nil {
+			return result, err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO prepared_policy_rebind_exclusions SELECT ?,prepared_digest FROM prepared_sources WHERE branch_id=? AND prepared_digest<>?`, result.Digest, b.ID, result.Digest); err != nil {
+			return result, err
+		}
+	}
+	if err = s.record(ctx, tx, a, request, body, action, library, revision, result); err != nil {
 		return result, err
 	}
 	if workspace != "" {

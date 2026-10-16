@@ -4,6 +4,7 @@
 import { message, useT } from "../lib/i18n";
 import { History } from "./history";
 import { IntegrationReview } from "./integration-review";
+import { PathPolicies } from "./path-policies";
 import { BranchCheckpoint } from "./checkpoint";
 import { BranchSelector } from "./branch-selector";
 import { branchAPI, branchRoot, type Branch } from "../lib/branches";
@@ -132,7 +133,7 @@ export function LibraryEditor({ id }: { id: string }) {
     const initialScope = workspaceKey(id, p.get("version") ? "" : p.get("branch") || "", p.get("version") || "");
     setVersion(p.get("version") || "");
     setView(
-      ["files", "changes", "versions", "history"].includes(p.get("view") || "")
+      ["files", "changes", "versions", "history", "evaluation policies"].includes(p.get("view") || "")
         ? p.get("view")!
         : "files",
     );
@@ -554,7 +555,7 @@ export function LibraryEditor({ id }: { id: string }) {
               </button>
             )}
             <nav aria-label={tr("Library views")}>
-              {["files", "changes", "versions", "history"].map((v) => (
+              {["files", "changes", "versions", "history", "evaluation policies"].map((v) => (
                 <button
                   key={v}
                   aria-current={view === v ? "page" : undefined}
@@ -819,6 +820,7 @@ export function LibraryEditor({ id }: { id: string }) {
           )}
           {view === "changes" && library && <Changes library={library} />}{" "}
           {view === "history" && <History key={id} library={id} branch={branchID} />}
+          {view === "evaluation policies" && <PathPolicies key={id} library={id} />}
           {view === "versions" && library && (
             <Versions
               library={library}

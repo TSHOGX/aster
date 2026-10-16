@@ -116,6 +116,7 @@ jobs:
           path: |
             admin-frontend/test-results/evolution-live
             volumes-studio/frontend/test-results/evaluation-policy
+            volumes-studio/frontend/test-results/path-policies
           retention-days: 7
           if-no-files-found: ignore
       - name: Core race checks (main and explicit qualification)

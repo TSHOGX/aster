@@ -11,7 +11,7 @@ import (
 
 // Active reservations point to the exact adopted configuration. Manual edits to
 // these paths inherit the same checks as generated changes.
-func (s *Store) currentBindingChecks(ctx context.Context, library string, branch Branch, main evolution.ContentRef, result history.Snapshot) ([]evolution.CheckRequirement, error) {
+func (s *Store) currentEvaluationChecks(ctx context.Context, library string, branch Branch, main evolution.ContentRef, result history.Snapshot) ([]evolution.CheckRequirement, error) {
 	repo, err := s.historyRepository(ctx, library)
 	if err != nil {
 		return nil, err
@@ -75,37 +75,9 @@ func (s *Store) currentBindingChecks(ctx context.Context, library string, branch
 			}
 			policyID := evolution.BindingPolicyID(config.GroupID, binding.ID)
 			check := evolution.CheckRequirement{PolicyID: policyID, PolicyRevision: config.Revision, Path: p.prefix, Mode: policy.Mode, Profile: *policy.Profile, Service: *policy.Service, ReferenceStrategy: policy.ReferenceStrategy}
-			switch policy.ReferenceStrategy {
-			case "target_main":
-				check.Reference = &main
-			case "generation_base":
-				tree, err := repo.Snapshot(ctx, branch.InitialBase)
-				if err != nil {
-					return nil, err
-				}
-				check.Reference = &evolution.ContentRef{LibraryID: library, CommitID: branch.InitialBase, Profile: tree.Profile, TreeDigest: tree.TreeDigest()}
-			case "pinned_release":
-				ref := policy.ReferenceRelease
-				version, err := s.Version(ctx, ref.VersionID)
-				if err != nil {
-					return nil, err
-				}
-				if version.LibraryID != ref.LibraryID || version.PublisherID != ref.PublisherID || version.DescriptorDigest != ref.DescriptorDigest || version.AcceptedCommit == "" || version.State != "published" && version.State != "archived" {
-					return nil, ErrConflict
-				}
-				referenceRepo, err := s.historyRepository(ctx, version.LibraryID)
-				if err != nil {
-					return nil, err
-				}
-				tree, err := referenceRepo.Snapshot(ctx, version.AcceptedCommit)
-				if err != nil {
-					return nil, err
-				}
-				check.Reference = &evolution.ContentRef{LibraryID: version.LibraryID, CommitID: version.AcceptedCommit, Profile: tree.Profile, TreeDigest: tree.TreeDigest()}
-			}
-			check.Digest, err = check.IdentityDigest()
-			if err != nil || check.Validate() != nil {
-				return nil, ErrInvalid
+			check, err = s.resolvePolicyCheck(ctx, library, branch, main, policy, check)
+			if err != nil {
+				return nil, err
 			}
 			checks = append(checks, check)
 			break
@@ -114,13 +86,42 @@ func (s *Store) currentBindingChecks(ctx context.Context, library string, branch
 			return nil, ErrInvalid
 		}
 	}
+	pathPolicies, err := s.pathEvaluationPolicies(ctx, library)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range pathPolicies.Items {
+		if p.Evaluation.Mode == "disabled" {
+			continue
+		}
+		paths := map[string]bool{}
+		for _, change := range changes {
+			if p.Path == "" {
+				paths[change.Path] = true
+			} else if prefixOverlap(p.Path, change.Path) {
+				paths[p.Path] = true
+			}
+		}
+		for path := range paths {
+			policy := p.Evaluation
+			check := evolution.CheckRequirement{PolicyID: p.ID, PolicyRevision: p.Revision, Path: path, Mode: policy.Mode, Profile: *policy.Profile, Service: *policy.Service, ReferenceStrategy: policy.ReferenceStrategy}
+			check, err = s.resolvePolicyCheck(ctx, library, branch, main, policy, check)
+			if err != nil {
+				return nil, err
+			}
+			checks = append(checks, check)
+		}
+	}
+
 	return evolution.UnionChecks(checks)
 }
 
 // Requirements captured by an earlier preparation survive configuration
 // relaxation. Repreparing against new main re-resolves only target-main controls.
-func (s *Store) retainedBranchChecks(ctx context.Context, library, branch string, main evolution.ContentRef) ([]evolution.CheckRequirement, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT p.identity,p.digest FROM prepared_merges p JOIN prepared_sources s ON s.prepared_digest=p.digest WHERE p.library_id=? AND s.branch_id=? ORDER BY p.created_at,p.digest`, library, branch)
+// An explicit rebind excludes a frozen set of earlier preparations for that one
+// new identity; later captured requirements still invalidate its readiness.
+func (s *Store) retainedBranchChecks(ctx context.Context, library, branch string, main evolution.ContentRef, rebind string) ([]evolution.CheckRequirement, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT p.identity,p.digest FROM prepared_merges p JOIN prepared_sources s ON s.prepared_digest=p.digest WHERE p.library_id=? AND s.branch_id=? AND NOT EXISTS(SELECT 1 FROM prepared_policy_rebind_exclusions e WHERE e.rebind_digest=? AND e.excluded_digest=p.digest) ORDER BY p.created_at,p.digest`, library, branch, rebind)
 	if err != nil {
 		return nil, err
 	}
@@ -157,17 +158,57 @@ func (s *Store) retainedBranchChecks(ctx context.Context, library, branch string
 	return evolution.UnionChecks(checks)
 }
 
-func (s *Store) preparedBindingChecks(ctx context.Context, library string, branch Branch, main evolution.ContentRef, result history.Snapshot, retain ...bool) ([]evolution.CheckRequirement, error) {
-	current, err := s.currentBindingChecks(ctx, library, branch, main, result)
+func (s *Store) preparedEvaluationChecks(ctx context.Context, library string, branch Branch, main evolution.ContentRef, result history.Snapshot, retain ...bool) ([]evolution.CheckRequirement, error) {
+	current, err := s.currentEvaluationChecks(ctx, library, branch, main, result)
 	if err != nil {
 		return nil, err
 	}
 	if len(retain) > 0 && !retain[0] {
 		return current, nil
 	}
-	retained, err := s.retainedBranchChecks(ctx, library, branch.ID, main)
+	retained, err := s.retainedBranchChecks(ctx, library, branch.ID, main, "")
 	if err != nil {
 		return nil, err
 	}
 	return evolution.UnionChecks(current, retained)
+}
+
+func (s *Store) resolvePolicyCheck(ctx context.Context, library string, branch Branch, main evolution.ContentRef, policy evolution.EvaluationPolicy, check evolution.CheckRequirement) (evolution.CheckRequirement, error) {
+	repo, err := s.historyRepository(ctx, library)
+	if err != nil {
+		return check, err
+	}
+	switch policy.ReferenceStrategy {
+	case "target_main":
+		check.Reference = &main
+	case "generation_base":
+		tree, err := repo.Snapshot(ctx, branch.InitialBase)
+		if err != nil {
+			return check, err
+		}
+		check.Reference = &evolution.ContentRef{LibraryID: library, CommitID: branch.InitialBase, Profile: tree.Profile, TreeDigest: tree.TreeDigest()}
+	case "pinned_release":
+		ref := policy.ReferenceRelease
+		version, err := s.Version(ctx, ref.VersionID)
+		if err != nil {
+			return check, err
+		}
+		if version.LibraryID != ref.LibraryID || version.PublisherID != ref.PublisherID || version.DescriptorDigest != ref.DescriptorDigest || version.AcceptedCommit == "" || version.State != "published" && version.State != "archived" {
+			return check, ErrConflict
+		}
+		referenceRepo, err := s.historyRepository(ctx, version.LibraryID)
+		if err != nil {
+			return check, err
+		}
+		tree, err := referenceRepo.Snapshot(ctx, version.AcceptedCommit)
+		if err != nil {
+			return check, err
+		}
+		check.Reference = &evolution.ContentRef{LibraryID: version.LibraryID, CommitID: version.AcceptedCommit, Profile: tree.Profile, TreeDigest: tree.TreeDigest()}
+	}
+	check.Digest, err = check.IdentityDigest()
+	if err != nil || check.Validate() != nil {
+		return check, ErrInvalid
+	}
+	return check, nil
 }

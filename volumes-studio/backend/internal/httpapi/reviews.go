@@ -2,11 +2,37 @@ package httpapi
 
 import (
 	"net/http"
+	"strconv"
 	"volume-studio/backend/internal/authoring"
 )
 
 func (a *AuthoringAPI) registerReviews() {
 	root := apiPrefix + "libraries/{library}"
+	a.mux.HandleFunc("GET "+root+"/evaluation-policies/history", func(w http.ResponseWriter, r *http.Request) {
+		var before int64
+		if raw := r.URL.Query().Get("before"); raw != "" {
+			value, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil {
+				respond(w, 0, nil, authoring.ErrInvalid)
+				return
+			}
+			before = value
+		}
+		value, err := a.Store.PathEvaluationHistory(r.Context(), actor(r), r.PathValue("library"), r.URL.Query().Get("path"), before)
+		respond(w, 200, value, err)
+	})
+	a.mux.HandleFunc("GET "+root+"/evaluation-policies", func(w http.ResponseWriter, r *http.Request) {
+		value, err := a.Store.PathEvaluationPolicies(r.Context(), actor(r), r.PathValue("library"))
+		respond(w, 200, value, err)
+	})
+	a.mux.HandleFunc("POST "+root+"/evaluation-policies", func(w http.ResponseWriter, r *http.Request) {
+		var input authoring.PathEvaluationPolicyInput
+		if !decodeBody(w, r, &input) {
+			return
+		}
+		value, err := a.Store.SetPathEvaluationPolicy(r.Context(), actor(r), r.PathValue("library"), input)
+		respond(w, 200, value, err)
+	})
 	a.mux.HandleFunc("GET "+root+"/conflicts/{workspace}/file", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		value, err := a.Store.ConflictFile(r.Context(), actor(r), r.PathValue("library"), r.PathValue("workspace"), q.Get("side"), q.Get("path"))

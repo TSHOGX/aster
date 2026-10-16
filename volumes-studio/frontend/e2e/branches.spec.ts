@@ -200,7 +200,7 @@ test("browser explicitly rebinds a stale prepared policy", async ({ page }) => {
   const created = await page.request.post("/volumes-studio/api/v1/libraries", { headers, data: { request_id: crypto.randomUUID(), name: `Rebind ${crypto.randomUUID()}` } });
   expect(created.ok(), await created.text()).toBeTruthy();
   const library = await created.json();
-  for (const action of ["volume.read", "volume.author", "volume.configure"]) {
+  for (const action of ["volume.read", "volume.author", "volume.configure", "volume.review"]) {
     const grant = await page.request.post("/api/admin/studio-grants", { headers: { Origin: origin }, data: { request_id: crypto.randomUUID(), kind: "account", subject_id: session.subject, library_id: library.id, action, effect: "allow", expected_revision: 0 } });
     expect(grant.ok(), await grant.text()).toBeTruthy();
   }
@@ -220,7 +220,8 @@ test("browser explicitly rebinds a stale prepared policy", async ({ page }) => {
   await page.goto(`/volumes-studio/libraries/${library.id}?branch=${branch.id}&integration=${encodeURIComponent(prepared.digest)}`);
   await expect(page.getByRole("button", { name: "Rebind current policy", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Rebind current policy", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Rebind current policy", exact: true })).toHaveCount(0);
+  await page.getByRole("dialog").getByRole("button", { name: "Rebind current policy", exact: true }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("integration")).not.toBe(prepared.digest);
   const rebound = new URL(page.url()).searchParams.get("integration");
   expect(rebound).toBeTruthy();
   expect(rebound).not.toBe(prepared.digest);

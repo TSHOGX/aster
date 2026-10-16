@@ -131,10 +131,15 @@ func (s *Store) checkPrepared(ctx context.Context, library, digest string, prepa
 			return ErrConflict
 		}
 		delete(expected, source.head)
-		current, err := s.preparedBindingChecks(ctx, library, branch, prepared.Main, resultTree)
+		current, err := s.currentEvaluationChecks(ctx, library, branch, prepared.Main, resultTree)
 		if err != nil {
 			return err
 		}
+		retained, err := s.retainedBranchChecks(ctx, library, branch.ID, prepared.Main, digest)
+		if err != nil {
+			return err
+		}
+		current = append(current, retained...)
 		for _, check := range current {
 			if !captured[check.Digest] {
 				return ErrConflict

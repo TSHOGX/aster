@@ -161,7 +161,7 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     <h2>{tr("Integration review")}</h2>
     <p>{tr("Prepare committed changes against main. Saved but uncommitted edits are excluded.")}</p>
     <button disabled={busy} onClick={() => void run(() => prepare())}>{tr("Prepare integration")}</button>
-    {view?.readiness === "stale_or_conflicted" && <button disabled={busy} onClick={() => void run(() => prepare(view.digest))}>{tr("Rebind current policy")}</button>}
+    {view?.acceptance === "not_accepted" && view.identity.sources.length === 1 && !view.identity.selections?.length && <button disabled={busy} onClick={() => void run(async () => { if (await studio.ask("Rebind current policy", "Replace retained evaluation requirements with current policy? This requires a new approval.", ["Keep current requirements", "Rebind current policy"]) === "Rebind current policy") await prepare(view.digest); })}>{tr("Rebind current policy")}</button>}
     {composition.length > 0 && <section aria-label={tr("Compose selected changes")}>
       <h3>{tr("Compose selected changes")}</h3>
       <p>{tr("Freeze committed paths from more than one branch into one reviewable integration. Unselected paths remain deferred.")}</p>

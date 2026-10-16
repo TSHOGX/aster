@@ -12,6 +12,12 @@ func BindingPolicyID(group, binding string) string {
 	return "binding-" + strings.TrimPrefix(Digest([]byte(group+"\x00"+binding)), "sha256:")
 }
 
+// VolumePathPolicyID identifies Studio-owned policy independently of any writer.
+// An empty path selects the whole Volume; resolved checks still name actual paths.
+func VolumePathPolicyID(group, library, path string) string {
+	return "volume-policy-" + strings.TrimPrefix(Digest([]byte(group+"\x00"+library+"\x00"+path)), "sha256:")
+}
+
 // EvaluationAssignment is a private cross-service authorization request. Studio
 // supplies the verified preparation; the central authority checks current grants.
 type EvaluationAssignment struct {

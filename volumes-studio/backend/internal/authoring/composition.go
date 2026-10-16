@@ -203,7 +203,7 @@ func (s *Store) ComposeMerge(ctx context.Context, a Actor, library string, input
 	checks := []evolution.CheckRequirement{}
 	for _, source := range sources {
 		sourcesRef = append(sourcesRef, evolution.ContentRef{LibraryID: library, CommitID: source.branch.Head, Profile: source.full.Profile, TreeDigest: source.full.TreeDigest()})
-		branchChecks, checkErr := s.preparedBindingChecks(ctx, library, source.branch, mainRef, current)
+		branchChecks, checkErr := s.preparedEvaluationChecks(ctx, library, source.branch, mainRef, current)
 		if checkErr != nil {
 			return result, checkErr
 		}

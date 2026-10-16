@@ -113,11 +113,31 @@ CREATE TABLE library_merge_policies(
  library_id TEXT PRIMARY KEY REFERENCES libraries(id),revision INTEGER NOT NULL,
  digest TEXT NOT NULL,minimum_approvals INTEGER NOT NULL CHECK(minimum_approvals>0)
 );
+CREATE TABLE library_evaluation_policies(
+ library_id TEXT NOT NULL REFERENCES libraries(id),path TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),body BLOB NOT NULL,digest TEXT NOT NULL,
+ PRIMARY KEY(library_id,path,revision)
+);
+CREATE TRIGGER immutable_library_evaluation_policy BEFORE UPDATE ON library_evaluation_policies BEGIN SELECT RAISE(ABORT,'immutable evaluation policy'); END;
+CREATE TRIGGER retained_library_evaluation_policy BEFORE DELETE ON library_evaluation_policies BEGIN SELECT RAISE(ABORT,'retain evaluation policy'); END;
 CREATE TABLE prepared_sources(
  prepared_digest TEXT NOT NULL REFERENCES prepared_merges(digest),
  branch_id TEXT NOT NULL REFERENCES branches(id),head TEXT NOT NULL,
  PRIMARY KEY(prepared_digest,branch_id)
 );
+CREATE TABLE prepared_policy_rebinds(
+ prepared_digest TEXT PRIMARY KEY REFERENCES prepared_merges(digest),
+ previous_digest TEXT NOT NULL REFERENCES prepared_merges(digest)
+);
+CREATE TABLE prepared_policy_rebind_exclusions(
+ rebind_digest TEXT NOT NULL REFERENCES prepared_policy_rebinds(prepared_digest),
+ excluded_digest TEXT NOT NULL REFERENCES prepared_merges(digest),
+ PRIMARY KEY(rebind_digest,excluded_digest)
+);
+CREATE TRIGGER immutable_prepared_rebind BEFORE UPDATE ON prepared_policy_rebinds BEGIN SELECT RAISE(ABORT,'immutable policy rebind'); END;
+CREATE TRIGGER retained_prepared_rebind BEFORE DELETE ON prepared_policy_rebinds BEGIN SELECT RAISE(ABORT,'retain policy rebind'); END;
+CREATE TRIGGER immutable_rebind_exclusion BEFORE UPDATE ON prepared_policy_rebind_exclusions BEGIN SELECT RAISE(ABORT,'immutable policy rebind exclusion'); END;
+CREATE TRIGGER retained_rebind_exclusion BEFORE DELETE ON prepared_policy_rebind_exclusions BEGIN SELECT RAISE(ABORT,'retain policy rebind exclusion'); END;
 CREATE TABLE merge_operations(
  id TEXT PRIMARY KEY,library_id TEXT NOT NULL REFERENCES libraries(id),
  prepared_digest TEXT NOT NULL UNIQUE REFERENCES prepared_merges(digest),
@@ -163,6 +183,8 @@ BEGIN SELECT RAISE(ABORT,'retain review provenance'); END;
 CREATE TRIGGER immutable_prepared_sources
 BEFORE UPDATE ON prepared_sources
 BEGIN SELECT RAISE(ABORT,'immutable prepared source identity'); END;
+CREATE TRIGGER retained_prepared_sources BEFORE DELETE ON prepared_sources
+BEGIN SELECT RAISE(ABORT,'retain prepared source identity'); END;
 
 CREATE TABLE evolution_reservation_operations (
  operation_id TEXT PRIMARY KEY,

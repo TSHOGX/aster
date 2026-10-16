@@ -28,6 +28,7 @@ export type PreparedIntegration = {
     library_id: string;
     main: ContentRef;
     sources: ContentRef[];
+    selections?: { branch_id: string; head: string; selected_paths: string[] }[];
     result: ContentRef;
     policy_revision: number;
     policy_digest: string;

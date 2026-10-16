@@ -33,10 +33,15 @@ import (
 // assigned input bytes before producing metrics. No store mutation bypasses a gate.
 type evaluationProcessCase struct {
 	Mode, Outcome string
+	PathPolicy    bool
 }
 
 func TestRequiredEvaluationRealProcesses(t *testing.T) {
 	evaluationPolicyProcesses(t, evaluationProcessCase{Mode: "required", Outcome: "pass"})
+}
+
+func TestManualPathEvaluationRealProcesses(t *testing.T) {
+	evaluationPolicyProcesses(t, evaluationProcessCase{Mode: "required", Outcome: "pass", PathPolicy: true})
 }
 
 func TestEvaluationPolicyRealProcesses(t *testing.T) {
@@ -404,6 +409,31 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 		_, err = store.ApplyStudioGrant(ctx, token, product.StudioGrantCommand{RequestID: strings.ReplaceAll(action, ".", "-"), Kind: "account", SubjectID: admin.ID, LibraryID: "aster-shared-assets", Action: action, Effect: "allow"})
 		must(t, err)
 	}
+	if test.PathPolicy {
+		original := publicHandler
+		var grantMu sync.Mutex
+		revisions := map[string]int64{"volume.read": 1, "volume.configure": 1}
+		publicHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == "POST" && r.URL.Path == "/fixture/path-policy-access" {
+				grantMu.Lock()
+				defer grantMu.Unlock()
+				var input struct{ Action, Effect string }
+				if json.NewDecoder(r.Body).Decode(&input) != nil || revisions[input.Action] == 0 {
+					http.Error(w, "invalid fixture grant", 400)
+					return
+				}
+				_, err := store.ApplyStudioGrant(r.Context(), token, product.StudioGrantCommand{RequestID: fmt.Sprintf("path-policy-%s-%d", strings.ReplaceAll(input.Action, ".", "-"), revisions[input.Action]), Kind: "account", SubjectID: admin.ID, LibraryID: "aster-shared-assets", Action: input.Action, Effect: input.Effect, ExpectedRevision: revisions[input.Action]})
+				if err != nil {
+					http.Error(w, err.Error(), 500)
+					return
+				}
+				revisions[input.Action]++
+				w.WriteHeader(204)
+				return
+			}
+			original.ServeHTTP(w, r)
+		})
+	}
 	_, err = store.CreateProject(ctx, admin.ID, "source-project", "Source")
 	must(t, err)
 	source := evolution.SourceBinding{ID: "source", Kind: "project", ResourceID: "source-project", PolicyRevision: 1, AudienceGroups: []string{product.StandardUsersGroup}, DerivativePublication: true}
@@ -414,7 +444,11 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 	if test.Mode != "disabled" {
 		policy = evolution.EvaluationPolicy{Mode: test.Mode, Profile: &profile.Ref, Service: &evaluator.Ref, ReferenceStrategy: "none"}
 	}
-	configuration := evolution.Configuration{GroupID: product.StandardUsersGroup, Revision: 1, Budget: budget, Sources: []evolution.SourceBinding{source}, Bindings: []evolution.Binding{{ID: "skills", Enabled: true, Template: template.Ref, Workflow: workflowRef, Service: service.Ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: "skills/derived", Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: policy, Budget: budget, Trigger: "manual"}}}
+	bindingPolicy := policy
+	if test.PathPolicy {
+		bindingPolicy = off
+	}
+	configuration := evolution.Configuration{GroupID: product.StandardUsersGroup, Revision: 1, Budget: budget, Sources: []evolution.SourceBinding{source}, Bindings: []evolution.Binding{{ID: "skills", Enabled: true, Template: template.Ref, Workflow: workflowRef, Service: service.Ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: "skills/derived", Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: bindingPolicy, Budget: budget, Trigger: "manual"}}}
 	_, err = store.ActivateEvolutionConfig(ctx, token, configuration.GroupID, product.EvolutionActivationInput{RequestID: "activate", Configuration: configuration})
 	must(t, err)
 	evalClient, err := evaluationclient.New(spaceOrigin, secret)
@@ -504,6 +538,24 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 		}
 	}
 	var main evolution.ContentRef
+	if test.PathPolicy {
+		if browserEnabled {
+			width := 1440
+			if os.Getenv("STUDIO_NARROW") == "1" {
+				width = 390
+			}
+			raw, _ := json.Marshal(map[string]any{"origin": issuer, "cookies": cookies, "central_cookie": token, "width": width, "browser": os.Getenv("STUDIO_TEST_BROWSER"), "policy": policy, "evidence_directory": filepath.Join(root, "volumes-studio/frontend/test-results/path-policies")})
+			cmd := exec.CommandContext(ctx, "node", filepath.Join(root, "volumes-studio/tests/browser/path-policies.mjs"))
+			cmd.Stdin = bytes.NewReader(raw)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("path policies browser: %v\n%s", err, output)
+			}
+			t.Log(string(output))
+		} else {
+			post("/evaluation-policies", map[string]any{"request_id": "manual-path-policy", "expected_revision": 0, "path": "skills", "evaluation": policy}, nil)
+		}
+	}
 	get("/main", &main)
 	var branch struct {
 		ID   string `json:"id"`

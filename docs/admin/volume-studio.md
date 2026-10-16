@@ -118,13 +118,49 @@ check status without exposing dataset contents.
 
 Main advances only after acceptance. Reviewers can also request changes or reject
 an integration. Saved conflict choices remain accessible through the workspace URL.
-If an open preparation is stale only because its retained evaluation policy should
-be replaced, an authorized reviewer can explicitly choose **Rebind current policy**;
-Studio creates a new prepared identity and fresh approval requirement while keeping
-the earlier preparation immutable. Main, source-head and policy changes that cannot
-be safely rebound still require a new preparation.
+For an open, single-branch integration, a user with author and reviewer authority
+can choose **Rebind current policy** and confirm replacement of retained evaluation
+requirements. Studio creates a new prepared identity requiring fresh approval while
+keeping the earlier preparation immutable. Rebinding applies to that preparation;
+later ordinary preparations still retain historical branch requirements. Accepted
+integrations and selected-path compositions cannot be rebound. Reprepare a
+composition with its explicit selections when its inputs or policies change.
+Requirements captured after a rebind can also invalidate its readiness; a rebind
+does not grant an ongoing exemption from later policy changes.
 Binary and oversized content are identified explicitly when a text preview is
 unavailable; selecting a side preserves its file bytes.
+
+## Configure evaluation for a Volume path
+
+Open a Volume's **Evaluation policies** tab. Reading policies and their revision
+history requires Volume read access; saving requires Volume configure access. The
+Volume must already belong to a group through an activated output. Evaluation
+requests also need an active group configuration containing an output to this Volume,
+available group budget and an explicit dataset/evaluator use grant.
+
+Choose an existing policy or **New policy**. Enter a clean relative **Policy path**,
+or leave it empty for the whole Volume. A selector covers its descendants, including
+manual edits, copied content, deletes and renames. Choose **Off**, **Informational
+evaluation** or **Required evaluation**. Enabled policies require the exact published
+profile and evaluator IDs, revisions and SHA-256 digests. Choose no comparison,
+accepted main, the branch's initial base, or an exact pinned published release as
+the comparison reference. **Save policy revision** records an immutable revision;
+**Policy revision history** displays earlier revisions. A Volume supports up to
+128 distinct selectors. Disable an existing selector by saving an Off revision.
+
+Overlapping Volume, ancestor, nested and group binding checks combine. Disabling
+one selector never subtracts another check. Selected-path compositions apply
+policies to the actual integrated changes; deferred changes remain on their source
+branches. Previously captured requirements remain until an explicit rebind of the
+open integration. Policy edits do not start evaluation automatically.
+
+Unsaved edits and unconfirmed requests remain in the authenticated tab's local
+recovery. **Recover policy save** retries the exact request after a lost reply.
+After a conflict, **Reload policies** retains your edits; inspect **Current policy**
+and explicitly choose **Use current policy revision** before saving a replacement.
+**Discard policy recovery** removes only the local recovery; an uncertain save may
+already have succeeded. If access is denied, the editor clears visible policy
+details and restores recovery only after an authorized reload.
 
 ## Inspect history and compare snapshots
 
