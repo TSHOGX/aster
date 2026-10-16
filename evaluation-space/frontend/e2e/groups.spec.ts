@@ -404,3 +404,60 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
     } finally { await context.close(); }
   });
 }
+
+for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", width: 390 }]) {
+  test(`run inspector clears denied evidence and superseded reads ${variant.locale}`, async ({ page: admin, browser }, info) => {
+    const { beta, user } = await provision(admin);
+    const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: variant.locale, viewport: { width: variant.width, height: 900 } });
+    const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
+    const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+    try {
+      await login(page, user); await page.goto(`/evaluation-space/groups/${beta.id}/`);
+      await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
+      await expect(page.getByRole("region", { name: tr("Group overview", "团队概览"), exact: true }).getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
+      const runs = `/evaluation-space/api/v1/groups/${beta.id}/runs`; const root = `${runs}/sensitive-run`;
+      const run = { id: "sensitive-run", state: "completed", fence: 1, handoff: "not_ready", evaluation_state: "not_requested", experiment_of: "source-run", pins: { workflow: { id: "skills", revision: 1 } }, created_at: new Date().toISOString() };
+      const attempt = { call: { id: "attempt", instance: "root/extract", number: 1, node: { id: "extract", kind: "agent" }, inputs: { corpus: "sensitive-input" }, prompt: "sensitive-prompt" }, state: "succeeded", outputs: { result: "sensitive-output" } };
+      const artifact = { id: "sensitive-artifact", size: 10, digest: "sha256:sensitive", media_type: "application/json" };
+      const event = { id: "event", sequence: 1, kind: "attempt-succeeded", attempt_id: "attempt", timestamp: new Date().toISOString(), artifacts: [artifact] };
+      const debug = { budget: { spent: { tokens: 2, cost_micros: 3 }, held: { tokens: 0, cost_micros: 0 }, available: { tokens: 98, cost_micros: 97 } }, attempts: [attempt], events: [event], provider_observations: [], opaque: [] };
+      let status = 200, evidenceStatus = 200; const cursors: string[] = [];
+      await page.route(`${origin}${runs}/**`, route => {
+        const url = new URL(route.request().url()); let body: unknown = run; let code = status;
+        if (url.pathname.endsWith("/events")) { cursors.push(url.searchParams.get("after")!); body = { events: [event, event], next_after: 1 }; code = evidenceStatus; }
+        else if (url.pathname.endsWith("/attempts")) { body = { items: [attempt] }; code = evidenceStatus; }
+        else if (url.pathname.endsWith("/artifacts")) { body = { items: [artifact] }; code = evidenceStatus; }
+        else if (url.pathname.endsWith("/debugger")) { body = debug; code = evidenceStatus; }
+        else if (url.pathname.endsWith("/source-run")) body = { ...run, id: "source-run", experiment_of: undefined };
+        return route.fulfill({ status: code, contentType: "application/json", body: JSON.stringify(code === 200 ? body : { error: "unavailable" }) });
+      });
+      await page.goto(`/evaluation-space/groups/${beta.id}/runs/sensitive-run`);
+      const download = page.getByRole("link", { name: tr("Open bounded content", "打开有界内容"), exact: true });
+      const refresh = page.getByRole("button", { name: tr("Refresh", "刷新"), exact: true });
+      await expect(download).toBeVisible();
+      await page.locator("summary").filter({ hasText: "root/extract" }).click();
+      await expect(page.getByText("sensitive-prompt", { exact: true })).toBeVisible();
+      await expect.poll(() => cursors.includes("1")).toBe(true);
+      await expect(page.locator("time")).toHaveCount(1); // Duplicate delivery is one timeline event.
+      for (const code of [403, 503]) {
+        evidenceStatus = code; await refresh.click();
+        await expect(page.getByText(tr("Run evidence is unavailable. Retry or check source access.", "运行证据不可用，请重试或检查源访问权限。"), { exact: true })).toBeVisible();
+        await expect(download).toHaveCount(0); await expect(page.getByText("sensitive-prompt", { exact: true })).toHaveCount(0);
+        await expect(page.getByRole("heading", { name: tr("Execution debugger", "执行调试器"), exact: true })).toHaveCount(0);
+        await expect(page.getByRole("heading", { name: tr("Experiment comparison", "实验比较"), exact: true })).toHaveCount(0);
+        evidenceStatus = 200; await refresh.click(); await expect(download).toBeVisible();
+      }
+      let release!: () => void, started!: () => void, delivered!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; }); const waiting = new Promise<void>(resolve => { started = resolve; }); const finished = new Promise<void>(resolve => { delivered = resolve; });
+      await page.route(`${origin}${root}/debugger`, async route => { started(); await held; await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(debug) }).catch(() => {}); delivered(); }, { times: 1 });
+      await refresh.click(); await waiting;
+      status = 403; await refresh.click();
+      await expect(page.getByText(tr("Run detail is unavailable. Retry or check group access.", "无法获取运行详情，请重试或检查团队访问权限。"), { exact: true })).toBeVisible();
+      release(); await finished; await expect(download).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: tr("Execution debugger", "执行调试器"), exact: true })).toHaveCount(0);
+      status = 200; await page.getByRole("button", { name: tr("Retry", "重试"), exact: true }).click(); await expect(download).toBeVisible();
+      await page.screenshot({ path: info.outputPath("run-evidence-recovered.png"), fullPage: true });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true); expect(errors).toEqual([]);
+    } finally { await context.close(); }
+  });
+}

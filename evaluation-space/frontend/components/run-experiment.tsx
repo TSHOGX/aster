@@ -57,7 +57,7 @@ export function RunExperiment({ group, run, workflow, budget, enabled }: { group
   if (!open) return <button disabled={!enabled || busy} onClick={() => void load()}>{tr("Run from here")}</button>;
   return <section className="card experiment-form" aria-label={tr("Checkpoint experiment")}><h3>{tr("Checkpoint experiment")}</h3>
     <p>{tr("Choose a start node and preview the exact upstream outputs to reuse. The source remains unchanged.")}</p>
-    <Link href={`/groups/${encodeURIComponent(group)}/workflows/${encodeURIComponent(workflow)}`}>{tr("Open workflow editor")}</Link>
+    <Link prefetch={false} href={`/groups/${encodeURIComponent(group)}/workflows/${encodeURIComponent(workflow)}`}>{tr("Open workflow editor")}</Link>
     <fieldset disabled={busy || !!request}><label>{tr("Frozen experiment workflow")}<textarea aria-label={tr("Frozen experiment workflow")} rows={10} value={text} onChange={event => { setText(event.target.value); setPreview(undefined); }} /></label>
       <label>{tr("Start node")}<select aria-label={tr("Start node")} value={start} onChange={event => { setStart(event.target.value); setPreview(undefined); }}><option value="">{tr("Choose a node")}</option>{graph?.nodes.map(node => <option key={node.id} value={node.id}>{node.id}</option>)}</select></label>
       <label>{tr("Token budget")}<input aria-label={tr("Token budget")} type="number" min={1} max={budget.max_tokens} value={tokens} onChange={event => { setTokens(Number(event.target.value)); setPreview(undefined); }} /></label>

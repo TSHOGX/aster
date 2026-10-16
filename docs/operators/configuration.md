@@ -322,7 +322,9 @@ Run inspectors can request a source-authorized debugger projection for bounded
 budget usage and retained provider observations. Providers that expose only opaque
 job evidence are labeled as such; the UI does not infer tool or internal model
 details from a terminal status. The projection also joins durable attempts, event
-records and advertised artifacts. Each terminal node attempt retains a checkpoint
+records and advertised artifacts. Failed or denied evidence reads clear previously
+displayed attempts, artifacts and comparisons; retry after access or service recovery.
+Event reconnects resume from the last successful cursor without duplicating entries. Each terminal node attempt retains a checkpoint
 with its event; the checkpoint keeps a fixed history even if the run later resumes.
 A single artifact can be opened through the
 same source-authorized browser boundary; responses include its digest and size and

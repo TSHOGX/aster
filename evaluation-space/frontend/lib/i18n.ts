@@ -1,6 +1,8 @@
 "use client";
 import { useTranslator } from "../../../web/i18n";
 const zh = {
+"Run evidence is unavailable. Retry or check source access.": "运行证据不可用，请重试或检查源访问权限。",
+"Source comparison is unavailable. Retry or check source access.": "源运行比较不可用，请重试或检查源访问权限。",
 "Checkpoint experiment": "检查点实验",
 "Choose a start node and preview the exact upstream outputs to reuse. The source remains unchanged.": "选择起始节点并预览将复用的上游输出。源运行保持不变。",
 "Open workflow editor": "打开工作流编辑器",
