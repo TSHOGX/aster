@@ -48,3 +48,62 @@ func TestLayoutIndependentCanonicalOrder(t *testing.T) {
 		t.Fatal("ordering changed executable identity")
 	}
 }
+
+func TestNodeValidationNamesEditableField(t *testing.T) {
+	for _, tc := range []struct {
+		name, field string
+		change      func(*Node)
+	}{
+		{"attempts", "max_attempts", func(n *Node) { n.MaxAttempts = 0 }},
+		{"timeout", "timeout_seconds", func(n *Node) { n.TimeoutSeconds = 0 }},
+		{"implementation", "implementation_ref", func(n *Node) { n.Kind = "transform" }},
+		{"body identity", "body", func(n *Node) { n.Kind = "loop"; n.Body = &Revision{} }},
+		{"loop limit", "max_iterations", func(n *Node) { n.Kind = "loop"; n.Body = n.ModelRef; n.MaxIterations = 0 }},
+		{"loop predicate", "predicate", func(n *Node) { n.Kind = "loop"; n.Body = n.ModelRef; n.MaxIterations = 2; n.Predicate = "external" }},
+		{"loop outcome", "on_limit", func(n *Node) {
+			n.Kind = "loop"
+			n.Body = n.ModelRef
+			n.MaxIterations = 2
+			n.Predicate = "truthy"
+			n.OnLimit = ""
+		}},
+		{"subgraph depth", "max_depth", func(n *Node) { n.Kind = "subgraph"; n.Body = n.ModelRef; n.MaxDepth = 17 }},
+		{"join inactive", "inactive_inputs", func(n *Node) { n.Kind = "join"; n.InactiveInputs = "wait_forever" }},
+		{"router predicate", "predicate", func(n *Node) { n.Kind = "router"; n.Predicate = "external" }},
+		{"router routes", "routes", func(n *Node) { n.Kind = "router"; n.Predicate = "truthy" }},
+		{"map input", "item_inputs", func(n *Node) { n.Kind = "map" }},
+		{"map output", "item_outputs", func(n *Node) { n.Kind = "map"; n.ItemInputs = n.InputPorts }},
+		{"map count", "max_items", func(n *Node) {
+			n.Kind = "map"
+			n.ItemInputs = n.InputPorts
+			n.ItemOutputs = n.OutputPorts
+			n.Body = n.ModelRef
+		}},
+		{"map concurrency", "concurrency", func(n *Node) {
+			n.Kind = "map"
+			n.ItemInputs = n.InputPorts
+			n.ItemOutputs = n.OutputPorts
+			n.Body = n.ModelRef
+			n.MaxItems = 2
+			n.Concurrency = 999
+		}},
+		{"map failure", "failure_mode", func(n *Node) {
+			n.Kind = "map"
+			n.ItemInputs = n.InputPorts
+			n.ItemOutputs = n.OutputPorts
+			n.Body = n.ModelRef
+			n.MaxItems = 2
+			n.Concurrency = 1
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			graph := simpleWorkflow()
+			tc.change(&graph.Nodes[0])
+			err := graph.Validate()
+			field, ok := err.(FieldError)
+			if !ok || field.Path != "nodes[0]."+tc.field {
+				t.Fatalf("expected %s, got %v", tc.field, err)
+			}
+		})
+	}
+}

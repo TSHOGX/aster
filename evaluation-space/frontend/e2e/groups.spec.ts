@@ -747,3 +747,67 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
   } finally { await context.close(); }
  });
 }
+
+for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", width: 390 }]) {
+ test(`node settings preserve recovery and focus graph validation errors ${variant.locale}`, async ({ page: admin, browser }, info) => {
+  const { beta, user } = await provision(admin);
+  const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: variant.locale, viewport: { width: variant.width, height: 900 } });
+  const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message)); page.on("dialog", dialog => dialog.accept());
+  try {
+   await login(page, user); await page.goto(`/evaluation-space/groups/${beta.id}/`);
+   await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
+   await expect(page.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
+   const graph = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8")); graph.id = `settings-${crypto.randomUUID().slice(0, 8)}`;
+   const root = `/evaluation-space/api/v1/groups/${beta.id}/workflows/${graph.id}/draft`;
+   const session = await (await page.request.get("/evaluation-space/api/v1/session")).json();
+   const headers = { Origin: origin, "X-CSRF-Token": session.csrf };
+   expect((await page.request.put(root, { headers, data: { id: graph.id, expected_revision: 0, expected_layout_revision: 0, workflow: graph, layout: {} } })).status()).toBe(200);
+   await page.goto(`/evaluation-space/groups/${beta.id}/workflows/${graph.id}/`);
+   const executable = page.getByLabel(tr("Executable workflow JSON", "可执行工作流 JSON"), { exact: true });
+   const validate = page.getByRole("button", { name: tr("Validate draft", "验证草稿"), exact: true });
+   const checks: { field: string; focus: string; change: (value: typeof graph) => void }[] = [
+    { field: "edges[0].from", focus: "workflow", change: value => { value.edges[0].from = "missing.port"; } },
+    { field: "edges[0].to", focus: "workflow", change: value => { value.nodes[0].input_ports.corpus = `sha256:${"f".repeat(64)}`; } },
+    { field: "edges", focus: "workflow", change: value => { value.nodes.find((node: { id: string }) => node.id === "build").output_ports.items = value.inputs.corpus; value.edges[0].from = "build.items"; } },
+    { field: "extract.corpus", focus: "input_ports", change: value => { value.edges.shift(); } },
+    { field: "nodes[0].inactive_inputs", focus: "inactive_inputs", change: value => { value.nodes[0].kind = "join"; value.nodes[0].inactive_inputs = "wait_forever"; } },
+    { field: "nodes[0].max_iterations", focus: "max_iterations", change: value => { Object.assign(value.nodes[0], { kind: "loop", body: value.nodes[0].model_ref, predicate: "truthy", max_iterations: 0, on_limit: "fail" }); } },
+    { field: "nodes[0].concurrency", focus: "concurrency", change: value => { Object.assign(value.nodes[0], { kind: "map", body: value.nodes[0].model_ref, item_inputs: value.nodes[0].input_ports, item_outputs: value.nodes[0].output_ports, max_items: 3, concurrency: 99, failure_mode: "fail_fast" }); } },
+   ];
+   for (const check of checks) {
+    const invalid = structuredClone(graph); check.change(invalid);
+    await executable.fill(JSON.stringify(invalid));
+    const response = page.waitForResponse(response => response.url().endsWith("/draft/validate") && response.request().method() === "POST");
+    await validate.click(); expect((await response).status()).toBe(422);
+    await expect(page.locator("#workflow-field-error")).toContainText(check.field);
+    await expect(page.locator(`[data-field="${check.focus}"]`)).toBeFocused();
+   }
+   await executable.fill(JSON.stringify(graph));
+   await page.getByLabel(tr("Search node kinds", "搜索节点类型"), { exact: true }).fill("map");
+   await expect(page.getByRole("button", { name: tr("Add agent", "添加 agent"), exact: true })).toHaveCount(0);
+   const add = page.getByRole("button", { name: tr("Add map", "添加 map"), exact: true }); await add.focus(); await add.press("Enter");
+   const body = page.getByLabel(tr("Body workflow revision JSON", "子工作流版本 JSON"), { exact: true });
+   await body.fill(JSON.stringify(graph.nodes[0].model_ref));
+   await page.getByLabel(tr("Maximum items", "最大项目数"), { exact: true }).fill("9");
+   await page.getByLabel(tr("Concurrent items", "并发项目数"), { exact: true }).fill("2");
+   await page.getByLabel(tr("Item failure handling", "项目失败处理"), { exact: true }).selectOption("collect_errors");
+   const itemInputs = page.getByLabel(tr("Item input schemas JSON", "项目输入架构 JSON"), { exact: true });
+   await itemInputs.fill("{"); await expect(itemInputs).toHaveAttribute("aria-invalid", "true");
+   const save = page.getByRole("button", { name: tr("Save draft", "保存草稿"), exact: true }); await expect(save).toBeDisabled();
+   await page.getByRole("button", { name: /^build\b/ }).click();
+   await expect(page.getByLabel(tr("Implementation revision JSON", "实现版本 JSON"), { exact: true })).toBeVisible();
+   await page.getByRole("button", { name: /^map-node\b/ }).click(); await expect(itemInputs).toHaveValue("{");
+   await page.getByRole("button", { name: tr("Save recovery", "保存恢复副本"), exact: true }).click(); await page.reload();
+   await page.getByRole("button", { name: tr("Restore recovery", "恢复副本"), exact: true }).click();
+   await expect(itemInputs).toHaveValue("{"); await expect(save).toBeDisabled();
+   await itemInputs.fill(JSON.stringify(graph.nodes[0].input_ports));
+   await page.getByLabel(tr("Item output schemas JSON", "项目输出架构 JSON"), { exact: true }).fill(JSON.stringify(graph.nodes[0].output_ports));
+   await save.click(); await expect(page.getByText(tr("Draft saved.", "草稿已保存。"), { exact: true })).toBeVisible();
+   const saved = await (await page.request.get(root)).json();
+   expect(saved.workflow.nodes.find((node: { id: string }) => node.id === "map-node")).toMatchObject({ kind: "map", body: graph.nodes[0].model_ref, max_items: 9, concurrency: 2, failure_mode: "collect_errors", item_inputs: graph.nodes[0].input_ports, item_outputs: graph.nodes[0].output_ports });
+   await page.screenshot({ path: info.outputPath("map-node-settings.png"), fullPage: true });
+   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true); expect(errors).toEqual([]);
+  } finally { await context.close(); }
+ });
+}

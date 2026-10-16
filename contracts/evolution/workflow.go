@@ -134,8 +134,11 @@ func (w Workflow) Validate() error {
 			return fail(p+".id", "duplicate node")
 		}
 		nodes[n.ID] = n
-		if n.MaxAttempts < 1 || n.MaxAttempts > w.Limits.MaxTotalAttempts || n.TimeoutSeconds < 1 || n.TimeoutSeconds > w.Limits.TimeoutSeconds {
-			return fail(p, "bounded attempts and timeout required")
+		if n.MaxAttempts < 1 || n.MaxAttempts > w.Limits.MaxTotalAttempts {
+			return fail(p+".max_attempts", "bounded attempts and timeout required")
+		}
+		if n.TimeoutSeconds < 1 || n.TimeoutSeconds > w.Limits.TimeoutSeconds {
+			return fail(p+".timeout_seconds", "bounded attempts and timeout required")
 		}
 		if err := ports(p+".input_ports", n.InputPorts); err != nil {
 			return err
@@ -149,10 +152,13 @@ func (w Workflow) Validate() error {
 		for name, s := range n.OutputPorts {
 			sources[n.ID+"."+name] = s
 		}
-		for _, r := range []*Revision{n.ModelRef, n.ImplementationRef, n.Body} {
-			if r != nil {
-				if err := r.Validate(); err != nil {
-					return fail(p, err.Error())
+		for _, ref := range []struct {
+			field string
+			value *Revision
+		}{{"model_ref", n.ModelRef}, {"implementation_ref", n.ImplementationRef}, {"body", n.Body}} {
+			if ref.value != nil {
+				if err := ref.value.Validate(); err != nil {
+					return fail(p+"."+ref.field, err.Error())
 				}
 			}
 		}
@@ -188,11 +194,14 @@ func (w Workflow) Validate() error {
 			}
 		case "transform", "validator":
 			if n.ImplementationRef == nil {
-				return fail(p, "registered implementation required")
+				return fail(p+".implementation_ref", "registered implementation required")
 			}
 		case "router":
-			if !purePredicate(n.Predicate) || len(n.Routes) == 0 {
-				return fail(p, "registered pure predicate and routes required")
+			if !purePredicate(n.Predicate) {
+				return fail(p+".predicate", "registered pure predicate and routes required")
+			}
+			if len(n.Routes) == 0 {
+				return fail(p+".routes", "registered pure predicate and routes required")
 			}
 			seen := map[string]bool{}
 			for _, route := range n.Routes {
@@ -205,8 +214,11 @@ func (w Workflow) Validate() error {
 				return fail(p+".default_route", "default must be declared route")
 			}
 		case "map":
-			if len(n.ItemInputs) == 0 || len(n.ItemOutputs) == 0 {
-				return fail(p, "map item port schemas required")
+			if len(n.ItemInputs) == 0 {
+				return fail(p+".item_inputs", "map item port schemas required")
+			}
+			if len(n.ItemOutputs) == 0 {
+				return fail(p+".item_outputs", "map item port schemas required")
 			}
 			if err := ports(p+".item_inputs", n.ItemInputs); err != nil {
 				return err
@@ -214,20 +226,41 @@ func (w Workflow) Validate() error {
 			if err := ports(p+".item_outputs", n.ItemOutputs); err != nil {
 				return err
 			}
-			if n.Body == nil || n.MaxItems < 1 || n.Concurrency < 1 || n.Concurrency > w.Limits.MaxParallelNodes || (n.FailureMode != "fail_fast" && n.FailureMode != "collect_errors") {
-				return fail(p, "bounded body, concurrency and failure mode required")
+			if n.Body == nil {
+				return fail(p+".body", "bounded body, concurrency and failure mode required")
+			}
+			if n.MaxItems < 1 {
+				return fail(p+".max_items", "bounded body, concurrency and failure mode required")
+			}
+			if n.Concurrency < 1 || n.Concurrency > w.Limits.MaxParallelNodes {
+				return fail(p+".concurrency", "bounded body, concurrency and failure mode required")
+			}
+			if n.FailureMode != "fail_fast" && n.FailureMode != "collect_errors" {
+				return fail(p+".failure_mode", "bounded body, concurrency and failure mode required")
 			}
 		case "join":
 			if n.InactiveInputs != "skip" && n.InactiveInputs != "fail" {
-				return fail(p, "inactive route handling required")
+				return fail(p+".inactive_inputs", "inactive route handling required")
 			}
 		case "subgraph":
-			if n.Body == nil || n.MaxDepth < 1 || n.MaxDepth > 16 {
-				return fail(p, "bounded immutable subgraph required")
+			if n.Body == nil {
+				return fail(p+".body", "bounded immutable subgraph required")
+			}
+			if n.MaxDepth < 1 || n.MaxDepth > 16 {
+				return fail(p+".max_depth", "bounded immutable subgraph required")
 			}
 		case "loop":
-			if n.Body == nil || n.MaxIterations < 1 || !purePredicate(n.Predicate) || (n.OnLimit != "stop" && n.OnLimit != "fail") {
-				return fail(p, "bounded loop and pure stop predicate required")
+			if n.Body == nil {
+				return fail(p+".body", "bounded loop and pure stop predicate required")
+			}
+			if n.MaxIterations < 1 {
+				return fail(p+".max_iterations", "bounded loop and pure stop predicate required")
+			}
+			if !purePredicate(n.Predicate) {
+				return fail(p+".predicate", "bounded loop and pure stop predicate required")
+			}
+			if n.OnLimit != "stop" && n.OnLimit != "fail" {
+				return fail(p+".on_limit", "bounded loop and pure stop predicate required")
 			}
 		default:
 			return fail(p+".kind", "unsupported node kind")

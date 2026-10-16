@@ -286,9 +286,15 @@ JSON and canvas layout revisions separate, validates the same typed graph used b
 the runner, uses compare-and-swap draft saves, and publishes immutable revisions
 without activating a group. Publishing requires the explicit `workflow.edit` grant;
 it does not grant configuration activation or run admission.
-The workbench offers a keyboard node palette, typed connection list with explicit
-edge removal, node inspector, executable digest feedback, undo/redo and local
-recovery. Use **Activate from configuration** after publishing
+The workbench offers a searchable keyboard node palette, typed connections with
+explicit edge removal, a node inspector, executable digest feedback, undo/redo and
+local recovery. The inspector exposes implementation revisions for transforms and
+validators; routing predicates and defaults; join handling for inactive inputs;
+and immutable body revisions, limits and failure behavior for maps, loops and
+subgraphs. Revision JSON contains `id`, `revision` and `digest`. Incomplete JSON
+remains recoverable when switching nodes or reloading a saved local recovery copy,
+and blocks saving until corrected. Validation identifies and focuses invalid node
+settings; graph-wide edge and cycle errors focus the executable configuration. Use **Activate from configuration** after publishing
 when the group should adopt the immutable workflow revision; publication alone
 never changes the active group configuration. Run and evaluation deep links retain
 the group scope; their browser views show frozen pins, deduplicated event cursors,
