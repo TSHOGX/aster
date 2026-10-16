@@ -16,6 +16,7 @@ type ProviderOutcome struct {
 	CallID            string                  `json:"call_id"`
 	ProviderRequestID string                  `json:"provider_request_id"`
 	State             string                  `json:"state"`
+	Retryable         bool                    `json:"retryable,omitempty"`
 	Usage             RunUsage                `json:"usage"`
 	Output            *evolution.ArtifactRef  `json:"output,omitempty"`
 }
@@ -30,6 +31,12 @@ func (s *Store) RecordProviderOutcome(ctx context.Context, lease RunLease, value
 	}
 	if value.State != "completed" && value.State != "failed" && value.State != "cancelled" {
 		return fmt.Errorf("invalid provider terminal state")
+	}
+	if value.Retryable && value.State != "failed" {
+		return fmt.Errorf("only failed provider outcomes can be retryable")
+	}
+	if value.State != "completed" && value.Output != nil {
+		return fmt.Errorf("failed or cancelled provider outcome cannot contain output")
 	}
 	if value.State == "completed" && value.Output == nil {
 		return fmt.Errorf("completed provider output required")

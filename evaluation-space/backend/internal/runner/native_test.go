@@ -83,7 +83,7 @@ func (p *nativeProvider) Cancel(context.Context, projections.ProviderCall) (proj
 	}
 	return projections.ProviderOutcome{}, errors.New("unknown cancellation")
 }
-func nativeFixture(t *testing.T) (*projections.Store, string, evolution.Run, *NativeExecutor, *nativeProvider) {
+func nativeFixture(t *testing.T, configure ...func(*evolution.Workflow)) (*projections.Store, string, evolution.Run, *NativeExecutor, *nativeProvider) {
 	t.Helper()
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "space.db")
@@ -97,6 +97,9 @@ func nativeFixture(t *testing.T) (*projections.Store, string, evolution.Run, *Na
 	ref := evolution.Revision{ID: "model", Revision: 1, Digest: evolution.Digest([]byte("model"))}
 	text := "Read {{value}}"
 	graph := evolution.Workflow{SchemaVersion: 1, ID: "native", ParametersSchema: json.RawMessage(`{"type":"object"}`), Inputs: map[string]string{"value": digest}, Outputs: map[string]string{"value": digest}, Nodes: []evolution.Node{{ID: "agent", Kind: "agent", InputPorts: map[string]string{"value": digest}, OutputPorts: map[string]string{"value": digest}, Prompt: &evolution.Prompt{Text: text, Variables: []string{"value"}, Digest: evolution.Digest([]byte(text))}, ModelRef: &ref, MaxAttempts: 1, TimeoutSeconds: 10}, {ID: "build", Kind: "transform", InputPorts: map[string]string{"value": digest}, OutputPorts: map[string]string{"value": digest}, ImplementationRef: &ref, MaxAttempts: 1, TimeoutSeconds: 10}}, Edges: []evolution.Edge{{From: "$input.value", To: "agent.value"}, {From: "agent.value", To: "build.value"}, {From: "build.value", To: "$output.value"}}, Limits: evolution.Limits{MaxParallelNodes: 2, MaxTotalAttempts: 10, TimeoutSeconds: 60}}
+	for _, apply := range configure {
+		apply(&graph)
+	}
 	raw, err := graph.Canonical()
 	if err != nil {
 		t.Fatal(err)

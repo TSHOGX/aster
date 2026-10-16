@@ -119,7 +119,7 @@ func (r nativeRuntime) Execute(ctx context.Context, call workflow.Call) (workflo
 		return nil, err
 	}
 	if outcome.State != "completed" {
-		return nil, workflow.Failure{Code: "provider_failed"}
+		return nil, workflow.Failure{Code: "provider_failed", Retryable: outcome.State == "failed" && outcome.Retryable && len(call.Node.Tools) == 0}
 	}
 	if outcome.Output != nil && outcome.Output.Size > r.run.Budget.MaxArtifactBytes {
 		return nil, workflow.Failure{Code: "output_artifact_budget"}

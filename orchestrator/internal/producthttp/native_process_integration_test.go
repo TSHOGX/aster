@@ -60,6 +60,10 @@ func TestNativeDynamicBudgetFailureRealProcesses(t *testing.T) {
 	nativeGenerationProcesses(t, "dynamic-budget")
 }
 
+func TestNativeNumberedRetryRealProcesses(t *testing.T) {
+	nativeGenerationProcesses(t, "numbered-retry")
+}
+
 func TestNativeDynamicInspectionRealProcesses(t *testing.T) {
 	nativeGenerationProcesses(t, "dynamic-inspection")
 }
@@ -114,6 +118,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	studioAddress, participantAddress, spaceAddress := address(), address(), address()
 	spaceBrowserAddress := address()
 	spaceOrigin := "http://" + spaceAddress
+	browserNumberedRetry := mode == "numbered-retry" && os.Getenv("EVALUATION_NUMBERED_RETRY_BROWSER_TEST") == "1"
 	browserDynamic := mode == "dynamic-inspection" && os.Getenv("EVALUATION_DYNAMIC_BROWSER_TEST") == "1"
 	browserTools := mode == "tool-inspection" && os.Getenv("EVALUATION_TOOLS_BROWSER_TEST") == "1"
 	browserRetention := mode == "retention" && os.Getenv("EVALUATION_RETENTION_BROWSER_TEST") == "1"
@@ -155,7 +160,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		}
 	}
 	var evaluationFrontend string
-	if browserUpgrade || browserRetention || browserTools || browserDynamic {
+	if browserUpgrade || browserRetention || browserTools || browserDynamic || browserNumberedRetry {
 		frontendAddress := address()
 		evaluationFrontend = "http://" + frontendAddress
 		copyCmd := exec.CommandContext(ctx, "cp", "-r", filepath.Join(root, "evaluation-space/frontend/.next/static"), filepath.Join(root, "evaluation-space/frontend/.next/standalone/evaluation-space/frontend/.next/"))
@@ -197,7 +202,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	studioURL, _ := url.Parse("http://" + studioAddress)
 	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { host := r.In.Host; r.SetURL(studioURL); r.Out.Host = host }}
 	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if (browserUpgrade || browserRetention || browserTools || browserDynamic) && strings.HasPrefix(r.URL.Path, "/evaluation-space/") {
+		if (browserUpgrade || browserRetention || browserTools || browserDynamic || browserNumberedRetry) && strings.HasPrefix(r.URL.Path, "/evaluation-space/") {
 			spaceProxy.ServeHTTP(w, r)
 			return
 		}
@@ -369,6 +374,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			Digest string             `json:"request_digest"`
 			Model  evolution.Revision `json:"model"`
 			Call   struct {
+				Number int                        `json:"number"`
 				Node   evolution.Node             `json:"node"`
 				Inputs map[string]json.RawMessage `json:"inputs"`
 				Prompt string                     `json:"prompt"`
@@ -448,7 +454,18 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			value["outputs"] = map[string]any{}
 			raw, _ = json.Marshal(value)
 		}
+		if mode == "numbered-retry" && submission.Call.Node.ID == "extract" && submission.Call.Number == 1 {
+			var value map[string]any
+			must(t, json.Unmarshal(raw, &value))
+			value["state"], value["retryable"], value["outputs"] = "failed", true, map[string]any{}
+			raw, _ = json.Marshal(value)
+		}
 		responses[key] = raw
+		if mode == "numbered-retry" && submission.Call.Node.ID == "extract" && submission.Call.Number == 1 {
+			// Lookup must recover this exact failure before starting attempt two.
+			w.WriteHeader(503)
+			return
+		}
 		if mode == "lost-model-reply" && runID == "example-skills" && calls[runID] == 1 {
 			w.WriteHeader(503)
 			return
@@ -475,13 +492,13 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		Schemas map[string]json.RawMessage `json:"schemas"`
 	}
 	must(t, json.Unmarshal(output, &packages))
-	if mode == "tool-inspection" || mode == "tool-checkpoint" {
-		publishToolDefinition := func(kind string, ref evolution.Revision, body any) {
+	if mode == "tool-inspection" || mode == "tool-checkpoint" || mode == "numbered-retry" {
+		publishInspectionDefinition := func(kind string, ref evolution.Revision, body any) {
 			raw, _ := json.Marshal(map[string]any{"kind": kind, "ref": ref, "body": body})
 			command := exec.CommandContext(ctx, catalog, "--state-directory", spaceDirectory)
 			command.Stdin = bytes.NewReader(raw)
 			if output, err := command.CombinedOutput(); err != nil {
-				t.Fatalf("tool publication: %v %s", err, output)
+				t.Fatalf("inspection publication: %v %s", err, output)
 			}
 		}
 		for i := range packages {
@@ -500,7 +517,11 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 				}
 				for k := range graph.Workflow.Nodes {
 					if graph.Workflow.Nodes[k].Kind == "agent" && (mode != "tool-checkpoint" || graph.Workflow.Nodes[k].ID == "draft") {
-						graph.Workflow.Nodes[k].Tools = []evolution.Revision{toolRef}
+						if mode == "numbered-retry" {
+							graph.Workflow.Nodes[k].MaxAttempts = 2
+						} else {
+							graph.Workflow.Nodes[k].Tools = []evolution.Revision{toolRef}
+						}
 					}
 				}
 				raw, err := graph.Workflow.Canonical()
@@ -508,7 +529,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 				old := graph.Ref
 				graph.Ref.Revision++
 				graph.Ref.Digest = evolution.Digest(raw)
-				publishToolDefinition("workflow", graph.Ref, graph.Workflow)
+				publishInspectionDefinition("workflow", graph.Ref, graph.Workflow)
 				for k := range pkg.Template.Workflows {
 					if pkg.Template.Workflows[k] == old {
 						pkg.Template.Workflows[k] = graph.Ref
@@ -518,7 +539,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			pkg.Template.Ref.Revision++
 			pkg.Template.Ref.Digest, err = evolution.DefinitionDigest(pkg.Template)
 			must(t, err)
-			publishToolDefinition("template", pkg.Template.Ref, pkg.Template)
+			publishInspectionDefinition("template", pkg.Template.Ref, pkg.Template)
 		}
 	}
 	additionalSchemas := map[string]json.RawMessage{}
@@ -641,9 +662,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 
 	start(studioBinary, studioAddress, "--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evaluation-endpoint", spaceOrigin)
 	spaceArgs := []string{"--listen", spaceAddress, "--state-directory", spaceDirectory, "--identity-endpoint", central.URL, "--native-config", nativePath, "--studio-input-endpoint", "http://" + participantAddress}
-	if retryJourney || mode == "retention" || mode == "tool-inspection" || mode == "dynamic-inspection" {
+	if retryJourney || mode == "retention" || mode == "tool-inspection" || mode == "dynamic-inspection" || mode == "numbered-retry" {
 		frontendOrigin := central.URL
-		if browserUpgrade || browserRetention || browserTools || browserDynamic {
+		if browserUpgrade || browserRetention || browserTools || browserDynamic || browserNumberedRetry {
 			frontendOrigin = evaluationFrontend
 		}
 		spaceArgs = append(spaceArgs, "--browser-listen", spaceBrowserAddress, "--public-origin", issuer, "--frontend", frontendOrigin)
@@ -1650,6 +1671,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		}
 	}
 	expectedCorrections := 1
+	if mode == "numbered-retry" {
+		expectedCorrections = 2
+	}
 	if mode == "dynamic-inspection" {
 		expectedCorrections = 3
 	}
@@ -1672,6 +1696,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	}
 	if mode == "dynamic-inspection" {
 		verifyNativeDynamicInspection(t, ctx, nativeToolInspection{Store: store, Token: token, Actor: admin.ID, Group: configuration.GroupID, Run: runIDs["example-corrections"], Repository: root, State: spaceDirectory, Origin: issuer, Browser: browserDynamic})
+	}
+	if mode == "numbered-retry" {
+		verifyNativeNumberedRetry(t, ctx, nativeToolInspection{Store: store, Token: token, Actor: admin.ID, Group: configuration.GroupID, Run: runIDs["example-corrections"], Repository: root, State: spaceDirectory, Origin: issuer, Browser: browserNumberedRetry})
 	}
 	if mode == "tool-inspection" {
 		verifyNativeToolInspection(t, ctx, nativeToolInspection{Store: store, Token: token, Actor: admin.ID, Group: configuration.GroupID, Run: runIDs["example-corrections"], Repository: root, State: spaceDirectory, Origin: issuer, Browser: browserTools, Tool: toolRef})

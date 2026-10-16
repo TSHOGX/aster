@@ -706,6 +706,17 @@ model. `tool_trace_state: omitted` means the provider did not retain tool activi
 it is not evidence that no tools ran. Source access and artifact expiry apply to
 these observations.
 
+For a known terminal failure, a model service can return `state: failed` with
+`retryable: true`. Automatic numbered retries require a node with no declared
+tools and `tool_trace_state: complete` with no tool observations. A tool-bearing
+node or omitted trace remains a settled failure even if the provider requests a
+retry. Other states cannot claim retryability. Each attempt spends its own recorded
+usage and requires remaining node/run attempts, time and budget. The inspector
+retains the failed attempt alongside its successor. Network errors and lost replies
+keep the original call identity until reconciliation; they do not start fresh
+attempts. Completed, cancelled and schema-invalid outputs are not automatically
+retried. Choose an explicit fresh run when new execution is intended.
+
 Configure `-studio-input-endpoint` and `STUDIO_EVALUATION_INPUT_SECRET` for private
 Studio base lookup and result submission. `EVALUATION_SPACE_STUDIO_SECRET` protects
 Studio's reverse artifact fetches. Native generation can run with evaluator connections

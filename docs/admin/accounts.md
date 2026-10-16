@@ -325,6 +325,12 @@ After a lost response, use **Recover draft test** to recover the same saved
 revision, scope and budget. The pending request survives a page reload in the
 same browser session. The inspector identifies the test scope and source run.
 
+For Agent nodes with a maximum-attempt setting above one, an authenticated known
+retryable model failure can start the next numbered attempt within the run budget.
+The inspector preserves both attempts and each attempt's cost. Automatic model
+retries require no declared tools and complete tool evidence; omitted tool traces,
+uncertain requests and tool-bearing calls do not trigger a fresh attempt.
+
 Terminal runs also offer **Retry as new run**. The server copies the source run's
 frozen pins and budget into a fresh queued run with `retry_of` lineage; the source
 run and its evidence remain unchanged. The action requires `run.start`, rejects a

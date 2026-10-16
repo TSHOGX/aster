@@ -114,6 +114,7 @@ jobs:
         with:
           name: evolution-browser-failure-${{ github.run_attempt }}
           path: |
+            evaluation-space/frontend/test-results/numbered-retry
             evaluation-space/frontend/test-results/dynamic
             evaluation-space/frontend/test-results/tools
             evaluation-space/frontend/test-results/retention

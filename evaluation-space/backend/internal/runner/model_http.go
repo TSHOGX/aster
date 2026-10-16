@@ -58,6 +58,7 @@ type ModelObservation struct {
 	Model             evolution.Revision     `json:"model"`
 	ProviderRequestID string                 `json:"provider_request_id"`
 	State             string                 `json:"state"`
+	Retryable         bool                   `json:"retryable,omitempty"`
 	Usage             projections.RunUsage   `json:"usage"`
 	Outputs           workflow.Values        `json:"outputs"`
 	ResponseModel     string                 `json:"response_model"`
@@ -226,6 +227,9 @@ func (p *HTTPModel) call(ctx context.Context, method, suffix string, call projec
 	if observation.RunID != call.RunID || observation.CallID != call.ID || observation.IdempotencyKey != call.IdempotencyKey || observation.RequestDigest != call.Request.Digest || observation.Model != p.connection.Model {
 		return outcome, ErrModelDenied
 	}
+	if observation.Retryable && observation.State != "failed" {
+		return outcome, ErrModelUnavailable
+	}
 	if observation.State == "queued" || observation.State == "running" {
 		return outcome, ErrModelPending
 	}
@@ -248,7 +252,10 @@ func (p *HTTPModel) call(ctx context.Context, method, suffix string, call projec
 		return outcome, projections.ErrRunBudget
 	}
 	evidence := modelArtifact(call, "trace", raw, evolution.Digest([]byte("native-model-observation-v1")))
-	outcome = projections.ProviderOutcome{CallID: call.ID, ProviderRequestID: observation.ProviderRequestID, State: observation.State, Usage: observation.Usage, Evidence: []evolution.ArtifactRef{evidence}}
+	// Retain the provider's hint in evidence, but settle ineligible failures
+	// without authorizing a new tool effect or inferring absence from omission.
+	retryable := observation.Retryable && len(node.Node.Tools) == 0 && observation.ToolTraceState == "complete"
+	outcome = projections.ProviderOutcome{CallID: call.ID, ProviderRequestID: observation.ProviderRequestID, State: observation.State, Retryable: retryable, Usage: observation.Usage, Evidence: []evolution.ArtifactRef{evidence}}
 	var output []byte
 	if observation.State == "completed" {
 		if observation.Outputs == nil {

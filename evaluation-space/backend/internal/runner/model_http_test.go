@@ -115,7 +115,7 @@ func TestNativeHTTPModelRecoversLostReplyAndRetainsActualEvidence(t *testing.T) 
 	}
 }
 
-func modelCallFixture(t *testing.T) (*projections.Store, evolution.Revision, projections.ProviderCall, []byte) {
+func modelCallFixture(t *testing.T, withTools ...bool) (*projections.Store, evolution.Revision, projections.ProviderCall, []byte) {
 	t.Helper()
 	store, _, run, executor, _ := nativeFixture(t)
 	ctx := context.Background()
@@ -124,6 +124,9 @@ func modelCallFixture(t *testing.T) (*projections.Store, evolution.Revision, pro
 		ref = key
 	}
 	call := workflow.Call{ID: "call", Instance: "root/agent", Number: 1, Workflow: run.Pins.Workflow, Node: evolution.Node{ID: "agent", Kind: "agent", ModelRef: &ref}, Inputs: workflow.Values{"value": json.RawMessage(`"corpus"`)}, Prompt: "Read corpus"}
+	if len(withTools) > 0 && withTools[0] {
+		call.Node.Tools = []evolution.Revision{ref}
+	}
 	raw, _ := json.Marshal(call)
 	artifact := evolution.ArtifactRef{ID: "request", GroupID: run.GroupID, SchemaDigest: evolution.Digest([]byte("schema")), Digest: evolution.Digest(raw), Size: int64(len(raw)), MediaType: "application/json", GrantID: "run-grant", PolicyRevision: 1}
 	if err := store.SealArtifact(ctx, artifact, bytes.NewReader(raw)); err != nil {

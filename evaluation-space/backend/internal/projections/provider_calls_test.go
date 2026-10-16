@@ -5,12 +5,18 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestProviderCallIdentitySurvivesTakeover(t *testing.T) {
+	t.Run("completed", func(t *testing.T) { providerCallIdentitySurvivesTakeover(t, false) })
+	t.Run("retryable-failure", func(t *testing.T) { providerCallIdentitySurvivesTakeover(t, true) })
+}
+
+func providerCallIdentitySurvivesTakeover(t *testing.T, retryable bool) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "space.db")
 	s, err := Open(ctx, path)
@@ -77,11 +83,30 @@ func TestProviderCallIdentitySurvivesTakeover(t *testing.T) {
 		t.Fatal("prepared call settled without outcome", err)
 	}
 	outcome := ProviderOutcome{CallID: "call", ProviderRequestID: "provider-request", State: "completed", Usage: RunUsage{4, 7}, Output: &call.Request}
+	invalid := outcome
+	invalid.Retryable = true
+	if err = s.RecordProviderOutcome(ctx, replacement, invalid); err == nil {
+		t.Fatal("completed retry hint accepted")
+	}
+	invalid.State = "failed"
+	if err = s.RecordProviderOutcome(ctx, replacement, invalid); err == nil {
+		t.Fatal("failed outcome with output accepted")
+	}
+	if retryable {
+		outcome.State, outcome.Output, outcome.Retryable = "failed", nil, true
+	}
 	if err = s.RecordProviderOutcome(ctx, replacement, outcome); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.RecordProviderOutcome(ctx, replacement, outcome); err != nil {
 		t.Fatal("outcome retry", err)
+	}
+	if retryable {
+		changed := outcome
+		changed.Retryable = false
+		if err = s.RecordProviderOutcome(ctx, replacement, changed); err != ErrConflict {
+			t.Fatal("retry eligibility rewritten", err)
+		}
 	}
 	changed := outcome
 	changed.Usage.Tokens++
@@ -112,7 +137,7 @@ func TestProviderCallIdentitySurvivesTakeover(t *testing.T) {
 		t.Fatal(err)
 	}
 	recovered, err := s.ProviderOutcome(ctx, recovery, "call")
-	if err != nil || recovered.ProviderRequestID != outcome.ProviderRequestID || recovered.Usage != outcome.Usage || recovered.Output == nil || *recovered.Output != *outcome.Output {
+	if err != nil || !reflect.DeepEqual(recovered, outcome) {
 		t.Fatal("lost retained result", recovered, err)
 	}
 	if _, err = s.ProviderOutcome(ctx, replacement, "call"); err != ErrConflict {
