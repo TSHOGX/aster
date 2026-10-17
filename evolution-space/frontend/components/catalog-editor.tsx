@@ -32,7 +32,7 @@ export function CatalogEditor({ group, kind, editable }: { group: string; kind: 
   const [saved, setSaved] = useState("");
   const [published, setPublished] = useState<Ref>();
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(true);
   const request = useRef<AbortController | null>(null);
   const root = `/groups/${encodeURIComponent(group)}/${kind}`;
   function begin() {

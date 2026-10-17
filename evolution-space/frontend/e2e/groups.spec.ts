@@ -3,6 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 const origin = "https://127.0.0.1:18543";
+async function settleOverview(page: Page) {
+  // Complete automatic catalog reads before full-document fixture navigation.
+  // WebKit reports interrupted TLS reads as native page errors during unload.
+  const catalogs = page.locator(".overview .catalog-editor select");
+  for (let index = 0; index < await catalogs.count(); index++) await expect(catalogs.nth(index)).toBeEnabled();
+}
+
 async function provision(admin: Page) {
   expect((await admin.request.post("/api/auth/login", { headers: { Origin: origin }, data: { username: "evolution-space-admin", password: "browser-fixture-password" } })).ok()).toBeTruthy();
   const groups = (await (await admin.request.get("/api/admin/groups?limit=50")).json()).groups as { id: string; name: string }[];
@@ -38,7 +45,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
     const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
     try {
       await login(page, user);
-      await page.goto(`/evolution-space/groups/${alpha.id}/?from=deep-link`);
+      await settleOverview(page); await page.goto(`/evolution-space/groups/${alpha.id}/?from=deep-link`);
       await page.getByRole("link", { name: text("Sign in", "登录"), exact: true }).click();
       await expect(page).toHaveURL(new RegExp(`/evolution-space/groups/${alpha.id}/\\?from=deep-link`));
       const overview = page.getByRole("region", { name: text("Group overview", "团队概览"), exact: true });
@@ -58,10 +65,10 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       await expect(overview.getByText(text("Manage configuration", "管理配置"), { exact: true }).locator("..")).toContainText(text("Allowed", "允许"));
       await expect(overview.getByText(text("Edit and publish workflows", "编辑和发布工作流"), { exact: true }).locator("..")).toContainText(text("Allowed", "允许"));
       await expect(overview.getByText(text("Read source evidence", "读取源证据"), { exact: true }).locator("..")).toContainText(text("Not granted", "未授权"));
-      await page.goto(`/evolution-space/groups/${beta.id}/workflows/skills/`);
+      await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/workflows/skills/`);
       await expect(page.getByRole("heading", { name: text("Workflow editor", "工作流编辑器"), exact: true })).toBeVisible();
       await expect(page.getByRole("alert").filter({ hasText: text("Workflow draft is unavailable", "工作流草稿不可用") })).toBeVisible();
-      await page.goto(`/evolution-space/groups/${beta.id}/`);
+      await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
       await expect(overview.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
       await page.screenshot({ path: info.outputPath("group-overview.png"), fullPage: true });
       await page.getByLabel(text("Search groups", "搜索团队"), { exact: true }).fill("Secret Team");
@@ -101,7 +108,7 @@ test("failed reads clear stale metadata and language changes preserve navigation
   const page = await context.newPage();
   try {
     await login(page, user);
-    await page.goto(`/evolution-space/groups/${alpha.id}/`);
+    await settleOverview(page); await page.goto(`/evolution-space/groups/${alpha.id}/`);
     await page.getByRole("link", { name: "Sign in", exact: true }).click();
     const overview = page.locator(".overview");
     await expect(overview.getByRole("heading", { name: "Team Alpha", exact: true })).toBeVisible();
@@ -153,7 +160,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
     const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
     const errors: string[] = []; page.on("pageerror", error => errors.push(error.message)); page.on("dialog", dialog => dialog.accept());
     try {
-      await login(page, user); await page.goto(`/evolution-space/groups/${beta.id}/`);
+      await login(page, user); await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
       await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
       await expect(page.getByRole("region", { name: tr("Group overview", "团队概览"), exact: true }).getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
       const workflow = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8"));
@@ -169,7 +176,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       await grant(alpha.id, "workflow.edit");
       expect((await page.request.put(foreignDraft, { headers, data: { id: workflow.id, expected_revision: 1, expected_layout_revision: 1, workflow, layout: {} } })).status()).toBe(404);
       expect((await page.request.post(`${foreignDraft}/publish`, { headers, data: { revision: 1 } })).status()).toBe(404);
-      await page.goto(`/evolution-space/groups/${beta.id}/workflows/${workflow.id}/`);
+      await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/workflows/${workflow.id}/`);
       await page.getByRole("button", { name: /^extract\b/ }).click();
       const prompt = page.getByLabel(tr("Prompt text", "提示词文本"), { exact: true });
       await prompt.fill("Extract {{corpus}} with evidence");
@@ -272,7 +279,7 @@ test("terminal run inspector retries into a linked immutable run", async ({ page
   const page = await context.newPage();
   try {
     await login(page, user);
-    await page.goto(`/evolution-space/groups/${beta.id}/`);
+    await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
     await page.getByRole("link", { name: "Sign in", exact: true }).click();
     await expect(page.getByRole("region", { name: "Group overview", exact: true }).getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
     const root = `/evolution-space/api/v1/groups/${beta.id}/runs`;
@@ -289,7 +296,7 @@ test("terminal run inspector retries into a linked immutable run", async ({ page
       if (requests.length === 1) { await route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"reply_lost"}' }); return; }
       await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(retry) });
     });
-    await page.goto(`/evolution-space/groups/${beta.id}/runs/terminal-run`);
+    await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/runs/terminal-run`);
     await expect(page.getByRole("heading", { name: /Run inspector: terminal-run/, exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Retry as new run", exact: true })).toBeEnabled();
     await page.getByRole("button", { name: "Retry as new run", exact: true }).click();
@@ -316,7 +323,7 @@ for (const variant of [
     const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
     try {
       await login(page, user);
-      await page.goto(`/evolution-space/groups/${beta.id}/`);
+      await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
       await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
       await expect(page.getByRole("region", { name: tr("Group overview", "团队概览"), exact: true }).getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
       const root = `/evolution-space/api/v1/groups/${beta.id}/evaluations/job-report`;
@@ -328,7 +335,7 @@ for (const variant of [
       await page.route(`${origin}${root}`, route => route.fulfill({ status: jobStatus, contentType: "application/json", body: JSON.stringify(jobStatus === 200 ? job : { error: "access_denied" }) }));
       await page.route(`${origin}${root}/result`, route => route.fulfill({ status: resultStatus, contentType: "application/json", body: JSON.stringify(resultStatus === 200 ? completion : { error: "result_unavailable" }) }));
       await page.route(`${origin}${root}/cancel`, route => route.fulfill({ status: 403, contentType: "application/json", body: '{"error":"access_denied"}' }));
-      await page.goto(`/evolution-space/groups/${beta.id}/evaluations/job-report`);
+      await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/evaluations/job-report`);
       await expect(page.getByText(tr("Policy mode", "策略模式"), { exact: true })).toBeVisible();
       await expect(page.getByText(variant.mode === "required" ? tr("required", "必需") : tr("report_only", "仅报告"), { exact: true })).toBeVisible();
       const pending = page.getByText(tr("No settled report yet. The evaluator may still be running.", "尚无已结算报告，评估器可能仍在运行。"), { exact: true });
@@ -391,7 +398,7 @@ test("role matrix and keyboard skip link remain usable on a narrow viewport", as
   const page = await context.newPage();
   try {
     await login(page, user);
-    await page.goto(`/evolution-space/groups/${beta.id}/`);
+    await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
     await page.getByRole("link", { name: "Sign in", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
     await page.keyboard.press("Tab");
@@ -419,7 +426,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
     const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
     try {
       await login(page, user);
-      await page.goto(`/evolution-space/groups/${beta.id}/`);
+      await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
       await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
       await expect(page.getByRole("region", { name: tr("Group overview", "团队概览"), exact: true }).getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
       const root = `/evolution-space/api/v1/groups/${beta.id}/runs/pause-run`;
@@ -440,11 +447,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
         else if (path.endsWith("/debugger")) body = { budget: { spent: { tokens: 0, cost_micros: 0 }, held: { tokens: 10, cost_micros: 20 }, available: { tokens: 90, cost_micros: 80 } }, counts: { attempts: 0, events: 0, provider_observations: 0 }, next_after: "", has_more: false, provider_observations: [], opaque: [] };
         return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
       });
-      // Complete the overview's automatic detail reads before a full-document
-      // navigation; WebKit can report canceled TLS reads as native page errors.
-      await expect(page.getByLabel(tr("Template JSON", "模板 JSON"), { exact: true })).toBeEnabled();
-      await expect(page.getByLabel(tr("Profile JSON", "配置 JSON"), { exact: true })).toBeEnabled();
-      await page.goto(`/evolution-space/groups/${beta.id}/runs/pause-run`);
+      await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/runs/pause-run`);
       await page.getByRole("button", { name: tr("Pause", "暂停"), exact: true }).click();
       await expect(page.getByRole("heading", { name: `${tr("Run status", "运行状态")}: ${tr("Pausing", "正在暂停")}`, exact: true })).toBeVisible();
       await expect(page.getByText(tr("Pause requested. Current work is finishing before the run pauses.", "已请求暂停。当前工作完成后，运行将暂停。"), { exact: true })).toBeVisible();
@@ -472,7 +475,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
     const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
     const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
     try {
-      await login(page, user); await page.goto(`/evolution-space/groups/${beta.id}/`);
+      await login(page, user); await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
       await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
       await expect(page.getByRole("region", { name: tr("Group overview", "团队概览"), exact: true }).getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
       const root = `/evolution-space/api/v1/groups/${beta.id}/runs`;
@@ -496,7 +499,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
         else if (path.endsWith("/debugger")) body = { budget: { spent: { tokens: 0, cost_micros: 0 }, held: { tokens: 0, cost_micros: 0 }, available: { tokens: 30, cost_micros: 100 } }, counts: { attempts: 0, events: 0, provider_observations: 0 }, next_after: "", has_more: false, provider_observations: [], opaque: [] };
         return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
       });
-      await page.goto(`/evolution-space/groups/${beta.id}/runs/experiment-source`);
+      await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/runs/experiment-source`);
       await page.getByRole("button", { name: tr("Run from here", "从此处运行"), exact: true }).click();
       await page.getByLabel(tr("Start node", "起始节点"), { exact: true }).selectOption("critic");
       await page.getByLabel(tr("Token budget", "令牌预算"), { exact: true }).fill("30");
@@ -550,7 +553,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
         else if (url.pathname.endsWith("/source-run")) body = { ...run, id: "source-run", experiment_of: undefined };
         return route.fulfill({ status: code, contentType: "application/json", body: JSON.stringify(code === 200 ? body : { error: "unavailable" }) });
       });
-      await page.goto(`/evolution-space/groups/${beta.id}/runs/sensitive-run`);
+      await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/runs/sensitive-run`);
       await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
       const download = page.getByRole("link", { name: tr("Open bounded content", "打开有界内容"), exact: true });
       const refresh = page.getByRole("button", { name: tr("Refresh", "刷新"), exact: true });
@@ -619,7 +622,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
   const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   try {
-   await login(page, user); await page.goto(`/evolution-space/groups/${beta.id}/`);
+   await login(page, user); await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
    await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
    await expect(page.getByRole("region", { name: tr("Group overview", "团队概览"), exact: true })).toBeVisible();
    const workflow = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8")); workflow.id = `draft-test-${crypto.randomUUID().slice(0, 8)}`;
@@ -629,14 +632,14 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    expect((await page.request.put(draftPath, { headers, data: { id: workflow.id, expected_revision: 0, expected_layout_revision: 0, workflow, layout: {} } })).status()).toBe(200);
    const budget = { max_tokens: 100, max_cost_micros: 100, max_attempts: 20, timeout_seconds: 60, max_artifact_bytes: 1048576 };
    const root = `/evolution-space/api/v1/groups/${beta.id}/runs`; let created = ""; const requests: Record<string, unknown>[] = [];
-   await page.route(`${origin}${root}*`, route => route.fulfill({ json: { items: [{ id: "source", budget }], next_after: "source", has_more: false } }));
+   await page.route(`${origin}${root}*`, route => route.fulfill({ json: { items: [{ id: "source", budget, state: "completed", handoff: "submitted", evaluation_state: "not_requested", created_at: "2026-10-17T00:00:00Z", pins: { template: { id: "skills", revision: 1 }, workflow: { id: workflow.id, revision: 1 }, base: { commit_id: "a".repeat(64) } } }], next_after: "source", has_more: false } }));
    await page.route(`${origin}${root}/**`, route => {
     const path = new URL(route.request().url()).pathname;
     const body = path.endsWith("/events") ? { events: [], next_after: 0 } : path.endsWith("/debugger") ? { budget: { spent: { tokens: 0, cost_micros: 0 }, held: { tokens: 0, cost_micros: 0 } }, counts: { attempts: 0, events: 0, provider_observations: 0 }, provider_observations: [], opaque: [] } : path.endsWith(`/${created}`) ? { id: created, state: "queued", fence: 0, handoff: "not_applicable", evaluation_state: "not_applicable", pins: {}, budget, created_at: new Date().toISOString(), draft_test: { kind: "node", node_id: "extract", source: { run_id: "source" }, draft: { id: workflow.id, revision: 1 } } } : { items: [], has_more: false };
     return route.fulfill({ json: body });
    });
    await page.route(`${origin}${draftPath}/tests`, route => { const input = route.request().postDataJSON(); requests.push(input); created = input.id; return requests.length === 1 ? route.fulfill({ status: 503, body: "lost response" }) : route.fulfill({ status: 201, json: { id: created } }); });
-   await page.goto(`/evolution-space/groups/${beta.id}/workflows/${workflow.id}/`);
+   await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/workflows/${workflow.id}/`);
    await page.getByRole("button", { name: tr("Test saved draft", "测试已保存草稿"), exact: true }).click();
    const form = page.getByRole("region", { name: tr("Draft test", "草稿测试"), exact: true });
    await form.getByLabel(tr("Source run", "源运行"), { exact: true }).selectOption("source");
@@ -670,7 +673,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
   const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   try {
-   await login(page, user); await page.goto(`/evolution-space/groups/${beta.id}/`);
+   await login(page, user); await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
    await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
    const form = page.getByRole("region", { name: tr("Workflow drafts", "工作流草稿"), exact: true });
    await form.getByRole("button", { name: tr("New or fork draft", "新建或派生草稿"), exact: true }).click();
@@ -686,7 +689,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    const headers = { Origin: origin, "X-CSRF-Token": session.csrf };
    const saved = await (await page.request.get(`${root}/${id}/draft`)).json();
    expect(saved.revision).toBe(2); expect(saved.workflow.nodes).toHaveLength(1);
-   await page.goto(`/evolution-space/groups/${beta.id}/`);
+   await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
    await expect(form.getByRole("link", { name: id, exact: true })).toBeVisible();
    // Commit an exact historical fork, then simulate a lost response.
    const forkID = `fork-${crypto.randomUUID().slice(0, 8)}`;
@@ -735,7 +738,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    expect((await page.request.post(root, { headers, data: { id: `run-${crypto.randomUUID()}`, source_run_id: "missing" } })).status()).toBe(403);
    await grant(beta.id, "source.read");
    expect((await page.request.post(root, { headers, data: { id: `run-${crypto.randomUUID()}`, source_run_id: "missing" } })).status()).toBe(404);
-   await page.goto(`/evolution-space/groups/${beta.id}/`);
+   await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
    await expect(form.getByRole("link", { name: forkID, exact: true })).toBeVisible();
    await page.screenshot({ path: info.outputPath("draft-list.png"), fullPage: true });
    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -770,7 +773,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
    });
    const url = `/evolution-space/groups/${beta.id}/runs/nested/?attempt=z-child`;
-   await page.goto(`/evolution-space/auth/login?return=${encodeURIComponent(url)}`);
+   await settleOverview(page); await page.goto(`/evolution-space/auth/login?return=${encodeURIComponent(url)}`);
    const detail = page.locator("#attempt-z-child"); const summary = detail.locator("summary");
    await expect(summary).toBeFocused(); await expect(detail).toHaveAttribute("open", "");
    await expect(detail.getByText("exact nested prompt", { exact: true })).toBeVisible();
@@ -808,7 +811,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
   const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message)); page.on("dialog", dialog => dialog.accept());
   try {
-   await login(page, user); await page.goto(`/evolution-space/groups/${beta.id}/`);
+   await login(page, user); await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
    await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
    await expect(page.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
    const graph = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8")); graph.id = `settings-${crypto.randomUUID().slice(0, 8)}`;
@@ -820,7 +823,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    const held = new Promise<void>(resolve => { releaseDraft = resolve; });
    const requested = new Promise<void>(resolve => { draftRequested = resolve; });
    await page.route(`${origin}${root}`, async route => { draftRequested(); await held; await route.continue(); });
-   await page.goto(`/evolution-space/groups/${beta.id}/workflows/${graph.id}/`);
+   await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/workflows/${graph.id}/`);
    try {
     await requested;
     await expect(page.getByText(tr("Loading workflow…", "正在加载工作流…"), { exact: true })).toBeVisible();
@@ -889,7 +892,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
     const root = `/evolution-space/api/v1/groups/${beta.id}/profiles`;
     try {
       await login(page, user);
-      await page.goto(`/evolution-space/groups/${beta.id}/`);
+      await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
       await page.getByRole("link", { name: text("Sign in", "登录"), exact: true }).click();
       const editor = page.locator("section.card").filter({ has: page.getByRole("heading", { name: text("Evaluator profile editor", "评估器配置编辑器"), exact: true }) });
       const input = editor.getByRole("textbox", { name: text("Profile JSON", "配置 JSON"), exact: true });
@@ -991,7 +994,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
   const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   try {
-   await login(page, user); await page.goto(`/evolution-space/groups/${beta.id}/`);
+   await login(page, user); await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
    await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
    const graph = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8")); graph.id = `template-graph-${crypto.randomUUID().slice(0, 8)}`;
    const session = await (await page.request.get("/evolution-space/api/v1/session")).json();
@@ -1077,7 +1080,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    return route.fulfill({json:{items:[{id:second?"check-26":"check-01",state:"completed",profile:{ref:{id:"profile",revision:1}}}],next_after:second?"check-26":"check-25",has_more:!second}});
   });
   try {
-   await login(page,user);await page.goto(`/evolution-space/groups/${beta.id}/`);
+   await login(page,user);await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
    await page.getByRole("link",{name:tr("Sign in","登录"),exact:true}).click();
    const runs=page.getByRole("region",{name:tr("Run history","运行历史"),exact:true});
    const evaluations=page.getByRole("region",{name:tr("Evaluation history","评估历史"),exact:true});
