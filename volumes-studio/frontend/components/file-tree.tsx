@@ -262,9 +262,10 @@ export function FileTree({
         className="tree-scroll"
         role="tree"
         aria-label={tr("Files")}
-        onScroll={(e) =>
-          setViewport((v) => ({ ...v, top: e.currentTarget.scrollTop }))
-        }
+        onScroll={(e) => {
+          const top = e.currentTarget.scrollTop;
+          setViewport((v) => ({ ...v, top }));
+        }}
       >
         <div style={{ height: rows.length * rowHeight, position: "relative" }}>
           {rows.slice(first, end).map((row, i) => {

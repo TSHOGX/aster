@@ -642,6 +642,8 @@ test("image zoom uses native pixels and Markdown rejects remote images", async (
 test("expanding an unrelated folder preserves the tree scroll and editor", async ({
   page,
 }) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
   await signIn(page);
   await createLibrary(page, "Stable folders " + Date.now());
   await createFile(page, "selected.md");
@@ -688,23 +690,26 @@ test("expanding an unrelated folder preserves the tree scroll and editor", async
   await tree.evaluate((node) => {
     node.scrollTop = 0;
   });
+  // The first row fits even when review controls leave a short tree viewport.
+  // Clicking a lower offscreen row would itself scroll before expansion.
   const folder = page.getByRole("button", {
-    name: "Open folder05",
+    name: "Open folder00",
     exact: true,
   });
   await folder.click();
   await expect(
-    page.getByRole("button", { name: "Open folder05/child.md", exact: true }),
+    page.getByRole("button", { name: "Open folder00/child.md", exact: true }),
   ).toBeVisible();
   expect(await tree.evaluate((node) => node.scrollTop)).toBe(0);
-  await folder.click();
+  await folder.press("ArrowLeft");
   await expect(
-    page.getByRole("button", { name: "Open folder05/child.md", exact: true }),
+    page.getByRole("button", { name: "Open folder00/child.md", exact: true }),
   ).toHaveCount(0);
   expect(await tree.evaluate((node) => node.scrollTop)).toBe(0);
   await expect(
     page.getByRole("textbox", { name: "Contents of selected.md" }),
   ).toBeVisible();
+  expect(errors).toEqual([]);
 });
 
 test("filled actions retain contrast in toolbars and dialogs across appearances", async ({
