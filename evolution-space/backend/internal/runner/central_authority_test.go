@@ -94,6 +94,20 @@ func TestCentralNativeAuthorityBindsClaimAndTerminalSettlement(t *testing.T) {
 	if err = store.RetainGenerationGrant(ctx, changedAssignment, changedGrant); !errors.Is(err, projections.ErrConflict) {
 		t.Fatal("test grant attached to production run", err)
 	}
+	// Disabling a provider fences retained work and input reads immediately, but
+	// must preserve cleanup/settlement authority for uncertain external effects.
+	if _, err = store.SetServiceState(ctx, projections.ServiceStateInput{RequestID: "revoke-service", ServiceID: run.Pins.Service.ID, ExpectedRevision: 1, Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	if err = authority.AuthorizeRun(ctx, run, false); err == nil {
+		t.Fatal("disabled service retained execution")
+	}
+	if err = authority.AuthorizeArtifact(ctx, run, run.Pins.Inputs[0]); err == nil {
+		t.Fatal("disabled service retained input reads")
+	}
+	if err = authority.AuthorizeRun(ctx, run, true); err != nil {
+		t.Fatal("disabled service prevented cleanup", err)
+	}
 	// Exercise the claim/cleanup/settlement boundary with retained exact grant.
 	lease, err := store.ClaimRun(ctx, run.ID, "worker", time.Minute)
 	if err != nil {

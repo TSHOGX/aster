@@ -80,6 +80,27 @@ func TestReleaseWorkerRechecksScopedPublishGrant(t *testing.T) {
 	if err != nil || current.State == "published" || current.Error != "principal_authority_required" {
 		t.Fatal(current, err)
 	}
+	main, err := s.MainCommit(ctx, testActor, l.ID)
+	if err != nil || main.CommitID != accepted.AcceptedCommit {
+		t.Fatal("publication failure changed accepted main", main, err)
+	}
+	s.config.Authority = authorityFunc(func(context.Context, evolution.AccessRequest) (evolution.AccessDecision, error) {
+		return evolution.AccessDecision{Allowed: true, PolicyRevision: 3}, nil
+	})
+	if _, err = s.Operation(ctx, testActor, version.ID, OperationInput{RequestID: "retry-release", Action: "retry"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ValidateNext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := s.Version(ctx, version.ID)
+	if err != nil || recovered.State != "published" {
+		t.Fatal("publication retry did not recover same version", recovered, err)
+	}
+	replay, err := s.Merge(ctx, testActor, l.ID, input)
+	if err != nil || replay.AcceptedCommit != accepted.AcceptedCommit {
+		t.Fatal("publication recovery required another merge", replay, err)
+	}
 }
 
 func TestReleaseRetentionCountsBranchDrafts(t *testing.T) {

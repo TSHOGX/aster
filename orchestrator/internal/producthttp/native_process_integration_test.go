@@ -80,6 +80,8 @@ func TestNativeArtifactRetentionRealProcesses(t *testing.T) {
 	nativeGenerationProcesses(t, "retention")
 }
 
+func TestNativeMultiGroupRealProcesses(t *testing.T) { nativeGenerationProcesses(t, "multi-group") }
+
 func TestNativeManualRunRealProcesses(t *testing.T) { nativeGenerationProcesses(t, "manual") }
 
 func TestNativeGenerationRealProcesses(t *testing.T) {
@@ -98,6 +100,19 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	must(t, err)
 	build := func(module, command, name string) string {
 		t.Helper()
+		if release := os.Getenv("ASTER_TEST_RELEASE_ROOT"); release != "" {
+			family := "evolution-space"
+			if module == "volumes-studio/backend" {
+				family = "studio"
+			}
+			binary := filepath.Join(release, family, "bin", filepath.Base(command))
+			info, err := os.Stat(binary)
+			must(t, err)
+			if !info.Mode().IsRegular() || info.Mode()&0111 == 0 {
+				t.Fatal("packaged executable unavailable", binary)
+			}
+			return binary
+		}
 		binary := filepath.Join(t.TempDir(), name)
 		cmd := exec.CommandContext(ctx, "go", "build", "-o", binary, command)
 		cmd.Dir = filepath.Join(root, module)
@@ -607,6 +622,10 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	if output, err = provision.CombinedOutput(); err != nil {
 		t.Fatalf("corpus: %v %s", err, output)
 	}
+	var mixed *nativeMixedGroups
+	if mode == "multi-group" {
+		mixed = provisionNativeMixedGroups(t, ctx, store, token, catalog, spaceDirectory, artifact, corpusFile, secret)
+	}
 	registeredTools := []evolution.Revision{}
 	if mode == "tool-inspection" || mode == "tool-checkpoint" {
 		registeredTools = append(registeredTools, toolRef)
@@ -663,7 +682,8 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		return stop
 	}
 
-	start(studioBinary, studioAddress, "--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evolution-space-endpoint", spaceOrigin)
+	studioArgs := []string{"--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evolution-space-endpoint", spaceOrigin}
+	stopStudio := start(studioBinary, studioAddress, studioArgs...)
 	spaceArgs := []string{"--listen", spaceAddress, "--state-directory", spaceDirectory, "--identity-endpoint", central.URL, "--native-config", nativePath, "--studio-input-endpoint", "http://" + participantAddress}
 	if retryJourney || mode == "retention" || mode == "tool-inspection" || mode == "dynamic-inspection" || mode == "numbered-retry" {
 		frontendOrigin := central.URL
@@ -671,6 +691,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			frontendOrigin = evolutionSpaceFrontend
 		}
 		spaceArgs = append(spaceArgs, "--browser-listen", spaceBrowserAddress, "--public-origin", issuer, "--frontend", frontendOrigin)
+	}
+	if mixed != nil {
+		spaceArgs = append(spaceArgs, "--evaluation-connections", mixed.connections)
 	}
 	stopSpace := start(spaceBinary, spaceAddress, spaceArgs...)
 	for _, action := range []string{"volume.read", "volume.author", "volume.review", "volume.merge", "volume.configure"} {
@@ -1019,6 +1042,10 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 
 		}
 
+	}
+	var finishMixed func()
+	if mixed != nil {
+		finishMixed = mixed.start(t, ctx, store, token, admin.ID, issuer, configuration, spaceClient, studioClient, call, privateCall, spaceDirectory)
 	}
 	branches := map[string]string{}
 	failed := skipped
@@ -1675,6 +1702,20 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		post("/integrations/reviews", map[string]any{"request_id": "approve-" + binding.ID, "prepared_digest": prepared.Digest, "verdict": "approve", "rationale": "Verified generated files"}, nil)
 		post("/integrations/merge", map[string]any{"request_id": "merge-" + binding.ID, "prepared_digest": prepared.Digest, "expected_main": unchanged.CommitID}, nil)
 		get("/main", &unchanged)
+	}
+	if finishMixed != nil {
+		// Restart each independent service against its retained state before Beta
+		// review/evaluation. Alpha remains accepted and Beta retains its runs.
+		stopSpace()
+		stopSpace = start(spaceBinary, spaceAddress, spaceArgs...)
+		stopStudio()
+		start(studioBinary, studioAddress, studioArgs...)
+		var afterRestart evolution.ContentRef
+		get("/main", &afterRestart)
+		if afterRestart != unchanged {
+			t.Fatal("restart changed Alpha main")
+		}
+		finishMixed()
 	}
 	if workflowUpgrade != nil && mode != "tool-checkpoint" {
 		workflowUpgrade(unchanged)
