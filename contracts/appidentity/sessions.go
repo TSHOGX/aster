@@ -34,6 +34,20 @@ CREATE TABLE app_sessions (
 CREATE INDEX app_sessions_expiry ON app_sessions(expires_at);
 `
 
+// ClearSessions removes browser authority from an application-owned snapshot.
+// Callers must not pass the live application's database when preparing a backup.
+func ClearSessions(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, "DELETE FROM login_attempts; DELETE FROM app_sessions"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 type Sessions struct {
 	db     *sql.DB
 	client *Client

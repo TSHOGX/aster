@@ -491,7 +491,7 @@ The snapshot contains the projection database, including immutable catalog
 revisions, run and evaluator journals, artifact metadata, expiry receipts and
 unexpired sealed bytes. Keep
 `backup.json` with the database; its digest is checked during restore. An
-interrupted backup retains `backup.incomplete` and cannot be restored.
+interrupted backup retains `backup.incomplete` and cannot be restored or started.
 
 Restore into a new state directory and let the command validate the current schema
 before starting the service:
@@ -503,7 +503,15 @@ go build -o evolution-space-restore ./cmd/evolution-space-restore
   -output /absolute/evolution-space-state-restored
 ```
 
-Restore does not copy browser sessions or credentials. Start the restored service
+The command checks the copied bytes, database integrity and current schema before
+making the restored directory available. An interrupted restore retains
+`restore.incomplete`, which blocks service startup. Keep that directory for
+diagnosis and retry the original backup into another new directory; do not remove
+the marker to bypass validation.
+
+Backups and restores exclude browser sessions and pending logins without signing
+users out of the source installation. Operator credentials remain in your separate
+configuration. Start the restored service
 with reviewed identity and evaluator settings, then verify `/evolution-space/healthz`,
 `/evolution-space/readyz`, catalog identity, run ancestry and artifact digests
 before allowing new work. Never restore over a live state directory.

@@ -66,14 +66,20 @@ bin/evolution-space-backup \
 ```
 
 Restore only into a new state directory. The restore command verifies the
-manifest digest, rejects incomplete snapshots, and opens the database against the
-current schema before returning:
+manifest and copied database digests, rejects incomplete snapshots, and checks
+database integrity and the current schema before returning:
 
 ```sh
 bin/evolution-space-restore \
   -input /srv/backups/evolution-space-snapshot \
   -output /var/lib/evolution-space-restored
 ```
+
+An interrupted restore retains `restore.incomplete`; service startup refuses
+that directory. Keep it for diagnosis and retry the original backup into another
+new directory. Do not remove the marker to start a partial restore. Incomplete
+backups are also rejected at startup. Snapshots exclude browser sessions and
+pending logins without signing users out of the source installation.
 
 Start the restored service with reviewed identity/evaluator configuration, verify
 the probes, catalog identities, run ancestry and artifact digests, then switch the

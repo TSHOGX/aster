@@ -2,17 +2,20 @@ package projections
 
 // Evolution Space backups are deliberately offline snapshots of the single
 // projection database. Artifact bytes, run journals, evaluator submissions and
-// immutable catalog history all live in that database, so copying only selected
-// tables would create an authorization and ancestry hole.
+// immutable catalog history all live in that database. Copy it consistently,
+// then remove only browser sessions and pending logins from the private snapshot.
 
 import (
+	"aster/contracts/appidentity"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +60,9 @@ func (s *Store) Backup(ctx context.Context, target string) error {
 	if err := os.Chmod(dbPath, 0600); err != nil {
 		return err
 	}
+	if err := clearSnapshotSessions(ctx, dbPath); err != nil {
+		return err
+	}
 	if err := syncFile(dbPath); err != nil {
 		return err
 	}
@@ -78,17 +84,23 @@ func (s *Store) Backup(ctx context.Context, target string) error {
 	if err := os.Remove(marker); err != nil {
 		return err
 	}
+	if err := syncDir(target); err != nil {
+		return err
+	}
 	return syncDir(filepath.Dir(target))
 }
 
-// Restore validates every manifest entry and opens the restored database with
-// the current schema before returning. The destination must be independent of
+// Restore validates every manifest entry and checks the current schema without
+// initializing or modifying the snapshot. The destination must be independent of
 // both the source backup and any live state directory.
 func Restore(ctx context.Context, source, target string) error {
 	if !filepath.IsAbs(source) || !filepath.IsAbs(target) || source == "/" || target == "/" || source == target {
 		return fmt.Errorf("independent absolute restore paths required")
 	}
-	if _, err := os.Stat(filepath.Join(source, "backup.incomplete")); err == nil {
+	if rel, err := filepath.Rel(source, target); err != nil || rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))) {
+		return fmt.Errorf("restore destination must be outside backup directory")
+	}
+	if _, err := os.Lstat(filepath.Join(source, "backup.incomplete")); err == nil {
 		return fmt.Errorf("incomplete backup")
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -117,20 +129,84 @@ func Restore(ctx context.Context, source, target string) error {
 	if err = os.Mkdir(target, 0700); err != nil {
 		return err
 	}
-	defer func() {
-		if _, statErr := os.Stat(filepath.Join(target, "projections.db")); statErr != nil {
-			_ = os.RemoveAll(target)
-		}
-	}()
+	// Retain a durable startup barrier on every failure, including cancellation
+	// after an empty destination database was created. Such a file must never be
+	// initialized as a fresh installation by ordinary startup.
+	marker := filepath.Join(target, "restore.incomplete")
+	if err = writePrivate(marker, []byte("incomplete\n")); err != nil {
+		return err
+	}
+	if err = syncDir(target); err != nil {
+		return err
+	}
+	if err = syncDir(filepath.Dir(target)); err != nil {
+		return err
+	}
 	targetDB := filepath.Join(target, "projections.db")
 	if err = copyPrivate(sourceDB, targetDB, ctx); err != nil {
 		return err
 	}
-	check, err := Open(ctx, targetDB)
-	if err != nil {
+	// Verify the actual copied bytes too: verification of the source alone does
+	// not bind a later read if the backup changes during the copy.
+	size, digest, err := fileDigest(targetDB)
+	if err != nil || size != entry.Size || digest != entry.Digest {
+		return fmt.Errorf("restored database inventory mismatch")
+	}
+	if err = validateRestoredDatabase(ctx, targetDB); err != nil {
 		return fmt.Errorf("restored projection schema rejected: %w", err)
 	}
-	return check.Close()
+	if err = clearSnapshotSessions(ctx, targetDB); err != nil {
+		return err
+	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	if err = syncFile(targetDB); err != nil {
+		return err
+	}
+	if err = syncDir(target); err != nil {
+		return err
+	}
+	if err = os.Remove(marker); err != nil {
+		return err
+	}
+	return syncDir(target)
+}
+
+func validateRestoredDatabase(ctx context.Context, path string) error {
+	uri := url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}
+	db, err := sql.Open("sqlite", uri.String())
+	if err != nil {
+		return err
+	}
+	db.SetMaxOpenConns(1)
+	var integrity string
+	err = db.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity)
+	if err == nil && integrity != "ok" {
+		err = fmt.Errorf("restored database integrity check failed")
+	}
+	if err == nil {
+		// A valid snapshot already has the exact current schema. Read-only mode
+		// also prevents an empty SQLite database from becoming a fresh install.
+		err = initializeSchema(ctx, db)
+	}
+	return errors.Join(err, db.Close())
+}
+
+func clearSnapshotSessions(ctx context.Context, path string) error {
+	uri := url.URL{Scheme: "file", Path: path, RawQuery: "mode=rw&_pragma=secure_delete(ON)"}
+	db, err := sql.Open("sqlite", uri.String())
+	if err != nil {
+		return err
+	}
+	db.SetMaxOpenConns(1)
+	err = appidentity.ClearSessions(ctx, db)
+	if err == nil {
+		// Compact the private copy so removed login grants and PKCE verifiers
+		// are not retained in its free pages. The source database is untouched.
+		_, err = db.ExecContext(ctx, "VACUUM")
+	}
+	return errors.Join(err, db.Close())
 }
 
 func fileDigest(path string) (int64, string, error) {

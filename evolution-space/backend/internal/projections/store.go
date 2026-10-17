@@ -119,6 +119,13 @@ WHEN NEW.fence<OLD.fence
 BEGIN SELECT RAISE(ABORT,'run fence cannot decrease'); END;`
 
 func Open(ctx context.Context, path string) (*Store, error) {
+	for _, marker := range []string{"backup.incomplete", "restore.incomplete"} {
+		if _, err := os.Lstat(filepath.Join(filepath.Dir(path), marker)); err == nil {
+			return nil, fmt.Errorf("incomplete snapshot cannot be opened: %s", marker)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	}
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("absolute projection database path required")
 	}
