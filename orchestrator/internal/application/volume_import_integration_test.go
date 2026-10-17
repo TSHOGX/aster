@@ -223,9 +223,12 @@ func qualifyStudioImport(t *testing.T, profile string, adoption bool) {
 	if profile == content.SharedAssetsProfile {
 		fileBytes = 8 << 20
 	}
-	if os.Getenv("STUDIO_TEST_MAX_SIZE") == "1" {
-		fileBytes = 256 << 20
-		fileCount = 4
+	if os.Getenv("STUDIO_TEST_MAX_SIZE") == "1" && !adoption {
+		if profile == content.SharedAssetsProfile {
+			fileBytes, fileCount = 8<<20, 8
+		} else {
+			fileBytes, fileCount = 256<<20, 4
+		}
 	}
 	chunk := make([]byte, 8<<20)
 	var revision int64 = 1
@@ -233,6 +236,11 @@ func qualifyStudioImport(t *testing.T, profile string, adoption bool) {
 		guidance := "Shared import qualification"
 		if adoption {
 			guidance = "Shared adoption qualification"
+		}
+		if os.Getenv("STUDIO_TEST_MAX_SIZE") == "1" && !adoption {
+			// Eight maximum files exactly fill the profile; required AGENTS.md
+			// is empty UTF-8 so its bytes do not push the tree over 64 MiB.
+			guidance = ""
 		}
 		jsonCall("POST", draft+"/draft/text", map[string]any{"request_id": "agents", "expected_revision": revision, "expected_head": branch.Head, "path": "AGENTS.md", "text": guidance}, 200)
 		revision++
