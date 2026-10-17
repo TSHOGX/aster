@@ -14,10 +14,11 @@ Run `python3 scripts/rebuild.py --help` and `python3 scripts/deploy.py --help`
 for arguments. The complete builder requires a clean committed checkout by default;
 `--source-ref` explicitly selects a committed revision. Deployment requires a
 separately prepared host, private configuration and supervisor templates. Run it
-without `--fresh` to validate those inputs before activation. These tools have not
-yet been qualified together by a complete build and deployment on a prepared
-`/etc/aster` host. They do not automatically adapt an existing installation's
-service names or storage paths.
+without `--fresh` to validate those inputs before activation. Each host still needs
+reviewed supervisor templates, network configuration and storage preparation;
+build and package verification do not validate those installation-specific inputs.
+The tools do not automatically adapt an existing installation's service names or
+storage paths.
 
 The deployment plan is a private JSON file with these required keys:
 

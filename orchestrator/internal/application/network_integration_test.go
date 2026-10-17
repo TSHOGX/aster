@@ -161,7 +161,7 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 		handle := fmt.Sprintf("network-check-%d", sequence)
 		ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
 		defer cancel()
-		stream, err := backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/usr/bin/python3", Arguments: []string{"-c", strings.ReplaceAll(code, "/workspace", workspace)}, Directory: workspace})
+		stream, err := backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/usr/local/bin/node", Arguments: []string{"-e", "const fs=require('node:fs'),assert=require('node:assert/strict'),net=require('node:net'); const denied=(port)=>new Promise((resolve,reject)=>{const socket=net.connect({host:'192.0.2.1',port});socket.setTimeout(1000);socket.on('connect',()=>{socket.destroy();reject(new Error('undeclared upstream reachable'))});socket.on('error',()=>resolve());socket.on('timeout',()=>{socket.destroy();resolve()})}); (async()=>{" + strings.ReplaceAll(code, "/workspace", workspace) + "})().catch(error=>{console.error(error);process.exitCode=1})"}, Directory: workspace})
 		require(t, err)
 		defer stream.Close()
 		var output strings.Builder
@@ -179,7 +179,7 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 			}
 		}
 	}
-	shell("open('/workspace/retained','w').write('network-retained'); assert open('/etc/resolv.conf').read()==''")
+	shell("fs.writeFileSync('/workspace/retained','network-retained');assert.equal(fs.readFileSync('/etc/resolv.conf','utf8'),'')")
 	// Both active file helper modes must use the selected role mount.
 	a.writeFile(base+"/files/content?path=via-helper", "saved-path-file", "path-upload")
 	response, err := a.client.Get(a.origin + base + "/files/content?path=" + url.QueryEscape("via-helper"))
@@ -190,7 +190,7 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 	if response.StatusCode != 200 || string(data) != "saved-path-file" {
 		t.Fatal(response.StatusCode, string(data))
 	}
-	shell("assert open('/workspace/via-helper').read()=='saved-path-file'")
+	shell("assert.equal(fs.readFileSync('/workspace/via-helper','utf8'),'saved-path-file')")
 	if manifestPath := os.Getenv("PROJECT_TEST_SECONDARY_MANIFEST"); manifestPath != "" {
 		raw, err := os.ReadFile(manifestPath)
 		require(t, err)
@@ -214,7 +214,8 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 		originalRelease := original["resources"].(map[string]any)["profile"].(map[string]any)["sandbox_release"].(map[string]any)
 		originalRegistryArgs = []string{"--socket", socket, "--kind", "sandbox", "--id", originalRelease["id"].(string), "--version", originalRelease["version"].(string), "--digest", originalRelease["digest"].(string)}
 		state := a.cli(append([]string{"runtime", "inspect"}, originalRegistryArgs...)...)
-		if state["template_referenced"] != false || state["project_references"] != "1" {
+		// The saved Project configuration still pins its original environment.
+		if state["template_referenced"] != true || state["project_references"] != "1" {
 			t.Fatal(state)
 		}
 		disableArgs := append(append([]string{"runtime", "disable"}, originalRegistryArgs...), "--expected-revision", fmt.Sprint(state["revision"]), "--request-id", "disable-retained-runtime")
@@ -294,7 +295,7 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 	if same != ref || current["network_policy_pending"] != false {
 		t.Fatal("running placement changed", same, current)
 	}
-	shell("assert open('/etc/resolv.conf').read()==''")
+	shell("assert.equal(fs.readFileSync('/etc/resolv.conf','utf8'),'')")
 	pauseResume := func() {
 		t.Helper()
 		p := a.request("GET", base, nil, 200)
@@ -321,19 +322,19 @@ func TestReleasedDatabaseNetworkPolicy(t *testing.T) {
 		t.Fatal("saved volume slots changed")
 	}
 
-	code := fmt.Sprintf(`import socket,ssl,urllib.request,base64
-assert open('/workspace/retained').read()=='network-retained'
-assert socket.gethostbyname('example.com')=='192.0.2.1'
-context=ssl.create_default_context(cadata=base64.b64decode('%s').decode())
-opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),urllib.request.HTTPSHandler(context=context))
-data=opener.open('https://example.com:%d/package.whl',timeout=5).read()
-assert len(data)==%d
-assert open('/etc/hosts').read().find('model.internal')>=0
-try:
- socket.create_connection(('192.0.2.1',18890),timeout=1)
-except OSError: pass
-else: raise Exception('undeclared upstream was reachable')
-print('DNS TLS PACKAGE DENIAL OK')`, certificate, port, len(payload))
+	code := fmt.Sprintf(`
+assert.equal(fs.readFileSync('/workspace/retained','utf8'),'network-retained');
+const dns=require('node:dns').promises;
+assert.equal((await dns.lookup('example.com',{family:4})).address,'192.0.2.1');
+const data=await new Promise((resolve,reject)=>{
+ const request=require('node:https').get('https://example.com:%d/package.whl',{family:4,ca:Buffer.from('%s','base64')},response=>{
+  const chunks=[];response.on('data',chunk=>chunks.push(chunk));response.on('end',()=>resolve(Buffer.concat(chunks)));response.on('error',reject);
+ });request.setTimeout(5000,()=>request.destroy(new Error('TLS request timed out')));request.on('error',reject);
+});
+assert.equal(data.length,%d);
+assert.ok(fs.readFileSync('/etc/hosts','utf8').includes('model.internal'));
+await denied(18890);
+console.log('DNS TLS PACKAGE DENIAL OK');`, port, certificate, len(payload))
 	if !strings.Contains(shell(code), "DNS TLS PACKAGE DENIAL OK") {
 		t.Fatal("guest network check missing")
 	}
@@ -369,7 +370,7 @@ print('DNS TLS PACKAGE DENIAL OK')`, certificate, port, len(payload))
 	// The live placement still has the previously selected permission.
 	shell(code)
 	pauseResume()
-	shell(fmt.Sprintf("import socket\nassert open('/etc/resolv.conf').read()==''\ntry:\n socket.create_connection(('192.0.2.1',%d),timeout=1)\nexcept OSError: pass\nelse: raise Exception('removed access remains')", port))
+	shell(fmt.Sprintf("assert.equal(fs.readFileSync('/etc/resolv.conf','utf8'),'');await denied(%d)", port))
 
 	// The saved project policy survives owner replacement. An explicit selection
 	// applies the new template snapshot on the next verified resume.
@@ -382,7 +383,7 @@ print('DNS TLS PACKAGE DENIAL OK')`, certificate, port, len(payload))
 	reach["direct"] = []any{map[string]any{"cidr": "192.0.2.1/32", "port": port, "protocol": "tcp"}}
 	reach["resolvers"] = []string{"192.0.2.1"}
 	accepted = apply()
-	shell("assert open('/etc/resolv.conf').read()==''")
+	shell("assert.equal(fs.readFileSync('/etc/resolv.conf','utf8'),'')")
 	pauseResume()
 	shell(code)
 	if current["desired_network_policy_revision"] != accepted || current["network_policy_pending"] != false || !reflect.DeepEqual(current["resources"].(map[string]any)["volumes"], original["resources"].(map[string]any)["volumes"]) {
