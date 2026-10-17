@@ -58,3 +58,37 @@ func (s *Store) EvolutionSourceResources(ctx context.Context, token, group, kind
 	})
 	return result, err
 }
+
+// EvolutionAudienceGroups discovers only groups already visible through current
+// membership (or platform administration). It never grants reuse or membership.
+func (s *Store) EvolutionAudienceGroups(ctx context.Context, token, group, after string, limit int) (EvolutionResourcePage, error) {
+	result := EvolutionResourcePage{Items: []EvolutionResource{}, NextAfter: after}
+	if !validID(group) || after != "" && !validID(after) || limit < 1 || limit > 50 {
+		return result, ErrInvalid
+	}
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		actor, err := s.evolutionGroupSession(ctx, tx, token, group, "config.read")
+		if err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT g.id,g.name FROM account_groups g WHERE g.id>? AND (?='admin' OR EXISTS(SELECT 1 FROM account_memberships m WHERE m.group_id=g.id AND m.account_id=?)) ORDER BY g.id LIMIT ?`, after, actor.Role, actor.ID, limit+1)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var item EvolutionResource
+			if err = rows.Scan(&item.ID, &item.Name); err != nil {
+				return err
+			}
+			if len(result.Items) == limit {
+				result.HasMore = true
+				break
+			}
+			result.Items = append(result.Items, item)
+			result.NextAfter = item.ID
+		}
+		return rows.Err()
+	})
+	return result, err
+}

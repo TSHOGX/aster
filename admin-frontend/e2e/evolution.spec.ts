@@ -6,7 +6,7 @@ const ref = { id: "example", revision: 1, digest: `sha256:${"a".repeat(64)}` };
 const config: Configuration = { group_id: "standard-users", revision: 1, auto_enabled: false, budget, sources: [{ id: "team-source", kind: "project", resource_id: "project", policy_revision: 1, audience_groups: ["standard-users"], derivative_publication: true, exclusions: ["turns/private"] }], bindings: [{ id: "skills", enabled: true, template: ref, workflow: ref, service: ref, budget, output: { library_id: "library", prefix: "skills", profile: "authored-v1" }, source_ids: ["team-source"], trigger: "manual", depends_on: [], inputs: { corpus: { sources: ["team-source"] } } }] };
 async function fixture(page: import("@playwright/test").Page) {
   await adminFixture(page);
-  const permissions: Permissions = { sources: [{ source_id: "team-source", valid: true }], account_id: "admin-id", can_manage: true, can_run: true, can_read_evidence: false, can_backfill: false, can_manage_grants: true, evidence_grant_revision: 0 };
+  const permissions: Permissions = { group_name: "Standard users", sources: [{ source_id: "team-source", valid: true }], account_id: "admin-id", can_manage: true, can_run: true, can_read_evidence: false, can_backfill: false, can_manage_grants: true, evidence_grant_revision: 0 };
   const control = { loseReply: true, changed: false, statusDenied: false, revoked: false };
   const requests: Record<string, unknown>[] = [], receipts = new Map<string, Backfill>();
   let preview: Backfill | null = null;
@@ -84,4 +84,37 @@ test("revoked evidence stays hidden after reload while owner cleanup remains ava
   await expect(page.getByText("execution", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Cancel backfill", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("Backfill cancelled.");
+});
+
+for (const width of [390,1440]) test(`scoped group configuration stays separate from administration at ${width}px`,async({page})=>{
+ await adminFixture(page,"user");await page.setViewportSize({width,height:1000});
+ let denied=false,revision=0;
+ const configuration={group_id:"standard-users",revision:0,auto_enabled:false,budget,sources:[],bindings:[]};
+ await page.route("**/api/admin/groups/standard-users/optimization**",route=>{
+  const path=new URL(route.request().url()).pathname;
+  if(denied)return route.fulfill({status:403,json:{error:"Group configuration access denied"}});
+  if(path.endsWith("/permissions"))return route.fulfill({json:{group_name:"Delegated team",account_id:"admin-id",can_manage:true,can_run:false,can_read_evidence:false,can_backfill:false,can_manage_grants:false,sources:[]}});
+  if(path.endsWith("/sources"))return route.fulfill({json:{sources:[],has_more:false}});
+  if(path.endsWith("/draft")){
+   if(route.request().method()==="PUT"){revision++;return route.fulfill({json:{revision,configuration:route.request().postDataJSON().configuration}})}
+   return revision?route.fulfill({json:{revision,configuration}}):route.fulfill({status:404,json:{error:"not configured"}});
+  }
+  if(path.includes("/catalog/"))return route.fulfill({json:{revisions:[],has_more:false}});
+  return route.fulfill({status:404,json:{error:"not configured"}});
+ });
+ await page.goto("/admin/groups/standard-users/optimization");
+ await expect(page.getByRole("heading",{name:"Automatic optimization",exact:true})).toBeVisible();
+ await expect(page.getByText("Delegated team",{exact:true})).toBeVisible();
+ await expect(page.getByRole("link",{name:"Users",exact:true})).toHaveCount(0);
+ await expect(page.getByRole("link",{name:"Policies",exact:true})).toHaveCount(0);
+ await expect(page.getByRole("link",{name:"Open Evolution Space",exact:true})).toHaveAttribute("href","/evolution-space/groups/standard-users/");
+ await page.getByRole("button",{name:"Save configuration draft",exact:true}).click();
+ await expect(page.getByText("Request confirmed.",{exact:true})).toBeVisible();
+ await page.reload();await expect(page.getByText("Delegated team",{exact:true})).toBeVisible();
+ denied=true;await page.getByRole("button",{name:"Reload server status",exact:true}).click();
+ await expect(page.getByRole("alert").filter({hasText:"Group configuration access denied"})).toBeVisible();
+ await expect(page.getByRole("button",{name:"Save configuration draft",exact:true})).toHaveCount(0);
+ await expect(page.getByText("Delegated team",{exact:true})).toHaveCount(0);
+ await page.goto("/admin/users");await expect(page.getByRole("heading",{name:"Access denied",exact:true})).toBeVisible();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
 });

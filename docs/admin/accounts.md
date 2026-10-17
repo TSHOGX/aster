@@ -264,7 +264,9 @@ metadata. Language preferences are shared with the central application.
 
 **Sign out of this central session** also ends the originating central login and
 its derived application sessions. Configuration editing and activation are available
-through the group administration page described below.
+through **Open configuration** for a delegated group manager, using the same
+central editor described below. This does not grant access to user, policy or
+resource administration.
 
 Open **Workflow drafts** on the Evolution Space group page to find saved drafts.
 With `workflow.edit`, choose **New or fork draft** and a fresh draft ID. Start empty,
@@ -398,7 +400,14 @@ policy: select the revision in the group's configuration when ready to adopt it.
 
 ### Edit and activate group optimization
 
-Open **Groups → select a group → Automatic optimization**. A configuration draft
+Platform administrators open **Groups → select a group → Automatic optimization**.
+Delegated managers open their group in Evolution Space and choose **Open
+configuration**. They need current membership plus `config.read` and
+`config.manage`; unrelated administration remains unavailable. **Open Evolution
+Space** returns to that group. Configuration access does not grant source evidence,
+source ownership, permission management or historical-backfill authority.
+
+A configuration draft
 is editable and does not enable execution. Select approved source policies, choose
 published templates and services, and add goal bindings. The catalog distinguishes
 an empty catalog from an unavailable connection or denied access. Service selectors
@@ -410,13 +419,16 @@ library with read and configuration permission. Project/session searches include
 only the current account's resources, even for administrators; deleting resources
 are excluded. Change the source kind to clear the old resource selection. Select
 the owning group and any other authorized audience groups with the group checkboxes,
-then choose permitted derivative publication and exact exclusions. Configuration-manager or administrator status alone
+then choose permitted derivative publication and exact exclusions. The audience
+picker shows current memberships for ordinary accounts and the group catalog for
+platform administrators; it never chooses or grants an audience automatically.
+Configuration-manager or administrator status alone
 does not authorize someone else's source. Selecting a newer policy revision is explicit;
 existing draft references are not silently upgraded.
 
 Choose a default evolution service and evaluation policy. Defaults and per-binding
 inheritance choices are saved centrally with the draft and are available in a new tab
-or another authorized administrator's session. New bindings inherit both group defaults.
+or another authorized configuration manager's session. New bindings inherit both group defaults.
 Each binding labels an inherited value or an explicit override. Choosing a service or
 editing a binding's evaluation policy creates an override; **Use group service default**
 and **Reset evaluation to group default** restore inheritance. **Use template evaluation

@@ -139,3 +139,39 @@ test("published catalog drives recoverable draft and two-participant activation"
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   await writeFile(process.env.ADMIN_EVOLUTION_RESULT!, JSON.stringify(state));
 });
+
+test("delegated group manager configures without global administrator access",async({page:admin,browser,baseURL},info)=>{
+ const tr=(text:string)=>process.env.ADMIN_EVOLUTION_LOCALE?.startsWith("zh")?ZH[text]||text:text;
+ await admin.context().addCookies([{name:"project_login",value:process.env.ADMIN_EVOLUTION_TOKEN!,url:baseURL!,secure:true,httpOnly:true,sameSite:"Lax"}]);
+ const created=await admin.request.post("/api/admin/users",{headers:{Origin:baseURL!},data:{request_id:crypto.randomUUID(),username:`manager-${crypto.randomUUID()}`,display_name:"Delegated manager",role:"user",group_ids:["standard-users"]}});
+ expect(created.status(),await created.text()).toBe(201);const user=await created.json();
+ for(const action of ["config.read","config.manage"]){const response=await admin.request.put("/api/admin/groups/standard-users/optimization/grants",{headers:{Origin:baseURL!},data:{request_id:crypto.randomUUID(),account_id:user.user.id,action,effect:"allow",expected_revision:0}});expect(response.ok(),await response.text()).toBe(true)}
+ const context=await browser.newContext({baseURL,ignoreHTTPSErrors:true,viewport:{width:info.project.use.viewport?.width??1440,height:1000},locale:process.env.ADMIN_EVOLUTION_LOCALE||"en-US"});
+ try{
+  const page=await context.newPage();
+  expect((await page.request.post("/api/auth/login",{headers:{Origin:baseURL!},data:{username:user.user.username,password:user.temporary_password}})).ok()).toBe(true);
+  expect((await page.request.post("/api/auth/password/setup",{headers:{Origin:baseURL!},data:{new_password:"permanent-manager-password"}})).ok()).toBe(true);
+  expect((await page.request.get("/api/admin/groups/standard-users")).status()).toBe(403);
+  expect((await page.request.get("/api/admin/users")).status()).toBe(403);
+  await page.goto("/admin/groups/standard-users/optimization");
+  const attempts=page.getByLabel(`${tr("Group budget ceiling")}: ${tr("Maximum attempts")}`,{exact:true});
+  await expect(attempts).toBeEnabled();await attempts.fill("21");
+  await expect(page.getByRole("button",{name:tr("Save configuration draft"),exact:true})).toBeEnabled();
+  await expect(page.getByRole("link",{name:tr("Users"),exact:true})).toHaveCount(0);
+  await page.getByRole("button",{name:tr("Save configuration draft"),exact:true}).click();
+  await expect(page.getByText(tr("Request confirmed."),{exact:true})).toBeVisible();
+  const audiences=await(await page.request.get("/api/admin/groups/standard-users/optimization/audiences?limit=1")).json();
+  expect(audiences.items.map((item:{id:string})=>item.id)).toEqual(["standard-users"]);expect(audiences.has_more).toBe(false);
+  await page.getByRole("link",{name:tr("Corpus and historical backfill"),exact:true}).click();
+  await expect(page.getByRole("heading",{name:tr("Corpus and historical backfill"),exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:tr("Grant myself evidence access"),exact:true})).toHaveCount(0);
+  await page.getByRole("link",{name:tr("Automatic optimization"),exact:true}).click();
+  await expect(attempts).toBeEnabled();
+  await page.screenshot({path:info.outputPath("delegated-manager.png"),fullPage:true});
+  expect((await admin.request.put("/api/admin/groups/standard-users/optimization/grants",{headers:{Origin:baseURL!},data:{request_id:crypto.randomUUID(),account_id:user.user.id,action:"config.read",effect:"deny",expected_revision:1}})).ok()).toBe(true);
+  await page.getByRole("button",{name:tr("Reload server status"),exact:true}).click();
+  await expect(page.getByRole("button",{name:tr("Save configuration draft"),exact:true})).toHaveCount(0);
+  expect((await page.request.get("/api/admin/groups/standard-users/optimization/audiences")).status()).toBe(403);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+ }finally{await context.close()}
+});

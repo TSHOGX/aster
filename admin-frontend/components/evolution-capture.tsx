@@ -18,12 +18,12 @@ export function EvolutionCapture({ group, onDirty }: { group: string; onDirty: (
   const [error, setError] = useState("");
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const [metadata, permissions] = await Promise.all([api<{name: string}>(`/api/admin/groups/${enc(group)}`, { signal }), api<Permissions>(`/api/admin/groups/${enc(group)}/optimization/permissions`, { signal })]);
+      const permissions = await api<Permissions>(`/api/admin/groups/${enc(group)}/optimization/permissions`, { signal });
       let state: ConfigurationState | null = null, configuration: Configuration | null = null;
       try { state = await api<ConfigurationState>(`/api/admin/groups/${enc(group)}/optimization`, { signal }); }
       catch (error) { if (!(error instanceof APIError && error.status === 404)) throw error; }
       if (state?.active_revision) configuration = (await api<{ configuration: Configuration }>(`/api/admin/groups/${enc(group)}/optimization/revisions/${state.active_revision}`, { signal })).configuration;
-      if (!signal?.aborted) { setData({ name: metadata.name, permissions, state, configuration }); setError(""); }
+      if (!signal?.aborted) { setData({ name: permissions.group_name, permissions, state, configuration }); setError(""); }
     } catch (error) { if (!signal?.aborted) { setData(null); setError(message(error)); } }
   }, [group]);
   useEffect(() => { const abort = new AbortController(); const initial = setTimeout(() => void load(abort.signal), 0);
@@ -31,7 +31,7 @@ export function EvolutionCapture({ group, onDirty }: { group: string; onDirty: (
     const timer = setInterval(refresh, 15000); document.addEventListener("visibilitychange", refresh);
     return () => { abort.abort(); clearTimeout(initial); clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, [load]);
-  return <section className="evolution-capture"><header className="page-heading"><div><p>{data?.name || group}</p><h1>{tr("Corpus and historical backfill")}</h1><p>{tr("Inspect approved sources and review exact historical evidence before running a batch.")}</p></div><Link href={`/groups/${enc(group)}`}>{tr("Back to group")}</Link></header>
+  return <section className="evolution-capture"><header className="page-heading"><div><p>{data?.name || group}</p><h1>{tr("Corpus and historical backfill")}</h1><p>{tr("Inspect approved sources and review exact historical evidence before running a batch.")}</p></div><a href={`/evolution-space/groups/${enc(group)}/`}>{tr("Open Evolution Space")}</a></header>
     {error && <div role="alert" className="error">{tr(error)} <button onClick={() => void load()}>{tr("Retry loading")}</button></div>}
     {!data && !error && <p role="status">{tr("Loading group evidence settings…")}</p>}
     {data && <CaptureWorkbench key={`${group}:${data.permissions.account_id}`} group={group} {...data} onDirty={onDirty} reload={load} />}

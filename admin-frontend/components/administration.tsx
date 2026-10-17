@@ -27,6 +27,7 @@ export function Administration() {
   const tr = useT();
   const pathname = usePathname();
   const route = pathname.replace(/^\/admin(?=\/|$)/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  const scopedEvolution = route[0] === "groups" && route.length === 3 && ["optimization", "corpus"].includes(route[2]);
   const [identity, setIdentity] = useState<Identity | null>(null), [status, setStatus] = useState("loading"), [dirty, setDirty] = useState(false), [error, setError] = useState("");
   const generation = useRef(0);
   const dirtyRef = useRef(false);
@@ -83,9 +84,9 @@ export function Administration() {
     <main>
       {error && <p role="alert" className="error">{tr(error)}</p>}
       {status === "loading" && <p role="status">{tr("Opening administration…")}</p>}
-      {status === "denied" && <><h1>{tr("Access denied")}</h1><p>{tr("A platform administrator role is required.")}</p></>}
+      {status === "denied" && !scopedEvolution && <><h1>{tr("Access denied")}</h1><p>{tr("A platform administrator role is required.")}</p></>}
       {status === "unavailable" && <><p role="alert">{tr("Account access is unavailable.")}</p><button onClick={() => void reloadIdentity()}>{tr("Retry access check")}</button></>}
-      {status === "ready" && identity && <div key={identity.id} onClickCapture={guardNavigation}>
+      {(status === "ready" || status === "denied" && scopedEvolution) && identity && <div key={identity.id} onClickCapture={guardNavigation}>
         {(!route.length || route[0] === "users" && route.length === 1) ? <UserList />
           : route[0] === "users" && route.length === 2 ? <UserEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : (route[0] === "groups" || route[0] === "policies") && route.length === 1 ? <PolicyList key={route[0]} kind={route[0]} />

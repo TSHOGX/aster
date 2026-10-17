@@ -12,6 +12,7 @@ type EvolutionSourceStatus struct {
 	Valid    bool   `json:"valid"`
 }
 type EvolutionPermissions struct {
+	GroupName             string                  `json:"group_name"`
 	Sources               []EvolutionSourceStatus `json:"sources"`
 	AccountID             string                  `json:"account_id"`
 	CanEditWorkflows      bool                    `json:"can_edit_workflows"`
@@ -31,8 +32,7 @@ func (s *Store) EvolutionPermissions(ctx context.Context, token, group string) (
 		if err != nil {
 			return err
 		}
-		var found string
-		if err = tx.QueryRowContext(ctx, "SELECT id FROM account_groups WHERE id=?", group).Scan(&found); err != nil {
+		if err = tx.QueryRowContext(ctx, "SELECT name FROM account_groups WHERE id=?", group).Scan(&result.GroupName); err != nil {
 			return missing(err)
 		}
 		result.AccountID = actor.ID

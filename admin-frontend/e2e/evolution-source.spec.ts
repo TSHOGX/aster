@@ -7,6 +7,7 @@ for (const width of [390, 1440]) test(`source selectors preserve explicit audien
  let unavailable = false;
  await page.route("**/api/admin/groups/standard-users/optimization**", async route => {
   const url = new URL(route.request().url()), path = url.pathname;
+  if (path.endsWith("/audiences")) return route.fulfill({ json: { items: [{ id: "standard-users", name: "Standard users" }], has_more: false } });
   if (path.endsWith("/permissions")) return route.fulfill({ json: { account_id: "admin-id", can_manage: true, can_run: true, sources: [] } });
   if (path.endsWith("/draft") || path.endsWith("/optimization")) return route.fulfill({ status: 404, json: { error: "not configured" } });
   if (path.endsWith("/sources")) return route.fulfill({ json: { sources: [], has_more: false } });
