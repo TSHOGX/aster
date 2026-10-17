@@ -263,7 +263,7 @@ func (s *Store) ResolveEvaluationGrant(ctx context.Context, scope evolution.Eval
 			return err
 		}
 		if scope.Action == "input" {
-			return s.auditEvent(ctx, tx, "evaluation-space", "evaluation.input.read", "evaluation", assignment.JobID, scope.Grant.ID, 0, map[string]string{"subject_digest": scope.Grant.SubjectDigest})
+			return s.auditEvent(ctx, tx, "evolution-space", "evaluation.input.read", "evaluation", assignment.JobID, scope.Grant.ID, 0, map[string]string{"subject_digest": scope.Grant.SubjectDigest})
 		}
 		return nil
 	})
@@ -277,7 +277,7 @@ type EvaluationSettlement struct {
 	ResultDigest string                    `json:"result_digest"`
 }
 
-// SettleEvaluationGrant accepts only the authenticated Evaluation Space ledger.
+// SettleEvaluationGrant accepts only the authenticated Evolution Space ledger.
 // Revocation cannot prevent reconciliation of already reserved spending.
 func (s *Store) SettleEvaluationGrant(ctx context.Context, input EvaluationSettlement) error {
 	if input.Tokens < 0 || input.CostMicros < 0 || !manifest.ValidDigest(input.ResultDigest) {
@@ -311,7 +311,7 @@ func (s *Store) SettleEvaluationGrant(ctx context.Context, input EvaluationSettl
 		if _, err = tx.ExecContext(ctx, "UPDATE evaluation_authorizations SET state='settled',used_tokens=?,used_cost=?,settlement=? WHERE id=?", input.Tokens, input.CostMicros, raw, input.Grant.ID); err != nil {
 			return err
 		}
-		return s.auditEvent(ctx, tx, "evaluation-space", "evaluation.settle", "evaluation", input.Grant.JobID, input.Grant.ID, 0, input)
+		return s.auditEvent(ctx, tx, "evolution-space", "evaluation.settle", "evaluation", input.Grant.JobID, input.Grant.ID, 0, input)
 	})
 }
 

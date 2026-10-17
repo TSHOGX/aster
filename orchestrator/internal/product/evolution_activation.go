@@ -133,7 +133,7 @@ func (s *Store) acceptEvolutionParticipant(ctx context.Context, token string, re
 }
 func (s *Store) acceptEvolutionReceipt(ctx context.Context, tx *sql.Tx, actor string, receipt evolution.ActivationReceipt) error {
 	operation, participant, digest := receipt.OperationID, receipt.Participant, receipt.ConfigurationDigest
-	if receipt.Generation < 1 || receipt.State != "adopted" || (participant != "studio" && participant != "evaluation-space") {
+	if receipt.Generation < 1 || receipt.State != "adopted" || (participant != "studio" && participant != "evolution-space") {
 		return ErrInvalid
 	}
 	var group, state string
@@ -197,7 +197,7 @@ func (s *Store) settleEvolutionActivation(ctx context.Context, tx *sql.Tx, actor
 		return result, ErrForbidden
 	}
 	var count int
-	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_activation_receipts WHERE operation_id=? AND config_digest=? AND state='accepted' AND participant IN ('studio','evaluation-space')", operation, result.DesiredDigest).Scan(&count); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_activation_receipts WHERE operation_id=? AND config_digest=? AND state='accepted' AND participant IN ('studio','evolution-space')", operation, result.DesiredDigest).Scan(&count); err != nil {
 		return result, err
 	}
 	if count != 2 {

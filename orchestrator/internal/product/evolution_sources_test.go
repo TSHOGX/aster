@@ -50,7 +50,7 @@ func TestEvolutionSourceAuthorityCannotBeSelfDeclared(t *testing.T) {
 	if allowed {
 		t.Fatal("revoked source still authorizes projection")
 	}
-	if err = acceptEvolutionFixture(s, ctx, token, pending.OperationID, "evaluation-space", pending.DesiredDigest); err != ErrForbidden {
+	if err = acceptEvolutionFixture(s, ctx, token, pending.OperationID, "evolution-space", pending.DesiredDigest); err != ErrForbidden {
 		t.Fatal("late receipt bypassed source revocation", err)
 	}
 	if _, err = s.SettleEvolutionActivation(ctx, token, pending.OperationID); err != ErrForbidden {

@@ -12,16 +12,16 @@ test("native workflow authoring, testing, publication and selected group activat
   const groupAPI = `/api/admin/groups/${group}/optimization`;
   const state = await (await page.request.get(groupAPI)).json();
   const prior = await (await page.request.get(`${groupAPI}/revisions/${state.active_revision}`)).json();
-  const editorPath = `/evaluation-space/groups/${group}/workflows/${workflow}/`;
+  const editorPath = `/evolution-space/groups/${group}/workflows/${workflow}/`;
   if (process.env.ADMIN_EVOLUTION_UPGRADE_PHASE === "publish") {
-    await page.goto(`/evaluation-space/auth/login?return=${encodeURIComponent(editorPath)}`);
+    await page.goto(`/evolution-space/auth/login?return=${encodeURIComponent(editorPath)}`);
     await expect(page.getByRole("heading", { level: 1 })).toContainText(workflow);
     const canvas = page.getByRole("region", { name: tr("Workflow canvas", "工作流画布"), exact: true });
     const agent = canvas.locator("button").filter({ has: page.locator("strong", { hasText: /^draft$/ }) });
     await agent.focus(); await agent.press("Enter");
     const prompt = page.getByRole("textbox", { name: tr("Prompt text", "提示词文本"), exact: true });
     await prompt.fill(`${await prompt.inputValue()}\nKeep explicit source evidence.`);
-    const draft = await (await page.request.get(`/evaluation-space/api/v1/groups/${group}/workflows/${workflow}/draft`)).json();
+    const draft = await (await page.request.get(`/evolution-space/api/v1/groups/${group}/workflows/${workflow}/draft`)).json();
     const originalAgent = draft.workflow.nodes.find((node: { id: string }) => node.id === "draft");
     const add = page.getByRole("button", { name: tr("Add agent", "添加 agent"), exact: true });
     await add.focus(); await add.press("Enter");
@@ -59,9 +59,9 @@ test("native workflow authoring, testing, publication and selected group activat
     await expect(page).toHaveURL(/\/runs\//);
     await expect(page.getByRole("heading", { name: tr("Run status: completed", "运行状态: 已完成"), exact: true })).toBeVisible({ timeout: 30000 });
     const testID = new URL(page.url()).pathname.split("/").filter(Boolean).at(-1)!;
-    const run = await (await page.request.get(`/evaluation-space/api/v1/groups/${group}/runs/${testID}`)).json();
+    const run = await (await page.request.get(`/evolution-space/api/v1/groups/${group}/runs/${testID}`)).json();
     expect(run.draft_test.source.run_id).toBe(process.env.ADMIN_EVOLUTION_SOURCE_RUN);
-    const attempts = await (await page.request.get(`/evaluation-space/api/v1/groups/${group}/runs/${testID}/attempts?limit=100`)).json();
+    const attempts = await (await page.request.get(`/evolution-space/api/v1/groups/${group}/runs/${testID}/attempts?limit=100`)).json();
     expect(attempts.items.some((attempt: { call: { node: { id: string }; instance: string }; state: string }) => attempt.call.node.id === "review" && attempt.call.instance === "root/review" && attempt.state === "succeeded")).toBe(true);
     const nested = attempts.items.find((attempt: { call: { instance: string } }) => attempt.call.instance.includes("/iteration-0/critic"));
     expect(nested).toBeDefined(); expect(nested.call.parent).toBeTruthy();
@@ -111,7 +111,7 @@ test("native workflow authoring, testing, publication and selected group activat
     await expect.poll(async () => (await (await page.request.get(groupAPI)).json()).active_revision).toBe(state.active_revision + 1);
     await page.getByRole("button", { name: admin("Reload server status"), exact: true }).click();
     const lifecycle = page.locator("section.panel").filter({ has: page.getByRole("heading", { name: admin("Configuration lifecycle"), exact: true }) });
-    await expect(lifecycle).toContainText("studio"); await expect(lifecycle).toContainText("evaluation-space");
+    await expect(lifecycle).toContainText("studio"); await expect(lifecycle).toContainText("evolution-space");
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   await page.screenshot({ path: info.outputPath(`workflow-upgrade-${process.env.ADMIN_EVOLUTION_UPGRADE_PHASE}.png`), fullPage: true });

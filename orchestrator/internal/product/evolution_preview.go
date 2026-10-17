@@ -40,7 +40,7 @@ type EvolutionPreview struct {
 // PreviewEvolutionDraft performs central checks only. It creates no reservations
 // or operation; participants must still validate the exact configuration.
 func (s *Store) PreviewEvolutionDraft(ctx context.Context, token, group string, input EvolutionPreviewInput) (EvolutionPreview, error) {
-	result := EvolutionPreview{Changes: []EvolutionBindingChange{}, Issues: []string{}, RequiredParticipants: []string{"studio", "evaluation-space"}}
+	result := EvolutionPreview{Changes: []EvolutionBindingChange{}, Issues: []string{}, RequiredParticipants: []string{"studio", "evolution-space"}}
 	if !validID(group) || input.ExpectedRevision < 0 || input.ExpectedDraftRevision < 1 {
 		return result, ErrInvalid
 	}

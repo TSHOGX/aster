@@ -20,10 +20,10 @@ func TestEvaluationAuthorityPrivateServiceBoundaries(t *testing.T) {
 	secret := strings.Repeat("s", 32)
 	t.Setenv("EVALUATION_AUTH_TEST_SECRET", secret)
 	clients := []identityconfig.Client{}
-	for _, id := range []string{"studio", "evaluation-space"} {
+	for _, id := range []string{"studio", "evolution-space"} {
 		callback := "/volumes-studio/auth/callback"
-		if id == "evaluation-space" {
-			callback = "/evaluation-space/auth/callback"
+		if id == "evolution-space" {
+			callback = "/evolution-space/auth/callback"
 		}
 		clients = append(clients, identityconfig.Client{ID: id, Callback: "https://app" + callback, SecretEnvs: []string{"EVALUATION_AUTH_TEST_SECRET"}})
 	}
@@ -42,7 +42,7 @@ func TestEvaluationAuthorityPrivateServiceBoundaries(t *testing.T) {
 		return response.Code
 	}
 	for _, path := range []string{"evaluation-authorizations", "evaluation-authority", "evaluation-settlements"} {
-		for _, bad := range []struct{ client, credential, origin, cookie string }{{"producer", secret, "", ""}, {"studio", "wrong", "", ""}, {"evaluation-space", secret, "https://app", ""}, {"evaluation-space", secret, "", "ambient=value"}} {
+		for _, bad := range []struct{ client, credential, origin, cookie string }{{"producer", secret, "", ""}, {"studio", "wrong", "", ""}, {"evolution-space", secret, "https://app", ""}, {"evolution-space", secret, "", "ambient=value"}} {
 			code := call(private, path, bad.client, bad.credential, bad.origin, bad.cookie, `{"action":"execute"}`)
 			if code != 401 && code != 403 {
 				t.Fatal(path, bad.client, code)
@@ -52,7 +52,7 @@ func TestEvaluationAuthorityPrivateServiceBoundaries(t *testing.T) {
 			t.Fatal("private route exposed", path, code)
 		}
 	}
-	if code := call(private, "evaluation-authorizations", "evaluation-space", secret, "", "", `{}`); code != 403 {
+	if code := call(private, "evaluation-authorizations", "evolution-space", secret, "", "", `{}`); code != 403 {
 		t.Fatal("non-Studio minted grant", code)
 	}
 	if code := call(private, "evaluation-settlements", "studio", secret, "", "", `{}`); code != 403 {
@@ -62,7 +62,7 @@ func TestEvaluationAuthorityPrivateServiceBoundaries(t *testing.T) {
 	if code := call(private, "evaluation-authority", "studio", secret, "", "", string(cleanup)); code != 403 {
 		t.Fatal("Studio borrowed cleanup authority", code)
 	}
-	if code := call(private, "evaluation-authority", "evaluation-space", secret, "", "", `{"action":"read","action":"cleanup"}`); code != 400 {
+	if code := call(private, "evaluation-authority", "evolution-space", secret, "", "", `{"action":"read","action":"cleanup"}`); code != 400 {
 		t.Fatal("duplicate authority field", code)
 	}
 }

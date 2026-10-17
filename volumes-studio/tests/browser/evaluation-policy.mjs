@@ -1,5 +1,5 @@
 // Real-process evaluator policy acceptance. All report/merge requests reach the
-// actual Studio and Evaluation Space services; only the evaluator is deterministic.
+// actual Studio and Evolution Space services; only the evaluator is deterministic.
 import { chromium, firefox, webkit, expect } from '../../frontend/node_modules/@playwright/test/index.mjs';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';

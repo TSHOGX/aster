@@ -51,8 +51,8 @@ func (c *Config) Validate() error {
 		switch client.ID {
 		case "studio":
 			expectedCallback = "/volumes-studio/auth/callback"
-		case "evaluation-space":
-			expectedCallback = "/evaluation-space/auth/callback"
+		case "evolution-space":
+			expectedCallback = "/evolution-space/auth/callback"
 		default:
 			return fmt.Errorf("unsupported identity application %s", client.ID)
 		}

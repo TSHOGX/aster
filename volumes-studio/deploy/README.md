@@ -135,9 +135,9 @@ Studio receives only its own cookies, scoped to `/volumes-studio/`; it does not
 receive the Aster login cookie. Stopping Studio does not stop the Aster route, but
 the shared proxy and central identity remain deployment dependencies.
 
-When Evaluation Space is installed, add `-evaluation-space` with its separate
+When Evolution Space is installed, add `-evolution-space` with its separate
 browser gateway origin to the front-door command, for example
-`-evaluation-space http://127.0.0.1:18485`. Its public prefix is `/evaluation-space/`
+`-evolution-space http://127.0.0.1:18485`. Its public prefix is `/evolution-space/`
 and its cookies are isolated from Studio and Aster. The unconfigured route returns
 unavailable. Never point this option at the private worker listener.
 

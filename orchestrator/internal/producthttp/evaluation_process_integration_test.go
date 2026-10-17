@@ -22,13 +22,13 @@ import (
 	"time"
 
 	"aster/contracts/evolution"
-	"harness-platform/orchestrator/internal/evaluationclient"
+	"harness-platform/orchestrator/internal/evolutionspaceclient"
 	"harness-platform/orchestrator/internal/identityconfig"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/studioclient"
 )
 
-// Uses real Studio/Evaluation Space executables, central authorization/storage,
+// Uses real Studio/Evolution Space executables, central authorization/storage,
 // offline dataset provisioning, and a deterministic evaluator that reads actual
 // assigned input bytes before producing metrics. No store mutation bypasses a gate.
 type evaluationProcessPrepared struct {
@@ -110,9 +110,9 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 		}
 		return binary
 	}
-	catalog := build("evaluation-space/backend", "./cmd/evaluation-catalog", "catalog")
+	catalog := build("evolution-space/backend", "./cmd/evolution-space-catalog", "catalog")
 	studioBinary := build("volumes-studio/backend", "./cmd/studio", "studio")
-	spaceBinary := build("evaluation-space/backend", "./cmd/evaluation-space", "space")
+	spaceBinary := build("evolution-space/backend", "./cmd/evolution-space", "space")
 	address := func() string {
 		t.Helper()
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -143,11 +143,11 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 
 	secret := strings.Repeat("s", 32)
 	inputSecret := strings.Repeat("i", 32)
-	for _, name := range []string{"STUDIO_IDENTITY_CLIENT_SECRET", "STUDIO_CENTRAL_SECRET", "EVALUATION_SPACE_IDENTITY_SECRET", "EVALUATION_SPACE_CENTRAL_SECRET", "EVALUATION_SPACE_STUDIO_SECRET", "TEST_EVALUATOR_SECRET"} {
+	for _, name := range []string{"STUDIO_IDENTITY_CLIENT_SECRET", "STUDIO_CENTRAL_SECRET", "EVOLUTION_SPACE_IDENTITY_SECRET", "EVOLUTION_SPACE_CENTRAL_SECRET", "EVOLUTION_SPACE_STUDIO_SECRET", "TEST_EVALUATOR_SECRET"} {
 		t.Setenv(name, secret)
 	}
 	t.Setenv("TEST_EVALUATOR_INPUT_SECRET", inputSecret)
-	t.Setenv("STUDIO_EVALUATION_INPUT_SECRET", inputSecret)
+	t.Setenv("STUDIO_EVOLUTION_SPACE_INPUT_SECRET", inputSecret)
 	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "central.db"))
 	must(t, err)
 	defer store.Close()
@@ -155,7 +155,7 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 	must(t, err)
 	_, token, err := store.Authenticate(ctx, "admin", "permanent-admin-password")
 	must(t, err)
-	config := &identityconfig.Config{Issuer: issuer, Listen: "127.0.0.1:0", Clients: []identityconfig.Client{{ID: "studio", Callback: issuer + "/volumes-studio/auth/callback", SecretEnvs: []string{"STUDIO_IDENTITY_CLIENT_SECRET"}}, {ID: "evaluation-space", Callback: issuer + "/evaluation-space/auth/callback", SecretEnvs: []string{"EVALUATION_SPACE_IDENTITY_SECRET"}}}}
+	config := &identityconfig.Config{Issuer: issuer, Listen: "127.0.0.1:0", Clients: []identityconfig.Client{{ID: "studio", Callback: issuer + "/volumes-studio/auth/callback", SecretEnvs: []string{"STUDIO_IDENTITY_CLIENT_SECRET"}}, {ID: "evolution-space", Callback: issuer + "/evolution-space/auth/callback", SecretEnvs: []string{"EVOLUTION_SPACE_IDENTITY_SECRET"}}}}
 	must(t, config.CheckCredentials())
 	authentication := NewAuthentication(store, Config{Identity: config})
 	publicHandler = authentication.Handler(http.NotFoundHandler())
@@ -231,7 +231,7 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 					deniedCredentials = append(deniedCredentials, struct{ user, password, cookie, origin, grant, fence string }{"evaluator", inputSecret, "", "", value.GrantID, fmt.Sprint(value.Fence)})
 				}
 				for _, denied := range deniedCredentials {
-					endpoint := spaceOrigin + "/evaluation-space/provider/v1/groups/" + value.Subject.Dataset.GroupID + "/jobs/" + value.JobID + "/dataset"
+					endpoint := spaceOrigin + "/evolution-space/provider/v1/groups/" + value.Subject.Dataset.GroupID + "/jobs/" + value.JobID + "/dataset"
 					request, err := http.NewRequestWithContext(r.Context(), "GET", endpoint, nil)
 					if err != nil {
 						providerFailure = err.Error()
@@ -258,7 +258,7 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 					}
 				}
 				read := func(kind, path string) ([]byte, error) {
-					endpoint := spaceOrigin + "/evaluation-space/provider/v1/groups/" + value.Subject.Dataset.GroupID + "/jobs/" + value.JobID + "/" + kind
+					endpoint := spaceOrigin + "/evolution-space/provider/v1/groups/" + value.Subject.Dataset.GroupID + "/jobs/" + value.JobID + "/" + kind
 					if path != "" {
 						endpoint += "?" + url.Values{"path": {path}}.Encode()
 					}
@@ -530,7 +530,7 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 			t.Fatalf("static assets: %v %s", err, output)
 		}
 	}
-	start(studioBinary, studioAddress, "--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evaluation-endpoint", spaceOrigin, "--frontend", "http://"+frontendAddress)
+	start(studioBinary, studioAddress, "--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evolution-space-endpoint", spaceOrigin, "--frontend", "http://"+frontendAddress)
 	spaceArgs := []string{"--listen", spaceAddress, "--state-directory", spaceDirectory, "--identity-endpoint", central.URL, "--studio-input-endpoint", "http://" + participantAddress}
 	if test.Mode != "disabled" {
 		spaceArgs = append(spaceArgs, "--evaluation-connections", connections)
@@ -592,11 +592,11 @@ func evaluationPolicyProcesses(t *testing.T, test evaluationProcessCase) {
 	configuration := evolution.Configuration{GroupID: product.StandardUsersGroup, Revision: 1, Budget: budget, Sources: []evolution.SourceBinding{source}, Bindings: []evolution.Binding{{ID: "skills", Enabled: true, Template: template.Ref, Workflow: workflowRef, Service: service.Ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: "skills/derived", Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: bindingPolicy, Budget: budget, Trigger: "manual"}}}
 	_, err = store.ActivateEvolutionConfig(ctx, token, configuration.GroupID, product.EvolutionActivationInput{RequestID: "activate", Configuration: configuration})
 	must(t, err)
-	evalClient, err := evaluationclient.New(spaceOrigin, secret)
+	spaceClient, err := evolutionspaceclient.New(spaceOrigin, secret)
 	must(t, err)
 	studioClient, err := studioclient.New("http://"+participantAddress, secret)
 	must(t, err)
-	must(t, (&product.EvolutionWorker{Store: store, Evaluation: evalClient, Studio: studioClient}).Step(ctx))
+	must(t, (&product.EvolutionWorker{Store: store, EvolutionSpace: spaceClient, Studio: studioClient}).Step(ctx))
 	if test.Mode != "disabled" {
 		_, err = store.SetEvaluationDatasetGrant(ctx, token, configuration.GroupID, product.EvaluationDatasetGrantInput{RequestID: "dataset", Artifact: dataset, Service: evaluator.Ref, Enabled: true})
 		must(t, err)

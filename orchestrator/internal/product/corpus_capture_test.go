@@ -165,7 +165,7 @@ func TestCorpusConsumptionAdvancesOnlySuccessfulPinnedBinding(t *testing.T) {
 	}
 	pending, err := s.ActivateEvolutionConfig(ctx, token, "fixture-users", EvolutionActivationInput{RequestID: "activate", Configuration: config})
 	must(t, err)
-	for _, participant := range []string{"studio", "evaluation-space"} {
+	for _, participant := range []string{"studio", "evolution-space"} {
 		must(t, acceptEvolutionFixture(s, ctx, token, pending.OperationID, participant, pending.DesiredDigest))
 	}
 	_, err = s.SettleEvolutionActivation(ctx, token, pending.OperationID)

@@ -15,7 +15,7 @@ import (
 
 const StudioAccessEntitlement = "volumes_studio.access"
 const StudioCreateEntitlement = "volumes_studio.create"
-const EvaluationSpaceAccessEntitlement = "evaluation_space.access"
+const EvolutionSpaceAccessEntitlement = "evolution_space.access"
 const IdentityEvidenceTTL = 60 * time.Second
 
 // IdentityAssertion contains central authority evidence for a registered client.
@@ -101,7 +101,7 @@ func (s *Store) identitySession(ctx context.Context, q queryer, session, client 
 	}
 	a.CentralSession = session
 	switch client {
-	case "evaluation-space":
+	case "evolution-space":
 		// Entrance carries no group, content or execution authority. A scoped user
 		// must have current read access to at least one group; each API rechecks its
 		// exact group and capability independently.
@@ -118,7 +118,7 @@ func (s *Store) identitySession(ctx context.Context, q queryer, session, client 
 				return IdentityAssertion{}, ErrForbidden
 			}
 		}
-		a.Entitlements = []string{EvaluationSpaceAccessEntitlement}
+		a.Entitlements = []string{EvolutionSpaceAccessEntitlement}
 	case "studio":
 		a.Entitlements = []string{StudioAccessEntitlement}
 		if role == "admin" {
@@ -244,10 +244,10 @@ func (s *Store) RevokeIdentity(ctx context.Context, client, grant string) error 
 	})
 }
 
-// EvaluationSpaceWorkflowAccess checks the current group read/editor grant for a
-// browser request carrying an opaque Evaluation Space application grant.
-func (s *Store) EvaluationSpaceWorkflowAccess(ctx context.Context, input appidentity.EvaluationWorkflowAccessRequest) (appidentity.EvaluationWorkflowAccess, error) {
-	result := appidentity.EvaluationWorkflowAccess{GroupID: input.GroupID}
+// EvolutionSpaceWorkflowAccess checks the current group read/editor grant for a
+// browser request carrying an opaque Evolution Space application grant.
+func (s *Store) EvolutionSpaceWorkflowAccess(ctx context.Context, input appidentity.EvolutionSpaceWorkflowAccessRequest) (appidentity.EvolutionSpaceWorkflowAccess, error) {
+	result := appidentity.EvolutionSpaceWorkflowAccess{GroupID: input.GroupID}
 	if !validID(input.GroupID) || (input.Action != "workflow.read" && input.Action != "workflow.edit") {
 		return result, ErrInvalid
 	}
@@ -256,11 +256,11 @@ func (s *Store) EvaluationSpaceWorkflowAccess(ctx context.Context, input appiden
 		return result, err
 	}
 	defer tx.Rollback()
-	session, err := identityGrantSession(ctx, tx, "evaluation-space", input.Grant)
+	session, err := identityGrantSession(ctx, tx, "evolution-space", input.Grant)
 	if err != nil {
 		return result, err
 	}
-	a, err := s.identitySession(ctx, tx, session, "evaluation-space")
+	a, err := s.identitySession(ctx, tx, session, "evolution-space")
 	if err != nil {
 		return result, err
 	}

@@ -27,7 +27,7 @@ configuration under `private/` or outside the repository.
 | `limits` | Global/per-Project capacities, bootstrap qualified `max_mounts_per_project`, idle deadlines and worker interval |
 | `http_metrics` | Enable optional HTTP metrics collection |
 | `volume_imports` | Trusted Studio sources and transfer/engine storage budgets; see below |
-| `evaluation_space` | Optional private participant endpoint and credential environment variable; see below |
+| `evolution_space` | Optional private participant endpoint and credential environment variable; see below |
 | `notifications` | Per-source Inbox notification policy; changes apply after application restart |
 | `gateways`, `agent_audience` | Independent gateway endpoints and upstream credential environment names |
 | `titles` | Optional host-side title model: `base_url`, `model`, `api_key_env` |
@@ -200,24 +200,24 @@ and uncertain attempts can each retain capacity. Project allocation quotas still
 apply independently. Removing a source or rotating credentials stops future source
 access; it does not delete ready local copies or recall acquired bytes.
 
-## Evaluation Space participant
+## Evolution Space participant
 
-Set `evaluation_space.endpoint` to the private Evaluation Space service origin and
-`evaluation_space.credential_env` to the name of an environment variable containing
+Set `evolution_space.endpoint` to the private Evolution Space service origin and
+`evolution_space.credential_env` to the name of an environment variable containing
 its central-service credential (at least 32 characters). The credential must match
-Evaluation Space's `EVALUATION_SPACE_CENTRAL_SECRET`. The origin requires HTTPS,
+Evolution Space's `EVOLUTION_SPACE_CENTRAL_SECRET`. The origin requires HTTPS,
 except for numeric loopback HTTP addresses. Redirects and environment proxies are
 not used for this transport. Keep the private endpoint inaccessible to browsers.
 
-With this configuration, a dedicated worker reconciles pending Evaluation Space
+With this configuration, a dedicated worker reconciles pending Evolution Space
 projections from the central database. It survives browser logout and application
 restart, verifies exact operation receipts, and retries uncertain transport outcomes
 by looking up participant state. It does not settle activation without Studio's
-receipt. Omitting this configuration disables automatic Evaluation Space dispatch;
+receipt. Omitting this configuration disables automatic Evolution Space dispatch;
 it does not erase pending operations.
 
-The private listener exposes `GET /evaluation-space/healthz` and
-`GET /evaluation-space/readyz` for the process supervisor. Both return a no-store
+The private listener exposes `GET /evolution-space/healthz` and
+`GET /evolution-space/readyz` for the process supervisor. Both return a no-store
 JSON `{"status":"ok"}` response after the state database has opened. Keep these
 probes on the private loopback listener; the browser gateway remains the only
 listener that should be routed through the shared TLS front door.
@@ -236,16 +236,16 @@ library configure authority. Central identity outages prevent new participant
 effects. The listener supports reservation lookup, reserve, adopt, and cancellation;
 configure central dispatch with `studio_participant.endpoint` and
 `studio_participant.credential_env`. The credential must match Studio’s central
-participant secret. New activation requires `evaluation_space` configuration as well. The
-worker reserves Studio outputs before Evaluation Space adoption, then adopts Studio
+participant secret. New activation requires `evolution_space` configuration as well. The
+worker reserves Studio outputs before Evolution Space adoption, then adopts Studio
 reservations and settles only after both exact receipts are recorded. Pending
 Studio discard cleanup can run with only `studio_participant` configured.
 
-Register Evaluation Space in central `identity.clients` with ID `evaluation-space`
-and the exact callback `${identity.issuer}/evaluation-space/auth/callback`.
+Register Evolution Space in central `identity.clients` with ID `evolution-space`
+and the exact callback `${identity.issuer}/evolution-space/auth/callback`.
 Studio's callback remains `${identity.issuer}/volumes-studio/auth/callback`.
-Only `studio` and `evaluation-space` are supported identity applications. They cannot
-exchange callback paths, grants or entitlements. Evaluation Space admission requires
+Only `studio` and `evolution-space` are supported identity applications. They cannot
+exchange callback paths, grants or entitlements. Evolution Space admission requires
 platform administration or current group membership with explicit `config.read` allow.
 Studio admission separately requires administrator status or an effective library-read
 grant. Admission confers no source evidence, execution or content authority. Both
@@ -255,19 +255,19 @@ revokes the originating central login and its derived grants, including after th
 application's content access has been revoked. Each registration references its own
 identity credential environment variable; participant credentials are separate.
 
-Evaluation Space can run a separate browser gateway alongside its private worker
+Evolution Space can run a separate browser gateway alongside its private worker
 listener. Set `--browser-listen 127.0.0.1:18485`, `--public-origin` to the registered
 HTTPS issuer, and `--frontend` to its frontend origin together. Plain HTTP frontend
 origins must use a literal loopback address. Keep this listener behind the shared
-TLS front door and route only `/evaluation-space/` browser traffic to it. Never
+TLS front door and route only `/evolution-space/` browser traffic to it. Never
 route public traffic to the private worker listener. The browser gateway provides
-login, callback, logout, `/evaluation-space/api/v1/session`, and readable groups at
-`/evaluation-space/api/v1/groups` and `/evaluation-space/api/v1/groups/{group}`.
+login, callback, logout, `/evolution-space/api/v1/session`, and readable groups at
+`/evolution-space/api/v1/groups` and `/evolution-space/api/v1/groups/{group}`.
 Group lists filter current grants and membership before pagination. They expose
 configuration revision/status and separate management, execution and evidence
 permissions. Source evidence still requires an explicit grant for administrators.
 It does not expose the private catalog or worker APIs.
-Workflow editor routes under `/evaluation-space/groups/{group}/workflows/{workflow}`
+Workflow editor routes under `/evolution-space/groups/{group}/workflows/{workflow}`
 use the same client-bound central grant. Drafts belong to the group that creates
 them; read, history, save and publication require that group. Workflow IDs are
 globally stable: editing a catalog workflow starts a new draft with a fresh ID,
@@ -297,7 +297,7 @@ layout-only edits preserve the validated executable digest. Prompt digests are
 computed from the frozen document submitted for save or validation. Publishing
 offers an explicit handoff to group configuration for activation; it does not
 silently change the active revision. Run detail links use
-`/evaluation-space/groups/{group}/runs/{run}`; the browser API returns only the
+`/evolution-space/groups/{group}/runs/{run}`; the browser API returns only the
 current group's frozen run metadata, deduplicated event cursor and authorized
 attempt records, including effective prompts, node inputs/outputs and artifact
 metadata when the current `source.read` grant permits them. Artifact metadata is
@@ -317,7 +317,7 @@ while admitted work settles; new nodes and new model budget reservations stop.
 The run becomes **paused** at a durable boundary, with current usage and checkpoint
 retained. Resume continues from completed node results. Cancellation remains
 available while pausing and fences further output immediately. Evaluation reports use
-`/evaluation-space/groups/{group}/evaluations/{job}` and expose the frozen subject,
+`/evolution-space/groups/{group}/evaluations/{job}` and expose the frozen subject,
 policy mode (`report_only` or `required`), observed metrics, coverage and outcome;
 dataset bytes and evaluator credentials
 remain private. A report can be canceled while it is queued or running. Failed
@@ -335,7 +335,7 @@ survives service restart and lost replies. Cancellation also closes an admission
 that has not yet returned, including after source authority is revoked. In the inspector,
 retrying a failed request after reload reuses its request ID until a successful
 response is received.
-Configuration managers can edit evaluator profiles from the Evaluation Space group
+Configuration managers can edit evaluator profiles from the Evolution Space group
 page. The editor pins the dataset artifact, scorer, runtime, model, tools, metric
 thresholds and minimum sample/coverage requirements; publishing creates the next
 immutable profile revision. Existing runs and reports retain their earlier profile
@@ -353,7 +353,7 @@ original size; a response over the one MiB default is marked `X-Report-Truncated
 true` and is not a complete report download. Dataset and evaluator input bytes
 remain on private provider routes.
 Evaluator implementations must return aggregate reports without raw answers or
-detailed grading traces. Evaluation Space rejects reports that identify a protected
+detailed grading traces. Evolution Space rejects reports that identify a protected
 dataset or have the same digest as any registered profile's dataset. Downloads
 repeat that check, including datasets registered after a report was completed.
 The same exclusion applies to generation inputs, provider requests, checkpoint
@@ -398,31 +398,31 @@ reopen **Run from here** and use **Recover experiment** to recover the same requ
 pending result from a temporary read failure and only exposes retained report
 artifacts; held-out answers never appear in reports or prompts.
 Frontend credentials and cookies are stripped before proxying. Application sessions
-persist in Evaluation Space's state database; Studio owns a separate session store
+persist in Evolution Space's state database; Studio owns a separate session store
 and cookie path. Central identity outages reject session authorization immediately.
 
-Build the frontend with `npm ci --prefix evaluation-space/frontend` followed by
-`npm --prefix evaluation-space/frontend run build`. Supervise it independently with
-`npm --prefix evaluation-space/frontend run start -- --hostname 127.0.0.1 --port 3003`
+Build the frontend with `npm ci --prefix evolution-space/frontend` followed by
+`npm --prefix evolution-space/frontend run build`. Supervise it independently with
+`npm --prefix evolution-space/frontend run start -- --hostname 127.0.0.1 --port 3003`
 and set the browser gateway's `--frontend http://127.0.0.1:3003`. The frontend uses
-`/evaluation-space` as its fixed base path. Add
-`-evaluation-space http://127.0.0.1:18485` to the shared `front-door` command.
-An unconfigured Evaluation Space route returns unavailable rather than falling
+`/evolution-space` as its fixed base path. Add
+`-evolution-space http://127.0.0.1:18485` to the shared `front-door` command.
+An unconfigured Evolution Space route returns unavailable rather than falling
 through to the central application. Browser cookies remain confined to their
-application path; an Evaluation Space outage leaves the other application routes
+application path; an Evolution Space outage leaves the other application routes
 available.
 
-### Provision Evaluation Space catalog revisions
+### Provision Evolution Space catalog revisions
 
 Group workflow editors can [publish goal templates online](../admin/accounts.md#publish-goal-templates).
 Use offline provisioning for operator-managed catalog definitions, including service
 registration. Group-owned template IDs cannot be extended through the offline command;
 publish their later revisions through the owning group's editor.
 
-Stop Evaluation Space before offline catalog publication. Build the provisioning
-command from `evaluation-space/backend` with
-`go build -o evaluation-catalog ./cmd/evaluation-catalog`, then run
-`./evaluation-catalog --state-directory /absolute/evaluation-state < publication.json`.
+Stop Evolution Space before offline catalog publication. Build the provisioning
+command from `evolution-space/backend` with
+`go build -o evolution-space-catalog ./cmd/evolution-space-catalog`, then run
+`./evolution-space-catalog --state-directory /absolute/evolution-space-state < publication.json`.
 The command refuses access while the service owns that database. Restart the service
 after publication.
 
@@ -434,14 +434,14 @@ retried. Existing revisions cannot be replaced or deleted.
 
 ### Expire retained artifact content
 
-Evaluation Space keeps artifact content until an operator explicitly expires it;
-there is no automatic age-based deletion. Stop Evaluation Space and build
-`evaluation-catalog` from `evaluation-space/backend`. Save the complete artifact
+Evolution Space keeps artifact content until an operator explicitly expires it;
+there is no automatic age-based deletion. Stop Evolution Space and build
+`evolution-space-catalog` from `evolution-space/backend`. Save the complete artifact
 reference from the run metadata as `/absolute/artifact.json`, then inspect its pins:
 
 ```sh
-go build -o evaluation-catalog ./cmd/evaluation-catalog
-./evaluation-catalog --state-directory /absolute/evaluation-state \
+go build -o evolution-space-catalog ./cmd/evolution-space-catalog
+./evolution-space-catalog --state-directory /absolute/evolution-space-state \
   --action inspect-artifact < /absolute/artifact.json
 ```
 
@@ -455,11 +455,11 @@ Create `/absolute/expiration.json` with a unique `request_id`, the exact referen
 in `artifact`, and a nonempty `reason`, then run:
 
 ```sh
-./evaluation-catalog --state-directory /absolute/evaluation-state \
+./evolution-space-catalog --state-directory /absolute/evolution-space-state \
   --action expire-artifact < /absolute/expiration.json
 ```
 
-Keep the receipt with the operator record and restart Evaluation Space. Repeating
+Keep the receipt with the operator record and restart Evolution Space. Repeating
 exactly the same request returns the same receipt. Changing its identity or reason
 fails. Expiry removes the sealed body and releases its charged store quota in one
 transaction. Metadata, ancestry and the expiry receipt remain; the expired identity
@@ -475,16 +475,16 @@ or secure erasure. It does not remove copies in journals, earlier backups, expor
 or Studio content. Apply their retention policies separately. Backups taken after
 expiry preserve the receipt and do not restore the expired body.
 
-### Back up and restore Evaluation Space
+### Back up and restore Evolution Space
 
-Stop Evaluation Space before taking a backup. Build the maintenance commands from
-`evaluation-space/backend` and choose a new destination outside the state directory:
+Stop Evolution Space before taking a backup. Build the maintenance commands from
+`evolution-space/backend` and choose a new destination outside the state directory:
 
 ```sh
-go build -o evaluation-space-backup ./cmd/evaluation-space-backup
-./evaluation-space-backup \
-  -state-directory /absolute/evaluation-state \
-  -output /absolute/backups/evaluation-space-snapshot
+go build -o evolution-space-backup ./cmd/evolution-space-backup
+./evolution-space-backup \
+  -state-directory /absolute/evolution-space-state \
+  -output /absolute/backups/evolution-space-snapshot
 ```
 
 The snapshot contains the projection database, including immutable catalog
@@ -497,15 +497,15 @@ Restore into a new state directory and let the command validate the current sche
 before starting the service:
 
 ```sh
-go build -o evaluation-space-restore ./cmd/evaluation-space-restore
-./evaluation-space-restore \
-  -input /absolute/backups/evaluation-space-snapshot \
-  -output /absolute/evaluation-state-restored
+go build -o evolution-space-restore ./cmd/evolution-space-restore
+./evolution-space-restore \
+  -input /absolute/backups/evolution-space-snapshot \
+  -output /absolute/evolution-space-state-restored
 ```
 
 Restore does not copy browser sessions or credentials. Start the restored service
-with reviewed identity and evaluator settings, then verify `/evaluation-space/healthz`,
-`/evaluation-space/readyz`, catalog identity, run ancestry and artifact digests
+with reviewed identity and evaluator settings, then verify `/evolution-space/healthz`,
+`/evolution-space/readyz`, catalog identity, run ancestry and artifact digests
 before allowing new work. Never restore over a live state directory.
 
 Workflow digests hash the shared contract's canonical workflow JSON. Service,
@@ -525,8 +525,8 @@ the selected template and workflow schemas before projection adoption. Required
 fields, types, bounds, enums, and additional-property rules are enforced without
 coercing values or supplying defaults.
 
-To change a service's admission state while Evaluation Space is stopped, run
-`./evaluation-catalog --state-directory /absolute/evaluation-state --action service-state`
+To change a service's admission state while Evolution Space is stopped, run
+`./evolution-space-catalog --state-directory /absolute/evolution-space-state --action service-state`
 with a JSON object on stdin containing `request_id`, `service_id`,
 `expected_revision`, and `enabled`. The admission-state revision starts at one
 when the first service definition is published. Successful changes return its next
@@ -536,7 +536,7 @@ service; immutable definitions and previously adopted projection receipts remain
 available as provenance. Publishing another definition does not reset admission state.
 
 Inspect retained catalog reference metadata while the service is stopped with
-`./evaluation-catalog --state-directory /absolute/evaluation-state --action list`.
+`./evolution-space-catalog --state-directory /absolute/evolution-space-state --action list`.
 Provide `{"kind":"service","after_id":"","after_revision":0,"limit":50}` on stdin.
 Supported kinds match publication. Continue using returned `next_id` and
 `next_revision` when `has_more` is true; limits range from 1 to 100. Results include
@@ -545,18 +545,18 @@ not imply current admission eligibility. Connection and credential details are n
 included in this listing.
 
 Before changing service state, inspect its current admission revision with
-`./evaluation-catalog --state-directory /absolute/evaluation-state --action inspect-service`
+`./evolution-space-catalog --state-directory /absolute/evolution-space-state --action inspect-service`
 and `{"service_id":"SERVICE_ID"}` on stdin. The result contains `service_id`,
 `revision`, and `enabled`. Use that revision as `expected_revision` for the mutation;
 it is independent of immutable catalog definition revisions. Inspection follows
 the same stopped-service ownership requirement as other offline catalog commands.
 
-### Online Evaluation Space catalog access
+### Online Evolution Space catalog access
 
-When the Evaluation Space service is running, its private API serves catalog metadata
-and exact definitions under `/evaluation-space/api/v1/catalog/{kind}`. Callers authenticate with HTTP Basic user `central` and the configured
-`EVALUATION_SPACE_CENTRAL_SECRET`. Evaluation Space then uses its separate registered
-`evaluation-space` identity credential to check central catalog authority for the
+When the Evolution Space service is running, its private API serves catalog metadata
+and exact definitions under `/evolution-space/api/v1/catalog/{kind}`. Callers authenticate with HTTP Basic user `central` and the configured
+`EVOLUTION_SPACE_CENTRAL_SECRET`. Evolution Space then uses its separate registered
+`evolution-space` identity credential to check central catalog authority for the
 requested kind/action and, for payload reads, the exact immutable reference. Browser Cookie and Origin headers are rejected; these routes are private
 service/API boundaries, not browser endpoints.
 
@@ -571,7 +571,7 @@ is stopped.
 
 ### Run assigned evaluators
 
-Evaluation Space can run registered HTTP evaluators with
+Evolution Space can run registered HTTP evaluators with
 `-evaluation-connections /absolute/path/evaluators.json`. The file contains connection
 IDs used by immutable evaluator service definitions, origins, client IDs and secret
 environment references:
@@ -582,7 +582,7 @@ environment references:
     {
       "id": "team-evaluator",
       "endpoint": "https://evaluator.example.com",
-      "client_id": "evaluation-space",
+      "client_id": "evolution-space",
       "secret_env": "TEAM_EVALUATOR_SECRET",
       "input_secret_env": "TEAM_EVALUATOR_INPUT_SECRET"
     }
@@ -598,8 +598,8 @@ cannot be supplied by workflow inputs. The provider implements the versioned
 `/evaluation/v1/jobs/{id}` submit/status/result/cancel protocol and retains request
 identity across retries. Uncertain provider responses retain their spending hold.
 
-Also set `EVALUATION_SPACE_STUDIO_SECRET` (or select its variable with
-`-studio-secret-env`) for private Studio-to-Evaluation Space requests. This differs
+Also set `EVOLUTION_SPACE_STUDIO_SECRET` (or select its variable with
+`-studio-secret-env`) for private Studio-to-Evolution Space requests. This differs
 from the central participant credential and outbound central identity credential.
 The evaluation endpoints are available only when evaluator connections are configured;
 keep the listener private. A service credential alone does not grant dataset use:
@@ -608,24 +608,24 @@ revision and budget. Grant revocation stops new execution while cleanup can reco
 previous spending. Required checks remain pending until Studio receives matching
 results; configuring a provider alone does not create a passing merge check.
 
-Connect Studio to the same private Evaluation Space origin with
-`-evaluation-endpoint` and provide its credential through
-`EVALUATION_SPACE_STUDIO_SECRET` (or `-evaluation-secret-env`). Studio journals a
+Connect Studio to the same private Evolution Space origin with
+`-evolution-space-endpoint` and provide its credential through
+`EVOLUTION_SPACE_STUDIO_SECRET` (or `-evolution-space-secret-env`). Studio journals a
 reviewer's request before central authorization and remote admission. Restart/retry
 retains the same job and budget reservation. Result refresh verifies subject and
 profile measurements before recording immutable evidence; approval and merge recheck
 current central grant and evaluator availability.
 
-Set Evaluation Space's `-studio-input-endpoint` to Studio's private participant origin
-and provide `STUDIO_EVALUATION_INPUT_SECRET` (or select it with
+Set Evolution Space's `-studio-input-endpoint` to Studio's private participant origin
+and provide `STUDIO_EVOLUTION_SPACE_INPUT_SECRET` (or select it with
 `-studio-input-secret-env`). Studio uses the same inbound value, selected with
-`-evaluation-input-secret-env`; its participant listener must be enabled. These
+`-evolution-space-input-secret-env`; its participant listener must be enabled. These
 credentials differ from provider input credentials and central identity credentials.
 Provider input reads require the job grant and original submission fence, and stop
 on cancellation, expiry, completion or revocation.
 
-To provision an explicit dataset while Evaluation Space is stopped, run
-`evaluation-catalog --state-directory /absolute/state --action seal-artifact --artifact-file /absolute/dataset.json`
+To provision an explicit dataset while Evolution Space is stopped, run
+`evolution-space-catalog --state-directory /absolute/state --action seal-artifact --artifact-file /absolute/dataset.json`
 with the complete artifact reference JSON on stdin. The command verifies size and
 SHA-256 digest, retains the exact reference, and refuses a live store or symlink
 source. Provisioning bytes does not grant their use; authorize the exact artifact
@@ -633,7 +633,7 @@ and evaluator through the group's dataset grant before requesting an evaluation.
 
 ### Provision example goal definitions
 
-While Evaluation Space is stopped, `evaluation-catalog --state-directory
+While Evolution Space is stopped, `evolution-space-catalog --state-directory
 /absolute/state --action examples` reads `{"model":{"id":"...","revision":1,
 "digest":"sha256:..."}}` from stdin and publishes the skills and corrections
 example packages. Choose an exact registered model revision; provisioning the same
@@ -651,10 +651,10 @@ Their suggested output prefixes are `skills` and `lessons`; final publication st
 requires Studio review and the configured checks.
 
 Studio's private participant listener also accepts generation result lookup/submission
-when its Evaluation Space connection is configured. It authenticates Evaluation Space
-with `STUDIO_EVALUATION_INPUT_SECRET`, then asks central identity to verify the exact
+when its Evolution Space connection is configured. It authenticates Evolution Space
+with `STUDIO_EVOLUTION_SPACE_INPUT_SECRET`, then asks central identity to verify the exact
 successful run fence, base, output reservation and bound patch digest. Studio fetches
-only declared patch artifacts from Evaluation Space using its separate Studio service
+only declared patch artifacts from Evolution Space using its separate Studio service
 credential; the receiver verifies current central scope and immutable handoff membership.
 Neither listener accepts browser cookies or origins. A service credential by itself
 cannot authorize a generated branch. Result acceptance creates an isolated review
@@ -662,7 +662,7 @@ branch and does not advance main or publish a version.
 
 ### Configure native generation
 
-Evaluation Space accepts `-native-config /absolute/path/native.json` to enable the
+Evolution Space accepts `-native-config /absolute/path/native.json` to enable the
 native workflow worker and private generation admission API. Configure exact model
 revisions, authenticated model-service origins, credential environment references,
 per-model allowed tool revisions, and per-call token/cost ceilings. Set `example_builders` to true to register the
@@ -674,7 +674,7 @@ versioned skills/corrections builders and their schemas:
     {
       "reference": {"id": "team-model", "revision": 1, "digest": "sha256:REPLACE_WITH_REGISTERED_DIGEST"},
       "endpoint": "https://model-service.example.com",
-      "client_id": "evaluation-space",
+      "client_id": "evolution-space",
       "secret_env": "TEAM_MODEL_SECRET",
       "tools": [],
       "ceiling": {"tokens": 10000, "cost_micros": 1000000}
@@ -695,7 +695,7 @@ Each model's `tools` array lists the exact `{id, revision, digest}` references i
 adapter permits (at most 128 unique revisions). An empty or omitted array permits
 no tools. Declare the same references on workflow Agent nodes. Unsupported revisions
 fail before provider submission; changing a tool requires an explicit registry
-update and a new workflow revision. Restart Evaluation Space after changing its
+update and a new workflow revision. Restart Evolution Space after changing its
 registry. The model service must enforce the assigned tool scope itself and return
 authenticated observations; this list does not install executable tools.
 
@@ -717,13 +717,13 @@ keep the original call identity until reconciliation; they do not start fresh
 attempts. Completed, cancelled and schema-invalid outputs are not automatically
 retried. Choose an explicit fresh run when new execution is intended.
 
-Configure `-studio-input-endpoint` and `STUDIO_EVALUATION_INPUT_SECRET` for private
-Studio base lookup and result submission. `EVALUATION_SPACE_STUDIO_SECRET` protects
+Configure `-studio-input-endpoint` and `STUDIO_EVOLUTION_SPACE_INPUT_SECRET` for private
+Studio base lookup and result submission. `EVOLUTION_SPACE_STUDIO_SECRET` protects
 Studio's reverse artifact fetches. Native generation can run with evaluator connections
 absent and evaluation off. It still requires active central group configuration,
 explicit sealed-input reuse grants, and Studio output reservations.
 
-The private `POST /evaluation-space/internal/v1/generation/admit` route accepts a
+The private `POST /evolution-space/internal/v1/generation/admit` route accepts a
 complete frozen generation assignment from HTTP Basic user `central` with the central
 participant credential. Central identity checks requester/configuration/input/budget
 scope; local admission validates catalog pins and sealed bytes. `read` and `control`
@@ -736,11 +736,11 @@ uncertain model calls by their original key and looks up Studio acceptance befor
 submitting a result again. Generated branches retain the captured base and require
 normal human review; disjoint goal outputs remain separate branches until merged.
 
-A trusted central collector can transfer a sealed corpus while Evaluation Space is
-running with `POST /evaluation-space/internal/v1/generation/seal-input`. Authenticate
+A trusted central collector can transfer a sealed corpus while Evolution Space is
+running with `POST /evolution-space/internal/v1/generation/seal-input`. Authenticate
 as `central`, send raw bytes as `application/octet-stream`, and set
 `X-Corpus-Artifact` to unpadded base64url of the complete artifact-reference JSON.
-Evaluation Space obtains fresh central input-use authority before reading the body,
+Evolution Space obtains fresh central input-use authority before reading the body,
 then verifies digest/size and seals it under the immutable reference. Changed bytes,
 revoked policies and ungranted references are rejected. The endpoint has the artifact
 store's 64 MiB per-artifact bound and requires native configuration to be enabled.
@@ -769,7 +769,7 @@ unadmitted assignments and lets admitted work drain under current authority. Do 
 remove pending assignment or authorization records to force a retry. For typed
 cross-binding dependencies, the dispatcher retains waiting consumer plans
 and reads exact successful output references from
-`POST /evaluation-space/internal/v1/generation/output`. This private route requires
+`POST /evolution-space/internal/v1/generation/output`. This private route requires
 the producer's exact group, run, output port and winning fence plus current central
 read authority. It exposes only declared output ports from the completed workflow
 checkpoint. Failed prerequisites mark consumers skipped; output-transport outages
@@ -786,9 +786,9 @@ it to the binding's maximum. Keep model per-call reservation ceilings within the
 budgets selected for those runs.
 
 
-The central `evaluation_space` participant connection also supplies group configuration
+The central `evolution_space` participant connection also supplies group configuration
 catalog selectors and compatibility previews in Administration. Browser requests use
-central sessions; the server authenticates to Evaluation Space as `central`, validates
+central sessions; the server authenticates to Evolution Space as `central`, validates
 exact definition identities and rechecks the user's current group authority before
 returning results. Remote catalog errors appear as unavailable, not an empty list.
 Service connection and credential metadata is omitted from the browser response.

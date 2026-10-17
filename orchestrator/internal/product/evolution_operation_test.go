@@ -10,7 +10,7 @@ func TestEvolutionOperationInspectionScopeAndFailure(t *testing.T) {
 	token := adminTestToken(t, s, admin)
 	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
 	must(t, err)
-	must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evaluation-space", pending.DesiredDigest, "catalog_rejected"))
+	must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evolution-space", pending.DesiredDigest, "catalog_rejected"))
 	value, err := s.EvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID)
 	must(t, err)
 	if value.State != "failed" || len(value.Participants) != 1 || value.Participants[0].Error != "catalog_rejected" || value.Digest != pending.DesiredDigest {
@@ -34,14 +34,14 @@ func TestEvolutionHistoricalOperationRetainsTerminalState(t *testing.T) {
 	token := adminTestToken(t, s, admin)
 	first, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"first", 0, activationConfigFixture(1, true)})
 	must(t, err)
-	for _, participant := range []string{"studio", "evaluation-space"} {
+	for _, participant := range []string{"studio", "evolution-space"} {
 		must(t, acceptEvolutionFixture(s, ctx, token, first.OperationID, participant, first.DesiredDigest))
 	}
 	_, err = s.SettleEvolutionActivation(ctx, token, first.OperationID)
 	must(t, err)
 	second, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"second", 1, activationConfigFixture(2, true)})
 	must(t, err)
-	must(t, s.FailEvolutionParticipant(ctx, token, second.OperationID, "evaluation-space", second.DesiredDigest, "catalog_rejected"))
+	must(t, s.FailEvolutionParticipant(ctx, token, second.OperationID, "evolution-space", second.DesiredDigest, "catalog_rejected"))
 	old, err := s.EvolutionOperation(ctx, token, StandardUsersGroup, first.OperationID)
 	must(t, err)
 	if old.Current || old.State != "active" || old.Revision != 1 || len(old.Participants) != 2 {
@@ -74,7 +74,7 @@ func TestEvolutionTerminalStateCannotReopen(t *testing.T) {
 			t.Fatal("invalid transition accepted", state)
 		}
 	}
-	for _, participant := range []string{"studio", "evaluation-space"} {
+	for _, participant := range []string{"studio", "evolution-space"} {
 		must(t, acceptEvolutionFixture(s, ctx, token, pending.OperationID, participant, pending.DesiredDigest))
 	}
 	_, err = s.SettleEvolutionActivation(ctx, token, pending.OperationID)

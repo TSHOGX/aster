@@ -8,9 +8,9 @@ test("native checkpoint experiment, comparison and connection recovery", async (
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   await context.addCookies([{ name: "project_login", value: process.env.ADMIN_EVOLUTION_TOKEN!, url: baseURL!, secure: true, httpOnly: true, sameSite: "Lax" }]);
   const sourceID = process.env.ADMIN_EVOLUTION_SOURCE_RUN!;
-  const root = "/evaluation-space/api/v1/groups/standard-users/runs/";
-  const sourcePath = `/evaluation-space/groups/standard-users/runs/${sourceID}/`;
-  await page.goto(`/evaluation-space/auth/login?return=${encodeURIComponent(sourcePath)}`);
+  const root = "/evolution-space/api/v1/groups/standard-users/runs/";
+  const sourcePath = `/evolution-space/groups/standard-users/runs/${sourceID}/`;
+  await page.goto(`/evolution-space/auth/login?return=${encodeURIComponent(sourcePath)}`);
   await expect(page.getByRole("heading", { name: tr("Run status: paused", "运行状态: 已暂停"), exact: true })).toBeVisible();
   const sourceBefore = await (await page.request.get(root + sourceID)).json();
   await page.getByRole("button", { name: tr("Run from here", "从此处运行"), exact: true }).click();
@@ -90,7 +90,7 @@ test("native checkpoint experiment, comparison and connection recovery", async (
   await expect(page.locator("details")).toHaveCount(attempts.length);
   await expect(page.getByRole("heading", { name: tr("Run status: completed", "运行状态: 已完成"), exact: true })).toBeVisible();
   await page.unroute(eventPattern);
-  const session = await (await page.request.get("/evaluation-space/api/v1/session")).json();
+  const session = await (await page.request.get("/evolution-space/api/v1/session")).json();
   const grantRoot = "/api/admin/groups/standard-users/optimization/grants";
   const grants = await (await page.request.get(`${grantRoot}/${session.subject}`)).json();
   let revision = grants.grants.find((grant: { action: string }) => grant.action === "source.read").revision;

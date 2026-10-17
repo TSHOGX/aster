@@ -57,7 +57,7 @@ func TestEvolutionBasesRequireCurrentlyActiveAutomaticOperation(t *testing.T) {
 	if _, err = s.EvolutionParticipantActor(ctx, scope, "bases"); err != ErrForbidden {
 		t.Fatal("pending operation read generation bases", err)
 	}
-	for _, participant := range []string{"studio", "evaluation-space"} {
+	for _, participant := range []string{"studio", "evolution-space"} {
 		must(t, acceptEvolutionFixture(s, ctx, token, pending.OperationID, participant, pending.DesiredDigest))
 	}
 	_, err = s.SettleEvolutionActivation(ctx, token, pending.OperationID)

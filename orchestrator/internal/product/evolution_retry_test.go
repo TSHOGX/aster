@@ -8,7 +8,7 @@ func TestEvolutionRetryReplayDoesNotRestartLaterFailure(t *testing.T) {
 	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
 	must(t, err)
 	fail := func() {
-		must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evaluation-space", pending.DesiredDigest, "catalog_rejected"))
+		must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evolution-space", pending.DesiredDigest, "catalog_rejected"))
 	}
 	fail()
 	input := EvolutionRetryInput{"retry-once", 1}

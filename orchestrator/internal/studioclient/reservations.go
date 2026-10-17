@@ -1,4 +1,4 @@
-// Package evaluationclient implements the Studio activation participant transport.
+// Package evolutionspaceclient implements the Studio activation participant transport.
 package studioclient
 
 import (

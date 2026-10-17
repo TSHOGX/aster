@@ -19,7 +19,7 @@ func TestGenerationAuthorityIsServiceSpecificAndPrivate(t *testing.T) {
 	defer store.Close()
 	secret := strings.Repeat("s", 32)
 	t.Setenv("GENERATION_TEST_SECRET", secret)
-	config := &identityconfig.Config{Issuer: "https://app", Listen: "127.0.0.1:8083", Clients: []identityconfig.Client{{ID: "studio", Callback: "https://app/volumes-studio/auth/callback", SecretEnvs: []string{"GENERATION_TEST_SECRET"}}, {ID: "evaluation-space", Callback: "https://app/evaluation-space/auth/callback", SecretEnvs: []string{"GENERATION_TEST_SECRET"}}}}
+	config := &identityconfig.Config{Issuer: "https://app", Listen: "127.0.0.1:8083", Clients: []identityconfig.Client{{ID: "studio", Callback: "https://app/volumes-studio/auth/callback", SecretEnvs: []string{"GENERATION_TEST_SECRET"}}, {ID: "evolution-space", Callback: "https://app/evolution-space/auth/callback", SecretEnvs: []string{"GENERATION_TEST_SECRET"}}}}
 	must(t, config.CheckCredentials())
 	auth := NewAuthentication(store, Config{Identity: config})
 	call := func(handler http.Handler, action, client, password, cookie, origin string) int {
@@ -34,7 +34,7 @@ func TestGenerationAuthorityIsServiceSpecificAndPrivate(t *testing.T) {
 	}
 	for _, action := range []string{"cancel-admission", "admit", "observe", "authority", "bind-result", "settle", "result-authority"} {
 		private := auth.IdentityServiceHandler()
-		for _, bad := range [][4]string{{"producer", secret, "", ""}, {"evaluation-space", "wrong", "", ""}, {"evaluation-space", secret, "ambient=x", ""}, {"evaluation-space", secret, "", "https://app"}} {
+		for _, bad := range [][4]string{{"producer", secret, "", ""}, {"evolution-space", "wrong", "", ""}, {"evolution-space", secret, "ambient=x", ""}, {"evolution-space", secret, "", "https://app"}} {
 			code := call(private, action, bad[0], bad[1], bad[2], bad[3])
 			if code != 401 && code != 403 {
 				t.Fatal(action, code)
@@ -45,7 +45,7 @@ func TestGenerationAuthorityIsServiceSpecificAndPrivate(t *testing.T) {
 				t.Fatal("Studio escalated to producer", action, code)
 			}
 		}
-		if code := call(auth.Handler(http.NotFoundHandler()), action, "evaluation-space", secret, "", ""); code != 404 {
+		if code := call(auth.Handler(http.NotFoundHandler()), action, "evolution-space", secret, "", ""); code != 404 {
 			t.Fatal("private route exposed", code)
 		}
 	}

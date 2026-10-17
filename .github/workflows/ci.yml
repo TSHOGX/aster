@@ -27,22 +27,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  evaluation-space:
+  evolution-space:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version-file: evaluation-space/backend/go.mod
-          cache-dependency-path: evaluation-space/backend/go.sum
-      - run: scripts/check.sh evaluation-space
+          go-version-file: evolution-space/backend/go.mod
+          cache-dependency-path: evolution-space/backend/go.sum
+      - run: scripts/check.sh evolution-space
       - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
       - run: npm ci
-        working-directory: evaluation-space/frontend
-      - run: scripts/check.sh evaluation-frontend
+        working-directory: evolution-space/frontend
+      - run: scripts/check.sh evolution-space-frontend
 
   studio:
     runs-on: ubuntu-24.04
@@ -101,9 +101,9 @@ jobs:
         working-directory: volumes-studio/frontend
       - run: npm --prefix volumes-studio/frontend run build
       - run: scripts/check.sh studio-browser
-      - run: npm ci --prefix evaluation-space/frontend
-      - run: npm --prefix evaluation-space/frontend run build
-      - run: scripts/check.sh evaluation-browser
+      - run: npm ci --prefix evolution-space/frontend
+      - run: npm --prefix evolution-space/frontend run build
+      - run: scripts/check.sh evolution-space-browser
       - name: Install admin evolution browser gate dependencies
         run: npm ci --prefix admin-frontend
       - name: Native evolution authoring and activation browser gates
@@ -114,10 +114,10 @@ jobs:
         with:
           name: evolution-browser-failure-${{ github.run_attempt }}
           path: |
-            evaluation-space/frontend/test-results/numbered-retry
-            evaluation-space/frontend/test-results/dynamic
-            evaluation-space/frontend/test-results/tools
-            evaluation-space/frontend/test-results/retention
+            evolution-space/frontend/test-results/numbered-retry
+            evolution-space/frontend/test-results/dynamic
+            evolution-space/frontend/test-results/tools
+            evolution-space/frontend/test-results/retention
             admin-frontend/test-results/evolution-live
             admin-frontend/test-results/studio-permissions
             volumes-studio/frontend/test-results/evaluator-replacement

@@ -79,7 +79,7 @@ func TestStudioReceiptSubstitutionRejected(t *testing.T) {
 				receipt := evolution.ActivationReceipt{Participant: "studio", OperationID: p.OperationID, ConfigurationDigest: p.Digest, Generation: 1, State: "reserved"}
 				switch field {
 				case "participant":
-					receipt.Participant = "evaluation-space"
+					receipt.Participant = "evolution-space"
 				case "operation":
 					receipt.OperationID = "other"
 				case "digest":

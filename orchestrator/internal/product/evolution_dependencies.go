@@ -81,7 +81,7 @@ func (w *EvolutionDispatcher) resolveDependencies(ctx context.Context) (resultEr
 		return err
 	}
 	outputs := map[string]evolution.GenerationOutput{}
-	transport, ok := w.Evaluation.(generationOutputTransport)
+	transport, ok := w.EvolutionSpace.(generationOutputTransport)
 	if !ok {
 		return fmt.Errorf("generation output transport required")
 	}

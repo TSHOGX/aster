@@ -28,8 +28,8 @@ func ApplicationFor(id string) (Application, bool) {
 	switch id {
 	case "studio":
 		return Application{"/volumes-studio/", "volumes_studio.access"}, true
-	case "evaluation-space":
-		return Application{"/evaluation-space/", "evaluation_space.access"}, true
+	case "evolution-space":
+		return Application{"/evolution-space/", "evolution_space.access"}, true
 	default:
 		return Application{}, false
 	}
@@ -160,7 +160,7 @@ func (c *Client) AuthorizeURL(state, challenge string) string {
 func (c *Client) Application() Application                         { app, _ := ApplicationFor(c.config.ClientID); return app }
 func (c *Client) Do(request *http.Request) (*http.Response, error) { return c.http.Do(request) }
 func LocalReturn(prefix, value string) (string, error) {
-	if prefix != "/volumes-studio/" && prefix != "/evaluation-space/" {
+	if prefix != "/volumes-studio/" && prefix != "/evolution-space/" {
 		return "", ErrUnauthorized
 	}
 	if value == "" {

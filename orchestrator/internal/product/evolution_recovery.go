@@ -9,7 +9,7 @@ import (
 // accepted configuration. Failure codes are bounded identifiers, not raw secrets
 // or remote error payloads.
 func (s *Store) FailEvolutionParticipant(ctx context.Context, token, operation, participant, digest, code string) error {
-	if !validID(code) || (participant != "studio" && participant != "evaluation-space") {
+	if !validID(code) || (participant != "studio" && participant != "evolution-space") {
 		return ErrInvalid
 	}
 	return s.write(ctx, func(tx *sql.Tx) error {

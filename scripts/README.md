@@ -2,8 +2,8 @@
 
 Use the operator guides for commands that prepare and inspect deployment artifacts. `candidate.py build` exports committed source; `verify` checks its inventory and `inspect` reports deployment identity. These commands do not activate services.
 
-`rebuild.py` assembles application, Studio, Evaluation Space, the pinned Khora engine and fresh Minimal/Work guest
-runtimes from one committed revision in an isolated checkout. Evaluation Space's
+`rebuild.py` assembles application, Studio, Evolution Space, the pinned Khora engine and fresh Minimal/Work guest
+runtimes from one committed revision in an isolated checkout. Evolution Space's
 backend, browser frontend and offline maintenance commands are recorded in the
 same deployment manifest and checked against the source commit. `deploy.py` validates
 that complete build against a prepared local host and supervisor plan. Activation
@@ -37,20 +37,20 @@ must already exist. The script reads `/etc/aster/owner.env`, `gateway.env` and
 `NAME=value` assignments, optionally quoted; shell expansion is not performed.
 
 Provide one `aster-NAME.service` template for each of `web`, `gateway`,
-`application`, `studio`, `evaluation-space`, `frontend`, `admin-frontend`,
-`evaluation-frontend`, `studio-frontend`, `studio-tls`, `evaluation-tls`,
+`application`, `studio`, `evolution-space`, `frontend`, `admin-frontend`,
+`evolution-space-frontend`, `studio-frontend`, `studio-tls`, `evolution-space-tls`,
 `engine-tls` and `engine`. Supported replacements are
-`@APPLICATION@`, `@STUDIO@`, `@EVALUATION_SPACE@`, `@ENGINE@`, `@RUNTIME@`,
+`@APPLICATION@`, `@STUDIO@`, `@EVOLUTION_SPACE@`, `@ENGINE@`, `@RUNTIME@`,
 `@WORK_RUNTIME@` and `@CONFIG@`.
 Templates must select the prepared namespace, state paths and the built runtime
 as the two engine templates named by `template` and `work_template` in the
-application configuration. The `evaluation-space` unit must run
-`@EVALUATION_SPACE@/bin/evaluation-space` with the private worker listener and
-loopback browser listener `127.0.0.1:18485`; `evaluation-frontend` must run the
-packaged `frontend/server.js`. `evaluation-tls` must expose that browser listener
+application configuration. The `evolution-space` unit must run
+`@EVOLUTION_SPACE@/bin/evolution-space` with the private worker listener and
+loopback browser listener `127.0.0.1:18485`; `evolution-space-frontend` must run the
+packaged `frontend/server.js`. `evolution-space-tls` must expose that browser listener
 on the private TLS address used by the front door (the reference port is `18447`).
-The `web` command must include `-evaluation-space` and route only the
-`/evaluation-space/` prefix to that TLS endpoint. `--os-base` and `--work-os-base`
+The `web` command must include `-evolution-space` and route only the
+`/evolution-space/` prefix to that TLS endpoint. `--os-base` and `--work-os-base`
 must match their family markers. The build also prepares `content/agent-config` and
 `content/shared-assets`; review the model settings and content paths before use. Keep both the
 build directory and unit templates outside all reset directories.

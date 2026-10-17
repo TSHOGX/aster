@@ -48,7 +48,7 @@ func TestPrivateRunResultAuthenticatesBeforeAuthorityAndFailsClosed(t *testing.T
 		api.Handler().ServeHTTP(response, request)
 		return response
 	}
-	for _, bad := range [][4]string{{"producer", secret, "", ""}, {"evaluation-space", "wrong", "", ""}, {"evaluation-space", secret, "https://app", ""}, {"evaluation-space", secret, "", "ambient=x"}} {
+	for _, bad := range [][4]string{{"producer", secret, "", ""}, {"evolution-space", "wrong", "", ""}, {"evolution-space", secret, "https://app", ""}, {"evolution-space", secret, "", "ambient=x"}} {
 		if response := call(bad[0], bad[1], bad[2], bad[3], raw); response.Code != 403 {
 			t.Fatal(response.Code)
 		}
@@ -56,16 +56,16 @@ func TestPrivateRunResultAuthenticatesBeforeAuthorityAndFailsClosed(t *testing.T
 	if authority.calls != 0 {
 		t.Fatal("unauthenticated caller reached authority")
 	}
-	response := call("evaluation-space", secret, "", "", raw)
+	response := call("evolution-space", secret, "", "", raw)
 	if response.Code != 404 || authority.calls != 1 {
 		t.Fatal(response.Code, response.Body.String())
 	}
 	authority.deny = true
-	if response := call("evaluation-space", secret, "", "", raw); response.Code != 403 {
+	if response := call("evolution-space", secret, "", "", raw); response.Code != 403 {
 		t.Fatal(response.Code)
 	}
 	duplicate := append(bytes.TrimSuffix(raw, []byte("}")), []byte(`,"fence":1}`)...)
-	if response := call("evaluation-space", secret, "", "", duplicate); response.Code != 400 {
+	if response := call("evolution-space", secret, "", "", duplicate); response.Code != 400 {
 		t.Fatal("duplicate scope accepted", response.Code)
 	}
 }

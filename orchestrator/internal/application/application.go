@@ -15,7 +15,7 @@ import (
 
 	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/edge"
-	"harness-platform/orchestrator/internal/evaluationclient"
+	"harness-platform/orchestrator/internal/evolutionspaceclient"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/producthttp"
 	"harness-platform/orchestrator/internal/sandbox/khora"
@@ -127,12 +127,12 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	recovery := &product.AgentRecovery{Store: store, Lifecycle: lifecycle, Backend: backend}
 	retirement := &product.ChildRetirement{Store: store, Lifecycle: lifecycle, Backend: backend, Captures: captures, Shares: shares}
 	app.Workers = &product.Workers{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Captures: captures, Recovery: recovery, Retirement: retirement, Titles: cfg.titleGenerator(), IdleAfter: time.Duration(cfg.Limits.IdleAfter), IdleAgentAfter: time.Duration(cfg.Limits.IdleAgentAfter), Interval: time.Duration(cfg.Limits.Interval), Report: func(kind string, err error) { logger.Warn("application work pending", "scope", kind, "error", err) }}
-	if cfg.EvaluationSpace != nil {
-		client, err := evaluationclient.New(cfg.EvaluationSpace.Endpoint, os.Getenv(cfg.EvaluationSpace.CredentialEnv))
+	if cfg.EvolutionSpace != nil {
+		client, err := evolutionspaceclient.New(cfg.EvolutionSpace.Endpoint, os.Getenv(cfg.EvolutionSpace.CredentialEnv))
 		if err != nil {
 			return app, err
 		}
-		app.Workers.Evolution = &product.EvolutionWorker{Store: store, Evaluation: client}
+		app.Workers.Evolution = &product.EvolutionWorker{Store: store, EvolutionSpace: client}
 	}
 	if cfg.StudioParticipant != nil {
 		if app.Workers.Evolution == nil {
@@ -144,8 +144,8 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 		}
 		app.Workers.Evolution.Studio = client
 	}
-	if cfg.Identity != nil && app.Workers.Evolution != nil && app.Workers.Evolution.Evaluation != nil && app.Workers.Evolution.Studio != nil {
-		app.Workers.EvolutionDispatch = &product.EvolutionDispatcher{Store: store, Evaluation: app.Workers.Evolution.Evaluation, Studio: app.Workers.Evolution.Studio, Issuer: cfg.Identity.Issuer}
+	if cfg.Identity != nil && app.Workers.Evolution != nil && app.Workers.Evolution.EvolutionSpace != nil && app.Workers.Evolution.Studio != nil {
+		app.Workers.EvolutionDispatch = &product.EvolutionDispatcher{Store: store, EvolutionSpace: app.Workers.Evolution.EvolutionSpace, Studio: app.Workers.Evolution.Studio, Issuer: cfg.Identity.Issuer}
 	}
 	transportConfig := producthttp.Config{TrustForwardedHost: true, Identity: cfg.Identity}
 	if cfg.HTTPMetrics {
@@ -157,8 +157,8 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	if app.Workers.Evolution != nil && app.Workers.Evolution.Studio != nil {
 		app.Auth.EvolutionOutputs = app.Workers.Evolution.Studio
 	}
-	if app.Workers.Evolution != nil && app.Workers.Evolution.Evaluation != nil {
-		app.Auth.EvolutionCatalog = app.Workers.Evolution.Evaluation
+	if app.Workers.Evolution != nil && app.Workers.Evolution.EvolutionSpace != nil {
+		app.Auth.EvolutionCatalog = app.Workers.Evolution.EvolutionSpace
 	}
 	app.Auth.RuntimeInspector = app.Backend
 	app.Auth.ProjectInspector = app.Backend

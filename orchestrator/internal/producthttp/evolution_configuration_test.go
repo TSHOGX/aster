@@ -116,7 +116,7 @@ func TestEvolutionRecoveryHTTPScopedManagerAndOrigin(t *testing.T) {
 	pending, err := store.ActivateEvolutionConfig(ctx, manager, config.GroupID, product.EvolutionActivationInput{RequestID: "activate", Configuration: config})
 	must(t, err)
 	fail := func() {
-		must(t, store.FailEvolutionParticipant(ctx, admin, pending.OperationID, "evaluation-space", pending.DesiredDigest, "catalog_rejected"))
+		must(t, store.FailEvolutionParticipant(ctx, admin, pending.OperationID, "evolution-space", pending.DesiredDigest, "catalog_rejected"))
 	}
 	fail()
 	handler := NewAuthentication(store, Config{}).Handler(http.NotFoundHandler())

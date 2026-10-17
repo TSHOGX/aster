@@ -260,7 +260,7 @@ func (s *Store) RefreshEvaluation(ctx context.Context, a Actor, library, id stri
 		return summary, ErrInvalid
 	}
 	// Keep only the validated check evidence; sensitive report references remain
-	// in Evaluation Space behind its evidence authority.
+	// in Evolution Space behind its evidence authority.
 	assessed.Reports = nil
 	raw, _ := json.Marshal(assessed)
 	s.mu.Lock()

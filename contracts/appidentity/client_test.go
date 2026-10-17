@@ -13,12 +13,15 @@ import (
 )
 
 func TestApplicationsRejectForeignAuthority(t *testing.T) {
-	for _, id := range []string{"studio", "evaluation-space"} {
+	if _, ok := ApplicationFor("evaluation-space"); ok {
+		t.Fatal("retired application identity accepted")
+	}
+	for _, id := range []string{"studio", "evolution-space"} {
 		t.Run(id, func(t *testing.T) {
 			app, _ := ApplicationFor(id)
 			otherID := "studio"
 			if id == otherID {
-				otherID = "evaluation-space"
+				otherID = "evolution-space"
 			}
 			other, _ := ApplicationFor(otherID)
 			for _, scenario := range []string{"valid", "foreign_entitlement", "foreign_issuer", "expired", "malformed", "outage", "redirect"} {

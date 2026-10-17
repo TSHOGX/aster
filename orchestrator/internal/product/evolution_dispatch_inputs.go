@@ -149,7 +149,7 @@ func (s *Store) prepareGenerationInputs(ctx context.Context, tx *sql.Tx, actor A
 }
 
 // DispatchInputContent audits every sensitive export with the original actor's
-// current evidence permission. Static artifacts already provisioned in Evaluation
+// current evidence permission. Static artifacts already provisioned in Evolution
 // Space have no local payload; their exact grant is still checked at admission.
 func (s *Store) dispatchInputContent(ctx context.Context, assignment evolution.GenerationAssignment, ref evolution.ArtifactRef) ([]byte, bool, error) {
 	var body []byte

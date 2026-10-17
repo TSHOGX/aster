@@ -65,7 +65,7 @@ test("published catalog drives recoverable draft and two-participant activation"
   await expect.poll(async () => (await (await page.request.get("/api/admin/groups/standard-users/optimization")).json()).state).toBe("active");
   await page.getByRole("button", { name: tr("Reload server status"), exact: true }).click();
   const lifecycle = page.locator("section.panel").filter({ has: page.getByRole("heading", { name: tr("Configuration lifecycle"), exact: true }) });
-  await expect(lifecycle).toContainText("studio"); await expect(lifecycle).toContainText("evaluation-space");
+  await expect(lifecycle).toContainText("studio"); await expect(lifecycle).toContainText("evolution-space");
   const state = await (await page.request.get("/api/admin/groups/standard-users/optimization")).json(); expect(state.auto_enabled).toBe(false);
   const revision = await (await page.request.get(`/api/admin/groups/standard-users/optimization/revisions/${state.active_revision}`)).json();
   expect(revision.configuration.bindings).toHaveLength(2); expect(revision.configuration.bindings[0].inputs.corpus.sources).toEqual(["source"]);

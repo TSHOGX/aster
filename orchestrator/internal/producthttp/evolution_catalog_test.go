@@ -3,7 +3,7 @@ package producthttp
 import (
 	"aster/contracts/evolution"
 	"context"
-	"harness-platform/orchestrator/internal/evaluationclient"
+	"harness-platform/orchestrator/internal/evolutionspaceclient"
 	"harness-platform/orchestrator/internal/product"
 	"net/http"
 	"net/http/httptest"
@@ -16,14 +16,14 @@ type browserCatalog struct {
 	onRead func()
 }
 
-func (c *browserCatalog) Catalog(context.Context, string, string, int64, int) (evaluationclient.CatalogPage, error) {
+func (c *browserCatalog) Catalog(context.Context, string, string, int64, int) (evolutionspaceclient.CatalogPage, error) {
 	c.calls++
 	if c.onRead != nil {
 		c.onRead()
 	}
-	return evaluationclient.CatalogPage{Revisions: []evolution.Revision{}}, nil
+	return evolutionspaceclient.CatalogPage{Revisions: []evolution.Revision{}}, nil
 }
-func (c *browserCatalog) CatalogDefinition(context.Context, string, evolution.Revision) (evaluationclient.CatalogEntry, error) {
+func (c *browserCatalog) CatalogDefinition(context.Context, string, evolution.Revision) (evolutionspaceclient.CatalogEntry, error) {
 	panic("unexpected definition request")
 }
 func TestBrowserCatalogRequiresCurrentGroupAuthorityBeforeAndAfterFetch(t *testing.T) {

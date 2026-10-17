@@ -86,7 +86,7 @@ func TestEvolutionDispatcherFreezesSharedBatchAndReplaysLostReply(t *testing.T) 
 	must(t, (&EvolutionTriggerWorker{Store: s}).Step(ctx))
 	bases := &dispatchBases{ref: evolution.ContentRef{LibraryID: "library", CommitID: strings.Repeat("a", 64), Profile: "authored-v1", TreeDigest: evolution.Digest([]byte("base"))}}
 	remote := &dispatchTransport{loseReply: true}
-	worker := &EvolutionDispatcher{Store: s, Studio: bases, Evaluation: remote, Issuer: "https://app"}
+	worker := &EvolutionDispatcher{Store: s, Studio: bases, EvolutionSpace: remote, Issuer: "https://app"}
 	must(t, worker.prepare(ctx))
 	frozen := dispatchAssignments(t, s)
 	if len(frozen) != 2 || frozen[0].BatchID == "" || frozen[0].BatchID != frozen[1].BatchID || !reflect.DeepEqual(frozen[0].Pins.Inputs, frozen[1].Pins.Inputs) || !reflect.DeepEqual(frozen[0].Pins.InputPorts, frozen[1].Pins.InputPorts) || frozen[0].Pins.Base != frozen[1].Pins.Base || bases.calls != 1 {
@@ -97,7 +97,7 @@ func TestEvolutionDispatcherFreezesSharedBatchAndReplaysLostReply(t *testing.T) 
 	}
 	// Restart the service worker and replay the exact assignment. New source input
 	// must remain pending while these generations are admitted or unsettled.
-	worker = &EvolutionDispatcher{Store: s, Studio: bases, Evaluation: remote, Issuer: "https://app"}
+	worker = &EvolutionDispatcher{Store: s, Studio: bases, EvolutionSpace: remote, Issuer: "https://app"}
 	for i := 0; i < 4; i++ {
 		must(t, worker.dispatch(ctx))
 	}
@@ -167,7 +167,7 @@ func TestEvolutionDispatcherPreparationAuditRollsBackAndRevocationStopsExport(t 
 	must(t, (&EvolutionTriggerWorker{Store: s}).Step(ctx))
 	bases := &dispatchBases{ref: evolution.ContentRef{LibraryID: "library", CommitID: strings.Repeat("a", 64), Profile: "authored-v1", TreeDigest: evolution.Digest(nil)}}
 	remote := &dispatchTransport{}
-	worker := &EvolutionDispatcher{Store: s, Studio: bases, Evaluation: remote, Issuer: "https://app"}
+	worker := &EvolutionDispatcher{Store: s, Studio: bases, EvolutionSpace: remote, Issuer: "https://app"}
 	_, err := s.db.Exec(`CREATE TRIGGER fail_dispatch_audit BEFORE INSERT ON audit_events WHEN NEW.action='generation.dispatch.prepared' BEGIN SELECT RAISE(ABORT,'fault'); END;`)
 	must(t, err)
 	if err = worker.prepare(ctx); err == nil {
@@ -209,7 +209,7 @@ func TestEvolutionDisableSupersedesUnadmittedButDrainsAdmittedDispatch(t *testin
 	must(t, (&EvolutionTriggerWorker{Store: s}).Step(ctx))
 	bases := &dispatchBases{ref: evolution.ContentRef{LibraryID: "library", CommitID: strings.Repeat("a", 64), Profile: "authored-v1", TreeDigest: evolution.Digest(nil)}}
 	remote := &dispatchTransport{loseReply: true}
-	worker := &EvolutionDispatcher{Store: s, Studio: bases, Evaluation: remote, Issuer: "https://app"}
+	worker := &EvolutionDispatcher{Store: s, Studio: bases, EvolutionSpace: remote, Issuer: "https://app"}
 	must(t, worker.prepare(ctx))
 	if err := worker.dispatch(ctx); err == nil {
 		t.Fatal("missing lost reply")

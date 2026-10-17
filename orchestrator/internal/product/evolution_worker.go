@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"harness-platform/orchestrator/internal/evaluationclient"
+	"harness-platform/orchestrator/internal/evolutionspaceclient"
 	"harness-platform/orchestrator/internal/studioclient"
 )
 
@@ -12,11 +12,11 @@ import (
 // One operation per step and a rotating cursor prevent an offline group from
 // starving unrelated groups. The participant transport handles uncertain replies.
 type EvolutionWorker struct {
-	Store         *Store
-	Evaluation    *evaluationclient.Client
-	Studio        *studioclient.Client
-	cursor        string
-	discardCursor string
+	Store          *Store
+	EvolutionSpace *evolutionspaceclient.Client
+	Studio         *studioclient.Client
+	cursor         string
+	discardCursor  string
 }
 
 func (w *EvolutionWorker) Step(ctx context.Context) error {
@@ -29,11 +29,11 @@ func (w *EvolutionWorker) Step(ctx context.Context) error {
 			return err
 		}
 	}
-	if w.Evaluation == nil {
+	if w.EvolutionSpace == nil {
 		return nil
 	}
 	var group, operation string
-	query := `SELECT c.group_id,c.operation_id FROM evolution_group_configs c WHERE c.state='activating' AND c.group_id>? AND (? OR NOT EXISTS(SELECT 1 FROM evolution_activation_receipts r WHERE r.operation_id=c.operation_id AND r.participant='evaluation-space' AND r.state='accepted' AND r.config_digest=c.desired_digest)) ORDER BY c.group_id LIMIT 1`
+	query := `SELECT c.group_id,c.operation_id FROM evolution_group_configs c WHERE c.state='activating' AND c.group_id>? AND (? OR NOT EXISTS(SELECT 1 FROM evolution_activation_receipts r WHERE r.operation_id=c.operation_id AND r.participant='evolution-space' AND r.state='accepted' AND r.config_digest=c.desired_digest)) ORDER BY c.group_id LIMIT 1`
 	err := w.Store.reader.QueryRowContext(ctx, query, w.cursor, w.Studio != nil).Scan(&group, &operation)
 	if errors.Is(err, sql.ErrNoRows) {
 		w.cursor = ""
@@ -64,10 +64,10 @@ func (w *EvolutionWorker) Step(ctx context.Context) error {
 			return err
 		}
 	}
-	receipt, err := w.Evaluation.Reconcile(ctx, projection)
-	if errors.Is(err, evaluationclient.ErrRejected) {
+	receipt, err := w.EvolutionSpace.Reconcile(ctx, projection)
+	if errors.Is(err, evolutionspaceclient.ErrRejected) {
 		return w.Store.write(ctx, func(tx *sql.Tx) error {
-			return w.Store.failEvolutionParticipant(ctx, tx, "service:evolution", operation, "evaluation-space", projection.Digest, "catalog_rejected")
+			return w.Store.failEvolutionParticipant(ctx, tx, "service:evolution", operation, "evolution-space", projection.Digest, "catalog_rejected")
 		})
 	}
 	if err != nil {

@@ -90,7 +90,7 @@ func TestBackfillPreviewFreezesEvidenceAndRunsWithAutomationDisabled(t *testing.
 	defer s.Close()
 	bases := &dispatchBases{ref: evolution.ContentRef{LibraryID: "library", CommitID: strings.Repeat("a", 64), Profile: "authored-v1", TreeDigest: evolution.Digest(nil)}}
 	remote := &dispatchTransport{loseReply: true}
-	worker := &EvolutionDispatcher{Store: s, Studio: bases, Evaluation: remote, Issuer: "https://app"}
+	worker := &EvolutionDispatcher{Store: s, Studio: bases, EvolutionSpace: remote, Issuer: "https://app"}
 	must(t, worker.prepareBackfill(ctx))
 	plans := dispatchAssignments(t, s)
 	if len(plans) != 1 || plans[0].Automatic || plans[0].RunID != preview.Runs["skills"] || plans[0].Budget != input.Budgets["skills"] {
@@ -235,7 +235,7 @@ func TestBackfillDependencyBatchUsesPreviewBudgetAndSurvivesDisable(t *testing.T
 	must(t, err)
 	bases := &dispatchBases{ref: evolution.ContentRef{LibraryID: "library", CommitID: strings.Repeat("a", 64), Profile: "authored-v1", TreeDigest: evolution.Digest(nil)}}
 	remote := &dependencyTransport{store: s}
-	worker := &EvolutionDispatcher{Store: s, Studio: bases, Evaluation: remote, Issuer: "https://app"}
+	worker := &EvolutionDispatcher{Store: s, Studio: bases, EvolutionSpace: remote, Issuer: "https://app"}
 	must(t, worker.prepareBackfill(ctx))
 	_, err = s.DisableEvolution(ctx, token, "fixture-users", DisableEvolutionInput{RequestID: "off", ExpectedRevision: 1})
 	must(t, err)
@@ -280,7 +280,7 @@ func TestBackfillPreparationAuditRollbackAndConfigurationReplacement(t *testing.
 	_, err = s.CommandEvolutionBackfill(ctx, token, "fixture-users", preview.ID, "execute", BackfillCommand{RequestID: "execute", Digest: preview.Digest})
 	must(t, err)
 	bases := &dispatchBases{ref: evolution.ContentRef{LibraryID: "library", CommitID: strings.Repeat("a", 64), Profile: "authored-v1", TreeDigest: evolution.Digest(nil)}}
-	worker := &EvolutionDispatcher{Store: s, Studio: bases, Evaluation: &dispatchTransport{}, Issuer: "https://app"}
+	worker := &EvolutionDispatcher{Store: s, Studio: bases, EvolutionSpace: &dispatchTransport{}, Issuer: "https://app"}
 	_, err = s.db.Exec(`CREATE TRIGGER fail_backfill_prepare BEFORE INSERT ON audit_events WHEN NEW.action='evolution.backfill.prepared' BEGIN SELECT RAISE(ABORT,'fault'); END;`)
 	must(t, err)
 	if err = worker.prepareBackfill(ctx); err == nil {

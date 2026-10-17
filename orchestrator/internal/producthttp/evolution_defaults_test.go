@@ -4,7 +4,7 @@ import (
 	"aster/contracts/evolution"
 	"context"
 	"encoding/json"
-	"harness-platform/orchestrator/internal/evaluationclient"
+	"harness-platform/orchestrator/internal/evolutionspaceclient"
 	"harness-platform/orchestrator/internal/product"
 	"net/http"
 	"net/http/httptest"
@@ -18,12 +18,12 @@ type defaultCatalog struct {
 	template evolution.Template
 }
 
-func (c *defaultCatalog) CatalogDefinition(_ context.Context, kind string, ref evolution.Revision) (evaluationclient.CatalogEntry, error) {
+func (c *defaultCatalog) CatalogDefinition(_ context.Context, kind string, ref evolution.Revision) (evolutionspaceclient.CatalogEntry, error) {
 	c.calls++
 	if c.onRead != nil {
 		c.onRead()
 	}
-	return evaluationclient.CatalogEntry{Ref: ref, Definition: c.template}, nil
+	return evolutionspaceclient.CatalogEntry{Ref: ref, Definition: c.template}, nil
 }
 func TestEvolutionTemplateDefaultsVerifyPinsRecheckAuthorityAndReplayOffline(t *testing.T) {
 	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "defaults.db"))

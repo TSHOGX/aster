@@ -7,7 +7,7 @@ func TestEvolutionEventsPaginationAndReplay(t *testing.T) {
 	token := adminTestToken(t, s, admin)
 	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
 	must(t, err)
-	must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evaluation-space", pending.DesiredDigest, "catalog_rejected"))
+	must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evolution-space", pending.DesiredDigest, "catalog_rejected"))
 	input := EvolutionRetryInput{"retry", 1}
 	must(t, s.RetryEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, input))
 	must(t, s.RetryEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, input))

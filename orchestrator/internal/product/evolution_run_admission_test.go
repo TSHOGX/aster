@@ -26,7 +26,7 @@ func TestCentralRunAdmissionRequiresActiveBindingAndSeparatesAutomatic(t *testin
 	if allowed {
 		t.Fatal("pending projection authorized run")
 	}
-	for _, p := range []string{"studio", "evaluation-space"} {
+	for _, p := range []string{"studio", "evolution-space"} {
 		must(t, acceptEvolutionFixture(s, ctx, token, pending.OperationID, p, pending.DesiredDigest))
 	}
 	_, err = s.SettleEvolutionActivation(ctx, token, pending.OperationID)

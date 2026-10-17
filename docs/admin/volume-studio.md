@@ -183,7 +183,7 @@ merge attaches to the original integration without changing main. Required check
 need passing evidence before approval and merge. Adopted group output policies also apply
 to manual changes, deletes and renames in those paths. Tightening a policy requires
 repreparing; changing a binding to off does not erase checks already captured by an
-open branch's preparation. When your operator has connected Evaluation Space, set the evaluation token, cost
+open branch's preparation. When your operator has connected Evolution Space, set the evaluation token, cost
 and time limits and choose **Request evaluation**. The group ceiling and exact
 dataset/evaluator grant must permit the request. **Retry evaluation admission**
 resumes an uncertain request with the same job identity; **Refresh evaluation**
@@ -192,7 +192,7 @@ uncertain spending until the provider reconciles. A job canceled before dispatch
 records zero spending explicitly. After cancellation settles, **Request evaluation**
 creates a new attempt without changing the canceled history. Passing evidence enables approval only for the exact prepared
 result. Missing, failed, canceled, inconclusive or revoked evidence leaves required
-checks blocked. Detailed held-out reports remain in Evaluation Space; Studio shows
+checks blocked. Detailed held-out reports remain in Evolution Space; Studio shows
 check status without exposing dataset contents.
 
 Main advances only after acceptance. Reviewers can also request changes or reject

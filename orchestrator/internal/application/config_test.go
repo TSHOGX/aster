@@ -207,3 +207,35 @@ func TestConfigurationRejectsRetiredAuthentication(t *testing.T) {
 		}
 	}
 }
+
+func TestEvolutionSpaceConfigurationHasNoRetiredAlias(t *testing.T) {
+	cfg, path := configurationFixture(t)
+	cfg.EvolutionSpace = &ParticipantConnectionConfig{Endpoint: "https://space.example.com", CredentialEnv: "EVOLUTION_SPACE_CENTRAL_SECRET"}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadConfig(path)
+	if err != nil || loaded.EvolutionSpace == nil || *loaded.EvolutionSpace != *cfg.EvolutionSpace {
+		t.Fatal("new application configuration unavailable", err)
+	}
+	var document map[string]any
+	if err = json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	document["evaluation_space"] = document["evolution_space"]
+	delete(document, "evolution_space")
+	raw, err = json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = LoadConfig(path); err == nil {
+		t.Fatal("retired application configuration accepted")
+	}
+}

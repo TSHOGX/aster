@@ -90,20 +90,20 @@ func TestStudioEvaluationInputRestrictsExactAssignedSnapshot(t *testing.T) {
 	if w := call("producer", secret, "candidate", "note", ""); w.Code != 403 || resolver.calls != 0 {
 		t.Fatal("borrowed authority", w.Code)
 	}
-	if w := call("evaluation-space", secret, "candidate", "note", "https://app"); w.Code != 403 || resolver.calls != 0 {
+	if w := call("evolution-space", secret, "candidate", "note", "https://app"); w.Code != 403 || resolver.calls != 0 {
 		t.Fatal("ambient authority", w.Code)
 	}
-	if w := call("evaluation-space", secret, "candidate", "note", ""); w.Code != 200 || w.Body.String() != "exact candidate" || w.Header().Get("X-Content-Digest") == "" {
+	if w := call("evolution-space", secret, "candidate", "note", ""); w.Code != 200 || w.Body.String() != "exact candidate" || w.Header().Get("X-Content-Digest") == "" {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	if w := call("evaluation-space", secret, "candidate", "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), commit.CommitID) {
+	if w := call("evolution-space", secret, "candidate", "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), commit.CommitID) {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	if w := call("evaluation-space", secret, "reference", "note", ""); w.Code != 404 {
+	if w := call("evolution-space", secret, "reference", "note", ""); w.Code != 404 {
 		t.Fatal("invented reference", w.Code)
 	}
 	resolver.denied = true
-	if w := call("evaluation-space", secret, "candidate", "note", ""); w.Code != 403 {
+	if w := call("evolution-space", secret, "candidate", "note", ""); w.Code != 403 {
 		t.Fatal("revoked source", w.Code)
 	}
 }

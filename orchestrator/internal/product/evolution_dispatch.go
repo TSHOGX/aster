@@ -10,7 +10,7 @@ import (
 
 	"aster/contracts/evolution"
 	"github.com/google/uuid"
-	"harness-platform/orchestrator/internal/evaluationclient"
+	"harness-platform/orchestrator/internal/evolutionspaceclient"
 	"harness-platform/orchestrator/internal/studioclient"
 )
 
@@ -23,7 +23,7 @@ type EvolutionBaseTransport interface {
 }
 type EvolutionDispatcher struct {
 	Store                         *Store
-	Evaluation                    EvolutionGenerationTransport
+	EvolutionSpace                EvolutionGenerationTransport
 	Studio                        EvolutionBaseTransport
 	Issuer                        string
 	prepareCursor, dispatchCursor string
@@ -32,7 +32,7 @@ type EvolutionDispatcher struct {
 }
 
 func (w *EvolutionDispatcher) Step(ctx context.Context) error {
-	if w.Store == nil || w.Evaluation == nil || w.Studio == nil || w.Issuer == "" {
+	if w.Store == nil || w.EvolutionSpace == nil || w.Studio == nil || w.Issuer == "" {
 		return nil
 	}
 	// Preparation and replay each get a bounded opportunity on every tick.
@@ -64,7 +64,7 @@ func (w *EvolutionDispatcher) prepare(ctx context.Context) error {
 	}
 	return w.Store.freezeEvolutionBatch(ctx, p, bases, w.Issuer)
 }
-func (s *Store) freezeEvolutionBatch(ctx context.Context, p evaluationclient.Projection, bases map[string]evolution.ContentRef, issuer string) error {
+func (s *Store) freezeEvolutionBatch(ctx context.Context, p evolutionspaceclient.Projection, bases map[string]evolution.ContentRef, issuer string) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
 		var active int
 		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM evolution_group_configs WHERE group_id=? AND operation_id=? AND state='active' AND auto_enabled=1 AND active_revision=?", p.Configuration.GroupID, p.OperationID, p.Configuration.Revision).Scan(&active); err != nil {
@@ -245,12 +245,12 @@ func (w *EvolutionDispatcher) dispatchAssignment(ctx context.Context, a evolutio
 			return err
 		}
 		if found {
-			if err = w.Evaluation.SealGenerationInput(ctx, ref, body); err != nil {
+			if err = w.EvolutionSpace.SealGenerationInput(ctx, ref, body); err != nil {
 				return err
 			}
 		}
 	}
-	run, err := w.Evaluation.AdmitGeneration(ctx, a)
+	run, err := w.EvolutionSpace.AdmitGeneration(ctx, a)
 	if err != nil {
 		return err
 	}

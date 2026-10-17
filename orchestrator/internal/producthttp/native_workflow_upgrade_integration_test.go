@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"aster/contracts/evolution"
-	"harness-platform/orchestrator/internal/evaluationclient"
+	"harness-platform/orchestrator/internal/evolutionspaceclient"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/studioclient"
 )
@@ -25,7 +25,7 @@ type nativeWorkflowUpgrade struct {
 	Repository                      string
 	Store                           *product.Store
 	Token, Issuer, Actor, SourceRun string
-	Evaluation                      *evaluationclient.Client
+	EvolutionSpace                  *evolutionspaceclient.Client
 	Restart                         func()
 	Studio                          *studioclient.Client
 	Configuration                   evolution.Configuration
@@ -111,7 +111,7 @@ func verifyNativeWorkflowUpgrade(t *testing.T, ctx context.Context, f nativeWork
 	activate := func(request string, config evolution.Configuration) product.EvolutionGroupConfig {
 		result, err := f.Store.ActivateEvolutionConfig(ctx, f.Token, config.GroupID, product.EvolutionActivationInput{RequestID: request, ExpectedRevision: config.Revision - 1, Configuration: config})
 		must(t, err)
-		must(t, (&product.EvolutionWorker{Store: f.Store, Evaluation: f.Evaluation, Studio: f.Studio}).Step(ctx))
+		must(t, (&product.EvolutionWorker{Store: f.Store, EvolutionSpace: f.EvolutionSpace, Studio: f.Studio}).Step(ctx))
 		active, err := f.Store.EvolutionConfig(ctx, f.Token, config.GroupID)
 		must(t, err)
 		if active.State != "active" || active.ActiveRevision != config.Revision || active.ActiveDigest != result.DesiredDigest {
@@ -321,7 +321,7 @@ func runNativeEvolutionBrowser(t *testing.T, ctx context.Context, f nativeWorkfl
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		worker := &product.EvolutionWorker{Store: f.Store, Evaluation: f.Evaluation, Studio: f.Studio}
+		worker := &product.EvolutionWorker{Store: f.Store, EvolutionSpace: f.EvolutionSpace, Studio: f.Studio}
 		for {
 			if err := worker.Step(workerCtx); err != nil && !errors.Is(err, context.Canceled) {
 				t.Log("upgrade activation pending", err)

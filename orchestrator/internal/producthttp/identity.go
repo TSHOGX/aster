@@ -31,8 +31,8 @@ func (a *Authentication) IdentityServiceHandler() http.Handler {
 	mux.HandleFunc("POST /api/identity/v1/introspect", a.identityIntrospect)
 	mux.HandleFunc("POST /api/identity/v1/revoke", a.identityRevoke)
 	mux.HandleFunc("POST /api/identity/v1/studio-access", a.identityStudioAccess)
-	mux.HandleFunc("POST /api/identity/v1/evaluation-space-access", a.identityEvaluationSpaceAccess)
-	mux.HandleFunc("POST /api/identity/v1/evaluation-space-workflow-access", a.identityEvaluationSpaceWorkflowAccess)
+	mux.HandleFunc("POST /api/identity/v1/evolution-space-access", a.identityEvolutionSpaceAccess)
+	mux.HandleFunc("POST /api/identity/v1/evolution-space-workflow-access", a.identityEvolutionSpaceWorkflowAccess)
 	mux.HandleFunc("POST /api/identity/v1/projection-authority", a.identityProjectionAuthority)
 	mux.HandleFunc("POST /api/identity/v1/catalog-authority", a.identityCatalogAuthority)
 	mux.HandleFunc("POST /api/identity/v1/studio-output-reader", a.identityOutputReader)
@@ -45,40 +45,40 @@ func (a *Authentication) IdentityServiceHandler() http.Handler {
 	mux.HandleFunc("POST /api/identity/v1/studio-participant-authority", a.identityStudioParticipantAuthority)
 	return mux
 }
-func (a *Authentication) identityEvaluationSpaceAccess(w http.ResponseWriter, r *http.Request) {
+func (a *Authentication) identityEvolutionSpaceAccess(w http.ResponseWriter, r *http.Request) {
 	client, ok := a.identityService(w, r)
 	if !ok {
 		return
 	}
-	if client.ID != "evaluation-space" {
+	if client.ID != "evolution-space" {
 		writeError(w, 403, "evaluation service required")
 		return
 	}
-	var input appidentity.EvaluationAccessRequest
+	var input appidentity.EvolutionSpaceAccessRequest
 	if !decode(w, r, 4096, &input) {
 		return
 	}
-	result, err := a.Store.EvaluationSpaceAccess(r.Context(), input)
+	result, err := a.Store.EvolutionSpaceAccess(r.Context(), input)
 	if err != nil {
 		fail(w, err)
 		return
 	}
 	writeJSON(w, 200, result)
 }
-func (a *Authentication) identityEvaluationSpaceWorkflowAccess(w http.ResponseWriter, r *http.Request) {
+func (a *Authentication) identityEvolutionSpaceWorkflowAccess(w http.ResponseWriter, r *http.Request) {
 	client, ok := a.identityService(w, r)
 	if !ok {
 		return
 	}
-	if client.ID != "evaluation-space" {
+	if client.ID != "evolution-space" {
 		writeError(w, 403, "evaluation service required")
 		return
 	}
-	var input appidentity.EvaluationWorkflowAccessRequest
+	var input appidentity.EvolutionSpaceWorkflowAccessRequest
 	if !decode(w, r, 4096, &input) {
 		return
 	}
-	result, err := a.Store.EvaluationSpaceWorkflowAccess(r.Context(), input)
+	result, err := a.Store.EvolutionSpaceWorkflowAccess(r.Context(), input)
 	if err != nil {
 		fail(w, err)
 		return
@@ -244,7 +244,7 @@ func (a *Authentication) identityProjectionAuthority(w http.ResponseWriter, r *h
 	if !ok {
 		return
 	}
-	if client.ID != "evaluation-space" {
+	if client.ID != "evolution-space" {
 		writeError(w, 403, "evaluation service required")
 		return
 	}
@@ -289,7 +289,7 @@ func (a *Authentication) identityRunAdmissionAuthority(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
-	if client.ID != "evaluation-space" {
+	if client.ID != "evolution-space" {
 		writeError(w, 403, "evaluation service required")
 		return
 	}
@@ -310,7 +310,7 @@ func (a *Authentication) identityCatalogAuthority(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	if client.ID != "evaluation-space" {
+	if client.ID != "evolution-space" {
 		writeError(w, 403, "evaluation service required")
 		return
 	}

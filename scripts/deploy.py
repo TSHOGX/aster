@@ -17,9 +17,9 @@ import candidate
 
 STATE_ROOTS = (Path("/var/lib/aster"), Path("/var/lib/aster-studio"), Path("/srv/aster/engine"))
 
-SERVICES = ("web", "gateway", "application", "studio", "evaluation-space", "frontend",
-            "admin-frontend", "evaluation-frontend", "studio-frontend", "studio-tls",
-            "evaluation-tls", "engine-tls", "engine")
+SERVICES = ("web", "gateway", "application", "studio", "evolution-space", "frontend",
+            "admin-frontend", "evolution-space-frontend", "studio-frontend", "studio-tls",
+            "evolution-space-tls", "engine-tls", "engine")
 
 
 def run(args, **kwargs):
@@ -34,15 +34,15 @@ def validate(build, plan):
     app = candidate.verify(build / "application")
     run(["python3", Path(__file__).resolve().parents[1] / "volumes-studio/scripts/release.py",
          "verify", build / "studio"])
-    evaluation_release = Path(__file__).resolve().parents[1] / "evaluation-space/scripts/release.py"
-    run(["python3", evaluation_release, "verify", build / "evaluation-space"])
+    evolution_space_release = Path(__file__).resolve().parents[1] / "evolution-space/scripts/release.py"
+    run(["python3", evolution_space_release, "verify", build / "evolution-space"])
     studio = json.loads((build / "studio/studio-release.json").read_text())
-    evaluation_manifest = build / "evaluation-space/evaluation-space-release.json"
-    evaluation = json.loads(evaluation_manifest.read_text())
-    if app["commit"] != studio["source_commit"] or app["commit"] != evaluation["source_commit"] or app["commit"] != report["source_commit"]:
+    evolution_space_manifest = build / "evolution-space/evolution-space-release.json"
+    evolution_space = json.loads(evolution_space_manifest.read_text())
+    if app["commit"] != studio["source_commit"] or app["commit"] != evolution_space["source_commit"] or app["commit"] != report["source_commit"]:
         raise ValueError("mixed source revisions")
-    if hashlib.sha256(evaluation_manifest.read_bytes()).hexdigest() != report["evaluation_space_manifest_sha256"]:
-        raise ValueError("Evaluation Space release manifest changed")
+    if hashlib.sha256(evolution_space_manifest.read_bytes()).hexdigest() != report["evolution_space_manifest_sha256"]:
+        raise ValueError("Evolution Space release manifest changed")
     for name, key in (("bin/khora", "engine_sha256"), ("runtime.manifest.json", "runtime_manifest_sha256"),
                       ("bin/runtime-verify", "runtime_verifier_sha256")):
         if hashlib.sha256((build / name).read_bytes()).hexdigest() != report[key]:
@@ -86,12 +86,12 @@ def validate(build, plan):
         raise ValueError("invalid network namespace")
     if config.get("work_template", {}).get("manifest") != str(work_manifest) or config["work_template"].get("digest") != work_digest:
         raise ValueError("configuration must select the newly built Work release")
-    evaluation_config = config.get("evaluation_space")
-    if not isinstance(evaluation_config, dict) or not evaluation_config.get("endpoint") or not evaluation_config.get("credential_env"):
-        raise ValueError("configuration must select the deployed Evaluation Space endpoint and credential")
+    evolution_space_config = config.get("evolution_space")
+    if not isinstance(evolution_space_config, dict) or not evolution_space_config.get("endpoint") or not evolution_space_config.get("credential_env"):
+        raise ValueError("configuration must select the deployed Evolution Space endpoint and credential")
     templates = Path(plan["unit_templates"]).resolve()
     replacements = {"@APPLICATION@": str(build / "application"), "@STUDIO@": str(build / "studio"),
-                    "@EVALUATION_SPACE@": str(build / "evaluation-space"),
+                    "@EVOLUTION_SPACE@": str(build / "evolution-space"),
                     "@ENGINE@": str(build / "bin/khora"), "@RUNTIME@": str(build / "runtime"), "@WORK_RUNTIME@": str(build / "runtime-work"),
                     "@CONFIG@": str(config_path)}
     units = {}
@@ -103,16 +103,16 @@ def validate(build, plan):
         if re.search(r"@[A-Z_]+@", text):
             raise ValueError("unresolved supervisor placeholder: " + name)
         units[name] = text
-    if "-evaluation-space" not in units["aster-web.service"]:
-        raise ValueError("front door does not route Evaluation Space")
-    if "evaluation-space/bin/evaluation-space" not in units["aster-evaluation-space.service"]:
-        raise ValueError("Evaluation Space backend unit does not use the complete release")
-    if "evaluation-space/frontend" not in units["aster-evaluation-frontend.service"]:
-        raise ValueError("Evaluation Space frontend unit does not use the complete release")
-    if "18485" not in units["aster-evaluation-space.service"] or "browser-listen" not in units["aster-evaluation-space.service"]:
-        raise ValueError("Evaluation Space backend unit must expose its private browser gateway")
-    if "18447" not in units["aster-evaluation-tls.service"]:
-        raise ValueError("Evaluation Space TLS unit must expose the configured browser gateway")
+    if "-evolution-space" not in units["aster-web.service"]:
+        raise ValueError("front door does not route Evolution Space")
+    if "evolution-space/bin/evolution-space" not in units["aster-evolution-space.service"]:
+        raise ValueError("Evolution Space backend unit does not use the complete release")
+    if "evolution-space/frontend" not in units["aster-evolution-space-frontend.service"]:
+        raise ValueError("Evolution Space frontend unit does not use the complete release")
+    if "18485" not in units["aster-evolution-space.service"] or "browser-listen" not in units["aster-evolution-space.service"]:
+        raise ValueError("Evolution Space backend unit must expose its private browser gateway")
+    if "18447" not in units["aster-evolution-space-tls.service"]:
+        raise ValueError("Evolution Space TLS unit must expose the configured browser gateway")
     if not Path("/srv/aster/engine").is_mount():
         raise ValueError("prepare the fresh engine btrfs mount before activation")
     for user in ("asterapp", "asterweb"):
@@ -219,8 +219,8 @@ def activate(build, plan, config, units):
          plan["config"], "--username", credentials["username"], "--password-stdin"],
         input=credentials["password"] + "\n", text=True, env=env)
     run(["systemctl", "start", *[f"aster-{name}.service" for name in
-         ("frontend", "admin-frontend", "evaluation-frontend", "studio-frontend", "studio-tls",
-          "evaluation-space", "evaluation-tls", "application", "studio")]])
+         ("frontend", "admin-frontend", "evolution-space-frontend", "studio-frontend", "studio-tls",
+          "evolution-space", "evolution-space-tls", "application", "studio")]])
     for _ in range(100):
         if Path("/var/lib/aster/control.sock").exists():
             break

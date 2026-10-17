@@ -111,16 +111,16 @@ func verifyNativeDynamicInspection(t *testing.T, ctx context.Context, fixture na
 	if !fixture.Browser {
 		return
 	}
-	browser := os.Getenv("EVALUATION_TEST_BROWSER")
+	browser := os.Getenv("EVOLUTION_SPACE_TEST_BROWSER")
 	if browser == "" {
 		browser = "chromium"
 	}
 	width := 1440
-	if os.Getenv("EVALUATION_NARROW") == "1" {
+	if os.Getenv("EVOLUTION_SPACE_NARROW") == "1" {
 		width = 390
 	}
-	config, _ := json.Marshal(map[string]any{"origin": fixture.Origin, "cookie": fixture.Token, "group": fixture.Group, "run": fixture.Run, "browser": browser, "width": width, "evidence_directory": filepath.Join(fixture.Repository, "evaluation-space/frontend/test-results/dynamic", browser)})
-	command := exec.CommandContext(ctx, "node", filepath.Join(fixture.Repository, "evaluation-space/tests/browser/dynamic.mjs"))
+	config, _ := json.Marshal(map[string]any{"origin": fixture.Origin, "cookie": fixture.Token, "group": fixture.Group, "run": fixture.Run, "browser": browser, "width": width, "evidence_directory": filepath.Join(fixture.Repository, "evolution-space/frontend/test-results/dynamic", browser)})
+	command := exec.CommandContext(ctx, "node", filepath.Join(fixture.Repository, "evolution-space/tests/browser/dynamic.mjs"))
 	command.Stdin = bytes.NewReader(config)
 	output, err := command.CombinedOutput()
 	if err != nil {

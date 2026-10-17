@@ -3,7 +3,7 @@ package product
 import (
 	"aster/contracts/evolution"
 	"encoding/json"
-	"harness-platform/orchestrator/internal/evaluationclient"
+	"harness-platform/orchestrator/internal/evolutionspaceclient"
 	"harness-platform/orchestrator/internal/studioclient"
 	"net/http"
 	"net/http/httptest"
@@ -20,21 +20,21 @@ func TestEvolutionWorkerNeedsNoInteractiveSession(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		json.NewEncoder(w).Encode(evolution.ActivationReceipt{Participant: "evaluation-space", OperationID: pending.OperationID, ConfigurationDigest: pending.DesiredDigest, Generation: 1, State: "adopted"})
+		json.NewEncoder(w).Encode(evolution.ActivationReceipt{Participant: "evolution-space", OperationID: pending.OperationID, ConfigurationDigest: pending.DesiredDigest, Generation: 1, State: "adopted"})
 	}))
 	defer server.Close()
-	client, err := evaluationclient.New(server.URL, strings.Repeat("x", 32))
+	client, err := evolutionspaceclient.New(server.URL, strings.Repeat("x", 32))
 	must(t, err)
 	// Worker has no session token and reconstructs work solely from durable state.
-	worker := &EvolutionWorker{Store: s, Evaluation: client}
+	worker := &EvolutionWorker{Store: s, EvolutionSpace: client}
 	must(t, worker.Step(ctx))
-	worker = &EvolutionWorker{Store: s, Evaluation: client}
+	worker = &EvolutionWorker{Store: s, EvolutionSpace: client}
 	must(t, worker.Step(ctx))
 	if calls != 1 {
 		t.Fatalf("accepted work dispatched again: %d", calls)
 	}
 	var count int
-	must(t, s.reader.QueryRowContext(ctx, "SELECT count(*) FROM evolution_activation_receipts WHERE operation_id=? AND participant='evaluation-space' AND state='accepted'", pending.OperationID).Scan(&count))
+	must(t, s.reader.QueryRowContext(ctx, "SELECT count(*) FROM evolution_activation_receipts WHERE operation_id=? AND participant='evolution-space' AND state='accepted'", pending.OperationID).Scan(&count))
 	if count != 1 {
 		t.Fatal("worker did not persist receipt")
 	}
@@ -51,15 +51,15 @@ func TestEvolutionWorkerCoordinatesBothParticipants(t *testing.T) {
 	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
 	must(t, err)
 	state := ""
-	evaluated := false
+	spaceAdopted := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		participant := "studio"
-		if strings.HasPrefix(r.URL.Path, "/evaluation-space/") {
+		if strings.HasPrefix(r.URL.Path, "/evolution-space/") {
 			if state != "reserved" {
-				t.Error("evaluation preceded reservation")
+				t.Error("Evolution Space preceded reservation")
 			}
-			evaluated = true
-			participant = "evaluation-space"
+			spaceAdopted = true
+			participant = "evolution-space"
 		} else {
 			switch strings.TrimPrefix(r.URL.Path, "/volumes-studio/internal/v1/evolution/") {
 			case "lookup":
@@ -70,24 +70,24 @@ func TestEvolutionWorkerCoordinatesBothParticipants(t *testing.T) {
 			case "reserve":
 				state = "reserved"
 			case "adopt":
-				if !evaluated {
-					t.Error("adopted before evaluation")
+				if !spaceAdopted {
+					t.Error("adopted before Evolution Space")
 				}
 				state = "adopted"
 			}
 		}
 		receiptState := state
-		if participant == "evaluation-space" {
+		if participant == "evolution-space" {
 			receiptState = "adopted"
 		}
 		json.NewEncoder(w).Encode(evolution.ActivationReceipt{Participant: participant, OperationID: pending.OperationID, ConfigurationDigest: pending.DesiredDigest, Generation: 1, State: receiptState})
 	}))
 	defer server.Close()
-	evaluation, err := evaluationclient.New(server.URL, strings.Repeat("x", 32))
+	evolutionSpace, err := evolutionspaceclient.New(server.URL, strings.Repeat("x", 32))
 	must(t, err)
 	studio, err := studioclient.New(server.URL, strings.Repeat("x", 32))
 	must(t, err)
-	worker := &EvolutionWorker{Store: s, Evaluation: evaluation, Studio: studio}
+	worker := &EvolutionWorker{Store: s, EvolutionSpace: evolutionSpace, Studio: studio}
 	must(t, worker.Step(ctx))
 	active, err := s.EvolutionConfig(ctx, token, StandardUsersGroup)
 	must(t, err)
@@ -111,16 +111,16 @@ func TestEvolutionWorkerRecordsExplicitCatalogRejection(t *testing.T) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 	}))
 	defer server.Close()
-	client, err := evaluationclient.New(server.URL, strings.Repeat("x", 32))
+	client, err := evolutionspaceclient.New(server.URL, strings.Repeat("x", 32))
 	must(t, err)
-	worker := &EvolutionWorker{Store: s, Evaluation: client}
+	worker := &EvolutionWorker{Store: s, EvolutionSpace: client}
 	must(t, worker.Step(ctx))
 	failed, err := s.EvolutionConfig(ctx, token, StandardUsersGroup)
 	must(t, err)
 	if failed.State != "failed" || failed.ActiveRevision != 0 || failed.OperationID != pending.OperationID {
 		t.Fatal(failed)
 	}
-	worker = &EvolutionWorker{Store: s, Evaluation: client}
+	worker = &EvolutionWorker{Store: s, EvolutionSpace: client}
 	must(t, worker.Step(ctx))
 	if calls != 2 {
 		t.Fatal("failed operation retried without instruction", calls)
@@ -144,7 +144,7 @@ func TestEvolutionDiscardCompensatesOnlyPendingReservations(t *testing.T) {
 			token := adminTestToken(t, s, admin)
 			pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
 			must(t, err)
-			must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evaluation-space", pending.DesiredDigest, "catalog_rejected"))
+			must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evolution-space", pending.DesiredDigest, "catalog_rejected"))
 			input := EvolutionRetryInput{"discard", 1}
 			must(t, s.DiscardEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, input))
 			if err = s.RetryEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, EvolutionRetryInput{"retry", 1}); err != ErrConflict {
@@ -166,9 +166,9 @@ func TestEvolutionDiscardCompensatesOnlyPendingReservations(t *testing.T) {
 			defer server.Close()
 			studio, err := studioclient.New(server.URL, strings.Repeat("x", 32))
 			must(t, err)
-			evaluation, err := evaluationclient.New(server.URL, strings.Repeat("x", 32))
+			evolutionSpace, err := evolutionspaceclient.New(server.URL, strings.Repeat("x", 32))
 			must(t, err)
-			worker := &EvolutionWorker{Store: s, Studio: studio, Evaluation: evaluation}
+			worker := &EvolutionWorker{Store: s, Studio: studio, EvolutionSpace: evolutionSpace}
 			err = worker.Step(ctx)
 			if state == "adopted" {
 				if err != ErrConflict || cancelled {
@@ -204,7 +204,7 @@ func TestEvolutionDiscardRecoveryAfterCentralRestart(t *testing.T) {
 	token := adminTestToken(t, s, admin)
 	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
 	must(t, err)
-	must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evaluation-space", pending.DesiredDigest, "catalog_rejected"))
+	must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "evolution-space", pending.DesiredDigest, "catalog_rejected"))
 	input := EvolutionRetryInput{"discard", 1}
 	must(t, s.DiscardEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, input))
 	must(t, s.Close())
@@ -225,7 +225,7 @@ func TestEvolutionDiscardRecoveryAfterCentralRestart(t *testing.T) {
 	defer server.Close()
 	studio, err := studioclient.New(server.URL, strings.Repeat("x", 32))
 	must(t, err)
-	// Cleanup requires no Evaluation Space connection.
+	// Cleanup requires no Evolution Space connection.
 	worker := &EvolutionWorker{Store: s, Studio: studio}
 	must(t, worker.Step(ctx))
 	must(t, s.DiscardEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, input))
@@ -258,8 +258,8 @@ func TestEvolutionStudioConflictStopsBeforeEvaluation(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if strings.HasPrefix(r.URL.Path, "/evaluation-space/") {
-			t.Error("evaluation dispatched after reservation rejection")
+		if strings.HasPrefix(r.URL.Path, "/evolution-space/") {
+			t.Error("evolutionSpace dispatched after reservation rejection")
 		}
 		if strings.HasSuffix(r.URL.Path, "/lookup") {
 			http.NotFound(w, r)
@@ -270,16 +270,16 @@ func TestEvolutionStudioConflictStopsBeforeEvaluation(t *testing.T) {
 	defer server.Close()
 	studio, err := studioclient.New(server.URL, strings.Repeat("x", 32))
 	must(t, err)
-	evaluation, err := evaluationclient.New(server.URL, strings.Repeat("x", 32))
+	evolutionSpace, err := evolutionspaceclient.New(server.URL, strings.Repeat("x", 32))
 	must(t, err)
-	worker := &EvolutionWorker{Store: s, Studio: studio, Evaluation: evaluation}
+	worker := &EvolutionWorker{Store: s, Studio: studio, EvolutionSpace: evolutionSpace}
 	must(t, worker.Step(ctx))
 	status, err := s.EvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID)
 	must(t, err)
 	if status.State != "failed" || len(status.Participants) != 1 || status.Participants[0].Error != "reservation_rejected" {
 		t.Fatal(status)
 	}
-	worker = &EvolutionWorker{Store: s, Studio: studio, Evaluation: evaluation}
+	worker = &EvolutionWorker{Store: s, Studio: studio, EvolutionSpace: evolutionSpace}
 	must(t, worker.Step(ctx))
 	if calls != 2 {
 		t.Fatal("conflict retried or obscured by lookup", calls)

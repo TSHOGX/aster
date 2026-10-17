@@ -3,7 +3,7 @@ package producthttp
 import (
 	"aster/contracts/evolution"
 	"context"
-	"harness-platform/orchestrator/internal/evaluationclient"
+	"harness-platform/orchestrator/internal/evolutionspaceclient"
 	"harness-platform/orchestrator/internal/product"
 	"net/http"
 	"strconv"
@@ -53,7 +53,7 @@ func (a *Authentication) evolutionDraft(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			if a.EvolutionCatalog == nil {
-				writeError(w, 503, "Evaluation Space catalog connection is not configured.")
+				writeError(w, 503, "Evolution Space catalog connection is not configured.")
 				return
 			}
 			entry, err := a.EvolutionCatalog.CatalogDefinition(r.Context(), "template", binding.Template)
@@ -112,7 +112,7 @@ func (a *Authentication) previewEvolution(w http.ResponseWriter, r *http.Request
 	}
 	if value.CentralValid && value.Configuration != nil {
 		validator, ok := a.EvolutionCatalog.(interface {
-			ValidateConfiguration(context.Context, evolution.Configuration) (evaluationclient.ConfigurationValidation, error)
+			ValidateConfiguration(context.Context, evolution.Configuration) (evolutionspaceclient.ConfigurationValidation, error)
 		})
 		if ok {
 			validation, checkErr := validator.ValidateConfiguration(r.Context(), *value.Configuration)
@@ -130,14 +130,14 @@ func (a *Authentication) previewEvolution(w http.ResponseWriter, r *http.Request
 			valid := checkErr == nil && validation.Valid
 			value.CatalogValid = &valid
 			if checkErr != nil {
-				value.CatalogError = "Evaluation Space catalog is unavailable. Retry without changing the selected revision."
+				value.CatalogError = "Evolution Space catalog is unavailable. Retry without changing the selected revision."
 			} else {
 				value.CatalogError = validation.Error
 			}
 		} else {
 			valid := false
 			value.CatalogValid = &valid
-			value.CatalogError = "Evaluation Space catalog connection is not configured."
+			value.CatalogError = "Evolution Space catalog connection is not configured."
 		}
 	}
 	writeJSON(w, 200, value)

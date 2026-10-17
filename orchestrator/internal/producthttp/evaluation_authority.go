@@ -45,7 +45,7 @@ func (a *Authentication) identityEvaluationAuthority(w http.ResponseWriter, r *h
 	if !ok {
 		return
 	}
-	if client.ID != "studio" && client.ID != "evaluation-space" {
+	if client.ID != "studio" && client.ID != "evolution-space" {
 		writeError(w, 403, "evaluation service required")
 		return
 	}
@@ -54,7 +54,7 @@ func (a *Authentication) identityEvaluationAuthority(w http.ResponseWriter, r *h
 		writeError(w, 400, "invalid evaluation scope")
 		return
 	}
-	if client.ID != "evaluation-space" && (client.ID != "studio" || (input.Action != "read" && input.Action != "input")) {
+	if client.ID != "evolution-space" && (client.ID != "studio" || (input.Action != "read" && input.Action != "input")) {
 		writeError(w, 403, "evaluation service required")
 		return
 	}
@@ -70,7 +70,7 @@ func (a *Authentication) identityEvaluationSettlement(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	if client.ID != "evaluation-space" {
+	if client.ID != "evolution-space" {
 		writeError(w, 403, "evaluation service required")
 		return
 	}
@@ -91,7 +91,7 @@ func (a *Authentication) identityEvaluationProfile(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	if client.ID != "evaluation-space" {
+	if client.ID != "evolution-space" {
 		writeError(w, 403, "evaluation service required")
 		return
 	}

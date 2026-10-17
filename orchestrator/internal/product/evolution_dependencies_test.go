@@ -67,7 +67,7 @@ func TestGenerationDependenciesFreezeExactBatchAndWaitForSuccessfulOutput(t *tes
 	must(t, (&EvolutionTriggerWorker{Store: s}).Step(ctx))
 	bases := &dispatchBases{ref: evolution.ContentRef{LibraryID: "library", CommitID: strings.Repeat("a", 64), Profile: "authored-v1", TreeDigest: evolution.Digest(nil)}}
 	remote := &dependencyTransport{store: s}
-	worker := &EvolutionDispatcher{Store: s, Studio: bases, Evaluation: remote, Issuer: "https://app"}
+	worker := &EvolutionDispatcher{Store: s, Studio: bases, EvolutionSpace: remote, Issuer: "https://app"}
 	must(t, worker.prepare(ctx))
 	frozen := dispatchAssignments(t, s)
 	if len(frozen) != 1 || frozen[0].BindingID != "skills" {
@@ -102,7 +102,7 @@ func TestGenerationDependenciesFreezeExactBatchAndWaitForSuccessfulOutput(t *tes
 	must(t, reopenErr)
 	t.Cleanup(func() { s.Close() })
 	remote.store = s
-	worker = &EvolutionDispatcher{Store: s, Studio: bases, Evaluation: remote, Issuer: "https://app"}
+	worker = &EvolutionDispatcher{Store: s, Studio: bases, EvolutionSpace: remote, Issuer: "https://app"}
 	remote.fail = true
 	if err := worker.resolveDependencies(ctx); err == nil {
 		t.Fatal("missing output outage")
@@ -194,7 +194,7 @@ func TestGenerationDependencyFailureSkipsTransitiveConsumers(t *testing.T) {
 	must(t, (&EvolutionTriggerWorker{Store: s}).Step(ctx))
 	bases := &dispatchBases{ref: evolution.ContentRef{LibraryID: "library", CommitID: strings.Repeat("a", 64), Profile: "authored-v1", TreeDigest: evolution.Digest(nil)}}
 	remote := &dependencyTransport{store: s}
-	worker := &EvolutionDispatcher{Store: s, Studio: bases, Evaluation: remote, Issuer: "https://app"}
+	worker := &EvolutionDispatcher{Store: s, Studio: bases, EvolutionSpace: remote, Issuer: "https://app"}
 	must(t, worker.prepare(ctx))
 	must(t, worker.dispatch(ctx))
 	root := dispatchAssignments(t, s)[0]

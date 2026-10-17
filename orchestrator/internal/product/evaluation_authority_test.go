@@ -30,7 +30,7 @@ func evaluationAuthorityFixture(t *testing.T) (*Store, string, evolution.Evaluat
 	config.Bindings = []evolution.Binding{{ID: "binding", Enabled: true, Template: ref, Workflow: ref, Service: ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "library", Prefix: "skills", Profile: "authored-v1", ReservationGeneration: 1}, Evaluation: evolution.EvaluationPolicy{Mode: "required", Profile: &profile.Ref, Service: &ref, ReferenceStrategy: "none"}, Budget: config.Budget, Trigger: "manual"}}
 	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, config})
 	must(t, err)
-	for _, p := range []string{"studio", "evaluation-space"} {
+	for _, p := range []string{"studio", "evolution-space"} {
 		must(t, acceptEvolutionFixture(s, ctx, token, pending.OperationID, p, pending.DesiredDigest))
 	}
 	_, err = s.SettleEvolutionActivation(ctx, token, pending.OperationID)

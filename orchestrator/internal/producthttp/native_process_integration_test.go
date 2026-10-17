@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"aster/contracts/evolution"
-	"harness-platform/orchestrator/internal/evaluationclient"
+	"harness-platform/orchestrator/internal/evolutionspaceclient"
 	"harness-platform/orchestrator/internal/identityconfig"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/studioclient"
@@ -33,7 +33,7 @@ import (
 var errLostNativeAdmission = errors.New("lost native admission reply")
 
 type lostNativeAdmission struct {
-	client *evaluationclient.Client
+	client *evolutionspaceclient.Client
 	calls  int
 }
 
@@ -104,9 +104,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		}
 		return binary
 	}
-	catalog := build("evaluation-space/backend", "./cmd/evaluation-catalog", "catalog")
+	catalog := build("evolution-space/backend", "./cmd/evolution-space-catalog", "catalog")
 	studioBinary := build("volumes-studio/backend", "./cmd/studio", "studio")
-	spaceBinary := build("evaluation-space/backend", "./cmd/evaluation-space", "space")
+	spaceBinary := build("evolution-space/backend", "./cmd/evolution-space", "space")
 	address := func() string {
 		t.Helper()
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -118,10 +118,10 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	studioAddress, participantAddress, spaceAddress := address(), address(), address()
 	spaceBrowserAddress := address()
 	spaceOrigin := "http://" + spaceAddress
-	browserNumberedRetry := mode == "numbered-retry" && os.Getenv("EVALUATION_NUMBERED_RETRY_BROWSER_TEST") == "1"
-	browserDynamic := mode == "dynamic-inspection" && os.Getenv("EVALUATION_DYNAMIC_BROWSER_TEST") == "1"
-	browserTools := mode == "tool-inspection" && os.Getenv("EVALUATION_TOOLS_BROWSER_TEST") == "1"
-	browserRetention := mode == "retention" && os.Getenv("EVALUATION_RETENTION_BROWSER_TEST") == "1"
+	browserNumberedRetry := mode == "numbered-retry" && os.Getenv("EVOLUTION_SPACE_NUMBERED_RETRY_BROWSER_TEST") == "1"
+	browserDynamic := mode == "dynamic-inspection" && os.Getenv("EVOLUTION_SPACE_DYNAMIC_BROWSER_TEST") == "1"
+	browserTools := mode == "tool-inspection" && os.Getenv("EVOLUTION_SPACE_TOOLS_BROWSER_TEST") == "1"
+	browserRetention := mode == "retention" && os.Getenv("EVOLUTION_SPACE_RETENTION_BROWSER_TEST") == "1"
 	browserUpgrade := mode == "browser-retry" && os.Getenv("ADMIN_EVOLUTION_UPGRADE_TEST") == "1"
 	browserBackfill := mode == "backfill" && os.Getenv("ADMIN_EVOLUTION_BROWSER_TEST") == "1"
 	browserConfig := mode == "backfill" && os.Getenv("ADMIN_EVOLUTION_CONFIG_TEST") == "1"
@@ -159,15 +159,15 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			t.Fatal("admin frontend unavailable")
 		}
 	}
-	var evaluationFrontend string
+	var evolutionSpaceFrontend string
 	if browserUpgrade || browserRetention || browserTools || browserDynamic || browserNumberedRetry {
 		frontendAddress := address()
-		evaluationFrontend = "http://" + frontendAddress
-		copyCmd := exec.CommandContext(ctx, "cp", "-r", filepath.Join(root, "evaluation-space/frontend/.next/static"), filepath.Join(root, "evaluation-space/frontend/.next/standalone/evaluation-space/frontend/.next/"))
+		evolutionSpaceFrontend = "http://" + frontendAddress
+		copyCmd := exec.CommandContext(ctx, "cp", "-r", filepath.Join(root, "evolution-space/frontend/.next/static"), filepath.Join(root, "evolution-space/frontend/.next/standalone/evolution-space/frontend/.next/"))
 		if raw, err := copyCmd.CombinedOutput(); err != nil {
 			t.Fatalf("copy evaluation assets: %v %s", err, raw)
 		}
-		frontend := exec.CommandContext(ctx, "node", filepath.Join(root, "evaluation-space/frontend/.next/standalone/evaluation-space/frontend/server.js"))
+		frontend := exec.CommandContext(ctx, "node", filepath.Join(root, "evolution-space/frontend/.next/standalone/evolution-space/frontend/server.js"))
 		frontend.Env = append(os.Environ(), "HOSTNAME=127.0.0.1", "PORT="+strings.Split(frontendAddress, ":")[1])
 		frontend.Stderr = os.Stderr
 		must(t, frontend.Start())
@@ -184,7 +184,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		})
 		ready := false
 		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
-			response, err := http.Get(evaluationFrontend + "/evaluation-space/")
+			response, err := http.Get(evolutionSpaceFrontend + "/evolution-space/")
 			if err == nil {
 				response.Body.Close()
 				ready = true
@@ -193,7 +193,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			time.Sleep(30 * time.Millisecond)
 		}
 		if !ready {
-			t.Fatal("evaluation frontend unavailable")
+			t.Fatal("Evolution Space frontend unavailable")
 		}
 	}
 	spaceBrowserURL, _ := url.Parse("http://" + spaceBrowserAddress)
@@ -202,7 +202,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	studioURL, _ := url.Parse("http://" + studioAddress)
 	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { host := r.In.Host; r.SetURL(studioURL); r.Out.Host = host }}
 	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if (browserUpgrade || browserRetention || browserTools || browserDynamic || browserNumberedRetry) && strings.HasPrefix(r.URL.Path, "/evaluation-space/") {
+		if (browserUpgrade || browserRetention || browserTools || browserDynamic || browserNumberedRetry) && strings.HasPrefix(r.URL.Path, "/evolution-space/") {
 			spaceProxy.ServeHTTP(w, r)
 			return
 		}
@@ -226,11 +226,11 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 
 	secret := strings.Repeat("s", 32)
 	inputSecret := strings.Repeat("i", 32)
-	for _, name := range []string{"STUDIO_IDENTITY_CLIENT_SECRET", "STUDIO_CENTRAL_SECRET", "EVALUATION_SPACE_IDENTITY_SECRET", "EVALUATION_SPACE_CENTRAL_SECRET", "EVALUATION_SPACE_STUDIO_SECRET", "TEST_EVALUATOR_SECRET"} {
+	for _, name := range []string{"STUDIO_IDENTITY_CLIENT_SECRET", "STUDIO_CENTRAL_SECRET", "EVOLUTION_SPACE_IDENTITY_SECRET", "EVOLUTION_SPACE_CENTRAL_SECRET", "EVOLUTION_SPACE_STUDIO_SECRET", "TEST_EVALUATOR_SECRET"} {
 		t.Setenv(name, secret)
 	}
 	t.Setenv("TEST_EVALUATOR_INPUT_SECRET", inputSecret)
-	t.Setenv("STUDIO_EVALUATION_INPUT_SECRET", inputSecret)
+	t.Setenv("STUDIO_EVOLUTION_SPACE_INPUT_SECRET", inputSecret)
 	centralPath := filepath.Join(t.TempDir(), "central.db")
 	store, err := product.Open(ctx, centralPath)
 	must(t, err)
@@ -239,7 +239,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	must(t, err)
 	_, token, err := store.Authenticate(ctx, "admin", "permanent-admin-password")
 	must(t, err)
-	config := &identityconfig.Config{Issuer: issuer, Listen: "127.0.0.1:0", Clients: []identityconfig.Client{{ID: "studio", Callback: issuer + "/volumes-studio/auth/callback", SecretEnvs: []string{"STUDIO_IDENTITY_CLIENT_SECRET"}}, {ID: "evaluation-space", Callback: issuer + "/evaluation-space/auth/callback", SecretEnvs: []string{"EVALUATION_SPACE_IDENTITY_SECRET"}}}}
+	config := &identityconfig.Config{Issuer: issuer, Listen: "127.0.0.1:0", Clients: []identityconfig.Client{{ID: "studio", Callback: issuer + "/volumes-studio/auth/callback", SecretEnvs: []string{"STUDIO_IDENTITY_CLIENT_SECRET"}}, {ID: "evolution-space", Callback: issuer + "/evolution-space/auth/callback", SecretEnvs: []string{"EVOLUTION_SPACE_IDENTITY_SECRET"}}}}
 	must(t, config.CheckCredentials())
 	authentication := NewAuthentication(store, Config{Identity: config})
 	publicHandler = authentication.Handler(http.NotFoundHandler())
@@ -660,12 +660,12 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		return stop
 	}
 
-	start(studioBinary, studioAddress, "--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evaluation-endpoint", spaceOrigin)
+	start(studioBinary, studioAddress, "--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evolution-space-endpoint", spaceOrigin)
 	spaceArgs := []string{"--listen", spaceAddress, "--state-directory", spaceDirectory, "--identity-endpoint", central.URL, "--native-config", nativePath, "--studio-input-endpoint", "http://" + participantAddress}
 	if retryJourney || mode == "retention" || mode == "tool-inspection" || mode == "dynamic-inspection" || mode == "numbered-retry" {
 		frontendOrigin := central.URL
 		if browserUpgrade || browserRetention || browserTools || browserDynamic || browserNumberedRetry {
-			frontendOrigin = evaluationFrontend
+			frontendOrigin = evolutionSpaceFrontend
 		}
 		spaceArgs = append(spaceArgs, "--browser-listen", spaceBrowserAddress, "--public-origin", issuer, "--frontend", frontendOrigin)
 	}
@@ -704,11 +704,11 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	if dependent {
 		configuration.Bindings = append(configuration.Bindings, evolution.Binding{ID: dependentTemplate.Ref.ID, Enabled: true, Template: dependentTemplate.Ref, Workflow: dependentTemplate.Workflows[0], Service: service.Ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: "reviewed", Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: dependentTemplate.Evaluation, Budget: budget, Trigger: "schedule", Schedule: "@every 1m", Timezone: "Asia/Shanghai", DependsOn: []string{"example-skills"}, Inputs: map[string]evolution.BindingInput{"upstream": {Dependency: &evolution.BindingDependency{BindingID: "example-skills", OutputPort: "candidate"}}}})
 	}
-	evalClient, err := evaluationclient.New(spaceOrigin, secret)
+	spaceClient, err := evolutionspaceclient.New(spaceOrigin, secret)
 	must(t, err)
 	studioClient, err := studioclient.New("http://"+participantAddress, secret)
 	must(t, err)
-	authentication.EvolutionCatalog = evalClient
+	authentication.EvolutionCatalog = spaceClient
 	authentication.EvolutionOutputs = studioClient
 	var pending product.EvolutionGroupConfig
 	if browserConfig {
@@ -716,7 +716,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			worker := &product.EvolutionWorker{Store: store, Evaluation: evalClient, Studio: studioClient}
+			worker := &product.EvolutionWorker{Store: store, EvolutionSpace: spaceClient, Studio: studioClient}
 			for {
 				if err := worker.Step(workerCtx); err != nil && !errors.Is(err, context.Canceled) {
 					t.Log("activation pending", err)
@@ -746,7 +746,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	} else {
 		pending, err = store.ActivateEvolutionConfig(ctx, token, configuration.GroupID, product.EvolutionActivationInput{RequestID: "activate", Configuration: configuration})
 		must(t, err)
-		must(t, (&product.EvolutionWorker{Store: store, Evaluation: evalClient, Studio: studioClient}).Step(ctx))
+		must(t, (&product.EvolutionWorker{Store: store, EvolutionSpace: spaceClient, Studio: studioClient}).Step(ctx))
 	}
 	active, err := store.EvolutionConfig(ctx, token, configuration.GroupID)
 	must(t, err)
@@ -838,7 +838,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	privateCall := func(action string, input any) (int, []byte) {
 		t.Helper()
 		raw, _ := json.Marshal(input)
-		request, _ := http.NewRequestWithContext(ctx, "POST", spaceOrigin+"/evaluation-space/internal/v1/generation/"+action, bytes.NewReader(raw))
+		request, _ := http.NewRequestWithContext(ctx, "POST", spaceOrigin+"/evolution-space/internal/v1/generation/"+action, bytes.NewReader(raw))
 		request.SetBasicAuth("central", secret)
 		request.Header.Set("Content-Type", "application/json")
 		response, err := http.DefaultClient.Do(request)
@@ -912,11 +912,11 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			must(t, err)
 
 		}
-		transport := &lostNativeAdmission{client: evalClient}
-		dispatcher := &product.EvolutionDispatcher{Store: store, Evaluation: transport, Studio: studioClient, Issuer: issuer}
+		transport := &lostNativeAdmission{client: spaceClient}
+		dispatcher := &product.EvolutionDispatcher{Store: store, EvolutionSpace: transport, Studio: studioClient, Issuer: issuer}
 		for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); {
 			if err := dispatcher.Step(ctx); errors.Is(err, errLostNativeAdmission) {
-				dispatcher = &product.EvolutionDispatcher{Store: store, Evaluation: transport, Studio: studioClient, Issuer: issuer}
+				dispatcher = &product.EvolutionDispatcher{Store: store, EvolutionSpace: transport, Studio: studioClient, Issuer: issuer}
 			} else {
 				must(t, err)
 			}
@@ -937,12 +937,12 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		}
 	} else if automatic {
 		triggers := &product.EvolutionTriggerWorker{Store: store}
-		transport := &lostNativeAdmission{client: evalClient}
-		dispatcher := &product.EvolutionDispatcher{Store: store, Evaluation: transport, Studio: studioClient, Issuer: issuer}
+		transport := &lostNativeAdmission{client: spaceClient}
+		dispatcher := &product.EvolutionDispatcher{Store: store, EvolutionSpace: transport, Studio: studioClient, Issuer: issuer}
 		for deadline := time.Now().Add(80 * time.Second); time.Now().Before(deadline); {
 			must(t, triggers.Step(ctx))
 			if err := dispatcher.Step(ctx); errors.Is(err, errLostNativeAdmission) {
-				dispatcher = &product.EvolutionDispatcher{Store: store, Evaluation: transport, Studio: studioClient, Issuer: issuer}
+				dispatcher = &product.EvolutionDispatcher{Store: store, EvolutionSpace: transport, Studio: studioClient, Issuer: issuer}
 			} else {
 				must(t, err)
 			}
@@ -1054,17 +1054,17 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		must(t, err)
 		_, err = store.SetEvolutionGroupGrant(ctx, token, configuration.GroupID, product.EvolutionGroupGrantInput{RequestID: "experiment-authoring", AccountID: admin.ID, Action: "workflow.edit", Effect: "allow"})
 		must(t, err)
-		// Authenticate through the actual Evaluation Space PKCE/session gateway.
-		request, _ := http.NewRequestWithContext(ctx, "GET", "http://"+spaceBrowserAddress+"/evaluation-space/auth/login", nil)
+		// Authenticate through the actual Evolution Space PKCE/session gateway.
+		request, _ := http.NewRequestWithContext(ctx, "GET", "http://"+spaceBrowserAddress+"/evolution-space/auth/login", nil)
 		request.Host = issuerURL.Host
 		login, err := httpClient.Do(request)
 		must(t, err)
 		login.Body.Close()
 		location, err := url.Parse(login.Header.Get("Location"))
 		must(t, err)
-		code, err := store.AdmitIdentityCode(ctx, token, "evaluation-space", issuer+"/evaluation-space/auth/callback", location.Query().Get("code_challenge"))
+		code, err := store.AdmitIdentityCode(ctx, token, "evolution-space", issuer+"/evolution-space/auth/callback", location.Query().Get("code_challenge"))
 		must(t, err)
-		request, _ = http.NewRequestWithContext(ctx, "GET", "http://"+spaceBrowserAddress+"/evaluation-space/auth/callback?"+url.Values{"state": {location.Query().Get("state")}, "code": {code}}.Encode(), nil)
+		request, _ = http.NewRequestWithContext(ctx, "GET", "http://"+spaceBrowserAddress+"/evolution-space/auth/callback?"+url.Values{"state": {location.Query().Get("state")}, "code": {code}}.Encode(), nil)
 		request.Host = issuerURL.Host
 		for _, cookie := range login.Cookies() {
 			request.AddCookie(cookie)
@@ -1073,14 +1073,14 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		must(t, err)
 		callback.Body.Close()
 		if callback.StatusCode != 303 {
-			t.Fatal("Evaluation Space session failed", callback.StatusCode)
+			t.Fatal("Evolution Space session failed", callback.StatusCode)
 		}
 		spaceCookies := callback.Cookies()
 		spaceCSRF := ""
 		spaceCall := func(method, path string, input any) (int, []byte) {
 			t.Helper()
 			raw, _ := json.Marshal(input)
-			request, _ := http.NewRequestWithContext(ctx, method, "http://"+spaceBrowserAddress+"/evaluation-space/api/v1/"+path, bytes.NewReader(raw))
+			request, _ := http.NewRequestWithContext(ctx, method, "http://"+spaceBrowserAddress+"/evolution-space/api/v1/"+path, bytes.NewReader(raw))
 			request.Host = issuerURL.Host
 			for _, cookie := range spaceCookies {
 				if cookie.MaxAge >= 0 {
@@ -1267,7 +1267,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		experimentInput["checkpoint_id"] = preview.Checkpoint.ID
 		var experimentBody any = experimentInput
 		if browserUpgrade {
-			output := runNativeEvolutionBrowser(t, ctx, nativeWorkflowUpgrade{Repository: root, Store: store, Token: token, Issuer: issuer, Evaluation: evalClient, Studio: studioClient}, "experiment", retry.ID)
+			output := runNativeEvolutionBrowser(t, ctx, nativeWorkflowUpgrade{Repository: root, Store: store, Token: token, Issuer: issuer, EvolutionSpace: spaceClient, Studio: studioClient}, "experiment", retry.ID)
 			const marker = "NATIVE_EXPERIMENT_REQUEST="
 			_, tail, found := strings.Cut(string(output), marker)
 			if !found || len(strings.Fields(tail)) == 0 {
@@ -1551,7 +1551,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 					}
 				}
 			}
-			if _, err = evalClient.GenerationOutput(ctx, evolution.GenerationOutputScope{GroupID: testRun.GroupID, RunID: testRun.ID, Fence: testRun.Fence, Port: "candidate"}); err == nil {
+			if _, err = spaceClient.GenerationOutput(ctx, evolution.GenerationOutputScope{GroupID: testRun.GroupID, RunID: testRun.ID, Fence: testRun.Fence, Port: "candidate"}); err == nil {
 				t.Fatal("draft test output promoted")
 			}
 			retryAdmissionMu.Lock()
@@ -1612,7 +1612,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			verifyNativeWorkflowUpgrade(t, ctx, nativeWorkflowUpgrade{Store: store, Token: token, Issuer: issuer, Actor: admin.ID, SourceRun: sourceID, BrowserUpgrade: browserUpgrade, Repository: root, Restart: func() {
 				stopSpace()
 				stopSpace = start(spaceBinary, spaceAddress, spaceArgs...)
-			}, Evaluation: evalClient, Studio: studioClient, Configuration: configuration, Template: template, Artifact: artifact, Browser: spaceCall, StudioBrowser: call, Private: privateCall}, base)
+			}, EvolutionSpace: spaceClient, Studio: studioClient, Configuration: configuration, Template: template, Artifact: artifact, Browser: spaceCall, StudioBrowser: call, Private: privateCall}, base)
 		}
 
 	}

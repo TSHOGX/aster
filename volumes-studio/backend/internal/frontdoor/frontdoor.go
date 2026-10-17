@@ -20,10 +20,10 @@ const SessionCookie = "__Secure-volumes_studio_session"
 const LoginCookie = "__Secure-volumes_studio_login"
 
 type Config struct {
-	PublicOrigin    string
-	Studio          string
-	EvaluationSpace string
-	Application     string
+	PublicOrigin   string
+	Studio         string
+	EvolutionSpace string
+	Application    string
 }
 
 func origin(value string, public bool) (*url.URL, error) {
@@ -68,13 +68,13 @@ func New(config Config) (http.Handler, error) {
 	}
 	studioProxy := proxy(studio, public, transport, Prefix)
 	appProxy := proxy(application, public, transport, "")
-	var evaluationProxy *httputil.ReverseProxy
-	if config.EvaluationSpace != "" {
-		evaluation, err := origin(config.EvaluationSpace, false)
+	var evolutionSpaceProxy *httputil.ReverseProxy
+	if config.EvolutionSpace != "" {
+		evolutionSpace, err := origin(config.EvolutionSpace, false)
 		if err != nil {
 			return nil, err
 		}
-		evaluationProxy = proxy(evaluation, public, transport, "/evaluation-space/")
+		evolutionSpaceProxy = proxy(evolutionSpace, public, transport, "/evolution-space/")
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.EqualFold(r.Host, public.Host) {
@@ -92,7 +92,7 @@ func New(config Config) (http.Handler, error) {
 			http.NotFound(w, r)
 			return
 		}
-		if p == strings.TrimSuffix(Prefix, "/") || p == "/evaluation-space" {
+		if p == strings.TrimSuffix(Prefix, "/") || p == "/evolution-space" {
 			location := p + "/"
 			if r.URL.RawQuery != "" {
 				location += "?" + r.URL.RawQuery
@@ -105,8 +105,8 @@ func New(config Config) (http.Handler, error) {
 		if strings.HasPrefix(p, Prefix) {
 			appPrefix = Prefix
 		}
-		if strings.HasPrefix(p, "/evaluation-space/") {
-			appPrefix = "/evaluation-space/"
+		if strings.HasPrefix(p, "/evolution-space/") {
+			appPrefix = "/evolution-space/"
 		}
 		if err := filterCookies(r, appPrefix); err != nil {
 			http.Error(w, "ambiguous session cookie", http.StatusBadRequest)
@@ -114,13 +114,13 @@ func New(config Config) (http.Handler, error) {
 		}
 		if appPrefix == Prefix {
 			studioProxy.ServeHTTP(w, r)
-		} else if appPrefix == "/evaluation-space/" {
-			if evaluationProxy == nil {
+		} else if appPrefix == "/evolution-space/" {
+			if evolutionSpaceProxy == nil {
 				w.Header().Set("Cache-Control", "no-store")
-				http.Error(w, "Evaluation Space is unavailable", 503)
+				http.Error(w, "Evolution Space is unavailable", 503)
 				return
 			}
-			evaluationProxy.ServeHTTP(w, r)
+			evolutionSpaceProxy.ServeHTTP(w, r)
 		} else {
 			appProxy.ServeHTTP(w, r)
 		}
@@ -163,7 +163,7 @@ func proxy(target, public *url.URL, transport http.RoundTripper, prefix string) 
 			p.Out.Host = public.Host
 			for key := range p.Out.Header {
 				lower := strings.ToLower(key)
-				if lower == "forwarded" || lower == "authorization" || lower == "proxy-authorization" || lower == "x-real-ip" || strings.HasPrefix(lower, "x-forwarded-") || strings.HasPrefix(lower, "x-project-") || strings.HasPrefix(lower, "x-studio-") || strings.HasPrefix(lower, "x-evaluation-") || strings.HasPrefix(lower, "x-identity-") || strings.HasPrefix(lower, "x-auth-") || lower == "remote-user" {
+				if lower == "forwarded" || lower == "authorization" || lower == "proxy-authorization" || lower == "x-real-ip" || strings.HasPrefix(lower, "x-forwarded-") || strings.HasPrefix(lower, "x-project-") || strings.HasPrefix(lower, "x-studio-") || strings.HasPrefix(lower, "x-evolution-space-") || strings.HasPrefix(lower, "x-evaluation-") || strings.HasPrefix(lower, "x-identity-") || strings.HasPrefix(lower, "x-auth-") || lower == "remote-user" {
 					p.Out.Header.Del(key)
 				}
 			}

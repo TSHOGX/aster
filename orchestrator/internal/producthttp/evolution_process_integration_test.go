@@ -7,7 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"harness-platform/orchestrator/internal/evaluationclient"
+	"harness-platform/orchestrator/internal/evolutionspaceclient"
 	"harness-platform/orchestrator/internal/identityconfig"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/studioclient"
@@ -38,9 +38,9 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 		}
 		return binary
 	}
-	catalogBinary := build("evaluation-space/backend", "./cmd/evaluation-catalog", "evaluation-catalog")
+	catalogBinary := build("evolution-space/backend", "./cmd/evolution-space-catalog", "evolution-space-catalog")
 	studioBinary := build("volumes-studio/backend", "./cmd/studio", "studio")
-	evaluationBinary := build("evaluation-space/backend", "./cmd/evaluation-space", "evaluation-space")
+	evolutionSpaceBinary := build("evolution-space/backend", "./cmd/evolution-space", "evolution-space")
 	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "central.db"))
 	must(t, err)
 	defer store.Close()
@@ -51,11 +51,11 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 	secret := strings.Repeat("s", 32)
 	t.Setenv("STUDIO_IDENTITY_CLIENT_SECRET", secret)
 	t.Setenv("STUDIO_CENTRAL_SECRET", secret)
-	t.Setenv("EVALUATION_SPACE_IDENTITY_SECRET", secret)
-	t.Setenv("EVALUATION_SPACE_CENTRAL_SECRET", secret)
+	t.Setenv("EVOLUTION_SPACE_IDENTITY_SECRET", secret)
+	t.Setenv("EVOLUTION_SPACE_CENTRAL_SECRET", secret)
 	config := &identityconfig.Config{Issuer: "https://central", Listen: "127.0.0.1:0", Clients: []identityconfig.Client{
 		{ID: "studio", Callback: "https://central/volumes-studio/auth/callback", SecretEnvs: []string{"STUDIO_IDENTITY_CLIENT_SECRET"}},
-		{ID: "evaluation-space", Callback: "https://central/evaluation-space/auth/callback", SecretEnvs: []string{"EVALUATION_SPACE_IDENTITY_SECRET"}},
+		{ID: "evolution-space", Callback: "https://central/evolution-space/auth/callback", SecretEnvs: []string{"EVOLUTION_SPACE_IDENTITY_SECRET"}},
 	}}
 	must(t, config.CheckCredentials())
 	central := httptest.NewServer(NewAuthentication(store, Config{Identity: config}).IdentityServiceHandler())
@@ -67,7 +67,7 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 		must(t, listener.Close())
 		return addr
 	}
-	studioAddress, evaluationAddress := address(), address()
+	studioAddress, evolutionSpaceAddress := address(), address()
 	start := func(binary, addr string, args ...string) {
 		logFile, err := os.Create(filepath.Join(t.TempDir(), "service.log"))
 		must(t, err)
@@ -106,7 +106,7 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 		t.Fatal("participant listener did not start")
 	}
 	start(studioBinary, studioAddress, "--listen", address(), "--participant-listen", studioAddress, "--state-directory", t.TempDir(), "--public-origin", "https://central", "--identity-endpoint", central.URL, "--publisher-id", "publisher")
-	evaluationDirectory := t.TempDir()
+	evolutionSpaceDirectory := t.TempDir()
 	workflowRaw, err := os.ReadFile(filepath.Join(root, "contracts/evolution/testdata/skills.valid.json"))
 	must(t, err)
 	workflow, err := evolution.DecodeWorkflow(bytes.NewReader(workflowRaw))
@@ -117,7 +117,7 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 	provision := func(kind string, ref evolution.Revision, body []byte) {
 		raw, err := json.Marshal(map[string]any{"kind": kind, "ref": ref, "body": json.RawMessage(body)})
 		must(t, err)
-		cmd := exec.CommandContext(ctx, catalogBinary, "--state-directory", evaluationDirectory)
+		cmd := exec.CommandContext(ctx, catalogBinary, "--state-directory", evolutionSpaceDirectory)
 		cmd.Stdin = bytes.NewReader(raw)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("catalog provision: %v\n%s", err, output)
@@ -145,8 +145,8 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 	raw, err = json.Marshal(service)
 	must(t, err)
 	provision("service", service.Ref, raw)
-	start(evaluationBinary, evaluationAddress, "--listen", evaluationAddress, "--state-directory", evaluationDirectory, "--identity-endpoint", central.URL)
-	catalogRequest, err := http.NewRequestWithContext(ctx, "GET", "http://"+evaluationAddress+"/evaluation-space/api/v1/catalog/service/service/1?digest="+service.Ref.Digest, nil)
+	start(evolutionSpaceBinary, evolutionSpaceAddress, "--listen", evolutionSpaceAddress, "--state-directory", evolutionSpaceDirectory, "--identity-endpoint", central.URL)
+	catalogRequest, err := http.NewRequestWithContext(ctx, "GET", "http://"+evolutionSpaceAddress+"/evolution-space/api/v1/catalog/service/service/1?digest="+service.Ref.Digest, nil)
 	must(t, err)
 	anonymous, err := http.DefaultClient.Do(catalogRequest)
 	must(t, err)
@@ -176,11 +176,11 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 	configuration.Bindings = []evolution.Binding{{ID: "skills", Template: template.Ref, Workflow: workflowRef, Service: service.Ref, Parameters: []byte(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: "skills/derived", Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: evolution.EvaluationPolicy{Mode: "disabled", ReferenceStrategy: "none"}, Budget: configuration.Budget, Trigger: "manual"}}
 	pending, err := store.ActivateEvolutionConfig(ctx, token, configuration.GroupID, product.EvolutionActivationInput{RequestID: "activate", Configuration: configuration})
 	must(t, err)
-	evaluation, err := evaluationclient.New("http://"+evaluationAddress, secret)
+	evolutionSpace, err := evolutionspaceclient.New("http://"+evolutionSpaceAddress, secret)
 	must(t, err)
 	studio, err := studioclient.New("http://"+studioAddress, secret)
 	must(t, err)
-	worker := &product.EvolutionWorker{Store: store, Evaluation: evaluation, Studio: studio}
+	worker := &product.EvolutionWorker{Store: store, EvolutionSpace: evolutionSpace, Studio: studio}
 	must(t, worker.Step(ctx))
 	active, err := store.EvolutionConfig(ctx, token, configuration.GroupID)
 	must(t, err)
@@ -198,7 +198,7 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 	must(t, err)
 	// Recreate the central worker to prove the next operation is discovered from
 	// durable state rather than a retained interactive task.
-	worker = &product.EvolutionWorker{Store: store, Evaluation: evaluation, Studio: studio}
+	worker = &product.EvolutionWorker{Store: store, EvolutionSpace: evolutionSpace, Studio: studio}
 	must(t, worker.Step(ctx))
 	active, err = store.EvolutionConfig(ctx, token, configuration.GroupID)
 	must(t, err)
@@ -211,7 +211,7 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 	configuration.Bindings[0].Service.Revision = 99
 	rejected, err := store.ActivateEvolutionConfig(ctx, token, configuration.GroupID, product.EvolutionActivationInput{RequestID: "invalid-service", ExpectedRevision: 2, Configuration: configuration})
 	must(t, err)
-	worker = &product.EvolutionWorker{Store: store, Evaluation: evaluation, Studio: studio}
+	worker = &product.EvolutionWorker{Store: store, EvolutionSpace: evolutionSpace, Studio: studio}
 	must(t, worker.Step(ctx))
 	failed, err := store.EvolutionOperation(ctx, token, configuration.GroupID, rejected.OperationID)
 	must(t, err)
@@ -219,7 +219,7 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 		t.Fatal("missing durable catalog rejection", failed)
 	}
 	must(t, store.DiscardEvolutionOperation(ctx, token, configuration.GroupID, rejected.OperationID, product.EvolutionRetryInput{RequestID: "discard-invalid", ExpectedRevision: 3}))
-	worker = &product.EvolutionWorker{Store: store, Evaluation: evaluation, Studio: studio}
+	worker = &product.EvolutionWorker{Store: store, EvolutionSpace: evolutionSpace, Studio: studio}
 	must(t, worker.Step(ctx))
 	discarded, err := store.EvolutionConfig(ctx, token, configuration.GroupID)
 	must(t, err)
@@ -231,7 +231,7 @@ func TestEvolutionRealParticipantProcesses(t *testing.T) {
 	configuration.Bindings[0].Service = service.Ref
 	replacement, err := store.ActivateEvolutionConfig(ctx, token, configuration.GroupID, product.EvolutionActivationInput{RequestID: "replacement", ExpectedRevision: 3, Configuration: configuration})
 	must(t, err)
-	worker = &product.EvolutionWorker{Store: store, Evaluation: evaluation, Studio: studio}
+	worker = &product.EvolutionWorker{Store: store, EvolutionSpace: evolutionSpace, Studio: studio}
 	must(t, worker.Step(ctx))
 	active, err = store.EvolutionConfig(ctx, token, configuration.GroupID)
 	must(t, err)

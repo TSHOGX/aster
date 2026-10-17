@@ -28,7 +28,7 @@ func TestProjectionAuthorityBindsCurrentOperation(t *testing.T) {
 			t.Fatal("scope substitution allowed", changed)
 		}
 	}
-	must(t, s.FailEvolutionParticipant(ctx, token, config.OperationID, "evaluation-space", digest, "offline"))
+	must(t, s.FailEvolutionParticipant(ctx, token, config.OperationID, "evolution-space", digest, "offline"))
 	allowed, err = s.AuthorizeEvolutionProjection(ctx, scope)
 	must(t, err)
 	if allowed {

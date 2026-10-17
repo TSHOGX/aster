@@ -19,7 +19,7 @@ import (
 
 	"volume-studio/backend/internal/authoring"
 	"volume-studio/backend/internal/distribution"
-	"volume-studio/backend/internal/evaluationclient"
+	"volume-studio/backend/internal/evolutionspaceclient"
 	"volume-studio/backend/internal/httpapi"
 	"volume-studio/backend/internal/identity"
 )
@@ -38,9 +38,9 @@ func main() {
 	distributionListen := flag.String("distribution-listen", "127.0.0.1:8084", "private distribution listener")
 	participantListen := flag.String("participant-listen", "", "optional private loopback evolution participant listener")
 	participantSecretEnv := flag.String("participant-secret-env", "STUDIO_CENTRAL_SECRET", "environment containing the central participant credential")
-	evaluationEndpoint := flag.String("evaluation-endpoint", "", "Optional private Evaluation Space origin")
-	evaluationSecretEnv := flag.String("evaluation-secret-env", "EVALUATION_SPACE_STUDIO_SECRET", "Environment containing Studio evaluation credential")
-	evaluationInputSecretEnv := flag.String("evaluation-input-secret-env", "STUDIO_EVALUATION_INPUT_SECRET", "Environment containing inbound Evaluation Space input credential")
+	evolutionSpaceEndpoint := flag.String("evolution-space-endpoint", "", "Optional private Evolution Space origin")
+	evolutionSpaceSecretEnv := flag.String("evolution-space-secret-env", "EVOLUTION_SPACE_STUDIO_SECRET", "Environment containing Studio evaluation credential")
+	evolutionSpaceInputSecretEnv := flag.String("evolution-space-input-secret-env", "STUDIO_EVOLUTION_SPACE_INPUT_SECRET", "Environment containing inbound Evolution Space input credential")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*listen)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
@@ -62,8 +62,8 @@ func main() {
 	defer sessions.Close()
 	var evaluator authoring.Evaluator
 	var resultArtifacts authoring.RunResultArtifacts
-	if *evaluationEndpoint != "" {
-		transport, transportErr := evaluationclient.New(*evaluationEndpoint, os.Getenv(*evaluationSecretEnv), client)
+	if *evolutionSpaceEndpoint != "" {
+		transport, transportErr := evolutionspaceclient.New(*evolutionSpaceEndpoint, os.Getenv(*evolutionSpaceSecretEnv), client)
 		evaluator = transport
 		resultArtifacts = transport
 		err = transportErr
@@ -106,12 +106,12 @@ func main() {
 			}
 			originalParticipant.ServeHTTP(w, r)
 		})
-		if *evaluationEndpoint != "" {
-			inputAPI, err := httpapi.NewEvaluationInputAPI(store, client, os.Getenv(*evaluationInputSecretEnv))
+		if *evolutionSpaceEndpoint != "" {
+			inputAPI, err := httpapi.NewEvaluationInputAPI(store, client, os.Getenv(*evolutionSpaceInputSecretEnv))
 			if err != nil {
 				log.Fatal(err)
 			}
-			resultAPI, err := httpapi.NewRunResultAPI(store, os.Getenv(*evaluationInputSecretEnv))
+			resultAPI, err := httpapi.NewRunResultAPI(store, os.Getenv(*evolutionSpaceInputSecretEnv))
 			if err != nil {
 				log.Fatal(err)
 			}

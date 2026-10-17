@@ -39,7 +39,7 @@ func (a *EvaluationInputAPI) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	user, password, ok := r.BasicAuth()
 	actual := sha256.Sum256([]byte(password))
-	if !ok || user != "evaluation-space" || subtle.ConstantTimeCompare(actual[:], a.secret[:]) != 1 || r.Header.Get("Origin") != "" || r.Header.Get("Cookie") != "" {
+	if !ok || user != "evolution-space" || subtle.ConstantTimeCompare(actual[:], a.secret[:]) != 1 || r.Header.Get("Origin") != "" || r.Header.Get("Cookie") != "" {
 		writeError(w, 403, "service_identity_required")
 		return
 	}

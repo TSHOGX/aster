@@ -8,18 +8,18 @@ import (
 
 	"aster/contracts/evolution"
 	manifest "aster/contracts/volumemanifest"
-	"harness-platform/orchestrator/internal/evaluationclient"
+	"harness-platform/orchestrator/internal/evolutionspaceclient"
 )
 
 type EvolutionCatalog interface {
-	Catalog(context.Context, string, string, int64, int) (evaluationclient.CatalogPage, error)
-	CatalogDefinition(context.Context, string, evolution.Revision) (evaluationclient.CatalogEntry, error)
+	Catalog(context.Context, string, string, int64, int) (evolutionspaceclient.CatalogPage, error)
+	CatalogDefinition(context.Context, string, evolution.Revision) (evolutionspaceclient.CatalogEntry, error)
 }
 
 func (a *Authentication) evolutionCatalog(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	group, kind := r.PathValue("group"), r.PathValue("kind")
-	if !evaluationclient.CatalogKind(kind) {
+	if !evolutionspaceclient.CatalogKind(kind) {
 		writeError(w, 400, "invalid catalog kind")
 		return
 	}
@@ -30,7 +30,7 @@ func (a *Authentication) evolutionCatalog(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if a.EvolutionCatalog == nil {
-		writeJSON(w, 503, map[string]string{"code": "catalog_unavailable", "error": "Evaluation Space catalog connection is not configured."})
+		writeJSON(w, 503, map[string]string{"code": "catalog_unavailable", "error": "Evolution Space catalog connection is not configured."})
 		return
 	}
 	var result any
@@ -76,12 +76,12 @@ func (a *Authentication) evolutionCatalog(w http.ResponseWriter, r *http.Request
 		adminFailure(w, authorityErr)
 		return
 	}
-	if errors.Is(err, evaluationclient.ErrNotFound) {
+	if errors.Is(err, evolutionspaceclient.ErrNotFound) {
 		writeError(w, 404, "catalog definition not found")
 		return
 	}
 	if err != nil {
-		writeJSON(w, 503, map[string]string{"code": "catalog_unavailable", "error": "Evaluation Space catalog is unavailable. Retry without changing the selected revision."})
+		writeJSON(w, 503, map[string]string{"code": "catalog_unavailable", "error": "Evolution Space catalog is unavailable. Retry without changing the selected revision."})
 		return
 	}
 	writeJSON(w, 200, result)

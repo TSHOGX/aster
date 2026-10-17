@@ -504,7 +504,7 @@ func (s *Store) SettleGeneration(ctx context.Context, input GenerationSettlement
 				}
 			}
 		}
-		return s.auditEvent(ctx, tx, "evaluation-space", "generation.settle", "run", assignment.RunID, input.Grant.ID, fence, input)
+		return s.auditEvent(ctx, tx, "evolution-space", "generation.settle", "run", assignment.RunID, input.Grant.ID, fence, input)
 	})
 }
 
@@ -548,7 +548,7 @@ func (s *Store) AuthorizeGenerationInput(ctx context.Context, artifact evolution
 		if err = authorizeEvolutionSources(ctx, tx, evolution.Configuration{GroupID: artifact.GroupID, Sources: sources}); err != nil {
 			return err
 		}
-		return s.auditEvent(ctx, tx, "evaluation-space", "generation.input.transfer", "artifact", artifact.ID, artifact.GrantID, artifact.PolicyRevision, map[string]string{"group_id": artifact.GroupID, "digest": artifact.Digest})
+		return s.auditEvent(ctx, tx, "evolution-space", "generation.input.transfer", "artifact", artifact.ID, artifact.GrantID, artifact.PolicyRevision, map[string]string{"group_id": artifact.GroupID, "digest": artifact.Digest})
 	})
 }
 
@@ -581,7 +581,7 @@ func (s *Store) CancelGenerationAdmission(ctx context.Context, input evolution.G
 		if _, err = tx.ExecContext(ctx, `INSERT INTO generation_authorizations(id,run_id,group_id,binding_id,configuration_revision,occurrence_id,actor_id,assignment,assignment_digest,grant,state,fence,reserved_tokens,reserved_cost,settlement,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,'cancelled',?,0,0,?,?)`, grant.ID, assignment.RunID, assignment.GroupID, assignment.BindingID, assignment.Pins.ConfigurationRevision, assignment.OccurrenceID, assignment.Requester.Subject, raw, digest, receipt, input.Fence, settlement, s.timestamp()); err != nil {
 			return err
 		}
-		return s.auditEvent(ctx, tx, "evaluation-space", "generation.cancel-admission", "run", assignment.RunID, assignment.OccurrenceID, input.Fence, grant)
+		return s.auditEvent(ctx, tx, "evolution-space", "generation.cancel-admission", "run", assignment.RunID, assignment.OccurrenceID, input.Fence, grant)
 	})
 	return grant, err
 }

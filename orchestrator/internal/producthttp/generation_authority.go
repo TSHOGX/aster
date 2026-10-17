@@ -25,7 +25,7 @@ func (a *Authentication) identityGeneration(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	action := r.PathValue("action")
-	if client.ID != "evaluation-space" && !(client.ID == "studio" && (action == "result-authority" || action == "authority")) {
+	if client.ID != "evolution-space" && !(client.ID == "studio" && (action == "result-authority" || action == "authority")) {
 		writeError(w, 403, "generation service required")
 		return
 	}

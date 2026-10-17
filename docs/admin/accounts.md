@@ -112,7 +112,7 @@ To check a saved draft, POST to
 current desired configuration revision, initially zero),
 `expected_draft_revision`, and `auto_enabled`. The response includes central
 validation issues and the required participants. `central_valid` does not mean
-Studio or Evaluation Space has accepted the configuration. Preview does not
+Studio or Evolution Space has accepted the configuration. Preview does not
 reserve output paths or start work.
 
 POST the same fields plus `request_id` to the `/activate` endpoint to create a
@@ -120,7 +120,7 @@ pending activation. This requires both configuration read and manage access.
 A `202` response acknowledges the operation; it does not confirm activation.
 Read `/api/admin/groups/{group}/optimization` to compare desired and active
 revisions. When both participant clients are configured, the worker reserves Studio outputs,
-reconciles the Evaluation Space projection, adopts Studio reservations, and marks
+reconciles the Evolution Space projection, adopts Studio reservations, and marks
 the revision active after both receipts are verified. A participant outage leaves
 the operation pending for retry.
 
@@ -133,7 +133,7 @@ Inspect an activation at
 `operation_id`. This requires `config.read` and returns the exact configuration
 revision/digest plus recorded participant states and bounded failure codes. Missing
 participant entries mean no receipt has been recorded. `catalog_rejected` indicates
-Evaluation Space rejected the configuration's catalog validation. Operation lookup
+Evolution Space rejected the configuration's catalog validation. Operation lookup
 is scoped to the group and retains historical operations. The `current` field
 identifies the current desired operation; a historical `active` state records that
 activation succeeded, not that the configuration is still selected.
@@ -247,9 +247,9 @@ remain available. Generation and evaluation reservations share the group's concu
 token/cost ceiling, and uncertain work retains its hold until terminal settlement.
 This grant provisions input authority; it does not schedule or execute a workflow.
 
-### Open Evaluation Space
+### Open Evolution Space
 
-Open `/evaluation-space/` and choose **Sign in** to use your central account.
+Open `/evolution-space/` and choose **Sign in** to use your central account.
 Non-administrators need current group membership and a `config.read` grant for
 at least one group. Select a group or search its name; switching groups preserves
 their separate permissions and configuration status. Direct group links return to
@@ -266,7 +266,7 @@ metadata. Language preferences are shared with the central application.
 its derived application sessions. Configuration editing and activation are available
 through the group administration page described below.
 
-Open **Workflow drafts** on the Evaluation Space group page to find saved drafts.
+Open **Workflow drafts** on the Evolution Space group page to find saved drafts.
 With `workflow.edit`, choose **New or fork draft** and a fresh draft ID. Start empty,
 copy an exact saved draft revision owned by that group, or copy the workflow pinned
 by a run in that group. Run forks also require `source.read`. A draft revision fork
@@ -281,7 +281,7 @@ edits saved since creation. After an explicit rejection, choose a fresh ID and a
 accessible source revision before retrying.
 
 Workflow editors use group-scoped links under
-`/evaluation-space/groups/{group}/workflows/{workflow}`. The editor keeps executable
+`/evolution-space/groups/{group}/workflows/{workflow}`. The editor keeps executable
 JSON and canvas layout revisions separate, validates the same typed graph used by
 the runner, uses compare-and-swap draft saves, and publishes immutable revisions
 without activating a group. Publishing requires the explicit `workflow.edit` grant;
@@ -339,7 +339,7 @@ draft test preserves its test restrictions and rechecks the testing permissions.
 
 ### Publish goal templates
 
-Open a group in Evaluation Space and use **Goal template editor**. Configuration
+Open a group in Evolution Space and use **Goal template editor**. Configuration
 read access permits browsing published templates; `workflow.edit` permits authoring
 for that group. A template defines its goal, parameter schema, input/output schemas,
 output content profile, compatible workflow revisions, suggested output prefix and
@@ -366,7 +366,7 @@ alone changes no active configuration and grants no source, model or output acce
 
 ### Publish evaluator profiles
 
-In an Evaluation Space group, **Evaluator profile editor** requires configuration
+In an Evolution Space group, **Evaluator profile editor** requires configuration
 management permission. Choose an existing profile or enter a new definition with
 its dataset, scorer, runtime, model, tools, metric units, thresholds and minimum
 samples/coverage. Use a new ID with revision 1, or increment the revision when
@@ -434,7 +434,7 @@ an active configuration, existing runs or another group's pinned settings.
 
 Choose **Save configuration draft**, then **Preview activation**. The preview shows
 added, removed and changed bindings, output/evaluation changes, admitted-run count,
-and the exact resolved configuration. Central source/schedule checks and Evaluation
+and the exact resolved configuration. Central source/schedule checks and Evolution
 Space compatibility must pass. Studio validates and reserves output paths during
 activation; preview alone makes no reservation. Check the review acknowledgement and
 choose **Activate reviewed configuration**. Follow both participant states until the
@@ -524,7 +524,7 @@ Inspect `GET /api/admin/groups/{group}/corpus/collectors` with `config.read` to 
 source's activation baseline, processed event cursor, sealed-through sequence and
 latest snapshot ID. A snapshot failure leaves the capture cursor unchanged, and
 restart resumes from durable state. Automatic bindings dispatch through the configured
-Evaluation Space and Studio participant connections.
+Evolution Space and Studio participant connections.
 
 Automatic binding schedules require an explicit IANA `timezone` and either a
 five-field cron expression or `@every Nm` with 1–10080 minutes. For example,
@@ -550,7 +550,7 @@ baseline without historical replay.
 Each automatic binding requires `inputs`, keyed by the published workflow's input-port
 names. Use `{"sources":["source-id"]}` to assemble a bounded corpus delta, or
 `{"artifact":{...}}` for a complete immutable artifact reference already sealed in
-Evaluation Space and granted for generation. A dependency port instead uses
+Evolution Space and granted for generation. A dependency port instead uses
 `{"dependency":{"binding_id":"skills","output_port":"candidate"}}`. A port
 selects exactly one form. Source lists must select the binding's approved Project/session sources. Activation
 checks port names and schemas against the published workflow. For example:
