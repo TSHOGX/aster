@@ -67,6 +67,9 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       await page.getByLabel(text("Search groups", "搜索团队"), { exact: true }).fill("Secret Team");
       await page.getByRole("button", { name: text("Search", "搜索"), exact: true }).click();
       await expect(page.getByRole("heading", { name: text("No matching groups", "没有匹配的团队"), exact: true })).toBeVisible();
+      await page.reload();
+      await expect(page.getByLabel(text("Search groups", "搜索团队"), { exact: true })).toHaveValue("Secret Team");
+      await expect(page.getByRole("heading", { name: text("No matching groups", "没有匹配的团队"), exact: true })).toBeVisible();
       await expect(overview.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
       await page.getByLabel(text("Search groups", "搜索团队"), { exact: true }).fill("");
       await page.getByRole("button", { name: text("Search", "搜索"), exact: true }).click();
@@ -437,6 +440,10 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
         else if (path.endsWith("/debugger")) body = { budget: { spent: { tokens: 0, cost_micros: 0 }, held: { tokens: 10, cost_micros: 20 }, available: { tokens: 90, cost_micros: 80 } }, counts: { attempts: 0, events: 0, provider_observations: 0 }, next_after: "", has_more: false, provider_observations: [], opaque: [] };
         return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
       });
+      // Complete the overview's automatic detail reads before a full-document
+      // navigation; WebKit can report canceled TLS reads as native page errors.
+      await expect(page.getByLabel(tr("Template JSON", "模板 JSON"), { exact: true })).toBeEnabled();
+      await expect(page.getByLabel(tr("Profile JSON", "配置 JSON"), { exact: true })).toBeEnabled();
       await page.goto(`/evolution-space/groups/${beta.id}/runs/pause-run`);
       await page.getByRole("button", { name: tr("Pause", "暂停"), exact: true }).click();
       await expect(page.getByRole("heading", { name: `${tr("Run status", "运行状态")}: ${tr("Pausing", "正在暂停")}`, exact: true })).toBeVisible();
@@ -809,7 +816,18 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    const session = await (await page.request.get("/evolution-space/api/v1/session")).json();
    const headers = { Origin: origin, "X-CSRF-Token": session.csrf };
    expect((await page.request.put(root, { headers, data: { id: graph.id, expected_revision: 0, expected_layout_revision: 0, workflow: graph, layout: {} } })).status()).toBe(200);
+   let releaseDraft!: () => void, draftRequested!: () => void;
+   const held = new Promise<void>(resolve => { releaseDraft = resolve; });
+   const requested = new Promise<void>(resolve => { draftRequested = resolve; });
+   await page.route(`${origin}${root}`, async route => { draftRequested(); await held; await route.continue(); });
    await page.goto(`/evolution-space/groups/${beta.id}/workflows/${graph.id}/`);
+   try {
+    await requested;
+    await expect(page.getByText(tr("Loading workflow…", "正在加载工作流…"), { exact: true })).toBeVisible();
+    await expect(page.getByLabel(tr("Executable workflow JSON", "可执行工作流 JSON"), { exact: true })).toHaveCount(0);
+   } finally { releaseDraft(); }
+   await expect(page.getByRole("button", { name: /^extract\b/ })).toBeVisible();
+   await page.unroute(`${origin}${root}`);
    const executable = page.getByLabel(tr("Executable workflow JSON", "可执行工作流 JSON"), { exact: true });
    const validate = page.getByRole("button", { name: tr("Validate draft", "验证草稿"), exact: true });
    const checks: { field: string; focus: string; change: (value: typeof graph) => void }[] = [
@@ -1030,5 +1048,86 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    await expect(editor.getByRole("alert")).toBeVisible(); await expect(input).toHaveValue("");
    expect(errors).toEqual([]);
   } finally { await context.close(); }
+ });
+}
+
+for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", width: 390 }]) {
+ test(`run and evaluation history preserve scoped filters and pages ${variant.locale}`, async ({ page: admin, browser }, info) => {
+  const { beta, user, grant } = await provision(admin);
+  const context = await browser.newContext({baseURL:origin,ignoreHTTPSErrors:true,locale:variant.locale,viewport:{width:variant.width,height:1000}});
+  const page = await context.newPage(); const tr=(en:string,zh:string)=>variant.locale==="zh-CN"?zh:en;
+  const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));
+  const runsRoot=`/evolution-space/api/v1/groups/${beta.id}/runs`;
+  const evaluationsRoot=`/evolution-space/api/v1/groups/${beta.id}/evaluations`;
+  let failRuns=false,failEvaluations=false;
+  const run=(id:string)=>({id,state:"completed",handoff:"pending",evaluation_state:"not_requested",created_at:"2026-10-17T02:00:00Z",pins:{template:{id:"skills",revision:1},workflow:{id:"workflow",revision:2},base:{commit_id:"a".repeat(64)}}});
+  const requests:URLSearchParams[]=[];
+  // Synthetic metadata pages exercise browser state; actual filtering and
+  // group isolation are covered by the SQLite and browser-API regressions.
+  await page.route(`${origin}${runsRoot}?*`,route=>{
+   const query=new URL(route.request().url()).searchParams; requests.push(query);
+   if(failRuns)return route.fulfill({status:503,json:{error:"unavailable"}});
+   if(query.get("template")==="missing")return route.fulfill({json:{items:[],next_after:"",has_more:false}});
+   const second=!!query.get("after");
+   return route.fulfill({json:{items:[run(second?"run-26":"run-01")],next_after:second?"run-26":"run-25",has_more:!second}});
+  });
+  await page.route(`${origin}${evaluationsRoot}?*`,route=>{
+   if(failEvaluations)return route.fulfill({status:503,json:{error:"unavailable"}});
+   const second=!!new URL(route.request().url()).searchParams.get("after");
+   return route.fulfill({json:{items:[{id:second?"check-26":"check-01",state:"completed",profile:{ref:{id:"profile",revision:1}}}],next_after:second?"check-26":"check-25",has_more:!second}});
+  });
+  try {
+   await login(page,user);await page.goto(`/evolution-space/groups/${beta.id}/`);
+   await page.getByRole("link",{name:tr("Sign in","登录"),exact:true}).click();
+   const runs=page.getByRole("region",{name:tr("Run history","运行历史"),exact:true});
+   const evaluations=page.getByRole("region",{name:tr("Evaluation history","评估历史"),exact:true});
+   await expect(runs.getByRole("link",{name:"run-01",exact:true})).toBeVisible();
+   await expect(runs.getByRole("columnheader",{name:tr("Execution state","执行状态"),exact:true})).toBeVisible();
+   await expect(runs.getByRole("columnheader",{name:tr("Handoff","交接"),exact:true})).toBeVisible();
+   await runs.locator("summary").press("Enter");
+   await runs.getByLabel(tr("Template ID","模板 ID"),{exact:true}).fill("skills");
+   await runs.getByLabel(tr("Execution state","执行状态"),{exact:true}).selectOption("completed");
+   await runs.getByLabel(tr("Created from (inclusive)","创建时间起点（包含）"),{exact:true}).fill("2026-10-17T00:00:00+08:00");
+   await runs.getByRole("button",{name:tr("Apply filters","应用筛选"),exact:true}).press("Enter");
+   await expect(page).toHaveURL(/runs_template=skills/);
+   await expect.poll(()=>requests.at(-1)?.get("from")).toBe("2026-10-17T00:00:00+08:00");
+   await runs.getByRole("button",{name:tr("Next page","下一页"),exact:true}).press("Enter");
+   await expect(runs.getByRole("link",{name:"run-26",exact:true})).toBeVisible();
+   await expect(runs.getByRole("link",{name:"run-01",exact:true})).toHaveCount(0);
+   await evaluations.getByRole("button",{name:tr("Next page","下一页"),exact:true}).press("Enter");
+   await expect(evaluations.getByRole("link",{name:"check-26",exact:true})).toBeVisible();
+   await page.reload();
+   await expect(runs.getByRole("link",{name:"run-26",exact:true})).toBeVisible();
+   await expect(runs.getByLabel(tr("Template ID","模板 ID"),{exact:true})).toHaveValue("skills");
+   await expect(evaluations.getByRole("link",{name:"check-26",exact:true})).toBeVisible();
+   await runs.getByRole("link",{name:"run-26",exact:true}).press("Enter");
+   await expect(page).toHaveURL(/\/runs\/run-26\/?$/);
+   await expect(page.getByRole("heading",{name:tr("Run inspector","运行检查器"),exact:true})).toBeVisible();
+   await page.goBack();
+   await expect(runs.getByRole("link",{name:"run-26",exact:true})).toBeVisible();
+   expect(new URL(page.url()).searchParams.get("runs_after")).toBe("run-25");
+   failRuns=true;await runs.getByRole("button",{name:tr("Refresh","刷新"),exact:true}).click();
+   await expect(runs.getByRole("alert")).toBeVisible();await expect(runs.getByRole("table")).toHaveCount(0);
+   await expect(runs.getByText(tr("No matching runs.","没有匹配的运行。"),{exact:true})).toHaveCount(0);
+   failRuns=false;await runs.getByRole("button",{name:tr("Retry","重试"),exact:true}).click();
+   await expect(runs.getByRole("link",{name:"run-26",exact:true})).toBeVisible();
+   failEvaluations=true;await evaluations.getByRole("button",{name:tr("Refresh","刷新"),exact:true}).click();
+   await expect(evaluations.getByRole("alert")).toBeVisible();await expect(evaluations.getByRole("link")).toHaveCount(0);
+   failEvaluations=false;await evaluations.getByRole("button",{name:tr("Retry","重试"),exact:true}).click();
+   await expect(evaluations.getByRole("link",{name:"check-26",exact:true})).toBeVisible();
+   await runs.getByLabel(tr("Template ID","模板 ID"),{exact:true}).fill("missing");
+   await runs.getByRole("button",{name:tr("Apply filters","应用筛选"),exact:true}).click();
+   await expect(runs.getByText(tr("No matching runs.","没有匹配的运行。"),{exact:true})).toBeVisible();
+   expect(new URL(page.url()).searchParams.has("runs_after")).toBe(false);
+   await runs.getByRole("button",{name:tr("Clear filters","清除筛选"),exact:true}).click();
+   await expect(runs.getByRole("link",{name:"run-01",exact:true})).toBeVisible();
+   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+   await page.screenshot({path:info.outputPath("execution-history.png"),fullPage:true});
+   await grant(beta.id,"config.read","deny",1);
+   await page.locator(".overview > .section-heading").getByRole("button",{name:tr("Refresh","刷新"),exact:true}).click();
+   await expect(runs).toHaveCount(0);await expect(evaluations).toHaveCount(0);
+   expect((await page.request.get(`${runsRoot}?state=completed&after=run-25`)).status()).toBe(403);
+   expect(errors).toEqual([]);
+  } finally {await context.close()}
  });
 }

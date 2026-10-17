@@ -1,6 +1,7 @@
 /* eslint-disable @next/next/no-html-link-for-pages -- Root links leave this application base path for the central application. */
 "use client";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { LanguagePicker } from "../../../web/language-picker";
 import { useAccountPreferences } from "../../../web/account-preferences";
@@ -9,6 +10,7 @@ import { base, type Session, type Group, type GroupPage } from "../lib/api";
 import { useT } from "../lib/i18n";
 import { useRead } from "../lib/use-read";
 import { CatalogEditor } from "./catalog-editor";
+import { RunHistory, EvaluationHistory } from "./execution-history";
 import { WorkflowDrafts } from "./workflow-drafts";
 
 export function SpaceShell({ children }: { children: ReactNode }) {
@@ -61,23 +63,30 @@ export function Space({ groupID = "" }: { groupID?: string }) {
 }
 
 function GroupList({ selected }: { selected: string }) {
-  const tr = useT(); const [draft, setDraft] = useState(""); const [search, setSearch] = useState(""); const [after, setAfter] = useState("");
+  const tr = useT(); const params = useSearchParams();
+  const search = params.get("groups_search") ?? "", after = params.get("groups_after") ?? "";
+  const navigate = (search: string, after: string) => {
+    const url = new URL(window.location.href);
+    for (const [key, value] of [["groups_search", search], ["groups_after", after]]) {
+      if (value) url.searchParams.set(key, value); else url.searchParams.delete(key);
+    }
+    window.history.pushState(null, "", url.pathname + url.search + url.hash);
+  };
+  const selection = new URLSearchParams();
+  if (search) selection.set("groups_search", search);
+  if (after) selection.set("groups_after", after);
   const read = useRead<GroupPage>(`/groups?${new URLSearchParams({ search, after, limit: "25" })}`);
   return <aside className="groups" aria-label={tr("Groups")}><div className="section-heading"><h2>{tr("Groups")}</h2><button onClick={read.refresh}>{tr("Refresh")}</button></div>
-    <form onSubmit={event => { event.preventDefault(); setSearch(draft.trim()); setAfter(""); }}><label htmlFor="group-search">{tr("Search groups")}</label><div className="search"><input id="group-search" value={draft} maxLength={256} onChange={e => setDraft(e.target.value)} /><button type="submit">{tr("Search")}</button></div></form>
+    <form key={search} onSubmit={event => { event.preventDefault(); navigate(String(new FormData(event.currentTarget).get("search") ?? "").trim(), ""); }}><label htmlFor="group-search">{tr("Search groups")}</label><div className="search"><input id="group-search" name="search" defaultValue={search} maxLength={256} /><button type="submit">{tr("Search")}</button></div></form>
     {read.loading && <p role="status">{tr("Loading groups…")}</p>}
     {read.status && <div role="alert"><p>{tr(read.status === 401 || read.status === 403 ? "Group access was revoked. Sign in again or contact an administrator." : "Group access is unavailable. Please retry.")}</p><button onClick={read.refresh}>{tr("Retry")}</button></div>}
-    {read.data && <><ul>{read.data.items.map(group => <li key={group.id}><Link prefetch={false} href={`/groups/${encodeURIComponent(group.id)}/`} aria-current={selected === group.id ? "page" : undefined}>{group.name}</Link></li>)}</ul>
+    {read.data && <><ul>{read.data.items.map(group => <li key={group.id}><Link prefetch={false} href={`/groups/${encodeURIComponent(group.id)}/${selection.size ? `?${selection}` : ""}`} aria-current={selected === group.id ? "page" : undefined}>{group.name}</Link></li>)}</ul>
       {!read.data.items.length && <div><h3>{tr(search ? "No matching groups" : "No readable groups")}</h3>{!search && <p>{tr("Ask an administrator for group membership and configuration read access.")}</p>}</div>}
-      <div className="pagination">{after && <button onClick={() => setAfter("")}>{tr("First page")}</button>}{read.data.has_more && <button onClick={() => setAfter(read.data!.next_after)}>{tr("Next page")}</button>}</div>
+      <div className="pagination">{after && <button onClick={() => navigate(search, "")}>{tr("First page")}</button>}{read.data.has_more && <button onClick={() => navigate(search, read.data!.next_after)}>{tr("Next page")}</button>}</div>
     </>}
   </aside>;
 }
 const states: Record<string, string> = { unconfigured: "Not configured", draft: "Draft", activating: "Activating", active: "Active", failed: "Activation failed", discarding: "Discarding", discarded: "Discarded" };
-type RunSummary = { id: string; state: string; evaluation_state: string; pins: { workflow?: { id?: string; revision?: number } } };
-type RunPage = { items: RunSummary[]; next_after: string; has_more: boolean };
-type EvaluationSummary = { id: string; state: string; profile: { ref?: { id?: string; revision?: number } } };
-type EvaluationPage = { items: EvaluationSummary[]; next_after: string; has_more: boolean };
 function GroupOverview({ id }: { id: string }) {
   const tr = useT(); const read = useRead<GroupPage>(`/groups/${encodeURIComponent(id)}`);
   if (read.loading) return <p role="status">{tr("Loading group…")}</p>;
@@ -86,15 +95,13 @@ function GroupOverview({ id }: { id: string }) {
 }
 function GroupDetails({ group, refresh }: { group: Group; refresh: () => void }) {
   const tr = useT();
-  const runs = useRead<RunPage>(`/groups/${encodeURIComponent(group.id)}/runs?limit=5`);
-  const evaluations = useRead<EvaluationPage>(`/groups/${encodeURIComponent(group.id)}/evaluations?limit=5`);
   return <><div className="section-heading"><h1>{group.name}</h1><div className="editor-actions"><button onClick={refresh}>{tr("Refresh")}</button>{group.can_manage && <a className="button" href={`/admin/groups/${encodeURIComponent(group.id)}/optimization`}>{tr("Open configuration")}</a>}</div></div><p>{group.description}</p>
     <section className="card"><h2>{tr("Configuration")}</h2><p className="status">{tr(states[group.state] || group.state)}</p>
       <dl><div><dt>{tr("Desired revision")}</dt><dd>{group.desired_revision || "—"}</dd></div><div><dt>{tr("Active revision")}</dt><dd>{group.active_revision || "—"}</dd></div><div><dt>{tr("Automatic optimization")}</dt><dd>{tr(group.auto_enabled ? "On" : "Off")}</dd></div></dl>
       {!group.active_revision && <p>{tr("No active configuration. Ask a configuration manager to complete setup.")}</p>}
       {group.desired_revision !== group.active_revision && <p>{tr("A configuration change is pending. The active revision remains separate.")}</p>}
     </section>
-    <div className="workbench-grid overview-grid"><section className="card"><h2>{tr("Recent runs")}</h2>{runs.status && <p role="alert">{tr("Runs are unavailable. Retry when the service is restored.")}</p>}{!runs.loading && !runs.data?.items.length && <p>{tr("No runs yet.")}</p>}<ul>{runs.data?.items.map(run => <li key={run.id}><Link href={`/groups/${encodeURIComponent(group.id)}/runs/${encodeURIComponent(run.id)}`}>{run.id}</Link> · {tr(run.state === "pause_requested" ? "Pausing" : run.state)} · {tr(run.evaluation_state)}</li>)}</ul></section><section className="card"><h2>{tr("Recent evaluations")}</h2>{evaluations.status && <p role="alert">{tr("Evaluations are unavailable. Retry when the service is restored.")}</p>}{!evaluations.loading && !evaluations.data?.items.length && <p>{tr("No evaluations yet.")}</p>}<ul>{evaluations.data?.items.map(job => <li key={job.id}><Link href={`/groups/${encodeURIComponent(group.id)}/evaluations/${encodeURIComponent(job.id)}`}>{job.id}</Link> · {tr(job.state)} · {job.profile.ref?.id ?? "—"}</li>)}</ul></section></div>
+    <RunHistory group={group.id} /><EvaluationHistory group={group.id} />
     <CatalogEditor key={`templates:${group.id}`} group={group.id} kind="templates" editable={group.can_edit_workflows} />
     <WorkflowDrafts group={group.id} editable={group.can_edit_workflows} evidence={group.can_read_evidence} />
     {group.can_manage && <CatalogEditor group={group.id} kind="profiles" editable />}<section className="card" aria-labelledby="permissions-heading"><h2 id="permissions-heading">{tr("Your permissions")}</h2><table className="permission-matrix"><thead><tr><th scope="col">{tr("Capability")}</th><th scope="col">{tr("Effective access")}</th></tr></thead><tbody>{[["Read configuration", true], ["Manage configuration", group.can_manage], ["Edit and publish workflows", group.can_edit_workflows], ["Operate runs", group.can_run], ["Read source evidence", group.can_read_evidence]].map(([label, allowed]) => <tr key={String(label)}><th scope="row">{tr(String(label))}</th><td>{tr(allowed ? "Allowed" : "Not granted")}</td></tr>)}</tbody></table><p>{tr("Configuration access does not grant source evidence access.")}</p></section>

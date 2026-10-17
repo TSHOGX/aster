@@ -68,6 +68,8 @@ CREATE TRIGGER retained_template_owner BEFORE DELETE ON template_owners BEGIN SE
 CREATE TABLE service_states(service_id TEXT PRIMARY KEY,revision INTEGER NOT NULL CHECK(revision>0),enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));
 CREATE TABLE service_state_receipts(request_id TEXT PRIMARY KEY,request TEXT NOT NULL,revision INTEGER NOT NULL);
 CREATE TABLE runs(tokens INTEGER NOT NULL DEFAULT 0 CHECK(tokens>=0),cost_micros INTEGER NOT NULL DEFAULT 0 CHECK(cost_micros>=0),worker_id TEXT NOT NULL DEFAULT '',fence INTEGER NOT NULL DEFAULT 0 CHECK(fence>=0),lease_until INTEGER NOT NULL DEFAULT 0,id TEXT PRIMARY KEY,group_id TEXT NOT NULL,binding_id TEXT NOT NULL,configuration_revision INTEGER NOT NULL,occurrence_id TEXT NOT NULL,experiment_of TEXT NOT NULL DEFAULT '',request BLOB NOT NULL,body BLOB NOT NULL,state TEXT NOT NULL CHECK(state IN ('queued','running','pause_requested','paused','cancelling','completed','failed','cancelled')),UNIQUE(group_id,binding_id,configuration_revision,occurrence_id));
+CREATE INDEX runs_group_page ON runs(group_id,id);
+CREATE INDEX runs_group_state_page ON runs(group_id,state,id);
 CREATE UNIQUE INDEX experiment_binding_occurrence ON runs(group_id,binding_id,configuration_revision,occurrence_id,experiment_of);
 CREATE UNIQUE INDEX one_active_binding_run ON runs(group_id,binding_id) WHERE state IN ('queued','running','pause_requested','paused','cancelling') AND experiment_of='' AND json_extract(body,'$.draft_test') IS NULL;
 CREATE TRIGGER immutable_run_admission BEFORE UPDATE OF id,group_id,binding_id,configuration_revision,occurrence_id,experiment_of,request,body ON runs BEGIN SELECT RAISE(ABORT,'immutable run admission'); END;

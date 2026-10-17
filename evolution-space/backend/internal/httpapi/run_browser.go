@@ -58,7 +58,16 @@ func BrowserRunAPI(client *appidentity.Client, store *projections.Store) func(ap
 			write(w, 400, map[string]string{"error": "invalid_limit"})
 			return
 		}
-		page, err := store.Runs(r.Context(), r.PathValue("group"), r.URL.Query().Get("after"), limit)
+		query := r.URL.Query()
+		filter := projections.RunFilter{State: query.Get("state"), Template: query.Get("template"), Workflow: query.Get("workflow"), BaseCommit: query.Get("base_commit"), Source: query.Get("source"), Author: query.Get("author"), From: query.Get("from"), Until: query.Get("until")}
+		if raw := query.Get("workflow_revision"); raw != "" {
+			filter.WorkflowRevision, err = strconv.ParseInt(raw, 10, 64)
+		}
+		if err != nil || filter.Validate() != nil {
+			write(w, 400, map[string]string{"error": "invalid_run_filter"})
+			return
+		}
+		page, err := store.Runs(r.Context(), r.PathValue("group"), query.Get("after"), limit, filter)
 		if err != nil {
 			write(w, 422, map[string]string{"error": "runs_unavailable"})
 			return

@@ -117,6 +117,8 @@ func TestBrowserListDefaultsAndInvalidEventCursor(t *testing.T) {
 		status int
 	}{
 		{"runs", 200}, {"evaluations", 200}, {"runs/missing/attempts", 404},
+		{"runs?state=completed&workflow=skills&workflow_revision=2", 200},
+		{"runs?state=invalid", 400}, {"runs?workflow_revision=2", 400}, {"runs?workflow_revision=no", 400}, {"runs?from=yesterday", 400},
 		{"runs?limit=", 200}, {"evaluations?limit=", 200},
 		{"runs?limit=invalid", 400}, {"evaluations?limit=invalid", 400}, {"runs/missing/attempts?limit=invalid", 400},
 		{"runs?limit=51", 400}, {"evaluations?limit=0", 400}, {"runs/missing/attempts?limit=101", 400},

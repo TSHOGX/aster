@@ -57,3 +57,5 @@ dd { margin: 0; min-width: 0; text-align: right; }
 .catalog-editor .section-heading > div { min-width: 0; }
 
 .published-workflow pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+
+.execution-history form { display:grid; gap:.75rem; }.execution-history label { display:grid; gap:.35rem; }.execution-history select { max-width:100%; color:var(--foreground); background:var(--surface); padding:.5rem; border:1px solid var(--border-strong); border-radius:7px; }.history-filters { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:.75rem; margin-top:.75rem; }.execution-history table { margin:1rem 0; }.execution-history .pagination { margin-top:1rem; }

@@ -146,7 +146,7 @@ function Editor({ group, workflow }: { group: string; workflow: string }) {
     setPast(items => [...items, snapshot()]); setFuture(items => items.slice(0, -1)); setText(next.workflow); setLayout(next.layout); setFieldDrafts(next.fields ?? {}); setSelected(next.selected ?? ""); setNodeID(next.nodeID ?? ""); if (next.workflow !== text) setDigest(""); setDirty(true);
   }
   async function load() {
-    setErrorKey(""); setPublished(undefined);
+    setBusy(true); setErrorKey(""); setPublished(undefined);
     try {
       const sessionResponse = await fetch(`${base}/api/v1/session`, { credentials: "same-origin" });
       if (!sessionResponse.ok) throw new Error("session");
@@ -157,6 +157,7 @@ function Editor({ group, workflow }: { group: string; workflow: string }) {
       setDraft(value); setText(pretty(value.workflow)); setLayout(pretty(value.layout)); setFieldDrafts({}); setDirty(false); setPast([]); setFuture([]); setDigest("");
       if (window.sessionStorage.getItem(recoveryKey(current.subject, group, workflow))) setStatusKey("A local recovery draft is available. Review it before restoring.");
     } catch { setErrorKey("Workflow draft is unavailable. Retry or ask a workflow editor."); }
+    finally { setBusy(false); }
   }
   useEffect(() => { void load(); }, [group, workflow]);
   useEffect(() => {
@@ -233,6 +234,7 @@ function Editor({ group, workflow }: { group: string; workflow: string }) {
     finally { setBusy(false); }
   }
   if (errorKey && !draft) return <main className="session-gate"><h1>{tr("Workflow editor")}</h1><p role="alert">{tr(errorKey)}</p><button onClick={() => void load()}>{tr("Retry")}</button><Link prefetch={false} href={`/groups/${encodeURIComponent(group)}/`}>{tr("Back to group")}</Link></main>;
+  if (!draft) return <main className="session-gate"><h1>{tr("Workflow editor")}</h1><p role="status">{tr("Loading workflow…")}</p></main>;
   return <main ref={editor} className="editor-page">
     <header className="section-heading"><div><Link prefetch={false} href={`/groups/${encodeURIComponent(group)}/`}>{tr("Back to group")}</Link><h1>{tr("Workflow editor")}: {workflow}</h1><p>{tr("Draft, published revision and group activation are separate steps.")}</p></div><div className="editor-actions"><button disabled={busy || !past.length} onClick={undo}>{tr("Undo")}</button><button disabled={busy || !future.length} onClick={redo}>{tr("Redo")}</button><button onClick={saveRecovery}>{tr("Save recovery")}</button><button disabled={busy || !draft || !parsed || invalidFields.length > 0 || !!selectedNode && nodeID !== selected || !parseObject(layout)} onClick={() => void save()}>{tr("Save draft")}</button><button disabled={busy || !draft || dirty || invalidFields.length > 0} onClick={() => void publish()}>{tr("Publish revision")}</button><a className="button" href={`/admin/groups/${encodeURIComponent(group)}/optimization`}>{tr("Activate from configuration")}</a></div></header>
     {published && <section className="card published-workflow"><h2>{tr("Published workflow reference")}</h2><pre>{pretty(published)}</pre><p>{tr("Add this exact reference to a compatible goal template before activating it.")}</p><Link prefetch={false} href={`/groups/${encodeURIComponent(group)}/`}>{tr("Open goal templates")}</Link></section>}

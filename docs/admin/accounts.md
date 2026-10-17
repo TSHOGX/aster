@@ -306,6 +306,20 @@ evaluator metrics and explicit stale or redacted states. Artifact metadata inclu
 identity, digest, size and media kind; bytes still require a separate current grant.
 They never expose dataset bytes or service credentials.
 
+Use **Run history** and **Evaluation history** on the group page to browse older
+work with **Next page** and **First page**. Run history filters apply across all
+retained runs, before pagination. Filter by execution state, exact template or
+workflow ID/revision, source snapshot ID, base commit, requester account ID or
+creation time. The requester is the account that admitted the work, including the
+configuration actor for automatic runs. Enter time bounds with a timezone; the
+start is included and the end is excluded. Results use stable ID order.
+
+Execution, handoff and evaluation have separate columns. Filters and page positions
+survive reload and browser Back. Applying new filters returns runs to their first
+page while leaving the evaluation page unchanged. Failed reads clear displayed
+rows; use **Retry** after access or service recovery. On narrow screens, focus the
+run table to scroll across its columns with the keyboard.
+
 Open a node attempt to retain its selection in the run URL. **Link to this attempt**
 can be copied or bookmarked; reload restores the exact dynamic attempt even when
 it falls beyond the first results page. Parent attempts and event entries navigate
