@@ -169,4 +169,4 @@ fi
 
 if [[ $suite == publication || $suite == all ]]; then run application '^TestReleasedBuiltinVolumePublication$' publication 4m;fi
 
-if [[ $suite == imports ]]; then run application "^(TestStudioImportOnRealKhora|TestSharedAssetsImportOnRealKhora)$" imports 10m;fi
+if [[ $suite == imports ]]; then run application "^(TestStudioImportOnRealKhora|TestSharedAssetsImportOnRealKhora|TestSharedAssetsProjectAdoptionOnRealKhora)$" imports 10m;fi

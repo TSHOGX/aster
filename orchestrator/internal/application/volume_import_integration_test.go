@@ -27,16 +27,22 @@ import (
 	"harness-platform/orchestrator/internal/identityconfig"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/producthttp"
+	"harness-platform/orchestrator/internal/runtimerelease"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sandbox/khora"
 	"harness-platform/orchestrator/internal/volumeimport"
 )
 
-func TestStudioImportOnRealKhora(t *testing.T) { qualifyStudioImport(t, content.AuthoredProfile) }
-func TestSharedAssetsImportOnRealKhora(t *testing.T) {
-	qualifyStudioImport(t, content.SharedAssetsProfile)
+func TestStudioImportOnRealKhora(t *testing.T) {
+	qualifyStudioImport(t, content.AuthoredProfile, false)
 }
-func qualifyStudioImport(t *testing.T, profile string) {
+func TestSharedAssetsImportOnRealKhora(t *testing.T) {
+	qualifyStudioImport(t, content.SharedAssetsProfile, false)
+}
+func TestSharedAssetsProjectAdoptionOnRealKhora(t *testing.T) {
+	qualifyStudioImport(t, content.SharedAssetsProfile, true)
+}
+func qualifyStudioImport(t *testing.T, profile string, adoption bool) {
 	endpoint := os.Getenv("PROJECT_TEST_ENDPOINT")
 	studioBinary := os.Getenv("STUDIO_TEST_BINARY")
 	if endpoint == "" || studioBinary == "" {
@@ -64,6 +70,21 @@ func qualifyStudioImport(t *testing.T, profile string) {
 	must(err)
 	config, configPath := configurationFixture(t)
 	config.Engine.StoreID = identity.StoreID
+	if adoption {
+		manifestPath := os.Getenv("PROJECT_TEST_MANIFEST")
+		manifestBytes, err := os.ReadFile(manifestPath)
+		must(err)
+		digest, err := runtimerelease.Digest(manifestBytes)
+		must(err)
+		config.Template = Template{Version: "v1", ID: "agent-runtime", Manifest: manifestPath, Digest: digest}
+		sources := t.TempDir()
+		config.Content.AgentConfig = filepath.Join(sources, "config")
+		config.Content.SharedAssets = filepath.Join(sources, "shared-assets")
+		must(os.MkdirAll(config.Content.AgentConfig, 0700))
+		must(os.MkdirAll(filepath.Join(config.Content.SharedAssets, "skills"), 0700))
+		must(os.WriteFile(filepath.Join(config.Content.AgentConfig, "settings.json"), []byte("{}"), 0600))
+		must(os.WriteFile(filepath.Join(config.Content.SharedAssets, "AGENTS.md"), []byte("Initial guidance"), 0600))
+	}
 	raw, err := json.Marshal(config)
 	must(err)
 	must(os.WriteFile(configPath, raw, 0600))
@@ -209,7 +230,11 @@ func qualifyStudioImport(t *testing.T, profile string) {
 	chunk := make([]byte, 8<<20)
 	var revision int64 = 1
 	if profile == content.SharedAssetsProfile {
-		jsonCall("POST", draft+"/draft/text", map[string]any{"request_id": "agents", "expected_revision": revision, "expected_head": branch.Head, "path": "AGENTS.md", "text": "Shared import qualification"}, 200)
+		guidance := "Shared import qualification"
+		if adoption {
+			guidance = "Shared adoption qualification"
+		}
+		jsonCall("POST", draft+"/draft/text", map[string]any{"request_id": "agents", "expected_revision": revision, "expected_head": branch.Head, "path": "AGENTS.md", "text": guidance}, 200)
 		revision++
 	}
 
@@ -344,6 +369,10 @@ func qualifyStudioImport(t *testing.T, profile string) {
 	}
 	ref := sandbox.VolumeReference{StoreID: identity.StoreID, VolumeID: volume}
 	must(content.VerifyVolume(ctx, backend, ref, descriptor.TreeDigest, profile))
+	if adoption {
+		qualifyImportedProjectAdoption(t, ctx, app, token, admin.Account.ID, ready)
+		return
+	}
 	copyA, err := backend.SnapshotVolume(ctx, ref, "qualified-owned-a-"+profile, ready.Capacity)
 	must(err)
 	copyB, err := backend.SnapshotVolume(ctx, ref, "qualified-owned-b-"+profile, ready.Capacity)
