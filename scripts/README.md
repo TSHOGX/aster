@@ -7,7 +7,7 @@ runtimes from one committed revision in an isolated checkout. Evolution Space's
 backend, browser frontend and offline maintenance commands are recorded in the
 same deployment manifest and checked against the source commit. `deploy.py` validates
 that complete build against a prepared local host and supervisor plan. Activation
-requires its explicit `--fresh` option, which erases application, Studio and engine
+requires its explicit `--fresh` option, which erases application, Studio, Evolution Space and engine
 state and creates new administrator credentials.
 
 Run `python3 scripts/rebuild.py --help` and `python3 scripts/deploy.py --help`
@@ -29,11 +29,11 @@ The deployment plan is a private JSON file with these required keys:
 }
 ```
 
-Prepare `asterapp` and `asterweb`, the `/var/lib/aster` and
-`/var/lib/aster-studio` state directories, and a dedicated btrfs mount at
+Prepare `asterapp` and `asterweb`, the `/var/lib/aster`,
+`/var/lib/aster-studio` and `/var/lib/evolution-space` state directories, and a dedicated btrfs mount at
 `/srv/aster/engine`. The namespace, TLS, provider settings and environment files
-must already exist. The script reads `/etc/aster/owner.env`, `gateway.env` and
-`studio.env` before stopping services. Store environment values as literal
+must already exist. The script reads `/etc/aster/owner.env`, `gateway.env`,
+`studio.env` and `evolution-space.env` before stopping services. Store environment values as literal
 `NAME=value` assignments, optionally quoted; shell expansion is not performed.
 
 Provide one `aster-NAME.service` template for each of `web`, `gateway`,
@@ -46,7 +46,8 @@ Templates must select the prepared namespace, state paths and the built runtime
 as the two engine templates named by `template` and `work_template` in the
 application configuration. The `evolution-space` unit must run
 `@EVOLUTION_SPACE@/bin/evolution-space` with the private worker listener and
-loopback browser listener `127.0.0.1:18485`; `evolution-space-frontend` must run the
+loopback browser listener `127.0.0.1:18485` and exact
+`-state-directory /var/lib/evolution-space`; `evolution-space-frontend` must run the
 packaged `frontend/server.js`. `evolution-space-tls` must expose that browser listener
 on the private TLS address used by the front door (the reference port is `18447`).
 The `web` command must include `-evolution-space` and route only the
@@ -59,6 +60,9 @@ Run validation without `--fresh` first. It checks artifact inventories, the engi
 identity, runtime contents, configuration, reset-directory boundaries and unit
 syntax. Back up the installation using the [recovery guide](../docs/operators/recovery.md)
 before explicitly choosing `--fresh`; the script does not create a backup.
+Evolution Space's configured private endpoint must return its ready status over
+verified TLS before public ingress starts. An active supervisor process alone does
+not satisfy this check. Failed readiness leaves public ingress stopped.
 
 - [Install Aster](../docs/operators/installation.md)
 - [Upgrade services](../docs/operators/upgrades.md)

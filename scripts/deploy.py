@@ -8,6 +8,7 @@ from pathlib import Path
 import pwd
 import re
 import secrets
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -15,7 +16,7 @@ import time
 
 import candidate
 
-STATE_ROOTS = (Path("/var/lib/aster"), Path("/var/lib/aster-studio"), Path("/srv/aster/engine"))
+STATE_ROOTS = (Path("/var/lib/aster"), Path("/var/lib/aster-studio"), Path("/var/lib/evolution-space"), Path("/srv/aster/engine"))
 
 SERVICES = ("web", "gateway", "application", "studio", "evolution-space", "frontend",
             "admin-frontend", "evolution-space-frontend", "studio-frontend", "studio-tls",
@@ -111,6 +112,7 @@ def validate(build, plan):
         raise ValueError("Evolution Space frontend unit does not use the complete release")
     if "18485" not in units["aster-evolution-space.service"] or "browser-listen" not in units["aster-evolution-space.service"]:
         raise ValueError("Evolution Space backend unit must expose its private browser gateway")
+    validate_evolution_space_unit(units["aster-evolution-space.service"])
     if "18447" not in units["aster-evolution-space-tls.service"]:
         raise ValueError("Evolution Space TLS unit must expose the configured browser gateway")
     if not Path("/srv/aster/engine").is_mount():
@@ -134,6 +136,29 @@ def validate(build, plan):
     return config, units
 
 
+def validate_evolution_space_unit(unit):
+    # Match the actual argument, not a mention in a comment or another path.
+    # The complete fresh installer supports one explicit state boundary.
+    command = None
+    logical = unit.replace("\\\n", " ")
+    for line in logical.splitlines():
+        line = line.strip()
+        if line.startswith("ExecStart="):
+            if command is not None:
+                raise ValueError("Evolution Space unit must have one ExecStart")
+            command = shlex.split(line.removeprefix("ExecStart="))
+    if not command:
+        raise ValueError("Evolution Space unit requires ExecStart")
+    paths = []
+    for index, argument in enumerate(command):
+        if argument in ("-state-directory", "--state-directory"):
+            paths.append(command[index + 1] if index + 1 < len(command) else "")
+        elif argument.startswith(("-state-directory=", "--state-directory=")):
+            paths.append(argument.split("=", 1)[1])
+    if paths != ["/var/lib/evolution-space"]:
+        raise ValueError("Evolution Space unit must use -state-directory /var/lib/evolution-space")
+
+
 def validate_state_root(root):
     if root.is_symlink() or not root.is_dir() or root.resolve() != root:
         raise ValueError("state must be a regular prepared directory: " + str(root))
@@ -147,12 +172,28 @@ def validate_state_root(root):
 
 def activation_environment():
     env = dict(os.environ, SSL_CERT_FILE="/etc/aster/tls/upstream-ca.pem")
-    for name in ("owner.env", "gateway.env", "studio.env"):
+    for name in ("owner.env", "gateway.env", "studio.env", "evolution-space.env"):
         for line in Path("/etc/aster", name).read_text().splitlines():
             if line and not line.startswith("#") and "=" in line:
                 key, value = line.split("=", 1)
                 env[key] = value.strip().strip('"').strip("'")
     return env
+
+
+def wait_evolution_space_ready(plan, config):
+    endpoint = config["evolution_space"]["endpoint"].rstrip("/") + "/evolution-space/readyz"
+    for _ in range(100):
+        result = subprocess.run(["ip", "netns", "exec", plan["namespace"], "curl", "-fsS",
+                                 "--max-time", "2", "--cacert", "/etc/aster/tls/upstream-ca.pem",
+                                 endpoint], capture_output=True, text=True)
+        if result.returncode == 0:
+            try:
+                if json.loads(result.stdout).get("status") == "ok":
+                    return
+            except (ValueError, AttributeError):
+                pass
+        time.sleep(.2)
+    raise ValueError("Evolution Space did not become ready; public ingress remains stopped")
 
 
 def clear_state(root):
@@ -234,6 +275,7 @@ def activate(build, plan, config, units):
     for name in units:
         if name != "aster-web.service":
             run(["systemctl", "is-active", "--quiet", name])
+    wait_evolution_space_ready(plan, config)
     run(["systemctl", "enable", *units])
     run(["systemctl", "start", "aster-web.service"])
     run(["systemctl", "is-active", "--quiet", "aster-web.service"])
@@ -244,7 +286,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build", type=Path)
     parser.add_argument("--plan", type=Path, required=True)
-    parser.add_argument("--fresh", action="store_true", help="activate and erase all application, Studio and engine state")
+    parser.add_argument("--fresh", action="store_true", help="activate and erase all application, Studio, Evolution Space and engine state")
     args = parser.parse_args()
     build = args.build.resolve()
     plan = json.loads(args.plan.read_text())

@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -91,6 +92,49 @@ class DeploymentAdmissionTest(unittest.TestCase):
                 deploy.activate(self.root, {}, {}, {})
             run.assert_not_called()
             clear.assert_not_called()
+
+    def test_fresh_scope_includes_evolution_space_and_unit_must_match(self):
+        self.assertIn(Path("/var/lib/evolution-space"), deploy.STATE_ROOTS)
+        prefix = "[Service]\nExecStart=/release/evolution-space/bin/evolution-space "
+        for flag in ("-state-directory /var/lib/evolution-space", '--state-directory="/var/lib/evolution-space"'):
+            deploy.validate_evolution_space_unit(prefix + flag)
+        for flag in ("", "-state-directory /var/lib/other", "-state-directory /var/lib/evolution-space/child",
+                     "-state-directory /var/lib/evolution-space -state-directory /var/lib/other"):
+            with self.subTest(flag=flag), self.assertRaisesRegex(ValueError, "state-directory"):
+                deploy.validate_evolution_space_unit(prefix + flag)
+        with self.assertRaisesRegex(ValueError, "ExecStart"):
+            deploy.validate_evolution_space_unit("# ExecStart=ignored -state-directory /var/lib/evolution-space")
+
+    def test_evolution_environment_is_required_before_service_stop(self):
+        def read(path, *args, **kwargs):
+            if path.name == "evolution-space.env":
+                raise FileNotFoundError("evolution-space.env")
+            return "EXAMPLE=value\n"
+        with patch.object(deploy.os, "geteuid", return_value=0), \
+                patch.object(Path, "read_text", new=read), \
+                patch.object(deploy, "run") as run, patch.object(deploy, "clear_state") as clear:
+            with self.assertRaisesRegex(FileNotFoundError, "evolution-space.env"):
+                deploy.activate(self.root, {}, {}, {})
+            run.assert_not_called()
+            clear.assert_not_called()
+
+    def test_evolution_readiness_requires_valid_status_and_verified_tls(self):
+        replies = [SimpleNamespace(returncode=7, stdout=""),
+                   SimpleNamespace(returncode=0, stdout="not ready"),
+                   SimpleNamespace(returncode=0, stdout='{"status":"starting"}'),
+                   SimpleNamespace(returncode=0, stdout='{"status":"ok"}')]
+        with patch.object(deploy.subprocess, "run", side_effect=replies) as run, \
+                patch.object(deploy.time, "sleep"):
+            deploy.wait_evolution_space_ready({"namespace": "isolated"}, {"evolution_space": {"endpoint": "https://private.example:18486/"}})
+            self.assertEqual(run.call_count, 4)
+            command = run.call_args.args[0]
+            self.assertEqual(command[:4], ["ip", "netns", "exec", "isolated"])
+            self.assertIn("--cacert", command)
+            self.assertEqual(command[-1], "https://private.example:18486/evolution-space/readyz")
+        with patch.object(deploy.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="[]")), \
+                patch.object(deploy.time, "sleep"):
+            with self.assertRaisesRegex(ValueError, "public ingress remains stopped"):
+                deploy.wait_evolution_space_ready({"namespace": "isolated"}, {"evolution_space": {"endpoint": "https://private.example"}})
 
     def test_runtime_verification_precedes_host_configuration(self):
         report = json.loads((self.root / "deployment-build.json").read_text())

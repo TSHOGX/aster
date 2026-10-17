@@ -24,6 +24,13 @@ Restore only a consistent set with matching executable/schema, runtime registrat
 engine store and owned data. Do not connect a second writable owner to production
 storage. There is no built-in cross-host failover or active-active mode. Studio
 requires its [separate backup](../../volumes-studio/deploy/README.md#backup-and-restore).
+Include Evolution Space's [projection snapshot](configuration.md#back-up-and-restore-evolution-space)
+for catalog history, run/evaluation journals, artifacts and retention receipts.
+Stop all three writers before selecting a consistent recovery point; restoring
+one service alone does not recreate another service's grants or operation records.
+After restore, verify central configuration revisions, Studio accepted heads and
+release identities, and Evolution Space run/artifact lineage before reopening work.
+Browser sessions require fresh central login in both independent applications.
 
 ## Restart after a process or dependency failure
 
