@@ -6,6 +6,7 @@ import (
 )
 
 func (a *Authentication) groupRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/admin/groups/{group}/evolution/manual", a.evolutionManual)
 	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/audiences", a.evolutionAudienceGroups)
 	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/grants/{account}", a.evolutionAccountGrants)
 	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/source-resources", a.evolutionSourceResources)

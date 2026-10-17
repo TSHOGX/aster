@@ -118,3 +118,30 @@ for (const width of [390,1440]) test(`scoped group configuration stays separate 
  await page.goto("/admin/users");await expect(page.getByRole("heading",{name:"Access denied",exact:true})).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
 });
+
+test("manual run recovery blocks malformed storage and clears denied evidence",async({page})=>{
+ await adminFixture(page,"user");let denied=false,calls=0;
+ await page.route("**/api/admin/groups/standard-users/optimization**",route=>{
+  if(denied)return route.fulfill({status:403,json:{error:"Group access revoked"}});
+  const path=new URL(route.request().url()).pathname;
+  if(path.endsWith("/permissions"))return route.fulfill({json:{group_name:"Operator team",account_id:"admin-id",can_run:true,can_read_evidence:true,sources:[]}});
+  if(path.includes("/revisions/"))return route.fulfill({json:{configuration:config}});
+  return route.fulfill({json:{group_id:"standard-users",state:"active",active_revision:1,auto_enabled:false}});
+ });
+ await page.route("**/evolution/manual",route=>{calls++;return route.fulfill({status:503,json:{error:"uncertain"}})});
+ await page.addInitScript(()=>{sessionStorage.setItem("evolution-manual:admin-id:standard-users","{malformed")});
+ await page.goto("/admin/groups/standard-users/run");
+ await expect(page.getByRole("button",{name:"Start manual batch",exact:true})).toBeDisabled();
+ await expect(page.getByRole("alert").filter({hasText:"Saved request is invalid."})).toBeVisible();
+ page.on("dialog",dialog=>dialog.accept());
+ await page.getByRole("button",{name:"Discard recovery",exact:true}).click();
+ await page.getByRole("checkbox",{name:/^skills ·/}).check();
+ await page.getByRole("checkbox",{name:"I reviewed the selected workflows, input scope and spending ceilings.",exact:true}).check();
+ await page.evaluate(()=>{const original=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key.startsWith("evolution-manual:"))throw new Error("storage unavailable");return original.call(this,key,value)}});
+ await page.getByRole("button",{name:"Start manual batch",exact:true}).click();
+ await expect(page.getByRole("alert").filter({hasText:"storage unavailable"})).toBeVisible();expect(calls).toBe(0);
+ denied=true;await page.evaluate(()=>window.dispatchEvent(new Event("focus")));
+ await expect(page.getByRole("alert").filter({hasText:"Group access revoked"})).toBeVisible();
+ await expect(page.getByText("Operator team",{exact:false})).toHaveCount(0);
+ await expect(page.getByRole("button",{name:"Start manual batch",exact:true})).toHaveCount(0);
+});

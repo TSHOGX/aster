@@ -1,6 +1,7 @@
 "use client";
 import { useTranslator } from "../../../web/i18n";
 const zh = {
+"Run configured workflows": "运行已配置工作流",
 "Loading workflow…": "正在加载工作流…",
 "YYYY-MM-DDTHH:mm:ss+08:00": "YYYY-MM-DDTHH:mm:ss+08:00",
 "Workflow": "工作流",

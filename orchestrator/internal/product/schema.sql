@@ -2122,7 +2122,7 @@ CREATE TABLE evolution_trigger_occurrences (
  group_id TEXT NOT NULL REFERENCES account_groups(id),
  binding_id TEXT NOT NULL,
  configuration_revision INTEGER NOT NULL,
- trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('event','schedule','backfill')),
+ trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('event','schedule','backfill','manual')),
  state TEXT NOT NULL CHECK(state IN ('pending','frozen','superseded')),
  first_at TEXT NOT NULL,
  latest_at TEXT NOT NULL,

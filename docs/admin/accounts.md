@@ -214,7 +214,8 @@ activation, model/tool execution, or source evidence access. This is
 separate from configuration editing. Central service admission requires the exact
 active configuration and an enabled binding with current source authority. Automatic
 admission additionally requires automation enabled, no pending configuration update,
-and a non-manual trigger. These checks do not yet expose a user-facing run endpoint.
+and a non-manual trigger. Authorized operators can also use
+[manual execution](#start-configured-workflows-manually) with automation off.
 
 ### Authorize evaluator dataset use
 
@@ -397,6 +398,29 @@ same revision. Refreshing or selecting another profile asks before discarding
 unsaved changes. Failed or denied reads clear the previous document and choices;
 refresh after access or service recovery. Publication does not activate a group
 policy: select the revision in the group's configuration when ready to adopt it.
+
+### Start configured workflows manually
+
+Choose **Run configured workflows** from your Evolution Space group. You need
+current membership, `config.read`, `run.start` and read access to each output Volume.
+Captured inputs also require `source.read`. You do not need the platform
+administrator or configuration-manager role. Automatic optimization may remain off.
+
+Select bindings and review their prerequisite workflows, source scope and spending
+ceilings. **Start manual batch** freezes each output's current base and the next
+bounded captured input delta, or the binding's configured immutable artifacts.
+It does not capture past work: a source owner must first capture approved evidence,
+or an administrator can use historical backfill separately. Each source contributes
+at most its share of 32 episodes per binding; later input waits for another run.
+Successful runs advance their own input frontiers. A busy binding must settle before
+another batch can start. Current group, source and output grants are checked again
+at dispatch and subsequent effects.
+
+If the response is uncertain, **Check original request** recovers the same batch,
+including after reload. Do not start a replacement while the original request is
+unconfirmed. If local recovery storage is unavailable, no request is sent. Discarding
+a recovery record does not cancel work already queued. Dispatch, execution and
+Studio handoff remain separate; a run link becomes available after dispatch.
 
 ### Edit and activate group optimization
 

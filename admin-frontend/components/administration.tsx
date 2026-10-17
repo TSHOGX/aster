@@ -14,6 +14,7 @@ import { PolicyEditor } from "./policy-editor";
 import { StudioPermissionsEditor } from "./studio-permissions";
 import { EvolutionPermissionsEditor } from "./evolution-permissions";
 import { EvolutionConfiguration } from "./evolution-configuration";
+import { EvolutionManual } from "./evolution-manual";
 import { EvolutionCapture } from "./evolution-capture";
 import { GroupEditor } from "./group-editor";
 import { ProjectList, ProjectView } from "./project-views";
@@ -27,7 +28,7 @@ export function Administration() {
   const tr = useT();
   const pathname = usePathname();
   const route = pathname.replace(/^\/admin(?=\/|$)/, "").split("/").filter(Boolean).map(decodeURIComponent);
-  const scopedEvolution = route[0] === "groups" && route.length === 3 && ["optimization", "corpus"].includes(route[2]);
+  const scopedEvolution = route[0] === "groups" && route.length === 3 && ["optimization", "corpus", "run"].includes(route[2]);
   const [identity, setIdentity] = useState<Identity | null>(null), [status, setStatus] = useState("loading"), [dirty, setDirty] = useState(false), [error, setError] = useState("");
   const generation = useRef(0);
   const dirtyRef = useRef(false);
@@ -93,6 +94,7 @@ export function Administration() {
           : (route[0] === "users" || route[0] === "groups") && route.length === 3 && route[2] === "studio-permissions" ? <StudioPermissionsEditor key={`${route[0]}-${route[1]}`} kind={route[0] === "users" ? "account" : "group"} subject={route[1]} actor={identity.id} onDirty={setEditorDirty} />
           : route[0] === "groups" && route.length === 3 && route[2] === "evolution-permissions" ? <EvolutionPermissionsEditor key={route[1]} group={route[1]} actor={identity.id} onDirty={setEditorDirty} />
           : route[0] === "groups" && route.length === 3 && route[2] === "optimization" ? <EvolutionConfiguration key={route[1]} group={route[1]} onDirty={setEditorDirty} />
+          : route[0] === "groups" && route.length === 3 && route[2] === "run" ? <EvolutionManual key={route[1]} group={route[1]} onDirty={setEditorDirty} />
           : route[0] === "groups" && route.length === 3 && route[2] === "corpus" ? <EvolutionCapture key={route[1]} group={route[1]} onDirty={setEditorDirty} />
           : route[0] === "groups" && route.length === 2 ? <GroupEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : route[0] === "policies" && route.length === 2 ? <PolicyEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />

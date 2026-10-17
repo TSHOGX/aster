@@ -43,7 +43,7 @@ func (s *Store) prepareGenerationInputs(ctx context.Context, tx *sql.Tx, actor A
 		if err != nil {
 			return nil, nil, false, err
 		}
-		snapshot, err := s.sealCorpusSnapshot(ctx, tx, actor, group, CorpusSnapshotInput{RequestID: corpusDiscoveryRequest("dispatch-snapshot", group, r.SourceID, r.SourceRevision, r.After, r.Through, int64(limit)), SourceID: r.SourceID, SourceRevision: r.SourceRevision, AfterSequence: r.After, ThroughSequence: r.Through, Limit: limit})
+		snapshot, err := s.sealCorpusSnapshotForAction(ctx, tx, actor, group, CorpusSnapshotInput{RequestID: corpusDiscoveryRequest("dispatch-snapshot", group, r.SourceID, r.SourceRevision, r.After, r.Through, int64(limit)), SourceID: r.SourceID, SourceRevision: r.SourceRevision, AfterSequence: r.After, ThroughSequence: r.Through, Limit: limit}, "run.start")
 		if err != nil {
 			return nil, nil, false, err
 		}

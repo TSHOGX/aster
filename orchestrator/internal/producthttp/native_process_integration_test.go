@@ -80,6 +80,8 @@ func TestNativeArtifactRetentionRealProcesses(t *testing.T) {
 	nativeGenerationProcesses(t, "retention")
 }
 
+func TestNativeManualRunRealProcesses(t *testing.T) { nativeGenerationProcesses(t, "manual") }
+
 func TestNativeGenerationRealProcesses(t *testing.T) {
 	for _, mode := range []string{"success", "sibling-failure", "lost-model-reply", "automatic", "dependencies", "dependency-failure", "backfill", "browser-retry"} {
 		t.Run(mode, func(t *testing.T) { nativeGenerationProcesses(t, mode) })
@@ -124,9 +126,10 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	browserRetention := mode == "retention" && os.Getenv("EVOLUTION_SPACE_RETENTION_BROWSER_TEST") == "1"
 	browserUpgrade := mode == "browser-retry" && os.Getenv("ADMIN_EVOLUTION_UPGRADE_TEST") == "1"
 	browserBackfill := mode == "backfill" && os.Getenv("ADMIN_EVOLUTION_BROWSER_TEST") == "1"
+	browserManual := mode == "manual" && os.Getenv("ADMIN_EVOLUTION_MANUAL_TEST") == "1"
 	browserConfig := mode == "backfill" && os.Getenv("ADMIN_EVOLUTION_CONFIG_TEST") == "1"
 	var adminProxy http.Handler
-	if browserBackfill || browserConfig || browserUpgrade {
+	if browserBackfill || browserConfig || browserUpgrade || browserManual {
 		adminAddress := address()
 		adminURL, _ := url.Parse("http://" + adminAddress)
 		adminProxy = &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(adminURL) }}
@@ -687,7 +690,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	for _, pkg := range packages {
 		configuration.Bindings = append(configuration.Bindings, evolution.Binding{ID: pkg.Template.Ref.ID, Enabled: true, Template: pkg.Template.Ref, Workflow: pkg.Template.Workflows[0], Service: service.Ref, Parameters: json.RawMessage(`{}`), SourceIDs: []string{"source"}, Output: evolution.OutputBinding{LibraryID: "aster-shared-assets", Prefix: pkg.Template.SuggestedPrefix, Profile: "shared-assets-v1", ReservationGeneration: 1}, Evaluation: pkg.Template.Evaluation, Budget: budget, Trigger: "manual"})
 	}
-	if mode == "backfill" {
+	if mode == "backfill" || mode == "manual" {
 		for i := range configuration.Bindings {
 			configuration.Bindings[i].Inputs = map[string]evolution.BindingInput{"corpus": {Sources: []string{"source"}}}
 		}
@@ -850,7 +853,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	}
 	runIDs := map[string]string{}
 	skipped := map[string]bool{}
-	if mode == "backfill" {
+	if mode == "backfill" || mode == "manual" {
 		// Synthetic retained source episode; capture, transfer, admission, models,
 		// handoff and human review use the actual running services below.
 		stamp := time.Now().UTC().Add(-time.Hour).Format("2006-01-02T15:04:05.000000000Z07:00")
@@ -876,7 +879,30 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		must(t, err)
 		must(t, tx.Commit())
 		must(t, db.Close())
-		if browserBackfill {
+		if mode == "manual" {
+			_, err = store.SetEvolutionGroupGrant(ctx, token, configuration.GroupID, product.EvolutionGroupGrantInput{RequestID: "manual-source-read", AccountID: admin.ID, Action: "source.read", Effect: "allow"})
+			must(t, err)
+			_, err = store.CaptureCorpusEpisode(ctx, token, configuration.GroupID, product.CorpusCaptureInput{RequestID: "manual-capture", SourceID: "source", SourceRevision: 1, ExecutionID: "episode"})
+			must(t, err)
+			if browserManual {
+				cmd := exec.CommandContext(ctx, "node", "node_modules/@playwright/test/cli.js", "test", "--config", "playwright.evolution.config.ts")
+				cmd.Dir = filepath.Join(root, "admin-frontend")
+				cmd.Env = append(os.Environ(), "ADMIN_EVOLUTION_URL="+issuer, "ADMIN_EVOLUTION_TOKEN="+token)
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("manual browser: %v\n%s", err, output)
+				}
+			} else {
+				budgets := map[string]evolution.Budget{}
+				for _, binding := range configuration.Bindings {
+					budgets[binding.ID] = binding.Budget
+				}
+				input := product.EvolutionManualInput{RequestID: "manual-batch", ConfigurationRevision: 1, Budgets: budgets}
+				bases, err := studioClient.ManualBases(ctx, studioclient.Projection{OperationID: active.OperationID, Digest: active.ActiveDigest, Configuration: configuration})
+				must(t, err)
+				_, err = store.StartManualEvolution(ctx, token, configuration.GroupID, issuer, input, bases)
+				must(t, err)
+			}
+		} else if browserBackfill {
 			resultPath := filepath.Join(t.TempDir(), "backfill-preview.json")
 			cmd := exec.CommandContext(ctx, "node", "node_modules/@playwright/test/cli.js", "test", "--config", "playwright.evolution.config.ts")
 			cmd.Dir = filepath.Join(root, "admin-frontend")

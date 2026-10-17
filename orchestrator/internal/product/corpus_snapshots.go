@@ -52,6 +52,13 @@ func (s *Store) SealCorpusSnapshot(ctx context.Context, token, group string, inp
 }
 
 func (s *Store) sealCorpusSnapshot(ctx context.Context, tx *sql.Tx, actor Account, group string, input CorpusSnapshotInput) (CorpusSnapshot, error) {
+	return s.sealCorpusSnapshotForAction(ctx, tx, actor, group, input, "config.manage")
+}
+
+// Run preparation only seals the configured, already-captured source delta. It
+// requires run authority and evidence access, without granting capture or policy
+// editing authority to the operator.
+func (s *Store) sealCorpusSnapshotForAction(ctx context.Context, tx *sql.Tx, actor Account, group string, input CorpusSnapshotInput, action string) (CorpusSnapshot, error) {
 	var result CorpusSnapshot
 	if !validID(group) || !validID(input.SourceID) || input.SourceRevision < 1 || input.AfterSequence < 0 || input.ThroughSequence < 0 || input.ThroughSequence > 0 && input.ThroughSequence <= input.AfterSequence || input.Limit < 1 || input.Limit > 100 {
 		return result, ErrInvalid
@@ -61,7 +68,7 @@ func (s *Store) sealCorpusSnapshot(ctx context.Context, tx *sql.Tx, actor Accoun
 		return result, err
 	}
 	err = func() error {
-		if err := authorizeEvolutionGroup(ctx, tx, actor, group, "config.manage"); err != nil {
+		if err := authorizeEvolutionGroup(ctx, tx, actor, group, action); err != nil {
 			return err
 		}
 		if err = authorizeCorpusEvidence(ctx, tx, actor, group); err != nil {
