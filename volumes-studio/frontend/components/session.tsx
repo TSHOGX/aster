@@ -1,37 +1,52 @@
 "use client";
 import { useT } from "../lib/i18n";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useSessionRefresh } from "../../../web/session-refresh";
+import { centralSessionMatches } from "../../../web/application-session";
 import { api, APIError, base, Session } from "../lib/api";
 export function useSession() {
   const [session, setSession] = useState<Session | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  useEffect(() => {
+  const current = useRef<Session | null>(null);
+  const active = useRef<AbortController | null>(null);
+  const refresh = useCallback(() => {
+    active.current?.abort();
     const abort = new AbortController();
-    api<Session>("/session", { signal: abort.signal })
-      .then(setSession)
-      .catch((e: unknown) => {
-        if (!abort.signal.aborted)
-          setError(
-            e instanceof APIError && e.status === 401
-              ? "Sign in with your central account to continue."
-              : "The identity service is unavailable. Please retry.",
-          );
-      })
-      .finally(() => {
-        if (!abort.signal.aborted) setLoading(false);
-      });
-    return () => abort.abort();
+    active.current = abort;
+    void api<Session>("/session", { signal: abort.signal }).then(async value => {
+      if (!await centralSessionMatches(value.subject, abort.signal)) throw new APIError(401, "session_changed");
+      if (abort.signal.aborted) return;
+      if (current.current && (current.current.subject !== value.subject || current.current.issuer !== value.issuer)) {
+        // Keep recovery bound to its original account until a full navigation.
+        window.dispatchEvent(new Event("studio-auth-expired"));
+        return;
+      }
+      current.current = value;
+      setSession(value); setError("");
+    }).catch((e: unknown) => {
+      if (abort.signal.aborted) return;
+      const denied = e instanceof APIError && (e.status === 401 || e.status === 403);
+      if (denied && current.current) window.dispatchEvent(new Event("studio-auth-expired"));
+      setError(denied ? "Sign in with your central account to continue." : "The identity service is unavailable. Please retry.");
+    }).finally(() => { if (!abort.signal.aborted) setLoading(false); });
   }, []);
-  return { session, error, loading };
+  useSessionRefresh(refresh);
+  useEffect(() => {
+    refresh();
+    return () => active.current?.abort();
+  }, [refresh]);
+  return { session, error, loading, refresh };
 }
 export function SessionGate({
   error,
   loading,
+  retry,
 }: {
   error: string;
   loading: boolean;
+  retry: () => void;
 }) {
   const tr = useT();
   return (
@@ -42,11 +57,11 @@ export function SessionGate({
       <h1>{loading ? tr("Opening Studio…") : tr("Sign in to Studio")}</h1>
       <p role="status">{loading ? tr("Checking your session…") : tr(error)}</p>
       {!loading && (
-        <a
+        <><a
           className="button primary"
           href={`${base}/auth/login?return=${encodeURIComponent(window.location.pathname + window.location.search)}`}
         >
-           {tr("Sign in")} </a>
+           {tr("Sign in")} </a><button onClick={retry}>{tr("Retry")}</button></>
       )}
     </main>
   );

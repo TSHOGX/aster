@@ -1,12 +1,14 @@
 import { expect, test } from "@playwright/test";
 import { chooseValue } from "./picker";
-import { ZH } from "../lib/i18n/messages";
+import { spaceZH as ZH } from "../../evolution-space/frontend/lib/i18n-catalog";
 
 test("native workflow authoring, testing, publication and selected group activation", async ({ page, context, baseURL }, info) => {
   const chinese = process.env.ADMIN_EVOLUTION_LOCALE?.startsWith("zh");
   const tr = (en: string, zh: string) => chinese ? zh : en;
   const admin = (text: string) => chinese ? ZH[text] || text : text;
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  // Drive the ordered node list; the graph canvas has dedicated coverage.
+  await context.addInitScript(() => localStorage.setItem("evolution-space:canvas-view", "list"));
   await context.addCookies([{ name: "project_login", value: process.env.ADMIN_EVOLUTION_TOKEN!, url: baseURL!, secure: true, httpOnly: true, sameSite: "Lax" }]);
   const group = "standard-users", workflow = "browser-upgrade-workflow";
   const groupAPI = `/api/admin/groups/${group}/optimization`;
@@ -77,25 +79,26 @@ test("native workflow authoring, testing, publication and selected group activat
     await expect(page).toHaveURL(new RegExp(`attempt=${encodeURIComponent(nested.call.parent)}`));
     await page.goBack(); await expect(detail).toHaveAttribute("open", "");
     expect(run.handoff).toBe("not_applicable"); expect(run.evaluation_state).toBe("not_applicable");
-    await page.getByRole("link", { name: tr("Back to group", "返回团队"), exact: true }).click();
+    await page.getByRole("navigation", { name: tr("Group sections", "团队页面导航"), exact: true }).getByRole("link", { name: tr("Workflows", "工作流"), exact: true }).click();
     await page.getByRole("region", { name: tr("Workflow drafts", "工作流草稿"), exact: true }).getByRole("link", { name: workflow, exact: true }).click();
     await page.getByRole("button", { name: tr("Publish revision", "发布版本"), exact: true }).click();
     const published = page.locator("section.published-workflow"); await expect(published).toBeVisible();
     const ref = JSON.parse(await published.locator("pre").innerText()); expect(ref).toMatchObject({ id: workflow, revision: 2 });
+    // A new template revision adds the exact published workflow revision.
     await page.getByRole("link", { name: tr("Open goal templates", "打开目标模板"), exact: true }).click();
-    const template = page.locator("section.catalog-editor").filter({ has: page.getByRole("heading", { name: tr("Goal template editor", "目标模板编辑器"), exact: true }) });
-    await template.getByRole("combobox", { name: tr("Existing template", "现有模板"), exact: true }).selectOption("browser-upgrade-template:1");
-    const input = template.getByRole("textbox", { name: tr("Template JSON", "模板 JSON"), exact: true });
-    await expect(input).toBeEnabled();
-    const definition = JSON.parse(await input.inputValue()); definition.ref.revision = 2; delete definition.ref.digest; definition.workflows.push(ref);
-    await input.fill(JSON.stringify(definition, null, 2));
-    await template.getByRole("button", { name: tr("Publish template revision", "发布模板版本"), exact: true }).click();
-    await expect(template.getByRole("status")).toContainText("browser-upgrade-template @2");
+    await page.getByRole("row").filter({ hasText: "browser-upgrade-template" }).filter({ has: page.getByRole("cell", { name: "1", exact: true }) }).getByRole("link", { name: "browser-upgrade-template", exact: true }).click();
+    await page.getByRole("link", { name: tr("New revision", "新建版本"), exact: true }).click();
+    await expect(page.getByLabel(tr("Revision", "修订版本"), { exact: true })).toHaveValue("2");
+    await chooseValue(page.getByRole("combobox", { name: tr("Add published workflow", "添加已发布工作流"), exact: true }), { label: `${workflow} · 2` });
+    await page.getByRole("button", { name: tr("Add workflow", "添加工作流"), exact: true }).click();
+    await expect(page.locator(".ref-list code", { hasText: `${workflow} · 2` })).toBeVisible();
+    await page.getByRole("button", { name: tr("Publish template revision", "发布模板版本"), exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "browser-upgrade-template @2" })).toBeVisible();
     expect(await (await page.request.get(groupAPI)).json()).toEqual(state);
-    await template.getByRole("link", { name: tr("Activate from configuration", "从配置中激活"), exact: true }).click();
-    await expect(page.getByRole("heading", { level: 1 })).toHaveText(admin("Automatic optimization"));
+    await page.getByRole("link", { name: tr("Use in configuration", "在配置中使用"), exact: true }).click();
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(admin("Configuration and activation"));
   } else {
-    await page.goto(`/admin/groups/${group}/optimization`);
+    await page.goto(`/evolution-space/auth/login?return=${encodeURIComponent(`/evolution-space/groups/${group}/settings/configuration/`)}`);
     const bindings = page.locator("article.evolution-binding");
     await expect(bindings).toHaveCount(prior.configuration.bindings.length);
     const skills = bindings.filter({ has: page.getByRole("heading", { name: "example-skills", exact: true }) });

@@ -14,7 +14,7 @@ try {
   await page.getByRole('link', { name: 'Sign in', exact: true }).click();
   await expect(page.getByRole('heading', { name: `Run inspector: ${config.run}`, exact: true })).toBeVisible();
   const runMetadata = await (await page.request.get(root)).json();
-  await page.goto(`${config.origin}/evolution-space/groups/${config.group}/?runs_workflow=${encodeURIComponent(runMetadata.pins.workflow.id)}&runs_workflow_revision=${runMetadata.pins.workflow.revision}&runs_state=completed`);
+  await page.goto(`${config.origin}/evolution-space/groups/${config.group}/runs/?runs_workflow=${encodeURIComponent(runMetadata.pins.workflow.id)}&runs_workflow_revision=${runMetadata.pins.workflow.revision}&runs_state=completed`);
   const history = page.getByRole('region', { name: 'Run history', exact: true });
   const runLink = history.getByRole('link', { name: config.run, exact: true });
   await expect(runLink).toBeVisible();

@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { adminFixture } from "./fixture";
+import { settingsFixture, openSettings } from "./fixture";
 import { chooseValue } from "./picker";
 for (const width of [390, 1440]) test(`scoped grant review retains original request across reload and resolves conflicts at ${width}px`, async ({ page }) => {
- await adminFixture(page); await page.setViewportSize({ width, height: 1000 });
+ await settingsFixture(page); await page.setViewportSize({ width, height: 1000 });
  const actions = ["config.read", "config.manage", "run.start", "source.read", "workflow.edit"];
  let grants = actions.map(action => ({ action, effect: "unset", revision: 0, allowed: false }));
  let lose = true, conflict = false;
@@ -17,7 +17,7 @@ for (const width of [390, 1440]) test(`scoped grant review retains original requ
   if (lose) { lose = false; return route.abort("failed"); }
   return route.fulfill({ json: { revision: receipts.get(body.request_id) } });
  });
- await page.goto("/admin/groups/standard-users/evolution-permissions");
+ await openSettings(page, "settings/permissions/");
  await chooseValue(page.getByRole("combobox", { name: "Account permissions", exact: true }), "user-id");
  const row = page.getByRole("row").filter({ hasText: "Read source evidence" });
  await row.getByRole("button", { name: "Allow", exact: true }).click();

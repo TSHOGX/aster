@@ -104,7 +104,18 @@ func TestBrowserTemplatePublicationRequiresCurrentEditorAndExactCompatibility(t 
 	call("GET", exact, nil, 200)
 	input["unknown"] = true
 	call("POST", "team/templates", input, 400)
+	var workflows projections.CatalogPage
+	if err = json.Unmarshal(call("GET", "team/published-workflows", nil, 200), &workflows); err != nil || len(workflows.Revisions) != 1 || workflows.Revisions[0] != workflow {
+		t.Fatal("published workflow list", workflows, err)
+	}
+	var definition evolution.Workflow
+	if err = json.Unmarshal(call("GET", "team/published-workflows/"+graph.ID+"/1?digest="+workflow.Digest, nil, 200), &definition); err != nil || definition.ID != graph.ID {
+		t.Fatal("published workflow detail", definition, err)
+	}
+	call("GET", "team/published-workflows/"+graph.ID+"/1?digest="+evolution.Digest([]byte("wrong")), nil, 409)
+	call("GET", "team/published-workflows/"+graph.ID+"/9?digest="+workflow.Digest, nil, 404)
 	denied.Store(true)
+	call("GET", "team/published-workflows", nil, 403)
 	call("GET", "team/templates", nil, 403)
 	call("GET", exact, nil, 403)
 	call("POST", "team/templates", input, 403)

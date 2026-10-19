@@ -62,7 +62,7 @@ test("native checkpoint experiment, comparison and connection recovery", async (
   await context.setOffline(true);
   await expect(page.getByRole("alert").filter({ hasText: chinese ? /运行(证据不可用|详情)/ : /Run (detail|evidence) is unavailable/ })).toBeVisible({ timeout: 10000 });
   await expect(page.getByRole("heading", { name: tr("Execution debugger", "执行调试器"), exact: true })).toHaveCount(0);
-  await expect(page.locator("details")).toHaveCount(0);
+  await expect(page.getByRole("main").locator("details")).toHaveCount(0);
   await expect(comparison).toHaveCount(0);
   await context.setOffline(false);
   const events = await (await page.request.get(root + experimentID + "/events?after=0&limit=100")).json();
@@ -87,7 +87,7 @@ test("native checkpoint experiment, comparison and connection recovery", async (
   await expect(timeline).toHaveCount(events.events.length);
   await expect.poll(() => resumed, { timeout: 10000 }).toBe(true);
   await expect(timeline).toHaveCount(events.events.length);
-  await expect(page.locator("details")).toHaveCount(attempts.length);
+  await expect(page.getByRole("main").locator("details")).toHaveCount(attempts.length);
   await expect(page.getByRole("heading", { name: tr("Run status: completed", "运行状态: 已完成"), exact: true })).toBeVisible();
   await page.unroute(eventPattern);
   const session = await (await page.request.get("/evolution-space/api/v1/session")).json();
@@ -103,7 +103,7 @@ test("native checkpoint experiment, comparison and connection recovery", async (
   try {
     await page.getByRole("button", { name: tr("Refresh", "刷新"), exact: true }).click();
     await expect(page.getByRole("alert").filter({ hasText: tr("Run evidence is unavailable.", "运行证据不可用") })).toBeVisible();
-    await expect(page.locator("details")).toHaveCount(0);
+    await expect(page.getByRole("main").locator("details")).toHaveCount(0);
     await expect(comparison).toHaveCount(0);
     expect((await page.request.get(root + experimentID + "/attempts?limit=100")).status()).toBe(403);
     expect((await page.request.get(root + experimentID + "/artifacts/" + events.events.find((event: { artifacts?: unknown[] }) => event.artifacts?.length).artifacts[0].id)).status()).toBe(403);

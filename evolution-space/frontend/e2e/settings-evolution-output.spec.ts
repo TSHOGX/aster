@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { adminFixture } from "./fixture";
+import { settingsFixture, openSettings } from "./fixture";
 import { chooseValue } from "./picker";
 const ref = { id: "example", revision: 1, digest: `sha256:${"a".repeat(64)}` };
 const budget = { max_tokens: 100, max_cost_micros: 1000, max_attempts: 10, timeout_seconds: 120, max_artifact_bytes: 1048576 };
 for (const width of [390, 1440]) test(`output selector explains unavailable libraries and reservation overlap at ${width}px`, async ({ page }) => {
-  await adminFixture(page); await page.setViewportSize({ width, height: 1000 });
+  await settingsFixture(page); await page.setViewportSize({ width, height: 1000 });
   const library = { id: "library", name: "Team library", profile: "shared-assets-v1", archived: false, owner_group: "standard-users", can_configure: true };
   let denyDetail = false;
   const configuration = { group_id: "standard-users", revision: 0, auto_enabled: false, budget, sources: [], bindings: [{ id: "skills", enabled: true, template: ref, workflow: ref, service: ref, inputs: {}, parameters: {}, budget, depends_on: [], source_ids: [], evaluation: { mode: "disabled", reference_strategy: "none" }, output: { library_id: "", prefix: "skills", profile: "shared-assets-v1", reservation_generation: 1 }, trigger: "manual" }] };
@@ -25,7 +25,7 @@ for (const width of [390, 1440]) test(`output selector explains unavailable libr
     }
     return route.fallback();
   });
-  await page.goto("/admin/groups/standard-users/optimization");
+  await openSettings(page, "settings/configuration/");
   const picker = page.getByRole("combobox", { name: "skills: Output library", exact: true });
   await expect(picker).toBeEnabled(); await picker.click();
   await expect(page.getByRole("option", { name: /Other group.*Owned by another group/ })).toHaveAttribute("aria-disabled", "true");
@@ -49,7 +49,7 @@ for (const width of [390, 1440]) test(`output selector explains unavailable libr
 });
 
 for (const width of [390, 1440]) test(`existing binding adopts a compatible template without losing ownership at ${width}px`, async ({ page }, info) => {
-  await adminFixture(page); await page.setViewportSize({ width, height: 1000 });
+  await settingsFixture(page); await page.setViewportSize({ width, height: 1000 });
   const nextRef = { ...ref, revision: 2, digest: `sha256:${"b".repeat(64)}` };
   const incompatibleRef = { ...ref, revision: 3, digest: `sha256:${"c".repeat(64)}` };
   const off = { mode: "disabled", reference_strategy: "none" };
@@ -83,7 +83,7 @@ for (const width of [390, 1440]) test(`existing binding adopts a compatible temp
     }
     return route.fallback();
   });
-  await page.goto("/admin/groups/standard-users/optimization");
+  await openSettings(page, "settings/configuration/");
   const card = page.locator("article.evolution-binding");
   const picker = card.getByRole("combobox", { name: "Binding template revision", exact: true });
   await chooseValue(picker, { label: "example · 2" });

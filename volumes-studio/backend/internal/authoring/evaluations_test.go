@@ -104,6 +104,9 @@ func TestRequiredEvaluationUnlocksOnlyExactPreparedMerge(t *testing.T) {
 	if err != nil || len(view.Evaluations) != 1 {
 		t.Fatal(view, err)
 	}
+	if view.Evaluations[0].GroupID != "group" {
+		t.Fatal("evaluation navigation lost its authorized group", view.Evaluations)
+	}
 	// The journal and remote grant survive Studio owner restart.
 	config := s.config
 	if err = s.Close(); err != nil {

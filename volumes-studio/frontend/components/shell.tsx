@@ -11,7 +11,6 @@ import {
   UploadCloud,
   Search,
   LogOut,
-  ArrowUpRight,
 } from "lucide-react";
 import { api, base, bytes, Library, requestID, Upload } from "../lib/api";
 import { Page, query } from "../lib/workbench";
@@ -71,12 +70,10 @@ export function ShellHeader({ library }: { library?: Library | null }) {
             <span className="desktop-label">{tr("Tasks")}</span>
             {count > 0 && <span className="count">{formatQuantity(count)}</span>}
           </button>
-          <a href="/admin" className="icon-button" aria-label={tr("Open Aster")}>
-            <ArrowUpRight size={18} />
-          </a>
           <Menu
             label={tr("Account")}
             items={[
+              { label: tr("Back to Workbench"), action: () => window.location.assign(new URL("/", window.location.origin).href) },
               {
                 label: message("Sign out everywhere in this session"),
                 action: () =>
@@ -301,7 +298,7 @@ function RecoveryBanner() {
                  {tr("Restore")} </button>
               <Link
                 className="button"
-                href={`/libraries/${r.library}?path=${encodeURIComponent(r.path)}`}
+                href={`/libraries/${encodeURIComponent(r.library)}?${new URLSearchParams({ branch: r.branch, path: r.path })}`}
               >
                  {tr("Open library")} </Link>
             </div>

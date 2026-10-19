@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useUnsavedNavigation } from "../../../web/unsaved-navigation";
 import { api, APIError, base, type Session } from "../lib/api";
 import { useT } from "../lib/i18n";
 
@@ -13,15 +14,10 @@ const labels = {
   title: "Evaluator profile editor", description: "Profiles pin dataset, scorer, runtime, model, tools, thresholds and coverage. Every save creates an immutable revision.", help: "Choose a new ID with revision 1, or increment the revision to publish edits. The server computes the profile digest; referenced digests remain required.",
   discard: "Discard unsaved profile changes?", loading: "Loading profiles…", published: "Published immutable evaluator profile", existing: "Existing profile", choose: "Create or choose a profile", more: "Load more profiles", json: "Profile JSON", publish: "Publish profile revision",
  },
- templates: {
-  listError: "Goal templates are unavailable. Retry when the service is restored.", detailError: "Template detail is unavailable. Retry or check group access.", publishError: "Template publication failed. Check ownership, next revision, parameter schema and exact compatible workflows. Copy shared templates using a new ID and revision 1.",
-  title: "Goal template editor", description: "Templates pin a goal, parameter schema, input/output schemas, output profile, compatible workflows and evaluation defaults. Publication does not activate a group.", help: "Use a new ID with revision 1 to customize a shared template. Only its owning group can publish later revisions. The server computes the template digest.",
-  discard: "Discard unsaved template changes?", loading: "Loading templates…", published: "Published immutable goal template", existing: "Existing template", choose: "Create or choose a template", more: "Load more templates", json: "Template JSON", publish: "Publish template revision",
- },
 };
 const key = (ref: Ref) => `${ref.id}:${ref.revision}`;
 
-export function CatalogEditor({ group, kind, editable }: { group: string; kind: "profiles" | "templates"; editable: boolean }) {
+export function CatalogEditor({ group, kind, editable }: { group: string; kind: "profiles"; editable: boolean }) {
   const copy = labels[kind];
   const { listError, detailError, publishError } = copy;
   const tr = useT();
@@ -30,6 +26,7 @@ export function CatalogEditor({ group, kind, editable }: { group: string; kind: 
   const [selected, setSelected] = useState("");
   const [text, setText] = useState("");
   const [saved, setSaved] = useState("");
+  useUnsavedNavigation(text !== saved, base);
   const [published, setPublished] = useState<Ref>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(true);
@@ -99,15 +96,14 @@ export function CatalogEditor({ group, kind, editable }: { group: string; kind: 
     }
     finally { finish(controller); }
   }
-  return <section className="card catalog-editor">
+  return <section className="card catalog-editor" id={kind}>
     <div className="section-heading"><div><h2>{tr(copy.title)}</h2><p>{tr(copy.description)}</p><p>{tr(copy.help)}</p></div><button onClick={() => { if (discard()) void load(); }}>{tr("Refresh")}</button></div>
     {error && <p role="alert">{tr(error)}</p>}
     {busy && <p role="status">{tr(copy.loading)}</p>}
     {published && <p role="status">{tr(copy.published)}: {published.id} @{published.revision}</p>}
     <label>{tr(copy.existing)}<select aria-label={tr(copy.existing)} disabled={busy} value={selected} onChange={event => { if (discard()) void read(refs.find(ref => key(ref) === event.target.value)); }}><option value="">{tr(copy.choose)}</option>{refs.map(ref => <option key={key(ref)} value={key(ref)}>{ref.id} @{ref.revision}</option>)}</select></label>
     {cursor?.has_more && <button disabled={busy} onClick={() => void load(true)}>{tr(copy.more)}</button>}
-    <label>{tr(copy.json)}<textarea aria-label={tr(copy.json)} readOnly={!editable} disabled={busy} rows={14} value={text} onChange={event => { setText(event.target.value); setPublished(undefined); }} placeholder={JSON.stringify(kind === "templates" ? { ref: { id: "template", revision: 1 }, goal: "", parameters_schema: { type: "object" }, inputs: {}, outputs: {}, profile: "shared-assets-v1", workflows: [], suggested_prefix: "skills", evaluation: { mode: "disabled", reference_strategy: "none" } } : { ref: { id: "profile", revision: 1 }, dataset: { group_id: group }, scorer: {}, runtime: {}, model: {}, tools: [], thresholds: [{ name: "accuracy", unit: "ratio", operator: "gte", value: 0.9, minimum_samples: 10, minimum_coverage: 0.8 }], fixed_model_required: true }, null, 2)} /></label>
+    <label>{tr(copy.json)}<textarea aria-label={tr(copy.json)} readOnly={!editable} disabled={busy} rows={14} value={text} onChange={event => { setText(event.target.value); setPublished(undefined); }} placeholder={JSON.stringify({ ref: { id: "profile", revision: 1 }, dataset: { group_id: group }, scorer: {}, runtime: {}, model: {}, tools: [], thresholds: [{ name: "accuracy", unit: "ratio", operator: "gte", value: 0.9, minimum_samples: 10, minimum_coverage: 0.8 }], fixed_model_required: true }, null, 2)} /></label>
     {editable && <button className="primary" disabled={busy || !text.trim()} onClick={() => void publish()}>{tr(copy.publish)}</button>}
-    {kind === "templates" && <a className="button" href={`/admin/groups/${encodeURIComponent(group)}/optimization`}>{tr("Activate from configuration")}</a>}
   </section>;
 }

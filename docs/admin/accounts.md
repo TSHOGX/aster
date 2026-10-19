@@ -68,7 +68,8 @@ workspace, terminal or host-file access. See [Security](../reference/security.md
 
 ## Group configuration drafts
 
-Open **Groups → select a group → Evolution permissions** to manage scoped
+Open the group in Evolution Space (**Groups → select a group → Manage evolution in
+Evolution Space**) and choose **Settings → Permissions** to manage scoped
 configuration, workflow-authoring, run-start and source-evidence permissions. Search for an account,
 inspect its explicit grants and effective access, then choose **Allow** or **Deny**.
 Review the exact account/capability change before applying it. Ordinary accounts
@@ -250,28 +251,53 @@ This grant provisions input authority; it does not schedule or execute a workflo
 
 ### Open Evolution Space
 
-Open `/evolution-space/` and choose **Sign in** to use your central account.
+Choose **Evolution Space** from the workbench account menu, use **Manage evolution
+in Evolution Space** on an administration group page, or open `/evolution-space/`,
+then choose **Sign in** to use your central account.
 Non-administrators need current group membership and a `config.read` grant for
-at least one group. Select a group or search its name; switching groups preserves
-their separate permissions and configuration status. Direct group links return to
+at least one group. Evolution Space reopens the group you used last, or your only
+group; otherwise choose one from the list. **Switch group** in the sidebar changes
+groups, and each group keeps its separate permissions and configuration. The
+**Evolution Space** title returns to the group list. Direct group links return to
 the same page after sign-in.
+
+The sidebar organizes each group's work:
+
+- **Overview**: configuration status, recent runs and, before first activation, a
+  setup checklist (sources, templates, outputs, review).
+- **Build**: **Goal templates**, **Workflows** and **Evaluation profiles**.
+- **Operate**: **Runs** (history and **New run**) and **Evaluations**.
+- **Settings**: **Configuration and activation**, **Sources and corpus** and
+  **Permissions**.
+
+Sections you lack permission for are shown disabled with the missing permission.
 
 The overview shows desired and active revisions, automatic optimization status,
 and separate management, execution and source-evidence permissions. A configuration
 grant does not permit source evidence reads. An empty list means no groups match
 the current search or grants; a denied group and an unavailable service display
 different recovery messages. **Refresh** checks current authority and clears stale
-metadata. Language preferences are shared with the central application.
+metadata. Evolution Space applies the language, theme and accent chosen in Workbench
+settings. Run and evaluation detail pages preserve list filters and pagination when
+you choose **Back to runs** or **Back to evaluations**.
+
+A completed run shows **Open branch in Volume Studio** after output transfer settles.
+Review and merge that branch, then publish a version in Studio. A no-change result
+explains why no branch needs review. Pending output transfer retries automatically;
+use **Refresh** to check it rather than rerunning generation. Publication, central
+import and Project deployment remain explicit, separate steps.
 
 **Sign out of this central session** also ends the originating central login and
-its derived application sessions. Configuration editing and activation are available
-through **Open configuration** for a delegated group manager, using the same
-central editor described below. This does not grant access to user, policy or
-resource administration.
+its derived application sessions (**Account → Sign out of this central session**).
+Delegated group managers edit and activate configuration under **Settings →
+Configuration and activation**, described below. This does not grant access to
+user, policy or resource administration. Unsaved workflow, template, profile and
+configuration edits warn before leaving the page.
 
-Open **Workflow drafts** on the Evolution Space group page to find saved drafts.
+Open **Workflows** to find saved drafts.
 With `workflow.edit`, choose **New or fork draft** and a fresh draft ID. Start empty,
-copy an exact saved draft revision owned by that group, or copy the workflow pinned
+copy an exact saved draft revision owned by that group, copy a published workflow
+revision (a template's **Fork into a draft** preselects one), or copy the workflow pinned
 by a run in that group. Run forks also require `source.read`. A draft revision fork
 copies the latest saved layout for that executable revision; a run fork starts
 without a canvas layout. Forking leaves the source unchanged. Incomplete drafts can
@@ -289,19 +315,24 @@ JSON and canvas layout revisions separate, validates the same typed graph used b
 the runner, uses compare-and-swap draft saves, and publishes immutable revisions
 without activating a group. Publishing requires the explicit `workflow.edit` grant;
 it does not grant configuration activation or run admission.
-The workbench offers a searchable keyboard node palette, typed connections with
-explicit edge removal, a node inspector, executable digest feedback, undo/redo and
-local recovery. The inspector exposes implementation revisions for transforms and
+The canvas shows the workflow as a graph from workflow inputs to outputs. Drag
+between ports to connect matching schemas, drag nodes to arrange them, select a
+node to edit it in the inspector and press Delete to remove the selection.
+**Auto-layout** arranges the graph. Moving nodes changes only the layout revision,
+never the executable digest. Loops, maps and subgraphs show their bounds. **List**
+switches to an ordered node list with the same editing; narrow screens start there.
+The workbench also offers a searchable keyboard node palette, typed connections with
+explicit edge removal, executable digest feedback, undo/redo and local recovery. The inspector exposes implementation revisions for transforms and
 validators; routing predicates and defaults; join handling for inactive inputs;
 and immutable body revisions, limits and failure behavior for maps, loops and
 subgraphs. Revision JSON contains `id`, `revision` and `digest`. Incomplete JSON
 remains recoverable when switching nodes or reloading a saved local recovery copy,
 and blocks saving until corrected. Validation identifies and focuses invalid node
-settings; graph-wide edge and cycle errors focus the executable configuration. Use **Activate from configuration** after publishing
-when the group should adopt the immutable workflow revision; publication alone
-never changes the active group configuration. The selected template must explicitly
-include that workflow revision. Publication displays the exact workflow reference;
-use **Open goal templates** to publish a compatible template before selecting it in
+settings; graph-wide edge and cycle errors focus the executable configuration.
+Publication alone never changes the active group configuration. Publication shows
+the exact workflow reference with **Create goal template with this workflow**,
+which opens a new template with that revision selected. To adopt it in an existing
+template, publish a new template revision that includes it, then use the template in
 configuration. This does not upgrade other groups or earlier runs. Run and evaluation deep links retain
 the group scope; their browser views show frozen pins, deduplicated event cursors,
 authorized node attempts, effective prompts, inputs, outputs, artifact metadata,
@@ -356,22 +387,24 @@ draft test preserves its test restrictions and rechecks the testing permissions.
 
 ### Publish goal templates
 
-Open a group in Evolution Space and use **Goal template editor**. Configuration
-read access permits browsing published templates; `workflow.edit` permits authoring
-for that group. A template defines its goal, parameter schema, input/output schemas,
-output content profile, compatible workflow revisions, suggested output prefix and
-evaluation defaults. Every workflow reference must already be published and match
-the template's exact input/output schemas. Missing or incompatible revisions prevent
-publication. The server calculates the template's own digest.
+Open **Goal templates** in a group. Configuration read access permits browsing
+published templates; `workflow.edit` permits authoring for that group. Choose
+**New template** and fill in the template ID, goal, compatible workflows (the first
+selected published workflow sets the typed input and output ports; later ones must
+match exactly), output profile, suggested output directory, default evaluation and
+parameters schema. **Template document** shows the exact definition that will be
+published. The form lists anything still missing before **Publish template
+revision** becomes available. The server calculates the template's own digest.
 
-To customize a shared template, select its revision and change its ID to a new ID
-with revision 1. That group owns the new template's revision history. To revise a
-template your group owns, increment its revision; another group cannot append to
-it. Existing publications remain immutable and readable, including after an upgrade.
-Use **Load more templates** to browse further pages. After a lost publication
-response, retry the unchanged definition to recover its exact revision.
+A template's detail page offers **New revision**, which keeps the ID and increments
+the revision, and **Duplicate as new template**, which starts a copy at revision 1
+under a new ID owned by your group. Another group cannot append revisions to a
+template your group owns. Existing publications remain immutable and readable,
+including after an upgrade. After a lost publication response, publish again
+without changes to recover the exact revision.
 
-**Activate from configuration** opens the group's central configuration editor.
+**Use in configuration** opens **Settings → Configuration and activation** with that
+template revision selected for **Add template binding**.
 For an existing binding, use **Binding template revision** to select the published
 template. Its workflow remains selected if still supported; otherwise the first
 explicitly compatible workflow is selected. Review that choice, input mappings and
@@ -401,7 +434,7 @@ policy: select the revision in the group's configuration when ready to adopt it.
 
 ### Start configured workflows manually
 
-Choose **Run configured workflows** from your Evolution Space group. You need
+Choose **Runs → New run** in your Evolution Space group. You need
 current membership, `config.read`, `run.start` and read access to each output Volume.
 Captured inputs also require `source.read`. You do not need the platform
 administrator or configuration-manager role. Automatic optimization may remain off.
@@ -424,11 +457,12 @@ Studio handoff remain separate; a run link becomes available after dispatch.
 
 ### Edit and activate group optimization
 
-Platform administrators open **Groups → select a group → Automatic optimization**.
-Delegated managers open their group in Evolution Space and choose **Open
-configuration**. They need current membership plus `config.read` and
-`config.manage`; unrelated administration remains unavailable. **Open Evolution
-Space** returns to that group. Configuration access does not grant source evidence,
+Open **Settings → Configuration and activation** in the group's Evolution Space.
+Platform administrators and delegated managers use the same page; delegated
+managers need current membership plus `config.read` and `config.manage`, and
+unrelated administration remains unavailable. Earlier administration links for
+group optimization, corpus, manual runs and evolution permissions forward to the
+matching Evolution Space pages. Configuration access does not grant source evidence,
 source ownership, permission management or historical-backfill authority.
 
 A configuration draft
@@ -503,7 +537,7 @@ runs is handled separately from this disable action.
 
 ### Capture and seal authorized corpus episodes
 
-Open **Groups → select a group → Corpus and historical backfill** to inspect the active
+Open **Settings → Sources and corpus** in the group's Evolution Space to inspect the active
 configuration, source policies, collector progress and queued work. The page refreshes
 current permissions and shows changed or unavailable source policies separately from
 empty sources. Administrators can explicitly grant themselves evidence access from the
@@ -641,7 +675,7 @@ an authority-denied assignment; its original pins remain unchanged.
 
 ### Preview and execute bounded historical backfill
 
-On the group's **Corpus and historical backfill** page, select local start/end times,
+On the group's **Sources and corpus** page, select local start/end times,
 an episode limit and bindings. Required prerequisites are included automatically. Review
 each binding's token/cost budget; expand **Advanced budget limits** for attempts, timeout
 and artifact size. Choose **Preview historical backfill** to freeze the exact selection.

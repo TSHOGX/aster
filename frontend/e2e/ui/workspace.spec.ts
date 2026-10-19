@@ -215,10 +215,12 @@ test("global schedules, project selection and keyboard account menu", async ({
   await expect(
     page.getByRole("menuitem", { name: "Settings", exact: true }),
   ).toBeFocused();
-  await page.keyboard.press("ArrowDown");
-  await expect(
-    page.getByRole("menuitem", { name: "Sign out", exact: true }),
-  ).toBeFocused();
+  // The other applications are reached from the account menu, not a header strip.
+  for (const name of ["Evolution Space", "Volume Studio", "Sign out"]) {
+    await page.keyboard.press("ArrowDown");
+    await expect(page.getByRole("menuitem", { name, exact: true })).toBeFocused();
+  }
+  await expect(page.getByRole("navigation", { name: "Applications", exact: true })).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(page.getByLabel("Account", { exact: true })).toBeFocused();
 });

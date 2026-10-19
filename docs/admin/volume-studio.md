@@ -13,6 +13,14 @@ provision the required library permissions before editing. The catalog lists onl
 libraries with a current read grant; removing that grant also removes their summaries
 and search results.
 
+Use **Account → Back to Workbench** to return to the workbench. Studio applies
+the language, theme and accent chosen in Workbench settings.
+Recovery links retain the working branch; Markdown file links retain the branch or
+immutable version being viewed. Each evaluation check offers **Open evaluation report**
+to inspect its exact group-scoped result in Evolution Space; that application
+checks your current group and evidence permissions. The report links back to the
+immutable candidate in Studio.
+
 Shared-assets libraries use the immutable `shared-assets-v1` profile and the same
 explicit library grants. A published version must contain root
 `AGENTS.md`; skill entries must be directories containing `SKILL.md`. The base

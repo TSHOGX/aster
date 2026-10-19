@@ -8,7 +8,7 @@ import { useT } from "../lib/i18n";
 import { ConflictEditor } from "./conflict-workspace";
 import { useStudio } from "./studio-provider";
 
-type Evaluation = {id:string;requirement_digest:string;state:string;outcome:string};
+type Evaluation = {id:string;group_id?:string;requirement_digest:string;state:string;outcome:string};
 type View = { evaluations: Evaluation[]; evaluation: string; digest: string; identity: NonNullable<PreparedIntegration["identity"]>; readiness: string; acceptance: string; accepted_commit?: string; reviews: ReviewDecision[] };
 type Change = { path: string; change: string };
 type FilePreview = { commit_id: string; entry: Entry; text?: string; preview: string };
@@ -337,7 +337,7 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
          <p>{tr("Evaluation service")}: {check.service.id} · {check.service.revision}</p>
          <p>{tr("Reference strategy")}: {tr(check.reference_strategy)} {check.reference && <code>{check.reference.commit_id}</code>}</p>
          <p>{tr("Policy")}: <code>{check.policy_id}</code> · {check.policy_revision}</p>
-         {view.evaluations.filter(job=>job.requirement_digest===check.digest).map(job=><div key={job.id}><p><code>{job.id}</code> · {tr(job.state)} · {tr(job.outcome)}</p>{(job.state==="pending"||job.state==="admitted"||job.state==="cancelling")&&<button disabled={mutationBlocked} onClick={()=>void run(()=>reconcileEvaluation(job))}>{tr(job.state==="pending"?"Retry evaluation admission":"Refresh evaluation")}</button>}{(job.state==="pending"||job.state==="admitted")&&<button disabled={mutationBlocked} onClick={()=>void run(()=>cancelEvaluation(job))}>{tr("Cancel evaluation")}</button>}{job.state==="cancelling"&&<p>{tr("Cancellation requested; spending remains reserved until reconciliation finishes.")}</p>}</div>)}
+         {view.evaluations.filter(job=>job.requirement_digest===check.digest).map(job=><div key={job.id}><p><code>{job.id}</code> {job.group_id && <a href={`/evolution-space/groups/${encodeURIComponent(job.group_id)}/evaluations/${encodeURIComponent(job.id)}/`}>{tr("Open evaluation report")}</a>} · {tr(job.state)} · {tr(job.outcome)}</p>{(job.state==="pending"||job.state==="admitted"||job.state==="cancelling")&&<button disabled={mutationBlocked} onClick={()=>void run(()=>reconcileEvaluation(job))}>{tr(job.state==="pending"?"Retry evaluation admission":"Refresh evaluation")}</button>}{(job.state==="pending"||job.state==="admitted")&&<button disabled={mutationBlocked} onClick={()=>void run(()=>cancelEvaluation(job))}>{tr("Cancel evaluation")}</button>}{job.state==="cancelling"&&<p>{tr("Cancellation requested; spending remains reserved until reconciliation finishes.")}</p>}</div>)}
          <button disabled={mutationBlocked||view.evaluations.some(job=>job.requirement_digest===check.digest&&(job.state==="pending"||job.state==="admitted"||job.state==="cancelling"))} onClick={()=>void run(()=>requestEvaluation(check.digest))}>{tr("Request evaluation")}</button>
         </li>)}</ul>
        </>}

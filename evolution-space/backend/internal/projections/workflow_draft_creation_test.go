@@ -101,6 +101,23 @@ func TestWorkflowDraftCreationAtomicForkAndReplay(t *testing.T) {
 	if _, err = s.CreateWorkflowDraft(ctx, "beta", WorkflowDraftCreation{ID: "foreign-run", SourceRunID: run.ID}, actor); !errors.Is(err, ErrNotFound) {
 		t.Fatal("foreign run fork", err)
 	}
+	published, err := s.CreateWorkflowDraft(ctx, "gamma", WorkflowDraftCreation{ID: "from-published", SourceWorkflow: &ref}, actor)
+	if err != nil || len(published.Workflow.Nodes) != len(graph.Nodes) || published.Workflow.ID != "from-published" {
+		t.Fatal("published workflow fork", published, err)
+	}
+	tampered := ref
+	tampered.Digest = "sha256:" + strings.Repeat("0", 64)
+	if _, err = s.CreateWorkflowDraft(ctx, "gamma", WorkflowDraftCreation{ID: "tampered", SourceWorkflow: &tampered}, actor); !errors.Is(err, ErrConflict) {
+		t.Fatal("digest mismatch accepted", err)
+	}
+	missing := ref
+	missing.Revision = 99
+	if _, err = s.CreateWorkflowDraft(ctx, "gamma", WorkflowDraftCreation{ID: "missing", SourceWorkflow: &missing}, actor); !errors.Is(err, ErrNotFound) {
+		t.Fatal("missing revision", err)
+	}
+	if _, err = s.CreateWorkflowDraft(ctx, "gamma", WorkflowDraftCreation{ID: "ambiguous", SourceWorkflow: &ref, SourceRunID: run.ID}, actor); !errors.Is(err, ErrConflict) {
+		t.Fatal("ambiguous source accepted", err)
+	}
 	page, err := s.WorkflowDrafts(ctx, "alpha", "", 2)
 	if err != nil || len(page.Items) != 2 || !page.HasMore {
 		t.Fatal(page, err)

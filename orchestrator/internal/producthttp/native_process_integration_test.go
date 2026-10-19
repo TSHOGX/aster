@@ -177,8 +177,11 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			t.Fatal("admin frontend unavailable")
 		}
 	}
+	// Group configuration, corpus and manual-run pages are served by Evolution
+	// Space; the administration build remains for the central session only.
+	spaceBrowser := browserUpgrade || browserRetention || browserTools || browserDynamic || browserNumberedRetry || browserBackfill || browserConfig || browserManual
 	var evolutionSpaceFrontend string
-	if browserUpgrade || browserRetention || browserTools || browserDynamic || browserNumberedRetry {
+	if spaceBrowser {
 		frontendAddress := address()
 		evolutionSpaceFrontend = "http://" + frontendAddress
 		copyCmd := exec.CommandContext(ctx, "cp", "-r", filepath.Join(root, "evolution-space/frontend/.next/static"), filepath.Join(root, "evolution-space/frontend/.next/standalone/evolution-space/frontend/.next/"))
@@ -220,7 +223,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	studioURL, _ := url.Parse("http://" + studioAddress)
 	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { host := r.In.Host; r.SetURL(studioURL); r.Out.Host = host }}
 	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if (browserUpgrade || browserRetention || browserTools || browserDynamic || browserNumberedRetry) && strings.HasPrefix(r.URL.Path, "/evolution-space/") {
+		if spaceBrowser && strings.HasPrefix(r.URL.Path, "/evolution-space/") {
 			spaceProxy.ServeHTTP(w, r)
 			return
 		}
@@ -685,9 +688,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 	studioArgs := []string{"--listen", studioAddress, "--participant-listen", participantAddress, "--state-directory", t.TempDir(), "--public-origin", issuer, "--identity-endpoint", central.URL, "--publisher-id", "publisher", "--evolution-space-endpoint", spaceOrigin}
 	stopStudio := start(studioBinary, studioAddress, studioArgs...)
 	spaceArgs := []string{"--listen", spaceAddress, "--state-directory", spaceDirectory, "--identity-endpoint", central.URL, "--native-config", nativePath, "--studio-input-endpoint", "http://" + participantAddress}
-	if retryJourney || mode == "retention" || mode == "tool-inspection" || mode == "dynamic-inspection" || mode == "numbered-retry" {
+	if retryJourney || mode == "retention" || mode == "tool-inspection" || mode == "dynamic-inspection" || mode == "numbered-retry" || spaceBrowser {
 		frontendOrigin := central.URL
-		if browserUpgrade || browserRetention || browserTools || browserDynamic || browserNumberedRetry {
+		if spaceBrowser {
 			frontendOrigin = evolutionSpaceFrontend
 		}
 		spaceArgs = append(spaceArgs, "--browser-listen", spaceBrowserAddress, "--public-origin", issuer, "--frontend", frontendOrigin)

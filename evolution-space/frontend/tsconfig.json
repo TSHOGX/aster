@@ -24,7 +24,16 @@
     "resolveJsonModule": true,
     "typeRoots": [
       "./node_modules/@types"
-    ]
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "./*"
+      ],
+      "@web/*": [
+        "../../web/*"
+      ]
+    }
   },
   "include": [
     "next-env.d.ts",

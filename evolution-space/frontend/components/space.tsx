@@ -1,21 +1,23 @@
-/* eslint-disable @next/next/no-html-link-for-pages -- Root links leave this application base path for the central application. */
 "use client";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
-import { LanguagePicker } from "../../../web/language-picker";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useSessionRefresh } from "../../../web/session-refresh";
 import { useAccountPreferences } from "../../../web/account-preferences";
 import { clearAppearanceBinding } from "../../../web/appearance";
-import { base, type Session, type Group, type GroupPage } from "../lib/api";
+import { evolutionSectionPath } from "../../../web/application-paths";
+import { useLocale } from "../../../web/i18n";
+import { base, type Session, type GroupPage } from "../lib/api";
 import { useT } from "../lib/i18n";
 import { useRead } from "../lib/use-read";
-import { CatalogEditor } from "./catalog-editor";
-import { RunHistory, EvaluationHistory } from "./execution-history";
-import { WorkflowDrafts } from "./workflow-drafts";
+import { SessionContext, lastGroupKey, useGroup, useSession } from "./group-context";
+import { GroupList } from "./group-list";
+import { PageHeading } from "./group-layout";
 
 export function SpaceShell({ children }: { children: ReactNode }) {
   const tr = useT();
-  const session = useRead<Session>("/session", true);
+  const session = useRead<Session>("/session", true, true);
+  useSessionRefresh(session.refresh);
   const [lastSession, setLastSession] = useState<Session>();
   useEffect(() => {
     // Keep only the logout credential available if current admission is revoked.
@@ -30,7 +32,10 @@ export function SpaceShell({ children }: { children: ReactNode }) {
       <button onClick={session.refresh}>{tr("Retry")}</button>
       {lastSession && <SignOut session={lastSession} />}</>}
   </main>;
-  return <Workspace key={session.data.subject} session={session.data}>{children}</Workspace>;
+  return <SessionContext.Provider value={session.data}><Workspace key={session.data.subject} session={session.data}>
+    {session.status && <div role="alert"><p>{tr("Identity is unavailable. Retry when the service is restored.")}</p><button onClick={session.refresh}>{tr("Retry")}</button></div>}
+    {children}
+  </Workspace></SessionContext.Provider>;
 }
 function SignOut({ session }: { session: Session }) {
   const tr = useT(); const [pending, setPending] = useState(false); const [error, setError] = useState(false);
@@ -42,68 +47,91 @@ function SignOut({ session }: { session: Session }) {
       clearAppearanceBinding(); window.location.reload();
     } catch { setError(true); setPending(false); }
   }
-  return <div><button disabled={pending} onClick={() => void logout()}>{tr(pending ? "Signing out…" : "Sign out of this central session")}</button>{error && <p role="alert">{tr("Sign out is unavailable. Please retry.")}</p>}</div>;
+  return <><button disabled={pending} onClick={() => void logout()}>{tr(pending ? "Signing out…" : "Sign out of this central session")}</button>{error && <p role="alert">{tr("Sign out is unavailable. Please retry.")}</p>}</>;
+}
+function AccountMenu({ session }: { session: Session }) {
+  const tr = useT(); const menu = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (event: MouseEvent | KeyboardEvent) => {
+      if (!menu.current?.open) return;
+      if (event instanceof KeyboardEvent ? event.key === "Escape" : !menu.current.contains(event.target as Node)) menu.current.open = false;
+    };
+    document.addEventListener("click", close); document.addEventListener("keydown", close);
+    return () => { document.removeEventListener("click", close); document.removeEventListener("keydown", close); };
+  }, []);
+  // The workbench is a separate build; a document navigation crosses the edge.
+  return <details ref={menu} className="account-menu"><summary>{tr("Account")}</summary><div className="account-menu-items">
+    {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+    <a href="/">{tr("Back to Workbench")}</a>
+    <SignOut session={session} />
+  </div></details>;
 }
 function Workspace({ session, children }: { session: Session; children: ReactNode }) {
-  const tr = useT(); const preferences = useAccountPreferences(session.subject, true);
+  const tr = useT();
+  // Preferences are edited only in Workbench settings; Space applies them.
+  useAccountPreferences(session.subject, true);
   return <>
     <a className="skip-link" href="#main-content">{tr("Skip to main content")}</a>
-    <header className="header"><Link prefetch={false} className="brand" href="/">{tr("Evolution Space")}</Link>
-      <nav aria-label={tr("Central application")}><a href="/">{tr("Central application")}</a><a href="/volumes-studio/">{tr("Volume Studio")}</a></nav>
-      <LanguagePicker preferences={preferences} /><SignOut session={session} />
+    <header className="header"><Link prefetch={false} className="brand" href="/?choose=1">{tr("Evolution Space")}</Link>
+      <AccountMenu session={session} />
     </header>
     <div id="main-content" tabIndex={-1}>{children}</div>
   </>;
 }
-export function Space({ groupID = "" }: { groupID?: string }) {
-  const tr = useT();
-  return <main className="workspace"><GroupList selected={groupID} /><section className="overview" aria-label={tr("Group overview")}>
-      {groupID ? <GroupOverview key={groupID} id={groupID} /> : <><h1>{tr("Select a group")}</h1><p>{tr("Each group keeps its own configuration and permissions.")}</p></>}
-    </section></main>;
+
+// Opening the application continues in the last workspace, or the only one,
+// and falls back to an explicit choice. A stale preference is verified first.
+export function Landing() {
+  const tr = useT(); const router = useRouter(); const session = useSession(); const params = useSearchParams();
+  const choose = params.get("choose") === "1" || params.has("groups_search") || params.has("groups_after");
+  const [remembered] = useState(() => { try { return choose ? "" : localStorage.getItem(lastGroupKey(session.subject)) ?? ""; } catch { return ""; } });
+  const last = useRead<GroupPage>(remembered ? `/groups/${encodeURIComponent(remembered)}` : "/groups?limit=2");
+  const target = last.data && (remembered ? last.data.items[0]?.id : !choose && last.data.items.length === 1 && !last.data.has_more ? last.data.items[0].id : "");
+  useEffect(() => { if (target) router.replace(`/groups/${encodeURIComponent(target)}/`); }, [target, router]);
+  if (target || last.loading && !choose) return <main className="group-message"><p role="status">{tr("Opening your workspace…")}</p></main>;
+  return <main className="landing"><h1>{tr("Choose a group")}</h1><p>{tr("Each group keeps its own sources, workflows, runs and permissions. You can switch groups at any time.")}</p><GroupList persist /></main>;
 }
 
-function GroupList({ selected }: { selected: string }) {
-  const tr = useT(); const params = useSearchParams();
-  const search = params.get("groups_search") ?? "", after = params.get("groups_after") ?? "";
-  const navigate = (search: string, after: string) => {
-    const url = new URL(window.location.href);
-    for (const [key, value] of [["groups_search", search], ["groups_after", after]]) {
-      if (value) url.searchParams.set(key, value); else url.searchParams.delete(key);
-    }
-    window.history.pushState(null, "", url.pathname + url.search + url.hash);
-  };
-  const selection = new URLSearchParams();
-  if (search) selection.set("groups_search", search);
-  if (after) selection.set("groups_after", after);
-  const read = useRead<GroupPage>(`/groups?${new URLSearchParams({ search, after, limit: "25" })}`);
-  return <aside className="groups" aria-label={tr("Groups")}><div className="section-heading"><h2>{tr("Groups")}</h2><button onClick={read.refresh}>{tr("Refresh")}</button></div>
-    <form key={search} onSubmit={event => { event.preventDefault(); navigate(String(new FormData(event.currentTarget).get("search") ?? "").trim(), ""); }}><label htmlFor="group-search">{tr("Search groups")}</label><div className="search"><input id="group-search" name="search" defaultValue={search} maxLength={256} /><button type="submit">{tr("Search")}</button></div></form>
-    {read.loading && <p role="status">{tr("Loading groups…")}</p>}
-    {read.status && <div role="alert"><p>{tr(read.status === 401 || read.status === 403 ? "Group access was revoked. Sign in again or contact an administrator." : "Group access is unavailable. Please retry.")}</p><button onClick={read.refresh}>{tr("Retry")}</button></div>}
-    {read.data && <><ul>{read.data.items.map(group => <li key={group.id}><Link prefetch={false} href={`/groups/${encodeURIComponent(group.id)}/${selection.size ? `?${selection}` : ""}`} aria-current={selected === group.id ? "page" : undefined}>{group.name}</Link></li>)}</ul>
-      {!read.data.items.length && <div><h3>{tr(search ? "No matching groups" : "No readable groups")}</h3>{!search && <p>{tr("Ask an administrator for group membership and configuration read access.")}</p>}</div>}
-      <div className="pagination">{after && <button onClick={() => navigate(search, "")}>{tr("First page")}</button>}{read.data.has_more && <button onClick={() => navigate(search, read.data!.next_after)}>{tr("Next page")}</button>}</div>
-    </>}
-  </aside>;
-}
 const states: Record<string, string> = { unconfigured: "Not configured", draft: "Draft", activating: "Activating", active: "Active", failed: "Activation failed", discarding: "Discarding", discarded: "Discarded" };
-function GroupOverview({ id }: { id: string }) {
-  const tr = useT(); const read = useRead<GroupPage>(`/groups/${encodeURIComponent(id)}`);
-  if (read.loading) return <p role="status">{tr("Loading group…")}</p>;
-  if (read.status || !read.data?.items[0]) return <div role="alert"><h1>{tr(read.status === 401 || read.status === 403 ? "You no longer have access to this group." : "Group access is unavailable. Please retry.")}</h1><button onClick={read.refresh}>{tr("Retry")}</button><Link href="/">{tr("Back to groups")}</Link></div>;
-  return <GroupDetails group={read.data.items[0]} refresh={read.refresh} />;
-}
-function GroupDetails({ group, refresh }: { group: Group; refresh: () => void }) {
-  const tr = useT();
-  return <><div className="section-heading"><h1>{group.name}</h1><div className="editor-actions"><button onClick={refresh}>{tr("Refresh")}</button>{group.can_run && <a className="button" href={`/admin/groups/${encodeURIComponent(group.id)}/run`}>{tr("Run configured workflows")}</a>}{group.can_manage && <a className="button" href={`/admin/groups/${encodeURIComponent(group.id)}/optimization`}>{tr("Open configuration")}</a>}</div></div><p>{group.description}</p>
-    <section className="card"><h2>{tr("Configuration")}</h2><p className="status">{tr(states[group.state] || group.state)}</p>
-      <dl><div><dt>{tr("Desired revision")}</dt><dd>{group.desired_revision || "—"}</dd></div><div><dt>{tr("Active revision")}</dt><dd>{group.active_revision || "—"}</dd></div><div><dt>{tr("Automatic optimization")}</dt><dd>{tr(group.auto_enabled ? "On" : "Off")}</dd></div></dl>
-      {!group.active_revision && <p>{tr("No active configuration. Ask a configuration manager to complete setup.")}</p>}
-      {group.desired_revision !== group.active_revision && <p>{tr("A configuration change is pending. The active revision remains separate.")}</p>}
+type RecentRun = { id: string; state: string; handoff: string; evaluation_state: string; created_at: string; pins: { template: { id: string; revision: number } } };
+export function GroupOverview() {
+  const tr = useT(); const { group, refresh } = useGroup(); const search = useSearchParams(); const locale = useLocale();
+  const root = `/groups/${encodeURIComponent(group.id)}/`;
+  const runs = useRead<{ items: RecentRun[]; has_more: boolean }>(`/groups/${encodeURIComponent(group.id)}/runs?limit=5`);
+  const active = runs.data?.items.filter(run => ["queued", "running", "pause_requested", "paused", "cancelling"].includes(run.state)) ?? [];
+  const review = runs.data?.items.filter(run => run.state === "completed" && run.handoff === "submitted") ?? [];
+  const failed = runs.data?.items.filter(run => run.state === "failed" || run.handoff === "failed") ?? [];
+  return <section className="overview" aria-label={tr("Group overview")}>
+    <PageHeading title={group.name} description={group.description || undefined} actions={<>
+      <button onClick={refresh}>{tr("Refresh")}</button>
+      {group.can_run && <Link prefetch={false} className="button primary" href={`${root}runs/new/`}>{tr("New run")}</Link>}
+    </>} />
+    <div className="overview-cards">
+      <section className="card" id="configuration"><h2>{tr("Configuration")}</h2><p className="status">{tr(states[group.state] || group.state)}</p>
+        <dl><div><dt>{tr("Active revision")}</dt><dd>{group.active_revision || "—"}</dd></div><div><dt>{tr("Desired revision")}</dt><dd>{group.desired_revision || "—"}</dd></div><div><dt>{tr("Automatic optimization")}</dt><dd>{tr(group.auto_enabled ? "On" : "Off")}</dd></div></dl>
+        {group.desired_revision !== group.active_revision && <p>{tr("A configuration change is pending. The active revision remains separate.")}</p>}
+        <Link prefetch={false} href={`${root}settings/configuration/`}>{tr(group.can_manage ? "Edit configuration" : "View configuration")}</Link>
+      </section>
+      <section className="card"><h2>{tr("Activity")}</h2>
+        {runs.loading && <p role="status">{tr("Loading runs…")}</p>}
+        {runs.status && <p role="alert">{tr("Runs are unavailable. Retry when the service is restored.")}</p>}
+        {runs.data && <dl><div><dt>{tr("Active runs")}</dt><dd>{active.length}</dd></div><div><dt>{tr("Ready for expert review")}</dt><dd>{review.length}</dd></div><div><dt>{tr("Needs attention")}</dt><dd>{failed.length}</dd></div></dl>}
+        {runs.data?.has_more && <p><small>{tr("Counts cover the latest runs. Open run history for the full list.")}</small></p>}
+        <Link prefetch={false} href={evolutionSectionPath(group.id, "runs", search)}>{tr("Open run history")}</Link>
+      </section>
+    </div>
+    {!group.active_revision && <section className="card setup-steps" aria-labelledby="setup-heading"><h2 id="setup-heading">{tr("Set up this group")}</h2>
+      <p>{tr(group.can_manage ? "Complete these steps in any order, then review and activate. Workflows can be edited and tested before activation." : "No active configuration. Ask a configuration manager to complete setup.")}</p>
+      <ol>
+        <li><Link prefetch={false} href={`${root}settings/sources/`}>{tr("Configure sources")}</Link><small>{tr("Approve team sources the workflows may read.")}</small></li>
+        <li><Link prefetch={false} href={`${root}templates/`}>{tr("Choose or create goal templates")}</Link><small>{tr("A template pins the goal, ports, output profile and compatible workflows.")}</small></li>
+        <li><Link prefetch={false} href={`${root}settings/configuration/#bindings`}>{tr("Bind outputs")}</Link><small>{tr("Map each template to a Volume Studio library and directory.")}</small></li>
+        <li><Link prefetch={false} href={`${root}settings/configuration/#review`}>{tr("Review and activate")}</Link><small>{tr("Preview the effect, then activate an immutable configuration.")}</small></li>
+      </ol>
+    </section>}
+    <section className="card"><div className="section-heading"><h2>{tr("Recent runs")}</h2><Link prefetch={false} href={evolutionSectionPath(group.id, "runs", search)}>{tr("View all")}</Link></div>
+      {runs.data && (!runs.data.items.length ? <p>{tr("No runs yet. Start a manual run, or test a workflow draft.")}</p> : <table tabIndex={0} aria-label={tr("Recent runs")}><thead><tr>{["Run", "Execution state", "Handoff", "Evaluation", "Template", "Created at"].map(label => <th key={label} scope="col">{tr(label)}</th>)}</tr></thead>
+        <tbody>{runs.data.items.map(run => <tr key={run.id}><th scope="row"><Link prefetch={false} href={`${root}runs/${encodeURIComponent(run.id)}/`}>{run.id}</Link></th><td>{tr(run.state === "pause_requested" ? "Pausing" : run.state)}</td><td>{tr(run.handoff)}</td><td>{tr(run.evaluation_state)}</td><td>{run.pins.template.id} · {run.pins.template.revision}</td><td><time dateTime={run.created_at}>{new Date(run.created_at).toLocaleString(locale)}</time></td></tr>)}</tbody></table>)}
     </section>
-    <RunHistory group={group.id} /><EvaluationHistory group={group.id} />
-    <CatalogEditor key={`templates:${group.id}`} group={group.id} kind="templates" editable={group.can_edit_workflows} />
-    <WorkflowDrafts group={group.id} editable={group.can_edit_workflows} evidence={group.can_read_evidence} />
-    {group.can_manage && <CatalogEditor group={group.id} kind="profiles" editable />}<section className="card" aria-labelledby="permissions-heading"><h2 id="permissions-heading">{tr("Your permissions")}</h2><table className="permission-matrix"><thead><tr><th scope="col">{tr("Capability")}</th><th scope="col">{tr("Effective access")}</th></tr></thead><tbody>{[["Read configuration", true], ["Manage configuration", group.can_manage], ["Edit and publish workflows", group.can_edit_workflows], ["Operate runs", group.can_run], ["Read source evidence", group.can_read_evidence]].map(([label, allowed]) => <tr key={String(label)}><th scope="row">{tr(String(label))}</th><td>{tr(allowed ? "Allowed" : "Not granted")}</td></tr>)}</tbody></table><p>{tr("Configuration access does not grant source evidence access.")}</p></section>
-  </>;
+  </section>;
 }

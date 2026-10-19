@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api } from "@/lib/central";
 import { useT } from "@/lib/i18n";
 import { Select } from "@web/select";
 import { budgetFields, budgetLabels, type Budget, type Revision, type Source } from "@/lib/evolution";

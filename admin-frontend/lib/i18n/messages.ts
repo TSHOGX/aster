@@ -22,6 +22,7 @@ export const ZH: Record<string, string> = {
  "Manual runs work while automatic optimization is off. They use the next bounded captured input delta for each binding, or its configured immutable artifacts. They do not capture historical work.": "自动优化关闭时仍可手动运行。每个绑定使用下一批有界的已捕获增量输入或已配置的不可变产物，不会捕获历史工作。",
  "Run configured workflows": "运行已配置工作流",
   "Open Evolution Space": "打开演进空间",
+  "Manage evolution in Evolution Space": "在演进空间中管理演进",
   "Local import recovery is unavailable. Keep this tab open until the request is confirmed.": "本地导入恢复不可用。请求确认前，请保持此标签页打开。",
   "Local import recovery is invalid. Discard it before starting another operation.": "本地导入恢复记录无效。开始其他操作前，请先丢弃该记录。",
   "The original import request may already have completed. Check local imports before discarding recovery.": "原始导入请求可能已完成。丢弃恢复记录前，请检查本地导入。",

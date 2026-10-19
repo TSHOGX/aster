@@ -1,4 +1,8 @@
 export const ZH: Record<string, string> = {
+  "Open evaluation report": "打开评估报告",
+  "Back to Workbench": "返回工作台",
+  "Retry": "重试",
+  "Loading…": "加载中…",
   "Reviewed revert": "经审核的撤销",
   "Create an inverse draft for one commit and its selected immediate parent. Review and commit the draft, then prepare against current main for fresh checks and approval.": "为选定提交及其直接父提交创建反向草稿。审核并提交草稿后，针对当前主分支准备集成，重新执行检查和审批。",
   "Revert evidence is unavailable. Reload or check Volume access.": "撤销证据不可用。请重新加载或检查卷访问权限。",

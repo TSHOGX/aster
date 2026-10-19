@@ -833,7 +833,7 @@ function ancestors(path: string) {
   const parts = parentPath(path).split("/").filter(Boolean);
   return parts.map((_, i) => parts.slice(0, i + 1).join("/"));
 }
-type Studio = ReturnType<typeof useStudioController>;
+type Studio = ReturnType<typeof useStudioController> & { preferences: ReturnType<typeof useAccountPreferences> };
 const StudioContext = createContext<Studio | null>(null);
 export function useStudio() {
   const value = useContext(StudioContext);
@@ -842,15 +842,16 @@ export function useStudio() {
 }
 export function StudioProvider({ children }: { children: ReactNode }) {
   const tr = useT();
-  const { session, error, loading } = useSession();
-  const studio = useStudioController(session);
-  useAccountPreferences(session?.subject, true);
+  const { session, error, loading, refresh } = useSession();
+  const controller = useStudioController(session);
+  const preferences = useAccountPreferences(session?.subject, true);
+  const studio = { ...controller, preferences };
   useEffect(() => { document.title = "Volume Studio"; }, []);
   const question = studio.model.questions[0];
   return (
     <StudioContext.Provider value={studio}>
       {!session ? (
-        <SessionGate loading={loading} error={tr(error)} />
+        <SessionGate loading={loading} error={tr(error)} retry={refresh} />
       ) : studio.model.expired ? (
         <main className="session-gate">
           <h1>{tr("Sign in again")}</h1>
@@ -862,7 +863,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
              {tr("Sign in")} </a>
         </main>
       ) : (
-        children
+        <>{error && <div role="alert" className="notice error">{tr(error)} <button onClick={refresh}>{tr("Retry")}</button></div>}{children}</>
       )}
       {question && (
         <Modal

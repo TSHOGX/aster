@@ -1,2 +1,2 @@
-import { Space } from "../components/space";
-export default function Page() { return <Space />; }
+import { Landing } from "../components/space";
+export default function Page() { return <Landing />; }

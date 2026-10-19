@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, APIError } from "../lib/api";
-import { useT } from "../lib/i18n";
+import { message, useT } from "../lib/i18n";
+import type { Message } from "../../../web/i18n/locale";
 import { useStudio } from "./studio-provider";
 
 type Revision = { id: string; revision: number; digest: string };
@@ -165,8 +166,8 @@ export function PathPolicies({ library }: { library: string }) {
           {conflict && current && <details><summary>{tr("Current policy")}</summary><PolicyDetails value={current.evaluation} /><code>{current.digest}</code></details>}
           <label>{tr("Evaluation mode")}<select aria-label={tr("Evaluation mode")} value={policy.mode} onChange={event => { const mode = event.target.value as Policy["mode"]; update(mode === "disabled" ? off() : { ...policy, mode, profile: policy.profile ?? emptyRevision(), service: policy.service ?? emptyRevision() }); }}>{Object.entries(modeLabels).map(([value, label]) => <option key={value} value={value}>{tr(label)}</option>)}</select></label>
           {policy.mode !== "disabled" && <>
-            <RevisionFields title="Evaluation profile" value={policy.profile!} onChange={value => update({ ...policy, profile: value })} />
-            <RevisionFields title="Evaluation service" value={policy.service!} onChange={value => update({ ...policy, service: value })} />
+            <RevisionFields title={message("Evaluation profile")} value={policy.profile!} onChange={value => update({ ...policy, profile: value })} />
+            <RevisionFields title={message("Evaluation service")} value={policy.service!} onChange={value => update({ ...policy, service: value })} />
             <label>{tr("Reference strategy")}<select aria-label={tr("Reference strategy")} value={policy.reference_strategy} onChange={event => { const strategy = event.target.value as Policy["reference_strategy"]; update({ ...policy, reference_strategy: strategy, reference_release: strategy === "pinned_release" ? { publisher_id: "", library_id: "", version_id: "", descriptor_digest: "" } : undefined }); }}><option value="none">{tr("No comparison reference")}</option><option value="target_main">{tr("Accepted main")}</option><option value="generation_base">{tr("Branch initial base")}</option><option value="pinned_release">{tr("Pinned release")}</option></select></label>
             {policy.reference_release && <ReleaseFields value={policy.reference_release} onChange={value => update({ ...policy, reference_release: value })} />}
           </>}
@@ -193,7 +194,7 @@ function PolicyDetails({value}: {value: Policy}) {
   </dl>;
 }
 
-function RevisionFields({title, value, onChange}: {title: string; value: Revision; onChange: (value: Revision) => void}) {
+function RevisionFields({title, value, onChange}: {title: Message; value: Revision; onChange: (value: Revision) => void}) {
   const tr = useT();
   return <fieldset><legend>{tr(title)}</legend>
     <label>{tr("ID")}<input aria-label={`${tr(title)} ${tr("ID")}`} required pattern={idPattern} value={value.id} onChange={event => onChange({...value, id:event.target.value})} /></label>

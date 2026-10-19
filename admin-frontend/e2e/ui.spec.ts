@@ -478,3 +478,23 @@ for (const width of [390, 1440]) test(`bilingual shared-assets rollout retains a
  await expect(page.getByRole("heading",{name:"更新 1",exact:true})).toBeVisible();
  expect(commits).toHaveLength(2);expect(commits[0]).toEqual(commits[1]);
 });
+
+test("group evolution work lives in Evolution Space with one contextual entry", async ({ page }) => {
+  await adminFixture(page);
+  // Admin has no application strip and no language or appearance editor.
+  await page.goto("/admin/groups/standard-users");
+  await expect(page.getByRole("link", { name: "Return to workbench", exact: true })).toHaveAttribute("href", "/");
+  await expect(page.getByRole("navigation", { name: "Applications", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: "Language", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: "Theme mode", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Manage evolution in Evolution Space", exact: true })).toHaveAttribute("href", "/evolution-space/groups/standard-users/");
+  for (const name of ["Evolution permissions", "Automatic optimization", "Corpus and historical backfill"]) await expect(page.getByRole("link", { name, exact: true })).toHaveCount(0);
+  // Bookmarked group evolution pages forward to the matching Space section.
+  for (const [route, target] of [["optimization", "settings/configuration/"], ["corpus", "settings/sources/"], ["run", "runs/new/"], ["evolution-permissions", "settings/permissions/"]]) {
+    const forwarded = page.waitForRequest(request => request.url().endsWith(`/evolution-space/groups/standard-users/${target}`));
+    await page.route("**/evolution-space/**", route => route.fulfill({ contentType: "text/html", body: "<title>Evolution Space</title>" }));
+    await page.goto(`/admin/groups/standard-users/${route}`);
+    await forwarded;
+    await page.unroute("**/evolution-space/**");
+  }
+});

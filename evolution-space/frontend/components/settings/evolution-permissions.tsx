@@ -1,9 +1,8 @@
 "use client";
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, APIError, mutate } from "@/lib/api";
+import { api, APIError, mutate } from "@/lib/central";
 import { useT } from "@/lib/i18n";
-import type { UserPage } from "@/lib/models";
+type UserPage = { users: { id: string; username: string; display_name: string }[]; next_cursor?: string };
 import { Select } from "@web/select";
 const actionLabels: Record<string, string> = { "config.read": "Read group configuration", "config.manage": "Manage group configuration", "run.start": "Start group runs", "source.read": "Read source evidence", "workflow.edit": "Edit and publish group workflows" };
 type Grant = { action: string; effect: string; revision: number; allowed: boolean };
@@ -43,7 +42,7 @@ export function EvolutionPermissionsEditor({ group, actor, onDirty }: { group: s
   } finally { inFlight.current = false; if (alive.current) setBusy(false); }
  }
  const blocked = busy || !!pending || !ready;
- return <section><header className="page-heading"><div><h1>{tr("Evolution permissions")}</h1><p>{tr("Grant each capability explicitly. Configuration access never grants source evidence, Studio review or publication authority.")}</p></div><Link href={`/groups/${encodeURIComponent(group)}`}>{tr("Back to group")}</Link></header>
+ return <section><header className="page-heading"><div><h2>{tr("Manage member grants")}</h2><p>{tr("Grant each capability explicitly. Configuration access never grants source evidence, Studio review or publication authority.")}</p></div></header>
   {error && <p role="alert">{tr(error)}</p>}{notice && <p role="status">{tr(notice)}</p>}{!ready && error && <button onClick={() => { sessionStorage.removeItem(key); setReady(true); setError(""); }}>{tr("Clear invalid recovery data")}</button>}
   {pending && <section className="notice"><p>{tr("An original request is awaiting confirmation. Reloading preserves its identity.")}</p><button disabled={busy} onClick={() => void submit(pending)}>{tr("Check original request")}</button></section>}
   <section className="panel"><form className="filters" onSubmit={event => { event.preventDefault(); setQuery(search); setCursor(""); }}><label>{tr("Find users")}<input value={search} maxLength={256} onChange={event => setSearch(event.target.value)} /></label><button disabled={blocked}>{tr("Search users")}</button></form>{listError && <p role="alert">{tr(listError)}</p>}<label>{tr("Account permissions")}<Select aria-label={tr("Account permissions")} value={account} disabled={blocked || !!review} onChange={event => { setAccount(event.target.value); setNotice(""); }}><option value="">{tr("Choose an account")}</option>{account && !users.users.some(user => user.id === account) && <option value={account}>{grants?.display_name || account}</option>}{users.users.map(user => <option key={user.id} value={user.id}>{user.display_name} (@{user.username})</option>)}</Select></label><div className="form-actions">{users.next_cursor && <button disabled={blocked} onClick={() => setCursor(users.next_cursor!)}>{tr("Next users")}</button>}{cursor && <button disabled={blocked} onClick={() => setCursor("")}>{tr("First users")}</button>}<button disabled={blocked || !account} onClick={() => { setReview(null); void load(account); }}>{tr("Refresh permissions")}</button></div></section>

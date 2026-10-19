@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { evolutionContextQuery } from "../../../web/application-paths";
 import { useSearchParams } from "next/navigation";
 import { useLocale } from "../../../web/i18n";
 import { useT } from "../lib/i18n";
@@ -51,7 +52,7 @@ export function RunHistory({ group }: { group: string }) {
     </form>
     {read.loading && <p role="status">{tr("Loading runs…")}</p>}
     {read.status && <div role="alert"><p>{tr(read.status === 400 ? "Run filters are invalid. Check IDs, revision and timezone dates." : "Runs are unavailable. Retry when the service is restored.")}</p><button onClick={read.refresh}>{tr("Retry")}</button></div>}
-    {read.data && (!read.data.items.length ? <p role="status">{tr("No matching runs.")}</p> : <table tabIndex={0} aria-label={tr("Run history")}><thead><tr>{["Run", "Execution state", "Handoff", "Evaluation", "Template", "Workflow", "Created at"].map(label => <th key={label} scope="col">{tr(label)}</th>)}</tr></thead><tbody>{read.data.items.map(run => <tr key={run.id}><th scope="row"><Link prefetch={false} href={`/groups/${encodeURIComponent(group)}/runs/${encodeURIComponent(run.id)}`}>{run.id}</Link></th><td>{tr(run.state === "pause_requested" ? "Pausing" : run.state)}</td><td>{tr(run.handoff)}</td><td>{tr(run.evaluation_state)}</td><td>{run.pins.template.id} · {run.pins.template.revision}</td><td>{run.pins.workflow.id} · {run.pins.workflow.revision}</td><td><time dateTime={run.created_at}>{new Date(run.created_at).toLocaleString(locale)}</time></td></tr>)}</tbody></table>)}
+    {read.data && (!read.data.items.length ? <p role="status">{tr("No matching runs.")}</p> : <table tabIndex={0} aria-label={tr("Run history")}><thead><tr>{["Run", "Execution state", "Handoff", "Evaluation", "Template", "Workflow", "Created at"].map(label => <th key={label} scope="col">{tr(label)}</th>)}</tr></thead><tbody>{read.data.items.map(run => <tr key={run.id}><th scope="row"><Link prefetch={false} href={`/groups/${encodeURIComponent(group)}/runs/${encodeURIComponent(run.id)}/${evolutionContextQuery(search)}`}>{run.id}</Link></th><td>{tr(run.state === "pause_requested" ? "Pausing" : run.state)}</td><td>{tr(run.handoff)}</td><td>{tr(run.evaluation_state)}</td><td>{run.pins.template.id} · {run.pins.template.revision}</td><td>{run.pins.workflow.id} · {run.pins.workflow.revision}</td><td><time dateTime={run.created_at}>{new Date(run.created_at).toLocaleString(locale)}</time></td></tr>)}</tbody></table>)}
     <HistoryPages prefix="runs_" after={query.get("after") ?? ""} next={read.data?.next_after} more={read.data?.has_more} loading={read.loading} />
   </section>;
 }
@@ -61,7 +62,7 @@ export function EvaluationHistory({ group }: { group: string }) {
   return <section className="card execution-history" aria-labelledby="evaluations-heading"><div className="section-heading"><h2 id="evaluations-heading">{tr("Evaluation history")}</h2><button onClick={read.refresh}>{tr("Refresh")}</button></div>
     {read.loading && <p role="status">{tr("Loading evaluations…")}</p>}
     {read.status && <div role="alert"><p>{tr("Evaluations are unavailable. Retry when the service is restored.")}</p><button onClick={read.refresh}>{tr("Retry")}</button></div>}
-    {read.data && (!read.data.items.length ? <p role="status">{tr("No evaluations yet.")}</p> : <ul>{read.data.items.map(job => <li key={job.id}><Link prefetch={false} href={`/groups/${encodeURIComponent(group)}/evaluations/${encodeURIComponent(job.id)}`}>{job.id}</Link> · {tr(job.state)} · {job.profile.ref?.id ?? "—"}</li>)}</ul>)}
+    {read.data && (!read.data.items.length ? <p role="status">{tr("No evaluations yet.")}</p> : <ul>{read.data.items.map(job => <li key={job.id}><Link prefetch={false} href={`/groups/${encodeURIComponent(group)}/evaluations/${encodeURIComponent(job.id)}/${evolutionContextQuery(search)}`}>{job.id}</Link> · {tr(job.state)} · {job.profile.ref?.id ?? "—"}</li>)}</ul>)}
     <HistoryPages prefix="evaluations_" after={after} next={read.data?.next_after} more={read.data?.has_more} loading={read.loading} />
   </section>;
 }

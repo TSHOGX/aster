@@ -106,16 +106,21 @@ export function ProjectWorkbench() {
         if (!alive || generation !== authGeneration.current) return;
         acceptIdentity(user);
         if (user.must_change_password) clearAppearanceBinding();
-      }).catch(() => {
+      }).catch(error => {
         if (!alive || generation !== authGeneration.current) return;
+        if (!(error instanceof APIError && error.status === 401)) { setError(String(error)); return; }
         clearPreferenceMemory(); clearAppearanceBinding(); acceptIdentity(null);
         setError(tr("Your login expired. Sign in again."));
       });
     };
     const storage = (event: StorageEvent) => { if (event.key === ACTIVE_APPEARANCE_KEY || event.key === null) revalidate(); };
+    const visible = () => { if (!document.hidden) revalidate(); };
+    const timer = window.setInterval(visible, 30000);
+    window.addEventListener("focus", visible);
+    document.addEventListener("visibilitychange", visible);
     window.addEventListener("project-auth-expired", revalidate);
     window.addEventListener("storage", storage);
-    return () => { alive = false; window.removeEventListener("project-auth-expired", revalidate); window.removeEventListener("storage", storage); };
+    return () => { alive = false; window.clearInterval(timer); window.removeEventListener("focus", visible); document.removeEventListener("visibilitychange", visible); window.removeEventListener("project-auth-expired", revalidate); window.removeEventListener("storage", storage); };
   }, [tr, acceptIdentity]);
   useEffect(() => {
     if (!booted || identity && !identity.must_change_password) return;
@@ -836,6 +841,15 @@ function Application({
               {
                 label: tr("Settings"),
                 action: () => setSettingsOpen(true),
+              },
+              {
+                label: tr("Evolution Space"),
+                // Independent applications need a full navigation through the edge.
+                action: () => void (async () => { if (await guard.current()) window.location.assign(new URL("/evolution-space/", window.location.origin).href); })(),
+              },
+              {
+                label: tr("Volume Studio"),
+                action: () => void (async () => { if (await guard.current()) window.location.assign(new URL("/volumes-studio/", window.location.origin).href); })(),
               },
               ...(identity.role === "admin" ? [{
                 label: tr("Administration"),

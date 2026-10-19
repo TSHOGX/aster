@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api";
+import { api } from "@/lib/central";
 import { useT } from "@/lib/i18n";
 import { Select } from "@web/select";
 import type { Revision } from "@/lib/evolution";

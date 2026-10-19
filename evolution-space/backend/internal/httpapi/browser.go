@@ -85,7 +85,7 @@ func BrowserAPI(client *appidentity.Client, store *projections.Store) func(appid
 			profiles(session, w, r)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/evolution-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/templates/") || strings.HasSuffix(r.URL.Path, "/templates")) {
+		if strings.HasPrefix(r.URL.Path, "/evolution-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/templates/") || strings.HasSuffix(r.URL.Path, "/templates") || strings.Contains(r.URL.Path, "/published-workflows/") || strings.HasSuffix(r.URL.Path, "/published-workflows")) {
 			templates(session, w, r)
 			return
 		}

@@ -1,12 +1,11 @@
 "use client";
 import { LanguagePicker } from "@web/language-picker";
-import { Select } from "@web/select";
+import { AppearanceFields } from "@web/appearance-fields";
 import type { Identity } from "@web/identity";
 
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { api, APIError, command } from "@/lib/project-api";
-import type { Accent, ThemeMode } from "@web/appearance";
 import { useT } from "@/lib/i18n";
 import { IconButton, trapDialogFocus, useDialog } from "./ui";
 import { AccountAdvanced } from "./account-advanced";
@@ -66,21 +65,7 @@ export function AccountSettings({ identity, appearance, onIdentity, onProfile, o
       <section aria-labelledby="appearance-title">
         <h3 id="appearance-title">{tr("Appearance")}</h3>
         <LanguagePicker preferences={appearance} feedback={false} />
-        <div className="appearance-fields">
-          <label>{tr("Theme mode")}
-            <Select aria-label={tr("Theme mode")} value={appearance.preview.theme_mode} disabled={!appearance.loaded || appearance.pending}
-              onChange={event => void appearance.save({ theme_mode: event.target.value as ThemeMode })}>
-              <option value="system">{tr("System")}</option><option value="light">{tr("Light")}</option><option value="dark">{tr("Dark")}</option>
-            </Select>
-          </label>
-          <label>{tr("Accent color")}
-            <Select aria-label={tr("Accent color")} value={appearance.preview.accent} disabled={!appearance.loaded || appearance.pending}
-              onChange={event => void appearance.save({ accent: event.target.value as Accent })}>
-              <option value="neutral">{tr("Neutral")}</option><option value="blue">{tr("Blue")}</option>
-              <option value="green">{tr("Green")}</option><option value="violet">{tr("Violet")}</option>
-            </Select>
-          </label>
-        </div>
+        <AppearanceFields preferences={appearance} />
         <p className="settings-status" role="status">{appearance.pending ? tr("Saving…") : !appearance.loaded ? tr("Loading settings…") : dirtyAppearance ? tr("Unsaved appearance") : appearance.error ? tr("Settings unavailable") : tr("Saved")}</p>
         {appearance.error && <div className="settings-error" role="alert">
           <p>{appearance.conflict ? tr("Settings changed elsewhere. Your preview is unsaved; reapply it or use the saved settings.") : appearance.error}</p>

@@ -16,6 +16,9 @@ type WorkflowDraftCreation struct {
 	SourceDraftID  string `json:"source_draft_id,omitempty"`
 	SourceRevision int64  `json:"source_revision,omitempty"`
 	SourceRunID    string `json:"source_run_id,omitempty"`
+	// SourceWorkflow copies an exact published catalog revision, such as one a
+	// goal template selects. Published revisions are not group evidence.
+	SourceWorkflow *evolution.Revision `json:"source_workflow,omitempty"`
 }
 
 // CreateWorkflowDraft persists creation and its requester-bound receipt together.
@@ -26,6 +29,9 @@ func (s *Store) CreateWorkflowDraft(ctx context.Context, group string, input Wor
 		return result, ErrConflict
 	}
 	if input.SourceDraftID != "" && (!manifest.ValidID(input.SourceDraftID) || input.SourceRevision < 1 || input.SourceRunID != "") || input.SourceDraftID == "" && input.SourceRevision != 0 || input.SourceRunID != "" && !manifest.ValidID(input.SourceRunID) {
+		return result, ErrConflict
+	}
+	if input.SourceWorkflow != nil && (input.SourceDraftID != "" || input.SourceRunID != "" || input.SourceWorkflow.Validate() != nil) {
 		return result, ErrConflict
 	}
 	request, err := json.Marshal(struct {
@@ -69,6 +75,14 @@ func (s *Store) CreateWorkflowDraft(ctx context.Context, group string, input Wor
 		graph, err = evolution.Decode[evolution.Workflow](bytes.NewReader(raw))
 		if err != nil {
 			return result, err
+		}
+	} else if input.SourceWorkflow != nil {
+		graph, err = (workflowResolver{tx}).ResolveWorkflow(ctx, *input.SourceWorkflow)
+		if errors.Is(err, sql.ErrNoRows) {
+			return result, ErrNotFound
+		}
+		if err != nil {
+			return result, fmt.Errorf("%w: %v", ErrConflict, err)
 		}
 	} else if input.SourceRunID != "" {
 		var raw []byte

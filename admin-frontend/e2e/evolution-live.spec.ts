@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
-import { ZH } from "../lib/i18n/messages";
+import { spaceZH as ZH } from "../../evolution-space/frontend/lib/i18n-catalog";
 import { chooseValue } from "./picker";
-import type { Backfill } from "../lib/evolution";
+import type { Backfill } from "../../evolution-space/frontend/lib/evolution";
 test("real corpus backfill reviews frozen bytes and reconciles a lost preview across reload", async ({ page, context, baseURL }, info) => {
   const tr = (text: string) => process.env.ADMIN_EVOLUTION_LOCALE?.startsWith("zh") ? ZH[text] || text : text;
   await context.addCookies([{ name: "project_login", value: process.env.ADMIN_EVOLUTION_TOKEN!, url: baseURL!, httpOnly: true, secure: true, sameSite: "Lax" }]);
@@ -12,8 +12,8 @@ test("real corpus backfill reviews frozen bytes and reconciles a lost preview ac
     if (lose) { lose = false; const response = await route.fetch(); expect(response.status()).toBe(200); await response.dispose(); await route.abort("failed"); return; }
     await route.continue();
   });
-  await page.goto("/admin/groups/standard-users/corpus");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(tr("Corpus and historical backfill"));
+  await page.goto(`/evolution-space/auth/login?return=${encodeURIComponent("/evolution-space/groups/standard-users/settings/sources/")}`);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(tr("Sources and corpus"));
   await page.getByRole("button", { name: tr("Grant myself evidence access"), exact: true }).click();
   await page.getByText(tr("Capture an execution or seal a snapshot"), { exact: true }).click();
   await chooseValue(page.getByRole("combobox", { name: tr("Source"), exact: true }), "source");

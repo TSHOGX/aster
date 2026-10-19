@@ -37,7 +37,7 @@ export function BranchCheckpoint({ branch, onCommitted }: { branch: Branch; onCo
       else setUncertain(true);
     } finally { setBusy(false); }
   };
-  return <section aria-label={tr("Commit saved draft")} className="notice">
+  return <section aria-label={tr("Commit saved draft")} className="notice branch-checkpoint">
     <p>{tr("Saved draft revision {revision}", { revision: branch.draft_revision })} · <code>{branch.head}</code></p>
     {unsaved && <p>{tr("Unsaved editor changes are excluded from this commit.")}</p>}
     <label>{tr("Commit message")} <input value={message} disabled={busy || uncertain} onChange={event => setMessage(event.target.value)} /></label>

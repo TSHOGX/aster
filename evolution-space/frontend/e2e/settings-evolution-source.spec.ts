@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { adminFixture } from "./fixture";
+import { settingsFixture, openSettings } from "./fixture";
 import { chooseValue } from "./picker";
 for (const width of [390, 1440]) test(`source selectors preserve explicit audiences and distinguish empty from unavailable at ${width}px`, async ({ page }) => {
- await adminFixture(page); await page.setViewportSize({ width, height: 1000 });
+ await settingsFixture(page); await page.setViewportSize({ width, height: 1000 });
  let saved: { source: { kind: string; resource_id: string; audience_groups: string[] } } | undefined;
  let unavailable = false;
  await page.route("**/api/admin/groups/standard-users/optimization**", async route => {
@@ -21,7 +21,7 @@ for (const width of [390, 1440]) test(`source selectors preserve explicit audien
   if (path.includes("/catalog/")) return route.fulfill({ json: { revisions: [], has_more: false, next_id: "", next_revision: 0 } });
   return route.fallback();
  });
- await page.goto("/admin/groups/standard-users/optimization");
+ await openSettings(page, "settings/configuration/");
  await page.getByRole("button", { name: "Authorize a source I own", exact: true }).click();
  const form = page.getByRole("region", { name: "Source reuse policy", exact: true });
  await form.getByLabel("Source ID", { exact: true }).fill("new-source");

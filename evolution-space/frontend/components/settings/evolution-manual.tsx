@@ -1,6 +1,7 @@
 "use client";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { api, APIError, mutate } from "@/lib/api";
+import { api, APIError, mutate } from "@/lib/central";
 import { useT } from "@/lib/i18n";
 import { budgetFields, budgetLabels, budgetText, dependencySelection, type Budget, type BudgetText, type Configuration, type ConfigurationState, type Permissions } from "@/lib/evolution";
 
@@ -29,7 +30,7 @@ export function EvolutionManual({group,onDirty}:{group:string;onDirty:(dirty:boo
    }catch(failure){if(!signal.aborted){setLoaded(undefined);setError(failure instanceof Error?failure.message:String(failure))}}
   })()};load();const refresh=()=>{if(!document.hidden)load()};const timer=setInterval(refresh,15000);window.addEventListener("focus",refresh);return()=>{abort.abort();clearInterval(timer);window.removeEventListener("focus",refresh)};
  },[group]);
- return <section className="evolution-config"><header className="page-heading"><h1>{tr("Run configured workflows")}</h1><a href={`/evolution-space/groups/${encodeURIComponent(group)}/`}>{tr("Open Evolution Space")}</a></header>{error?<p role="alert">{tr(error)} <button onClick={()=>location.reload()}>{tr("Retry loading")}</button></p>:loaded?<ManualForm key={`${group}:${loaded.permissions.account_id}`} group={group} {...loaded} onDirty={onDirty}/>:<p role="status">{tr("Loading configuration…")}</p>}</section>;
+ return <section className="evolution-config"><header className="page-heading"><div><h1>{tr("New run")}</h1><p>{tr("Queue a manual batch from the active configuration. Draft tests start from a workflow draft instead.")}</p></div></header>{error?<p role="alert">{tr(error)} <button onClick={()=>location.reload()}>{tr("Retry loading")}</button></p>:loaded?<ManualForm key={`${group}:${loaded.permissions.account_id}`} group={group} {...loaded} onDirty={onDirty}/>:<p role="status">{tr("Loading configuration…")}</p>}</section>;
 }
 function ManualForm({group,permissions,configuration,onDirty}:{group:string;permissions:Permissions;configuration:Configuration;onDirty:(dirty:boolean)=>void}){
  const tr=useT(),key=`evolution-manual:${permissions.account_id}:${group}`;
@@ -70,6 +71,6 @@ function ManualForm({group,permissions,configuration,onDirty}:{group:string;perm
  {ids.map(id=>{const binding=configuration.bindings.find(binding=>binding.id===id)!;const values=budgets[id]||budgetText(binding.budget);return <fieldset key={id}><legend>{id}</legend><p>{tr("Source selection")}: {(binding.source_ids||[]).join(", ")||tr("None")} · {tr("Output library")}: {binding.output.library_id}</p><div className="form-grid">{budgetFields.map(field=><label key={field}>{tr(budgetLabels[field])}<input aria-label={`${id}: ${tr(budgetLabels[field])}`} type="number" min={field==="max_cost_micros"?0:1} max={Math.min(binding.budget[field],Number.MAX_SAFE_INTEGER)} value={values[field]} onChange={event=>{setBudgets(old=>({...old,[id]:{...values,[field]:event.target.value}}));setReviewed(0)}}/></label>)}</div></fieldset>})}
  {needsEvidence&&!permissions.can_read_evidence&&<p role="alert">{tr("Source evidence permission is required for captured inputs.")}</p>}
  <label className="check-label"><input type="checkbox" checked={reviewed===configuration.revision} onChange={event=>setReviewed(event.target.checked?configuration.revision:0)}/>{tr("I reviewed the selected workflows, input scope and spending ceilings.")}</label><button className="primary" disabled={!ids.length||reviewed!==configuration.revision||needsEvidence&&!permissions.can_read_evidence}>{tr("Start manual batch")}</button></fieldset></form>
- {result&&<section className="panel" role="status"><h2>{tr("Manual batch queued")}</h2><p>{result.batch_id}</p><p>{tr("Dispatch, execution and Studio handoff are separate stages. Open the run after dispatch; a pending run may not be visible in Evolution Space yet.")}</p><ul>{Object.entries(result.runs).map(([id,run])=><li key={id}><a href={`/evolution-space/groups/${encodeURIComponent(group)}/runs/${encodeURIComponent(run)}`}>{id} · {run}</a></li>)}</ul></section>}
+ {result&&<section className="panel" role="status"><h2>{tr("Manual batch queued")}</h2><p>{result.batch_id}</p><p>{tr("Dispatch, execution and Studio handoff are separate stages. Open the run after dispatch; a pending run may not be visible in Evolution Space yet.")}</p><ul>{Object.entries(result.runs).map(([id,run])=><li key={id}><Link href={`/groups/${encodeURIComponent(group)}/runs/${encodeURIComponent(run)}/`}>{id} · {run}</Link></li>)}</ul></section>}
  </>;
 }

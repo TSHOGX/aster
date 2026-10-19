@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { chooseValue } from "./picker";
-import { ZH } from "../lib/i18n/messages";
+import { spaceZH as ZH } from "../../evolution-space/frontend/lib/i18n-catalog";
 import { writeFile } from "node:fs/promises";
 test("published catalog drives recoverable draft and two-participant activation", async ({ page, context, baseURL }, info) => {
   const tr = (text: string) => process.env.ADMIN_EVOLUTION_LOCALE?.startsWith("zh") ? ZH[text] || text : text;
@@ -12,8 +12,8 @@ test("published catalog drives recoverable draft and two-participant activation"
     if (lose) { lose = false; const response = await route.fetch(); expect(response.status()).toBe(200); await response.dispose(); await route.abort("failed"); return; }
     await route.continue();
   });
-  await page.goto("/admin/groups/standard-users/optimization");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(tr("Automatic optimization"));
+  await page.goto(`/evolution-space/auth/login?return=${encodeURIComponent("/evolution-space/groups/standard-users/settings/configuration/")}`);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(tr("Configuration and activation"));
   await chooseValue(page.getByRole("combobox", { name: tr("Default evolution service"), exact: true }), { label: "native-service · 1" });
   const groupBudget = { "Maximum tokens": "2000", "Maximum cost (micros)": "20000", "Maximum attempts": "20", "Timeout (seconds)": "120", "Artifact size limit (bytes)": "1048576" };
   for (const [label, value] of Object.entries(groupBudget)) await page.getByLabel(`${tr("Group budget ceiling")}: ${tr(label)}`, { exact: true }).fill(value);
@@ -125,7 +125,7 @@ test("published catalog drives recoverable draft and two-participant activation"
   // Platform administrators can inspect and change scoped capabilities without
   // turning the target account into an administrator.
   const permissions = await (await page.request.get("/api/admin/groups/standard-users/optimization/permissions")).json();
-  await page.goto("/admin/groups/standard-users/evolution-permissions");
+  await page.goto(`/evolution-space/auth/login?return=${encodeURIComponent("/evolution-space/groups/standard-users/settings/permissions/")}`);
   await chooseValue(page.getByRole("combobox", { name: tr("Account permissions"), exact: true }), permissions.account_id);
   const evidence = page.getByRole("row").filter({ hasText: tr("Read source evidence") });
   await evidence.getByRole("button", { name: tr("Deny"), exact: true }).click();
@@ -153,7 +153,7 @@ test("delegated group manager configures without global administrator access",as
   expect((await page.request.post("/api/auth/password/setup",{headers:{Origin:baseURL!},data:{new_password:"permanent-manager-password"}})).ok()).toBe(true);
   expect((await page.request.get("/api/admin/groups/standard-users")).status()).toBe(403);
   expect((await page.request.get("/api/admin/users")).status()).toBe(403);
-  await page.goto("/admin/groups/standard-users/optimization");
+  await page.goto(`/evolution-space/auth/login?return=${encodeURIComponent("/evolution-space/groups/standard-users/settings/configuration/")}`);
   const attempts=page.getByLabel(`${tr("Group budget ceiling")}: ${tr("Maximum attempts")}`,{exact:true});
   await expect(attempts).toBeEnabled();await attempts.fill("21");
   await expect(page.getByRole("button",{name:tr("Save configuration draft"),exact:true})).toBeEnabled();
@@ -162,10 +162,10 @@ test("delegated group manager configures without global administrator access",as
   await expect(page.getByText(tr("Request confirmed."),{exact:true})).toBeVisible();
   const audiences=await(await page.request.get("/api/admin/groups/standard-users/optimization/audiences?limit=1")).json();
   expect(audiences.items.map((item:{id:string})=>item.id)).toEqual(["standard-users"]);expect(audiences.has_more).toBe(false);
-  await page.getByRole("link",{name:tr("Corpus and historical backfill"),exact:true}).click();
-  await expect(page.getByRole("heading",{name:tr("Corpus and historical backfill"),exact:true})).toBeVisible();
+  await page.getByRole("main").getByRole("link",{name:tr("Sources and corpus"),exact:true}).click();
+  await expect(page.getByRole("heading",{name:tr("Sources and corpus"),exact:true,level:1})).toBeVisible();
   await expect(page.getByRole("button",{name:tr("Grant myself evidence access"),exact:true})).toHaveCount(0);
-  await page.getByRole("link",{name:tr("Automatic optimization"),exact:true}).click();
+  await page.getByRole("main").getByRole("link",{name:tr("Configuration and activation"),exact:true}).click();
   await expect(attempts).toBeEnabled();
   await page.screenshot({path:info.outputPath("delegated-manager.png"),fullPage:true});
   expect((await admin.request.put("/api/admin/groups/standard-users/optimization/grants",{headers:{Origin:baseURL!},data:{request_id:crypto.randomUUID(),account_id:user.user.id,action:"config.read",effect:"deny",expected_revision:1}})).ok()).toBe(true);

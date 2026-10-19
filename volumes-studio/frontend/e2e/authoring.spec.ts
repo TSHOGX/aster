@@ -889,3 +889,26 @@ for (const width of [390, 1440]) test(`bilingual shared-assets controls and vali
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   } finally { await language("en"); }
 });
+
+test("account menu offers Workbench without duplicating settings and retains unsaved work through central logout", async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await signIn(page);
+  await createLibrary(page, "Shared session " + Date.now());
+  await page.getByRole("button", { name: "Show files", exact: true }).click();
+  await createFile(page, "retained.md");
+  await editorText(page, "retained.md", "unsaved account-local content");
+  await expect(page.getByRole("navigation", { name: "Applications", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Back to Workbench", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Settings", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("combobox", { name: "Theme mode", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Contents of retained.md", exact: true })).toContainText("unsaved account-local content");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const other = await context.newPage();
+  expect((await other.request.post("/api/auth/logout", { headers: { Origin: origin } })).ok()).toBeTruthy();
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByRole("heading", { name: "Sign in again", exact: true })).toBeVisible();
+  await expect(page.getByText("Your unsaved edits are retained for this account.", { exact: true })).toBeVisible();
+  await other.close();
+});

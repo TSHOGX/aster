@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { adminFixture } from "./fixture";
+import { settingsFixture, openSettings } from "./fixture";
 import type { Backfill, Configuration, Permissions } from "../lib/evolution";
 const budget = { max_tokens: 1000, max_cost_micros: 10000, max_attempts: 10, timeout_seconds: 120, max_artifact_bytes: 1048576 };
 const ref = { id: "example", revision: 1, digest: `sha256:${"a".repeat(64)}` };
 const config: Configuration = { group_id: "standard-users", revision: 1, auto_enabled: false, budget, sources: [{ id: "team-source", kind: "project", resource_id: "project", policy_revision: 1, audience_groups: ["standard-users"], derivative_publication: true, exclusions: ["turns/private"] }], bindings: [{ id: "skills", enabled: true, template: ref, workflow: ref, service: ref, budget, output: { library_id: "library", prefix: "skills", profile: "authored-v1" }, source_ids: ["team-source"], trigger: "manual", depends_on: [], inputs: { corpus: { sources: ["team-source"] } } }] };
 async function fixture(page: import("@playwright/test").Page) {
-  await adminFixture(page);
+  await settingsFixture(page);
   const permissions: Permissions = { group_name: "Standard users", sources: [{ source_id: "team-source", valid: true }], account_id: "admin-id", can_manage: true, can_run: true, can_read_evidence: false, can_backfill: false, can_manage_grants: true, evidence_grant_revision: 0 };
   const control = { loseReply: true, changed: false, statusDenied: false, revoked: false };
   const requests: Record<string, unknown>[] = [], receipts = new Map<string, Backfill>();
@@ -37,8 +37,8 @@ async function fixture(page: import("@playwright/test").Page) {
 }
 for (const width of [390, 1440]) test(`backfill retains an uncertain request and fits ${width}px`, async ({ page }, info) => {
   const { requests } = await fixture(page); await page.setViewportSize({ width, height: 1000 });
-  await page.goto("/admin/groups/standard-users/corpus");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Corpus and historical backfill");
+  await openSettings(page, "settings/sources/");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sources and corpus");
   await expect(page.getByRole("button", { name: "Preview historical backfill", exact: true })).toBeDisabled();
   await page.getByRole("button", { name: "Grant myself evidence access", exact: true }).click();
   await page.getByRole("checkbox", { name: "skills · skills", exact: true }).check();
@@ -60,7 +60,7 @@ for (const width of [390, 1440]) test(`backfill retains an uncertain request and
 });
 test("stale preview cannot execute and denied work is not an empty success", async ({ page }) => {
   const { control } = await fixture(page); control.loseReply = false;
-  await page.goto("/admin/groups/standard-users/corpus"); await page.getByRole("button", { name: "Grant myself evidence access" }).click();
+  await openSettings(page, "settings/sources/"); await page.getByRole("button", { name: "Grant myself evidence access" }).click();
   await page.getByRole("checkbox", { name: "skills · skills", exact: true }).check(); await page.getByRole("button", { name: "Preview historical backfill", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Frozen selection" })).toBeVisible(); control.changed = true;
   await page.getByRole("button", { name: "Reload current data" }).click();
@@ -73,7 +73,7 @@ test("stale preview cannot execute and denied work is not an empty success", asy
 
 test("revoked evidence stays hidden after reload while owner cleanup remains available", async ({ page }) => {
   const { control } = await fixture(page); control.loseReply = false;
-  await page.goto("/admin/groups/standard-users/corpus");
+  await openSettings(page, "settings/sources/");
   await page.getByRole("button", { name: "Grant myself evidence access" }).click();
   await page.getByRole("checkbox", { name: "skills · skills", exact: true }).check();
   await page.getByRole("button", { name: "Preview historical backfill", exact: true }).click();
@@ -86,8 +86,8 @@ test("revoked evidence stays hidden after reload while owner cleanup remains ava
   await expect(page.getByRole("status")).toContainText("Backfill cancelled.");
 });
 
-for (const width of [390,1440]) test(`scoped group configuration stays separate from administration at ${width}px`,async({page})=>{
- await adminFixture(page,"user");await page.setViewportSize({width,height:1000});
+for (const width of [390,1440]) test(`delegated group configuration saves drafts and clears on denial at ${width}px`,async({page})=>{
+ await settingsFixture(page,{can_run:false,can_read_evidence:false});await page.setViewportSize({width,height:1000});
  let denied=false,revision=0;
  const configuration={group_id:"standard-users",revision:0,auto_enabled:false,budget,sources:[],bindings:[]};
  await page.route("**/api/admin/groups/standard-users/optimization**",route=>{
@@ -102,25 +102,23 @@ for (const width of [390,1440]) test(`scoped group configuration stays separate 
   if(path.includes("/catalog/"))return route.fulfill({json:{revisions:[],has_more:false}});
   return route.fulfill({status:404,json:{error:"not configured"}});
  });
- await page.goto("/admin/groups/standard-users/optimization");
- await expect(page.getByRole("heading",{name:"Automatic optimization",exact:true})).toBeVisible();
- await expect(page.getByText("Delegated team",{exact:true})).toBeVisible();
+ await openSettings(page,"settings/configuration/");
+ await expect(page.getByRole("heading",{name:"Configuration and activation",exact:true,level:1})).toBeVisible();
+ // Group settings live in the group's sidebar, not in global administration.
+ await expect(page.getByRole("navigation",{name:"Group sections",exact:true}).getByRole("link",{name:"Configuration and activation",exact:true})).toHaveAttribute("aria-current","page");
  await expect(page.getByRole("link",{name:"Users",exact:true})).toHaveCount(0);
- await expect(page.getByRole("link",{name:"Policies",exact:true})).toHaveCount(0);
- await expect(page.getByRole("link",{name:"Open Evolution Space",exact:true})).toHaveAttribute("href","/evolution-space/groups/standard-users/");
  await page.getByRole("button",{name:"Save configuration draft",exact:true}).click();
  await expect(page.getByText("Request confirmed.",{exact:true})).toBeVisible();
- await page.reload();await expect(page.getByText("Delegated team",{exact:true})).toBeVisible();
+ await page.reload();await expect(page.getByRole("button",{name:"Save configuration draft",exact:true})).toBeVisible();
  denied=true;await page.getByRole("button",{name:"Reload server status",exact:true}).click();
  await expect(page.getByRole("alert").filter({hasText:"Group configuration access denied"})).toBeVisible();
  await expect(page.getByRole("button",{name:"Save configuration draft",exact:true})).toHaveCount(0);
- await expect(page.getByText("Delegated team",{exact:true})).toHaveCount(0);
- await page.goto("/admin/users");await expect(page.getByRole("heading",{name:"Access denied",exact:true})).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
 });
 
+
 test("manual run recovery blocks malformed storage and clears denied evidence",async({page})=>{
- await adminFixture(page,"user");let denied=false,calls=0;
+ await settingsFixture(page);let denied=false,calls=0;
  await page.route("**/api/admin/groups/standard-users/optimization**",route=>{
   if(denied)return route.fulfill({status:403,json:{error:"Group access revoked"}});
   const path=new URL(route.request().url()).pathname;
@@ -130,7 +128,7 @@ test("manual run recovery blocks malformed storage and clears denied evidence",a
  });
  await page.route("**/evolution/manual",route=>{calls++;return route.fulfill({status:503,json:{error:"uncertain"}})});
  await page.addInitScript(()=>{sessionStorage.setItem("evolution-manual:admin-id:standard-users","{malformed")});
- await page.goto("/admin/groups/standard-users/run");
+ await openSettings(page,"runs/new/");
  await expect(page.getByRole("button",{name:"Start manual batch",exact:true})).toBeDisabled();
  await expect(page.getByRole("alert").filter({hasText:"Saved request is invalid."})).toBeVisible();
  page.on("dialog",dialog=>dialog.accept());
@@ -142,6 +140,6 @@ test("manual run recovery blocks malformed storage and clears denied evidence",a
  await expect(page.getByRole("alert").filter({hasText:"storage unavailable"})).toBeVisible();expect(calls).toBe(0);
  denied=true;await page.evaluate(()=>window.dispatchEvent(new Event("focus")));
  await expect(page.getByRole("alert").filter({hasText:"Group access revoked"})).toBeVisible();
- await expect(page.getByText("Operator team",{exact:false})).toHaveCount(0);
+ await expect(page.getByRole("heading",{name:"New run",exact:true,level:1})).toBeVisible();
  await expect(page.getByRole("button",{name:"Start manual batch",exact:true})).toHaveCount(0);
 });

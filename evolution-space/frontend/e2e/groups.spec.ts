@@ -1,40 +1,8 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-const origin = "https://127.0.0.1:18543";
-async function settleOverview(page: Page) {
-  // Complete automatic catalog reads before full-document fixture navigation.
-  // WebKit reports interrupted TLS reads as native page errors during unload.
-  const catalogs = page.locator(".overview .catalog-editor select");
-  for (let index = 0; index < await catalogs.count(); index++) await expect(catalogs.nth(index)).toBeEnabled();
-}
-
-async function provision(admin: Page) {
-  expect((await admin.request.post("/api/auth/login", { headers: { Origin: origin }, data: { username: "evolution-space-admin", password: "browser-fixture-password" } })).ok()).toBeTruthy();
-  const groups = (await (await admin.request.get("/api/admin/groups?limit=50")).json()).groups as { id: string; name: string }[];
-  const alpha = groups.find(group => group.name === "Team Alpha")!;
-  const beta = groups.find(group => group.name === "Team Beta")!;
-  const secret = groups.find(group => group.name === "Secret Team")!;
-  expect(alpha && beta && secret).toBeTruthy();
-  const created = await admin.request.post("/api/admin/users", { headers: { Origin: origin }, data: { request_id: crypto.randomUUID(), username: `viewer-${crypto.randomUUID()}`, display_name: "Group viewer", role: "user", group_ids: [alpha.id, beta.id] } });
-  expect(created.status(), await created.text()).toBe(201);
-  const user = await created.json();
-  const grant = async (group: string, action: string, effect = "allow", revision = 0) => {
-    const response = await admin.request.put(`/api/admin/groups/${group}/optimization/grants`, { headers: { Origin: origin }, data: { request_id: crypto.randomUUID(), account_id: user.user.id, action, effect, expected_revision: revision } });
-    expect(response.ok(), await response.text()).toBeTruthy();
-  };
-  await grant(alpha.id, "config.read"); await grant(beta.id, "config.read");
-  await grant(beta.id, "config.manage"); await grant(beta.id, "run.start");
-  await grant(beta.id, "workflow.edit");
-  // An allow without membership must not reveal even group metadata.
-  await grant(secret.id, "config.read");
-  return { alpha, beta, secret, user, grant };
-}
-async function login(page: Page, user: { user: { username: string }; temporary_password: string }) {
-  expect((await page.request.post("/api/auth/login", { headers: { Origin: origin }, data: { username: user.user.username, password: user.temporary_password } })).ok()).toBeTruthy();
-  expect((await page.request.post("/api/auth/password/setup", { headers: { Origin: origin }, data: { new_password: "permanent-viewer-fixture-password" } })).ok()).toBeTruthy();
-}
+import { origin, settleOverview, provision, login, setPreferences, switchGroup } from "./fixture";
 for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", width: 390 }]) {
   test(`scoped group switching, revocation and shared logout ${variant.locale} ${variant.width}`, async ({ page: admin, browser }, info) => {
     const { alpha, beta, secret, user, grant } = await provision(admin);
@@ -50,9 +18,13 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       await expect(page).toHaveURL(new RegExp(`/evolution-space/groups/${alpha.id}/\\?from=deep-link`));
       const overview = page.getByRole("region", { name: text("Group overview", "团队概览"), exact: true });
       await expect(overview.getByRole("heading", { name: "Team Alpha", exact: true })).toBeVisible();
-      await expect(overview.getByText(text("Manage configuration", "管理配置"), { exact: true }).locator("..")).toContainText(text("Not granted", "未授权"));
-      await expect(overview.getByText(text("Edit and publish workflows", "编辑和发布工作流"), { exact: true }).locator("..")).toContainText(text("Not granted", "未授权"));
-      await expect(page.getByRole("link", { name: "Secret Team", exact: true })).toHaveCount(0);
+      // Read-only access: management sections explain the missing grant.
+      const sections = page.getByRole("navigation", { name: text("Group sections", "团队页面导航"), exact: true });
+      await expect(sections.getByText(text("Evaluation profiles", "评估配置"), { exact: false })).toHaveAttribute("aria-disabled", "true");
+      await sections.getByRole("link", { name: text("Permissions", "权限"), exact: true }).click();
+      const matrix = page.getByRole("region", { name: text("Your permissions", "您的权限"), exact: true });
+      await expect(matrix.getByRole("row", { name: `${text("Manage configuration", "管理配置")} ${text("Not granted", "未授权")}` })).toBeVisible();
+      await expect(matrix.getByRole("row", { name: `${text("Edit and publish workflows", "编辑和发布工作流")} ${text("Not granted", "未授权")}` })).toBeVisible();
       const groups = await (await page.request.get("/evolution-space/api/v1/groups?limit=1")).json();
       expect(groups.items).toHaveLength(1); expect(groups.has_more).toBe(true);
       const next = await (await page.request.get(`/evolution-space/api/v1/groups?limit=1&after=${groups.next_after}`)).json();
@@ -60,32 +32,40 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       expect((await page.request.get(`/evolution-space/api/v1/groups/${secret.id}`)).status()).toBe(403);
       expect((await page.request.get("/evolution-space/internal/v1/generation/admit")).status()).toBe(404);
       expect((await page.request.get("/evolution-space/api/v1/catalog/service")).status()).toBe(404);
-      await page.getByRole("link", { name: "Team Beta", exact: true }).click();
+      await page.getByRole("button", { name: text("Switch group", "切换团队"), exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: text("Switch group", "切换团队"), exact: true });
+      await expect(dialog.getByRole("link", { name: /^Secret Team\b/ })).toHaveCount(0);
+      await dialog.getByRole("link", { name: /^Team Beta\b/ }).click();
+      await expect(dialog).toBeHidden();
       await expect(overview.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
-      await expect(overview.getByText(text("Manage configuration", "管理配置"), { exact: true }).locator("..")).toContainText(text("Allowed", "允许"));
-      await expect(overview.getByText(text("Edit and publish workflows", "编辑和发布工作流"), { exact: true }).locator("..")).toContainText(text("Allowed", "允许"));
-      await expect(overview.getByText(text("Read source evidence", "读取源证据"), { exact: true }).locator("..")).toContainText(text("Not granted", "未授权"));
+      await sections.getByRole("link", { name: text("Permissions", "权限"), exact: true }).click();
+      await expect(matrix.getByRole("row", { name: `${text("Manage configuration", "管理配置")} ${text("Allowed", "允许")}` })).toBeVisible();
+      await expect(matrix.getByRole("row", { name: `${text("Read source evidence", "读取源证据")} ${text("Not granted", "未授权")}` })).toBeVisible();
       await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/workflows/skills/`);
       await expect(page.getByRole("heading", { name: text("Workflow editor", "工作流编辑器"), exact: true })).toBeVisible();
       await expect(page.getByRole("alert").filter({ hasText: text("Workflow draft is unavailable", "工作流草稿不可用") })).toBeVisible();
       await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
       await expect(overview.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
       await page.screenshot({ path: info.outputPath("group-overview.png"), fullPage: true });
+      // The application continues in the last group; the brand opens the picker.
+      await settleOverview(page); await page.goto("/evolution-space/");
+      await expect(page).toHaveURL(new RegExp(`/evolution-space/groups/${beta.id}/$`));
+      await page.getByRole("link", { name: text("Evolution Space", "演进空间"), exact: true }).click();
+      await expect(page.getByRole("heading", { name: text("Choose a group", "选择团队"), exact: true })).toBeVisible();
       await page.getByLabel(text("Search groups", "搜索团队"), { exact: true }).fill("Secret Team");
       await page.getByRole("button", { name: text("Search", "搜索"), exact: true }).click();
       await expect(page.getByRole("heading", { name: text("No matching groups", "没有匹配的团队"), exact: true })).toBeVisible();
       await page.reload();
       await expect(page.getByLabel(text("Search groups", "搜索团队"), { exact: true })).toHaveValue("Secret Team");
       await expect(page.getByRole("heading", { name: text("No matching groups", "没有匹配的团队"), exact: true })).toBeVisible();
-      await expect(overview.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
       await page.getByLabel(text("Search groups", "搜索团队"), { exact: true }).fill("");
       await page.getByRole("button", { name: text("Search", "搜索"), exact: true }).click();
-      await page.getByRole("link", { name: "Team Alpha", exact: true }).click();
+      await page.getByRole("link", { name: /^Team Alpha\b/ }).click();
       await expect(overview.getByRole("heading", { name: "Team Alpha", exact: true })).toBeVisible();
       await grant(alpha.id, "config.read", "deny", 1);
-      await overview.locator(":scope > .section-heading").getByRole("button", { name: text("Refresh", "刷新"), exact: true }).click();
-      await expect(overview.getByRole("heading", { name: text("You no longer have access to this group.", "您已无权访问此团队。"), exact: true })).toBeVisible();
-      await expect(overview.getByRole("heading", { name: "Team Alpha", exact: true })).toHaveCount(0);
+      await overview.locator(".page-header").getByRole("button", { name: text("Refresh", "刷新"), exact: true }).click();
+      await expect(page.getByRole("heading", { name: text("You no longer have access to this group.", "您已无权访问此团队。"), exact: true })).toBeVisible();
+      await expect(overview).toHaveCount(0);
       expect((await page.request.get(`/evolution-space/api/v1/groups/${alpha.id}`)).status()).toBe(403);
       const cookies = await context.cookies();
       expect(cookies.find(cookie => cookie.name === "__Secure-evolution_space_session")).toMatchObject({ path: "/evolution-space/", secure: true, httpOnly: true, sameSite: "Lax" });
@@ -93,6 +73,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       expect((await page.request.post("/evolution-space/auth/logout", { headers: { Origin: origin, "X-CSRF-Token": "bad" } })).status()).toBe(401);
       expect(session.csrf).toHaveLength(43);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.getByText(text("Account", "账户"), { exact: true }).click();
       await page.getByRole("button", { name: text("Sign out of this central session", "退出此主应用会话"), exact: true }).click();
       await expect(page.getByRole("link", { name: text("Sign in", "登录"), exact: true })).toBeVisible();
       expect((await page.request.get("/api/auth/session")).status()).toBe(401);
@@ -102,7 +83,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
   });
 }
 
-test("failed reads clear stale metadata and language changes preserve navigation", async ({ page: admin, browser }) => {
+test("failed reads clear stale metadata and account language applies without local controls", async ({ page: admin, browser }) => {
   const { alpha, beta, user } = await provision(admin);
   const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: "en-US", viewport: { width: 390, height: 900 } });
   const page = await context.newPage();
@@ -114,11 +95,11 @@ test("failed reads clear stale metadata and language changes preserve navigation
     await expect(overview.getByRole("heading", { name: "Team Alpha", exact: true })).toBeVisible();
     const selectedPath = `**/evolution-space/api/v1/groups/${alpha.id}`;
     await page.route(selectedPath, route => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"group_authority_unavailable"}' }));
-    await overview.locator(":scope > .section-heading").getByRole("button", { name: "Refresh", exact: true }).click();
-    await expect(overview.getByRole("heading", { name: "Group access is unavailable. Please retry.", exact: true })).toBeVisible();
-    await expect(overview.getByRole("heading", { name: "Team Alpha", exact: true })).toHaveCount(0);
+    await overview.locator(".page-header").getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Group access is unavailable. Please retry.", exact: true })).toBeVisible();
+    await expect(overview).toHaveCount(0);
     await page.unroute(selectedPath);
-    await overview.getByRole("button", { name: "Retry", exact: true }).click();
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(overview.getByRole("heading", { name: "Team Alpha", exact: true })).toBeVisible();
     let release!: () => void;
     const released = new Promise<void>(resolve => { release = resolve; });
@@ -128,21 +109,21 @@ test("failed reads clear stale metadata and language changes preserve navigation
       const response = await route.fetch(); started(); await released;
       await route.fulfill({ response }).catch(() => {});
     });
-    await overview.locator(":scope > .section-heading").getByRole("button", { name: "Refresh", exact: true }).click();
+    await overview.locator(".page-header").getByRole("button", { name: "Refresh", exact: true }).click();
     await pending;
-    await page.getByRole("link", { name: "Team Beta", exact: true }).click();
+    await switchGroup(page, "Team Beta");
     await expect(overview.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
     release(); await page.unroute(selectedPath);
     await expect(overview.getByRole("heading", { name: "Team Alpha", exact: true })).toHaveCount(0);
-    await page.getByRole("combobox", { name: "Language", exact: true }).click();
-    await page.getByRole("option", { name: "Chinese (Simplified)", exact: true }).click();
-    await expect(page.locator("html")).toHaveAttribute("lang", "zh-Hans");
-    await expect(overview.getByRole("heading", { name: "您的权限", exact: true })).toBeVisible();
-    await expect(overview.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
-    await expect.poll(async () => (await (await page.request.get("/api/me/preferences")).json()).language).toBe("zh");
+    // Language and appearance are edited only in Workbench settings.
+    await expect(page.getByRole("combobox", { name: "Language", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("combobox", { name: "Theme mode", exact: true })).toHaveCount(0);
+    await setPreferences(page, { language: "zh" });
     await page.reload();
-    await expect(overview.getByRole("heading", { name: "您的权限", exact: true })).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("lang", "zh-Hans");
+    await expect(page.getByRole("navigation", { name: "团队页面导航", exact: true }).getByRole("link", { name: "概览", exact: true })).toBeVisible();
     await expect(overview.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
+    await setPreferences(page, { language: "en" });
     await page.route("**/evolution-space/api/v1/session", route => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"identity_unavailable"}' }));
     await page.reload();
     await expect(page.getByText("Identity is unavailable. Retry when the service is restored.", { exact: true })).toBeVisible();
@@ -150,6 +131,7 @@ test("failed reads clear stale metadata and language changes preserve navigation
     await page.unroute("**/evolution-space/api/v1/session");
     await page.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(overview.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
+    expect(beta.id).toBeTruthy();
   } finally { await context.close(); }
 });
 
@@ -401,6 +383,10 @@ test("role matrix and keyboard skip link remain usable on a narrow viewport", as
     await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
     await page.getByRole("link", { name: "Sign in", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Team Beta", exact: true })).toBeVisible();
+    await page.getByRole("navigation", { name: "Group sections", exact: true }).getByRole("link", { name: "Permissions", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Permissions", exact: true, level: 1 })).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Permissions", exact: true, level: 1 })).toBeVisible();
     await page.keyboard.press("Tab");
     const skip = page.getByRole("link", { name: "Skip to main content", exact: true });
     await expect(skip).toBeFocused();
@@ -673,7 +659,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
   const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   try {
-   await login(page, user); await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
+   await login(page, user); await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/workflows/`);
    await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
    const form = page.getByRole("region", { name: tr("Workflow drafts", "工作流草稿"), exact: true });
    await form.getByRole("button", { name: tr("New or fork draft", "新建或派生草稿"), exact: true }).click();
@@ -689,7 +675,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    const headers = { Origin: origin, "X-CSRF-Token": session.csrf };
    const saved = await (await page.request.get(`${root}/${id}/draft`)).json();
    expect(saved.revision).toBe(2); expect(saved.workflow.nodes).toHaveLength(1);
-   await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
+   await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/workflows/`);
    await expect(form.getByRole("link", { name: id, exact: true })).toBeVisible();
    // Commit an exact historical fork, then simulate a lost response.
    const forkID = `fork-${crypto.randomUUID().slice(0, 8)}`;
@@ -738,7 +724,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    expect((await page.request.post(root, { headers, data: { id: `run-${crypto.randomUUID()}`, source_run_id: "missing" } })).status()).toBe(403);
    await grant(beta.id, "source.read");
    expect((await page.request.post(root, { headers, data: { id: `run-${crypto.randomUUID()}`, source_run_id: "missing" } })).status()).toBe(404);
-   await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
+   await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/workflows/`);
    await expect(form.getByRole("link", { name: forkID, exact: true })).toBeVisible();
    await page.screenshot({ path: info.outputPath("draft-list.png"), fullPage: true });
    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -892,7 +878,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
     const root = `/evolution-space/api/v1/groups/${beta.id}/profiles`;
     try {
       await login(page, user);
-      await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
+      await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/profiles/`);
       await page.getByRole("link", { name: text("Sign in", "登录"), exact: true }).click();
       const editor = page.locator("section.card").filter({ has: page.getByRole("heading", { name: text("Evaluator profile editor", "评估器配置编辑器"), exact: true }) });
       const input = editor.getByRole("textbox", { name: text("Profile JSON", "配置 JSON"), exact: true });
@@ -987,14 +973,14 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
 }
 
 for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", width: 390 }]) {
- test(`online template authoring and exact workflow publication ${variant.locale}`, async ({ page: admin, browser }, info) => {
+ test(`guided template authoring from an exact published workflow ${variant.locale}`, async ({ page: admin, browser }, info) => {
   const { alpha, beta, user, grant } = await provision(admin);
   await grant(alpha.id, "workflow.edit");
   const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: variant.locale, viewport: { width: variant.width, height: 900 } });
   const page = await context.newPage(); const tr = (en: string, zh: string) => variant.locale === "zh-CN" ? zh : en;
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   try {
-   await login(page, user); await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
+   await login(page, user); await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/workflows/`);
    await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
    const graph = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8")); graph.id = `template-graph-${crypto.randomUUID().slice(0, 8)}`;
    const session = await (await page.request.get("/evolution-space/api/v1/session")).json();
@@ -1004,51 +990,64 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    const drafts = page.getByRole("region", { name: tr("Workflow drafts", "工作流草稿"), exact: true });
    await drafts.getByRole("button", { name: tr("Refresh", "刷新"), exact: true }).click();
    const draftLink = drafts.getByRole("link", { name: graph.id, exact: true });
+   const nextDrafts = drafts.getByRole("button", { name: tr("Next page", "下一页"), exact: true });
    for (let pages = 0; pages < 20; pages++) {
-    await expect(drafts.getByRole("status")).toHaveCount(0);
+    await expect(draftLink.or(nextDrafts).first()).toBeVisible();
     if (await draftLink.count()) break;
-    const next = drafts.getByRole("button", { name: tr("Next page", "下一页"), exact: true });
-    await expect(next).toBeVisible(); await next.click();
+    await nextDrafts.click();
    }
    await draftLink.click();
    await page.getByRole("button", { name: tr("Publish revision", "发布版本"), exact: true }).click();
    const published = page.locator("section.card").filter({ has: page.getByRole("heading", { name: tr("Published workflow reference", "已发布工作流引用"), exact: true }) });
-   await expect(published).toBeVisible();
    const workflow = JSON.parse(await published.locator("pre").innerText());
    expect(workflow).toMatchObject({ id: graph.id, revision: 1 });
-   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
    const before = await (await page.request.get(`/evolution-space/api/v1/groups/${beta.id}`)).json();
-   await page.getByRole("link", { name: tr("Open goal templates", "打开目标模板"), exact: true }).click();
-   const editor = page.locator("section.card").filter({ has: page.getByRole("heading", { name: tr("Goal template editor", "目标模板编辑器"), exact: true }) });
-   const input = editor.getByRole("textbox", { name: tr("Template JSON", "模板 JSON"), exact: true });
-   const publish = editor.getByRole("button", { name: tr("Publish template revision", "发布模板版本"), exact: true });
-   await expect(input).toBeEnabled();
-   const template = { ref: { id: `online-template-${crypto.randomUUID().slice(0, 8)}`, revision: 1 }, goal: "Extract grounded skills", parameters_schema: { type: "object" }, inputs: graph.inputs, outputs: graph.outputs, profile: "authored-v1", workflows: [workflow], suggested_prefix: "skills", evaluation: { mode: "disabled", reference_strategy: "none" } };
-   await input.fill(JSON.stringify(template)); await publish.focus(); await publish.press("Enter");
-   await expect(editor.getByRole("status")).toContainText(`${template.ref.id} @1`);
-   const first = JSON.parse(await input.inputValue());
+   // The published reference flows straight into a new template.
+   await published.getByRole("link", { name: tr("Create goal template with this workflow", "使用此工作流创建目标模板"), exact: true }).click();
+   await expect(page.getByRole("heading", { name: tr("New goal template", "新建目标模板"), exact: true })).toBeVisible();
+   await expect(page.getByText(`${workflow.id} · 1`, { exact: true })).toBeVisible();
+   for (const port of Object.keys(graph.inputs)) await expect(page.locator(".port-list code", { hasText: port }).first()).toBeVisible();
+   const publish = page.getByRole("button", { name: tr("Publish template revision", "发布模板版本"), exact: true });
+   await expect(publish).toBeDisabled();
+   const id = `guided-template-${crypto.randomUUID().slice(0, 8)}`;
+   await page.getByLabel(tr("Template ID", "模板 ID"), { exact: true }).fill(id);
+   await page.getByLabel(tr("Goal", "目标"), { exact: true }).fill("Extract grounded skills");
+   await page.getByLabel(tr("Suggested output directory", "建议输出目录"), { exact: true }).fill("skills");
+   await page.getByText(tr("Template document", "模板文档"), { exact: true }).click();
+   await expect(page.locator(".document-preview")).toContainText(`"id": "${id}"`);
    const root = `/evolution-space/api/v1/groups/${beta.id}/templates`;
-   // Incompatible typed ports fail before an immutable revision is published.
-   const invalid = { ...first, ref: { ...first.ref, revision: 2 }, inputs: { invalid: workflow.digest } };
-   await input.fill(JSON.stringify(invalid)); await publish.click(); await expect(editor.getByRole("alert")).toBeVisible();
-   const next = { ...first, ref: { ...first.ref, revision: 2 }, goal: "Extract grounded skills with citations" };
-   await input.fill(JSON.stringify(next));
+   // Lose the reply after the server commits; the identical retry replays it.
    await page.route(`**${root}`, async route => {
     if (route.request().method() !== "POST") return route.continue();
     const response = await route.fetch(); expect(response.status()).toBe(201);
     await route.fulfill({ status: 503, contentType: "application/json", body: '{}' });
    });
-   await publish.click(); await expect(editor.getByRole("alert")).toBeVisible(); await page.unroute(`**${root}`);
-   await publish.click(); await expect(editor.getByRole("status")).toContainText(`${template.ref.id} @2`);
-   expect((await (await page.request.get(`${root}/${first.ref.id}/1?digest=${first.ref.digest}`)).json()).goal).toBe(template.goal);
+   await publish.click(); await expect(page.locator(".template-form [role=alert]")).toBeVisible(); await page.unroute(`**${root}`);
+   await publish.click();
+   await expect(page.getByRole("status").filter({ hasText: `${id} @1` })).toBeVisible();
+   await expect(page).toHaveURL(new RegExp(`/templates/${id}/1/\\?digest=`));
+   const first = await (await page.request.get(`${root}/${id}/1?digest=${new URL(page.url()).searchParams.get("digest")}`)).json();
+   expect(first.workflows).toEqual([workflow]);
+   const use = page.getByRole("link", { name: tr("Use in configuration", "在配置中使用"), exact: true });
+   await expect(use).toHaveAttribute("href", new RegExp(`/groups/${beta.id}/settings/configuration/\\?template_id=${id}&template_revision=1&template_digest=sha256`));
+   // A new revision keeps the ID and leaves revision 1 unchanged.
+   await page.getByRole("link", { name: tr("New revision", "新建版本"), exact: true }).click();
+   await expect(page.getByLabel(tr("Template ID", "模板 ID"), { exact: true })).toHaveValue(id);
+   await expect(page.getByLabel(tr("Revision", "修订版本"), { exact: true })).toHaveValue("2");
+   await page.getByLabel(tr("Goal", "目标"), { exact: true }).fill("Extract grounded skills with citations");
+   await publish.click();
+   await expect(page.getByRole("status").filter({ hasText: `${id} @2` })).toBeVisible();
+   expect((await (await page.request.get(`${root}/${id}/1?digest=${first.ref.digest}`)).json()).goal).toBe("Extract grounded skills");
+   const next = { ...first, ref: { id, revision: 3 } };
    expect((await page.request.post(`/evolution-space/api/v1/groups/${alpha.id}/templates`, { headers, data: next })).status()).toBe(409);
    expect(await (await page.request.get(`/evolution-space/api/v1/groups/${beta.id}`)).json()).toEqual(before);
-   await expect(editor.getByRole("link", { name: tr("Activate from configuration", "从配置中激活"), exact: true })).toHaveAttribute("href", `/admin/groups/${beta.id}/optimization`);
    await page.screenshot({ path: info.outputPath("published-template.png"), fullPage: true });
    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+   await page.getByRole("link", { name: tr("New revision", "新建版本"), exact: true }).click();
+   await expect(page.getByLabel(tr("Revision", "修订版本"), { exact: true })).toHaveValue("3");
    await grant(beta.id, "workflow.edit", "deny", 1);
-   await input.fill(JSON.stringify({ ...next, ref: { ...next.ref, revision: 3 } })); await publish.click();
-   await expect(editor.getByRole("alert")).toBeVisible(); await expect(input).toHaveValue("");
+   await publish.click();
+   await expect(page.locator(".template-form [role=alert]")).toContainText(tr("Publishing templates requires permission to edit workflows.", "发布模板需要编辑工作流的权限。"));
    expect(errors).toEqual([]);
   } finally { await context.close(); }
  });
@@ -1080,7 +1079,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    return route.fulfill({json:{items:[{id:second?"check-26":"check-01",state:"completed",profile:{ref:{id:"profile",revision:1}}}],next_after:second?"check-26":"check-25",has_more:!second}});
   });
   try {
-   await login(page,user);await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
+   await login(page,user);await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/runs/`);
    await page.getByRole("link",{name:tr("Sign in","登录"),exact:true}).click();
    const runs=page.getByRole("region",{name:tr("Run history","运行历史"),exact:true});
    const evaluations=page.getByRole("region",{name:tr("Evaluation history","评估历史"),exact:true});
@@ -1097,14 +1096,11 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    await runs.getByRole("button",{name:tr("Next page","下一页"),exact:true}).press("Enter");
    await expect(runs.getByRole("link",{name:"run-26",exact:true})).toBeVisible();
    await expect(runs.getByRole("link",{name:"run-01",exact:true})).toHaveCount(0);
-   await evaluations.getByRole("button",{name:tr("Next page","下一页"),exact:true}).press("Enter");
-   await expect(evaluations.getByRole("link",{name:"check-26",exact:true})).toBeVisible();
    await page.reload();
    await expect(runs.getByRole("link",{name:"run-26",exact:true})).toBeVisible();
    await expect(runs.getByLabel(tr("Template ID","模板 ID"),{exact:true})).toHaveValue("skills");
-   await expect(evaluations.getByRole("link",{name:"check-26",exact:true})).toBeVisible();
    await runs.getByRole("link",{name:"run-26",exact:true}).press("Enter");
-   await expect(page).toHaveURL(/\/runs\/run-26\/?$/);
+   await expect(page).toHaveURL(/\/runs\/run-26\/\?/);
    await expect(page.getByRole("heading",{name:tr("Run inspector","运行检查器"),exact:true})).toBeVisible();
    await page.goBack();
    await expect(runs.getByRole("link",{name:"run-26",exact:true})).toBeVisible();
@@ -1114,10 +1110,6 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    await expect(runs.getByText(tr("No matching runs.","没有匹配的运行。"),{exact:true})).toHaveCount(0);
    failRuns=false;await runs.getByRole("button",{name:tr("Retry","重试"),exact:true}).click();
    await expect(runs.getByRole("link",{name:"run-26",exact:true})).toBeVisible();
-   failEvaluations=true;await evaluations.getByRole("button",{name:tr("Refresh","刷新"),exact:true}).click();
-   await expect(evaluations.getByRole("alert")).toBeVisible();await expect(evaluations.getByRole("link")).toHaveCount(0);
-   failEvaluations=false;await evaluations.getByRole("button",{name:tr("Retry","重试"),exact:true}).click();
-   await expect(evaluations.getByRole("link",{name:"check-26",exact:true})).toBeVisible();
    await runs.getByLabel(tr("Template ID","模板 ID"),{exact:true}).fill("missing");
    await runs.getByRole("button",{name:tr("Apply filters","应用筛选"),exact:true}).click();
    await expect(runs.getByText(tr("No matching runs.","没有匹配的运行。"),{exact:true})).toBeVisible();
@@ -1126,11 +1118,190 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    await expect(runs.getByRole("link",{name:"run-01",exact:true})).toBeVisible();
    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
    await page.screenshot({path:info.outputPath("execution-history.png"),fullPage:true});
+   // Evaluation history pages independently on its own section.
+   await page.getByRole("navigation",{name:tr("Group sections","团队页面导航"),exact:true}).getByRole("link",{name:tr("Evaluations","评估"),exact:true}).click();
+   await evaluations.getByRole("button",{name:tr("Next page","下一页"),exact:true}).press("Enter");
+   await expect(evaluations.getByRole("link",{name:"check-26",exact:true})).toBeVisible();
+   await page.reload();
+   await expect(evaluations.getByRole("link",{name:"check-26",exact:true})).toBeVisible();
+   failEvaluations=true;await evaluations.getByRole("button",{name:tr("Refresh","刷新"),exact:true}).click();
+   await expect(evaluations.getByRole("alert")).toBeVisible();await expect(evaluations.getByRole("link")).toHaveCount(0);
+   failEvaluations=false;await evaluations.getByRole("button",{name:tr("Retry","重试"),exact:true}).click();
+   await expect(evaluations.getByRole("link",{name:"check-26",exact:true})).toBeVisible();
    await grant(beta.id,"config.read","deny",1);
-   await page.locator(".overview > .section-heading").getByRole("button",{name:tr("Refresh","刷新"),exact:true}).click();
+   await page.reload();
    await expect(runs).toHaveCount(0);await expect(evaluations).toHaveCount(0);
    expect((await page.request.get(`${runsRoot}?state=completed&after=run-25`)).status()).toBe(403);
    expect(errors).toEqual([]);
   } finally {await context.close()}
  });
 }
+
+test("account preferences apply without local controls and central logout synchronizes open tabs", async ({ page: admin, browser }, info) => {
+  const { beta, user } = await provision(admin);
+  const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: "en-US", viewport: { width: 390, height: 900 } });
+  const page = await context.newPage();
+  try {
+    await login(page, user);
+    await page.goto(`/evolution-space/groups/${beta.id}/`);
+    await page.getByRole("link", { name: "Sign in", exact: true }).click();
+    await expect(page.locator(".overview h1")).toHaveText("Team Beta");
+    const other = await context.newPage();
+    await other.goto(page.url());
+    await expect(other.locator(".overview h1")).toHaveText("Team Beta");
+    // No application strip or appearance editor; Workbench is one account-menu item.
+    await expect(page.getByRole("navigation", { name: "Applications", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("combobox", { name: "Theme mode", exact: true })).toHaveCount(0);
+    await page.getByText("Account", { exact: true }).click();
+    await expect(page.getByRole("link", { name: "Back to Workbench", exact: true })).toHaveAttribute("href", "/");
+    await page.keyboard.press("Escape");
+    await setPreferences(page, { theme_mode: "dark", accent: "violet" });
+    await other.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect(other.locator("html")).toHaveAttribute("data-theme", "dark");
+    await expect(other.locator("html")).toHaveAttribute("data-accent", "violet");
+    await setPreferences(page, { theme_mode: "system", accent: "neutral" });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: info.outputPath("workspace-mobile.png"), fullPage: true });
+    // End the actual central session, without relying on a local-storage signal.
+    expect((await other.request.post("/api/auth/logout", { headers: { Origin: origin } })).ok()).toBeTruthy();
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(page.getByRole("link", { name: "Sign in", exact: true })).toBeVisible();
+    await expect(page.locator(".overview")).toHaveCount(0);
+  } finally { await context.close(); }
+});
+
+test("completed run handoff and return links retain branch and history context", async ({ page: admin, browser }) => {
+  const { beta, user } = await provision(admin);
+  const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: "en-US" });
+  const page = await context.newPage();
+  try {
+    await login(page, user);
+    await page.goto(`/evolution-space/groups/${beta.id}/`);
+    await page.getByRole("link", { name: "Sign in", exact: true }).click();
+    await expect(page.locator(".overview h1")).toHaveText("Team Beta");
+    const root = `/evolution-space/api/v1/groups/${beta.id}/runs/review-run`;
+    let handoff = "submitted";
+    await page.route(`${origin}${root}`, route => route.fulfill({ json: {
+      id: "review-run", state: "completed", fence: 1, handoff, result_branch: "output-branch", evaluation_state: "not_requested",
+      pins: { output: { library_id: "output-library", prefix: "skills" }, workflow: { id: "skills", revision: 1 } },
+    } }));
+    // Retained metadata and review navigation remain useful without source evidence.
+    await page.route(`${origin}${root}/*`, route => route.fulfill({ status: 403, json: { error: "denied" } }));
+    await page.goto(`/evolution-space/groups/${beta.id}/runs/review-run/?runs_state=completed&runs_after=prior&groups_search=Beta`);
+    const review = page.getByRole("link", { name: "Open branch in Volume Studio", exact: true });
+    await expect(review).toHaveAttribute("href", "/volumes-studio/libraries/output-library/?branch=output-branch");
+    const back = page.getByRole("link", { name: "Back to runs", exact: true });
+    const target = new URL((await back.getAttribute("href"))!, origin);
+    expect(target.pathname).toBe(`/evolution-space/groups/${beta.id}/runs/`);
+    expect(target.searchParams.get("runs_state")).toBe("completed");
+    expect(target.searchParams.get("runs_after")).toBe("prior");
+    expect(target.searchParams.get("groups_search")).toBe("Beta");
+    handoff = "no_change";
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(page.getByText("This run produced no changes. No output branch needs review.", { exact: true })).toBeVisible();
+    await expect(review).toHaveCount(0);
+    handoff = "pending";
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(page.getByText(/Output transfer is pending/)).toBeVisible();
+  } finally { await context.close(); }
+});
+
+test("a central account switch gates the previous derived workspace", async ({ page: admin, browser }) => {
+  const { beta, user } = await provision(admin);
+  const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true });
+  const page = await context.newPage();
+  try {
+    await login(page, user);
+    await page.goto(`/evolution-space/groups/${beta.id}/`);
+    await page.getByRole("link", { name: "Sign in", exact: true }).click();
+    await expect(page.locator(".overview h1")).toHaveText("Team Beta");
+    // Signing in another central account need not revoke the prior session's
+    // scoped cookie. The shell must compare identities before rendering it.
+    expect((await page.request.post("/api/auth/login", { headers: { Origin: origin }, data: { username: "evolution-space-admin", password: "browser-fixture-password" } })).ok()).toBeTruthy();
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(page.getByRole("link", { name: "Sign in", exact: true })).toBeVisible();
+    await expect(page.locator(".overview")).toHaveCount(0);
+  } finally { await context.close(); }
+});
+
+test("unsaved template edits survive identity outages and cancelled group switches", async ({ page: admin, browser }) => {
+  const { alpha, beta, user } = await provision(admin);
+  const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: "en-US" });
+  const page = await context.newPage();
+  try {
+    await login(page, user);
+    await page.goto(`/evolution-space/groups/${beta.id}/templates/new/`);
+    await page.getByRole("link", { name: "Sign in", exact: true }).click();
+    const goal = page.getByLabel("Goal", { exact: true });
+    await expect(goal).toBeEnabled();
+    await goal.fill("unsaved goal retained");
+    await page.route("**/evolution-space/api/v1/session", route => route.fulfill({ status: 503, json: { error: "unavailable" } }));
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(page.getByRole("alert").filter({ hasText: "Identity is unavailable." })).toBeVisible();
+    await expect(goal).toHaveValue("unsaved goal retained");
+    await page.unroute("**/evolution-space/api/v1/session");
+    await page.getByRole("alert").filter({ hasText: "Identity is unavailable." }).getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "Identity is unavailable." })).toHaveCount(0);
+    await expect(goal).toHaveValue("unsaved goal retained");
+    const cancelled = page.waitForEvent("dialog").then(async dialog => { expect(dialog.type()).toBe("confirm"); await dialog.dismiss(); });
+    await switchGroup(page, "Team Alpha");
+    await cancelled;
+    await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
+    await expect(goal).toHaveValue("unsaved goal retained");
+    expect(new URL(page.url()).pathname).toContain(beta.id);
+    const accepted = page.waitForEvent("dialog").then(dialog => dialog.accept());
+    await switchGroup(page, "Team Alpha");
+    await accepted;
+    await expect(page.locator(".overview h1")).toHaveText("Team Alpha");
+    expect(new URL(page.url()).pathname).toContain(alpha.id);
+  } finally { await context.close(); }
+});
+
+for (const width of [1440, 390]) test(`graph canvas edits layout without changing the executable workflow at ${width}px`, async ({ page: admin, browser }, info) => {
+  const { beta, user } = await provision(admin);
+  const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, locale: "en-US", viewport: { width, height: 900 } });
+  const page = await context.newPage();
+  // React Flow observes canvas size; WebKit reports a deferred resize notice
+  // as a page error. It is not an application failure.
+  const errors: string[] = []; page.on("pageerror", error => { if (!error.message.startsWith("ResizeObserver loop")) errors.push(error.message); });
+  try {
+    await login(page, user);
+    await page.context().addInitScript(() => localStorage.setItem("evolution-space:canvas-view", "graph"));
+    const graph = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8")); graph.id = `canvas-${crypto.randomUUID().slice(0, 8)}`;
+    // Open the editor directly, then create the draft and retry in place, so no
+    // document navigation interrupts in-flight reads (WebKit reports those).
+    await page.goto(`/evolution-space/groups/${beta.id}/workflows/${graph.id}/`);
+    await page.getByRole("link", { name: "Sign in", exact: true }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "Workflow draft is unavailable" })).toBeVisible();
+    const session = await (await page.request.get("/evolution-space/api/v1/session")).json();
+    const draftPath = `/evolution-space/api/v1/groups/${beta.id}/workflows/${graph.id}/draft`;
+    expect((await page.request.put(draftPath, { headers: { Origin: origin, "X-CSRF-Token": session.csrf }, data: { id: graph.id, expected_revision: 0, expected_layout_revision: 0, workflow: graph, layout: {} } })).status()).toBe(200);
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    const canvas = page.getByRole("group", { name: "Workflow graph", exact: true });
+    await expect(canvas).toBeVisible();
+    for (const node of graph.nodes) await expect(canvas.locator(".flow-node header strong", { hasText: new RegExp(`^${node.id}$`) })).toBeVisible();
+    await expect(canvas.getByText("Workflow inputs", { exact: true })).toBeVisible();
+    await canvas.locator(".react-flow__node", { hasText: "critic" }).click();
+    await expect(page.getByRole("complementary").filter({ has: page.getByRole("heading", { name: "Node inspector" }) }).getByLabel("Node ID", { exact: true })).toHaveValue("critic");
+    const before = await (await page.request.get(draftPath)).json();
+    await page.getByRole("button", { name: "Auto-layout", exact: true }).click();
+    await expect(page.getByText("Unsaved changes", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Save draft", exact: true }).click();
+    await expect(page.getByText("Draft saved.", { exact: true })).toBeVisible();
+    const after = await (await page.request.get(draftPath)).json();
+    expect(after.revision).toBe(before.revision);
+    expect(after.layout_revision).toBe(before.layout_revision + 1);
+    expect(after.workflow).toEqual(before.workflow);
+    for (const node of graph.nodes) expect(Number.isFinite(after.layout[node.id].x)).toBe(true);
+    // The ordered list remains a complete keyboard alternative.
+    await page.getByRole("button", { name: "List", exact: true }).click();
+    await expect(canvas).toHaveCount(0);
+    await page.getByRole("button", { name: /^extract\b/ }).click();
+    await expect(page.getByLabel("Node ID", { exact: true })).toHaveValue("extract");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await page.getByRole("button", { name: "Graph", exact: true }).click();
+    await page.screenshot({ path: info.outputPath(`canvas-${width}.png`), fullPage: true });
+    await page.getByRole("group", { name: "Workflow graph", exact: true }).screenshot({ path: info.outputPath(`canvas-element-${width}.png`) });
+    expect(errors).toEqual([]);
+  } finally { await context.close(); }
+});

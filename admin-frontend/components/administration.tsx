@@ -7,15 +7,12 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react
 import { api, APIError } from "@/lib/api";
 import type { Identity } from "@web/identity";
 import { displayName } from "@web/brand";
-import { ACTIVE_APPEARANCE_KEY, clearAppearanceBinding } from "@web/appearance";
+import { clearAppearanceBinding } from "@web/appearance";
 import { useAccountPreferences } from "@web/account-preferences";
+import { useSessionRefresh } from "@web/session-refresh";
 import { PolicyList } from "./policy-list";
 import { PolicyEditor } from "./policy-editor";
 import { StudioPermissionsEditor } from "./studio-permissions";
-import { EvolutionPermissionsEditor } from "./evolution-permissions";
-import { EvolutionConfiguration } from "./evolution-configuration";
-import { EvolutionManual } from "./evolution-manual";
-import { EvolutionCapture } from "./evolution-capture";
 import { GroupEditor } from "./group-editor";
 import { ProjectList, ProjectView } from "./project-views";
 import { UserList } from "./user-list";
@@ -24,11 +21,13 @@ import { UserConfiguration } from "./configuration-controls";
 import { ResourceCenter } from "./resource-center";
 import { UserEditor } from "./user-editor";
 import { AuditView, OperationView } from "./audit-view";
+const evolutionRoutes: Record<string, string> = { optimization: "settings/configuration/", run: "runs/new/", corpus: "settings/sources/", "evolution-permissions": "settings/permissions/" };
 export function Administration() {
   const tr = useT();
   const pathname = usePathname();
   const route = pathname.replace(/^\/admin(?=\/|$)/, "").split("/").filter(Boolean).map(decodeURIComponent);
-  const scopedEvolution = route[0] === "groups" && route.length === 3 && ["optimization", "corpus", "run"].includes(route[2]);
+  // Group evolution work moved to Evolution Space; keep old links working.
+  const evolutionDestination = route[0] === "groups" && route.length === 3 ? evolutionRoutes[route[2]] : undefined;
   const [identity, setIdentity] = useState<Identity | null>(null), [status, setStatus] = useState("loading"), [dirty, setDirty] = useState(false), [error, setError] = useState("");
   const generation = useRef(0);
   const dirtyRef = useRef(false);
@@ -44,16 +43,18 @@ export function Administration() {
       setStatus("unavailable");
     });
   }, []);
+  const evolutionGroup = evolutionDestination ? route[1] : "";
+  useEffect(() => {
+    if (evolutionDestination) location.replace(`/evolution-space/groups/${encodeURIComponent(evolutionGroup)}/${evolutionDestination}`);
+  }, [evolutionDestination, evolutionGroup]);
   useEffect(() => {
     void reloadIdentity();
     const changed = () => void reloadIdentity();
-    const visible = () => { if (!document.hidden) changed(); };
-    const storage = (event: StorageEvent) => { if (event.key === ACTIVE_APPEARANCE_KEY || event.key === null) changed(); };
     window.addEventListener("admin-auth-expired", changed); window.addEventListener("admin-authority-denied", changed);
-    window.addEventListener("storage", storage); document.addEventListener("visibilitychange", visible);
-    return () => { window.removeEventListener("admin-auth-expired", changed); window.removeEventListener("admin-authority-denied", changed); window.removeEventListener("storage", storage); document.removeEventListener("visibilitychange", visible); };
+    return () => { window.removeEventListener("admin-auth-expired", changed); window.removeEventListener("admin-authority-denied", changed); };
   }, [reloadIdentity]);
   useAccountPreferences(identity?.id);
+  useSessionRefresh(() => void reloadIdentity());
   useEffect(() => { document.title = `${tr("Administration")} — ${displayName}`; }, [tr]);
   useEffect(() => {
     if (!dirty) return;
@@ -85,17 +86,13 @@ export function Administration() {
     <main>
       {error && <p role="alert" className="error">{tr(error)}</p>}
       {status === "loading" && <p role="status">{tr("Opening administration…")}</p>}
-      {status === "denied" && !scopedEvolution && <><h1>{tr("Access denied")}</h1><p>{tr("A platform administrator role is required.")}</p></>}
+      {status === "denied" && <><h1>{tr("Access denied")}</h1><p>{tr("A platform administrator role is required.")}</p></>}
       {status === "unavailable" && <><p role="alert">{tr("Account access is unavailable.")}</p><button onClick={() => void reloadIdentity()}>{tr("Retry access check")}</button></>}
-      {(status === "ready" || status === "denied" && scopedEvolution) && identity && <div key={identity.id} onClickCapture={guardNavigation}>
+      {status === "ready" && identity && <div key={identity.id} onClickCapture={guardNavigation}>
         {(!route.length || route[0] === "users" && route.length === 1) ? <UserList />
           : route[0] === "users" && route.length === 2 ? <UserEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : (route[0] === "groups" || route[0] === "policies") && route.length === 1 ? <PolicyList key={route[0]} kind={route[0]} />
           : (route[0] === "users" || route[0] === "groups") && route.length === 3 && route[2] === "studio-permissions" ? <StudioPermissionsEditor key={`${route[0]}-${route[1]}`} kind={route[0] === "users" ? "account" : "group"} subject={route[1]} actor={identity.id} onDirty={setEditorDirty} />
-          : route[0] === "groups" && route.length === 3 && route[2] === "evolution-permissions" ? <EvolutionPermissionsEditor key={route[1]} group={route[1]} actor={identity.id} onDirty={setEditorDirty} />
-          : route[0] === "groups" && route.length === 3 && route[2] === "optimization" ? <EvolutionConfiguration key={route[1]} group={route[1]} onDirty={setEditorDirty} />
-          : route[0] === "groups" && route.length === 3 && route[2] === "run" ? <EvolutionManual key={route[1]} group={route[1]} onDirty={setEditorDirty} />
-          : route[0] === "groups" && route.length === 3 && route[2] === "corpus" ? <EvolutionCapture key={route[1]} group={route[1]} onDirty={setEditorDirty} />
           : route[0] === "groups" && route.length === 2 ? <GroupEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : route[0] === "policies" && route.length === 2 ? <PolicyEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : route[0] === "users" && route.length === 3 && route[2] === "configuration" ? <UserConfiguration key={route[1]} id={route[1]} onDirty={setEditorDirty} />

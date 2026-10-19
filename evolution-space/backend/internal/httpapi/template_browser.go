@@ -83,6 +83,48 @@ func BrowserTemplateAPI(client *appidentity.Client, store *projections.Store) fu
 		}
 		write(w, 200, json.RawMessage(body))
 	})
+	// Template authors choose among immutable published workflow revisions.
+	// Published revisions are shared definitions, like the template catalog.
+	mux.HandleFunc("GET /evolution-space/api/v1/groups/{group}/published-workflows", func(w http.ResponseWriter, r *http.Request) {
+		if !authorize(w, r, "workflow.read") {
+			return
+		}
+		var revision int64
+		var err error
+		if value := r.URL.Query().Get("after_revision"); value != "" {
+			revision, err = strconv.ParseInt(value, 10, 64)
+		}
+		if err != nil {
+			write(w, 400, map[string]string{"error": "invalid_cursor"})
+			return
+		}
+		page, err := store.CatalogRevisions(r.Context(), projections.CatalogListInput{Kind: "workflow", AfterID: r.URL.Query().Get("after_id"), AfterRevision: revision, Limit: 50})
+		if err != nil {
+			write(w, 422, map[string]string{"error": "workflows_unavailable"})
+			return
+		}
+		write(w, 200, page)
+	})
+	mux.HandleFunc("GET /evolution-space/api/v1/groups/{group}/published-workflows/{id}/{revision}", func(w http.ResponseWriter, r *http.Request) {
+		if !authorize(w, r, "workflow.read") {
+			return
+		}
+		ref, err := browserCatalogRef(r)
+		if err != nil {
+			write(w, 400, map[string]string{"error": "invalid_workflow_reference"})
+			return
+		}
+		body, err := store.CatalogDefinition(r.Context(), "workflow", ref)
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, projections.ErrNotFound) {
+			write(w, 404, map[string]string{"error": "workflow_not_found"})
+			return
+		}
+		if err != nil {
+			write(w, 409, map[string]string{"error": "workflow_identity_conflict"})
+			return
+		}
+		write(w, 200, json.RawMessage(body))
+	})
 	mux.HandleFunc("POST /evolution-space/api/v1/groups/{group}/templates", func(w http.ResponseWriter, r *http.Request) {
 		if !authorize(w, r, "workflow.edit") {
 			return

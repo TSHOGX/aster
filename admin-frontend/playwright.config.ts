@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 export default defineConfig({
-  testDir: "./e2e", testMatch: ["ui.spec.ts", "volume-imports.spec.ts", "evolution.spec.ts", "evolution-output.spec.ts", "evolution-source.spec.ts", "evolution-permissions.spec.ts", "studio-permissions.spec.ts"], workers: 2, timeout: 30000,
+  testDir: "./e2e", testMatch: ["ui.spec.ts", "volume-imports.spec.ts", "studio-permissions.spec.ts"], workers: 2, timeout: 30000,
   expect: { timeout: 10000 },
   reporter: [["list"], ["json", { outputFile: "test-results/ui-report.json" }]],
   outputDir: "test-results/ui",

@@ -28,6 +28,7 @@ type EvaluationRequestInput struct {
 }
 type EvaluationSummary struct {
 	ID                string `json:"id"`
+	GroupID           string `json:"group_id"`
 	RequirementDigest string `json:"requirement_digest"`
 	State             string `json:"state"`
 	Outcome           string `json:"outcome"`
@@ -163,7 +164,7 @@ func (s *Store) ReconcileEvaluation(ctx context.Context, a Actor, library, id st
 	if err != nil {
 		return EvaluationSummary{}, err
 	}
-	summary := EvaluationSummary{ID: id, RequirementDigest: assignment.RequirementDigest, State: "pending", Outcome: "pending"}
+	summary := EvaluationSummary{ID: id, GroupID: assignment.GroupID, RequirementDigest: assignment.RequirementDigest, State: "pending", Outcome: "pending"}
 	if result != nil {
 		summary.State = result.State
 		summary.Outcome = result.Outcome
@@ -220,7 +221,7 @@ func (s *Store) RefreshEvaluation(ctx context.Context, a Actor, library, id stri
 	if err != nil {
 		return EvaluationSummary{}, err
 	}
-	summary := EvaluationSummary{ID: id, RequirementDigest: assignment.RequirementDigest, State: "pending", Outcome: "pending"}
+	summary := EvaluationSummary{ID: id, GroupID: assignment.GroupID, RequirementDigest: assignment.RequirementDigest, State: "pending", Outcome: "pending"}
 	if retained != nil {
 		summary.State = retained.State
 		summary.Outcome = retained.Outcome
@@ -283,7 +284,7 @@ func (s *Store) RefreshEvaluation(ctx context.Context, a Actor, library, id stri
 	return summary, nil
 }
 func (s *Store) evaluationSummaries(ctx context.Context, library, digest string) ([]EvaluationSummary, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id,requirement_digest,state,result FROM evaluation_requests WHERE library_id=? AND prepared_digest=? ORDER BY created_at,id", library, digest)
+	rows, err := s.db.QueryContext(ctx, "SELECT id,requirement_digest,state,result,assignment FROM evaluation_requests WHERE library_id=? AND prepared_digest=? ORDER BY created_at,id", library, digest)
 	if err != nil {
 		return nil, err
 	}
@@ -291,10 +292,15 @@ func (s *Store) evaluationSummaries(ctx context.Context, library, digest string)
 	result := []EvaluationSummary{}
 	for rows.Next() {
 		var value EvaluationSummary
-		var raw []byte
-		if err = rows.Scan(&value.ID, &value.RequirementDigest, &value.State, &raw); err != nil {
+		var raw, assignmentRaw []byte
+		if err = rows.Scan(&value.ID, &value.RequirementDigest, &value.State, &raw, &assignmentRaw); err != nil {
 			return nil, err
 		}
+		var assignment evolution.EvaluationAssignment
+		if err = json.Unmarshal(assignmentRaw, &assignment); err != nil {
+			return nil, err
+		}
+		value.GroupID = assignment.GroupID
 		value.Outcome = "pending"
 		if len(raw) > 0 {
 			var evidence evolution.EvaluationResult
