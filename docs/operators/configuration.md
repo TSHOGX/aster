@@ -639,24 +639,48 @@ SHA-256 digest, retains the exact reference, and refuses a live store or symlink
 source. Provisioning bytes does not grant their use; authorize the exact artifact
 and evaluator through the group's dataset grant before requesting an evaluation.
 
-### Provision example goal definitions
+### Provision starter goal templates
 
 While Evolution Space is stopped, `evolution-space-catalog --state-directory
 /absolute/state --action examples` reads `{"model":{"id":"...","revision":1,
-"digest":"sha256:..."}}` from stdin and publishes the skills and corrections
-example packages. Choose an exact registered model revision; provisioning the same
-package again is idempotent, while substituting a different model under an existing
-workflow revision is rejected. The command outputs the exact template/workflow
-references and port schema documents for inspection and registry configuration.
+"digest":"sha256:..."}}` from stdin and publishes five starter packages. Choose an exact
+registered model revision. Provisioning the same packages again is idempotent;
+substituting a different model under an existing workflow revision is rejected. The
+command outputs the exact template/workflow references and port schema documents for
+inspection and registry configuration.
 
-The skills graph drafts proposals, critiques/revises at most twice, and builds
-relative skill files. Corrections use a separate extract/verify/build graph. Both
-preserve unsupported proposals as held evidence and reject unsafe output names;
-the skill builder also rejects a critic that changes the original corpus. These
-packages do not grant source access, activate a group, or write a Volume. Running
-them requires the native model/implementation registry and authorized run admission.
-Their suggested output prefixes are `skills` and `lessons`; final publication still
-requires Studio review and the configured checks.
+| Template | Memory class | Output prefix | Workflow |
+| --- | --- | --- | --- |
+| `example-skills` | Procedural | `skills` | Draft, critique and revise at most twice, build `<id>/SKILL.md` |
+| `example-corrections` | Procedural | `lessons` | Extract lessons from failures and corrections, verify, build |
+| `example-facts` | Semantic | `facts` | Extract atomic facts, verify, build |
+| `example-knowledge` | Semantic | `knowledge` | Extract semantic-layer definitions, verify, consolidate, verify again, build |
+| `example-episodes` | Episodic | `episodes` | Split eligible episodes, record each in a bounded map, verify, build |
+
+Every proposal must cite episode IDs. A deterministic check applies each template's
+evidence rule and counts support by source family, so copies do not add support.
+Skills need completed episodes. Corrections, facts and knowledge need at least one
+completed episode. A case record covers exactly one episode family. The check holds,
+with a reason, any proposal with missing fields, truncated or unknown-provenance
+evidence, or content that resembles credentials, connection strings or email addresses.
+Builders write only declared files under their own prefix and never delete files or
+write `AGENTS.md`. Group workflow editors can also install a single example from the browser with
+**Copy to my drafts** or **Install template**; the browser lists only models in the
+native registry, and installation needs `example_builders` enabled. Both paths publish the
+same immutable revisions, so an example installed for one model cannot be reinstalled for
+another. These packages do not grant source access, activate a group or write
+a Volume. Running them requires the native registry with `example_builders` enabled and
+authorized run admission. Publication still requires Studio review and the configured checks.
+
+To publish a starter baseline evaluation profile, first seal the group's held-out
+dataset with `--action seal-artifact`. Then run `--action baseline-profile` with
+`{"template":"example-facts","ref":{"id":"facts-baseline","revision":1},"dataset":{...},
+"scorer":{...},"runtime":{...},"model":{...},"tools":[],"fixed_model_required":true}`
+on stdin. The command copies that template's preset thresholds into a complete profile,
+rejects a dataset that is not sealed in this store, and is idempotent. Each preset pairs
+an absolute floor with a non-negative delta against the reference content, so the
+configured scorer must report those metric names. Authorize dataset and evaluator use
+with the group's dataset grant before requesting an evaluation.
 
 Studio's private participant listener also accepts generation result lookup/submission
 when its Evolution Space connection is configured. It authenticates Evolution Space
@@ -674,7 +698,7 @@ Evolution Space accepts `-native-config /absolute/path/native.json` to enable th
 native workflow worker and private generation admission API. Configure exact model
 revisions, authenticated model-service origins, credential environment references,
 per-model allowed tool revisions, and per-call token/cost ceilings. Set `example_builders` to true to register the
-versioned skills/corrections builders and their schemas:
+versioned starter-template builders and their schemas:
 
 ```json
 {
@@ -695,7 +719,54 @@ versioned skills/corrections builders and their schemas:
 
 Use the same exact model reference when provisioning example definitions. Model
 services must support durable lookup/idempotent submission/cancellation; an ordinary
-untracked chat endpoint is insufficient. Native configuration does not accept inline
+untracked chat endpoint is insufficient for a static entry. For an OpenAI-compatible
+chat service, use model connections below instead.
+
+#### Model connections
+
+Set `"model_connections": true` to let platform administrators manage
+OpenAI-compatible chat services under **Settings → Model connections**; the static
+`models` list may then be empty. Also set `EVOLUTION_SPACE_MODEL_KEY_SECRET` (at
+least 32 characters, from a private environment file) before starting Evolution
+Space. It encrypts API keys in `modelconn.db` in the state directory; without it,
+connections cannot store or use keys. Losing the secret makes stored keys
+unreadable; enter them again. Change it with `-model-key-secret-env`.
+
+```json
+{"models": [], "schemas": {}, "example_builders": true, "model_connections": true}
+```
+
+Each connection has a base URL (HTTPS, or HTTP only on loopback), a model name, an
+output token limit, optional temperature and JSON mode. Changing any of these
+publishes a new pinned revision `{id, revision, digest}`; workflows keep the revision
+they pinned, and every revision stays executable. The name, enabled flag, key, call
+token ceiling, prices, timeout and concurrency apply to all revisions. Disabled
+connections, and connections without a usable key, admit no new calls.
+
+Evolution Space runs managed connections in process. Each agent call is recorded in
+`modelconn.db` before dispatch, so a retry or restart never sends it twice. The adapter
+asks for one JSON object keyed by the node's output ports, includes each port's JSON
+Schema, validates the reply, and allows one in-call repair. Invalid or truncated
+output, HTTP 429/5xx and timeouts are retryable failures; HTTP 4xx is not. A call
+interrupted by a restart is settled as a retryable failure with usage counted at its
+reserved ceiling, because the provider may already have spent it. Model connections
+do not run tools.
+
+Each call reserves its connection's token ceiling (and the matching cost ceiling when
+prices are set) from the run budget, so a binding's maximum tokens must be at least
+that ceiling. Reasoning models count reasoning in output tokens. Operators can also
+provision a connection while Evolution Space is stopped; the request, including the
+key, is read from stdin and the output omits the key:
+
+```sh
+sudo -u SERVICE_USER env EVOLUTION_SPACE_MODEL_KEY_SECRET=... \
+  evolution-space-catalog -state-directory /var/lib/evolution-space \
+  -action model-connection < connection.json
+```
+
+`connection.json` has the form `{"id": "team-glm", "connection": {"expected_revision": 0,
+"name": "...", "enabled": true, "settings": {...}, "policy": {...}, "api_key": "..."}}`.
+Delete it afterward. Backups include `modelconn.db` with keys still encrypted. Native configuration does not accept inline
 secrets, executable file paths or arbitrary transform code. Additional schema entries
 map exact schema digests to self-contained JSON Schema objects.
 

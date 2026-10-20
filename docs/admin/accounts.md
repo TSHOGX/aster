@@ -263,14 +263,30 @@ the same page after sign-in.
 
 The sidebar organizes each group's work:
 
-- **Overview**: configuration status, recent runs and, before first activation, a
-  setup checklist (sources, templates, outputs, review).
+- **Overview**: configuration status, recent runs and **How the pieces fit
+  together**, which links the four steps in order.
 - **Build**: **Goal templates**, **Workflows** and **Evaluation profiles**.
 - **Operate**: **Runs** (history and **New run**) and **Evaluations**.
 - **Settings**: **Configuration and activation**, **Sources and corpus** and
   **Permissions**.
 
 Sections you lack permission for are shown disabled with the missing permission.
+
+The pieces relate as follows:
+
+1. A **workflow** says how the work runs: a graph of agent, validator and builder
+   nodes with typed input and output ports. Publishing a draft creates an immutable revision.
+2. A **goal template** says what to produce: the goal, the compatible workflow
+   revisions, the output profile, a suggested output directory and a default evaluation mode.
+   It names no Volume.
+3. A **configuration binding**, under **Settings → Configuration and activation**, says where it
+   applies: the template and workflow revision, the sources to read, the output Volume and
+   directory, the trigger, the budget and the evaluation mode.
+4. Each **run** writes an isolated branch in Volume Studio for expert review and merge.
+
+An **evaluation profile** is optional. It defines how to measure a candidate on a
+held-out dataset. A binding sets evaluation to **Off**, **Informational** or **Required for merge**
+and, unless Off, names the profile and evaluator service.
 
 The overview shows desired and active revisions, automatic optimization status,
 and separate management, execution and source-evidence permissions. A configuration
@@ -294,7 +310,43 @@ Configuration and activation**, described below. This does not grant access to
 user, policy or resource administration. Unsaved workflow, template, profile and
 configuration edits warn before leaving the page.
 
-Open **Workflows** to find saved drafts.
+Open **Workflows** to find saved drafts and **Built-in examples**. Each example card
+opens a preview with four tabs: **Pipeline** shows the read-only graph and explains every
+node (select a node to read its prompt); **Worked sample** shows two input episodes, the
+files the builders write and the proposals held for review with their reasons;
+**Output fields** lists the fields each proposal carries; and **Baseline evaluation**
+shows the suggested metrics and a dataset line. With `workflow.edit`, choose
+**Copy to my drafts**: Evolution Space installs the example for the registered model
+(or asks you to choose one), then creates an editable draft under the ID you enter. If no
+model is available, previews still work; a platform administrator adds one under
+**Settings → Model connections**.
+
+The built-in examples cover three memory classes. Procedural: `skills` (draft, critique
+up to twice, build `skills/<id>/SKILL.md`) and `corrections` (lessons from failures, each
+backed by a completed episode). Semantic: `facts` (atomic facts with scope, valid time and
+supersession) and `knowledge` (a semantic layer of entities, dimensions, metrics,
+relationships and terms, verified again after consolidation). Episodic: `episodes` (one
+case record per source episode). Validators hold unsupported, failed-only, truncated,
+copied-only or sensitive evidence with a reason; held items stay in the run and never
+become files. Each example writes its own output directory, so several can share one
+corpus and Volume.
+
+Platform administrators manage installation-wide models under **Settings → Model
+connections**; other users see the entry disabled. **Add connection** takes an ID,
+display name, base URL of an OpenAI-compatible service (for example
+`https://api.example.com/v1`), API key and model. **Test connection** sends a short
+request with exactly these settings, reports the latency and loads the service's
+model list into the **Model** picker. The API key is write-only: the page shows only
+whether a key is set and its last four characters, and **Edit** keeps the stored key
+unless you enter a new one. Changing the base URL, model, output limit, temperature or
+JSON mode creates a new revision; existing workflows keep the revision they pinned.
+Under **Limits and prices**, **Tokens reserved per call** is reserved from the run budget
+for each call, so a binding's maximum tokens must be at least that value. Turning
+**Enabled** off stops new calls. Enabled connections appear in the editor's
+**Registered model** list and in example installation.
+
+In the editor, the node palette explains each node kind. For an agent node choose a
+**Registered model**; **Exact model reference** keeps the raw ID, revision and digest fields.
 With `workflow.edit`, choose **New or fork draft** and a fresh draft ID. Start empty,
 copy an exact saved draft revision owned by that group, copy a published workflow
 revision (a template's **Fork into a draft** preselects one), or copy the workflow pinned
@@ -403,6 +455,12 @@ template your group owns. Existing publications remain immutable and readable,
 including after an upgrade. After a lost publication response, publish again
 without changes to recover the exact revision.
 
+**Built-in examples** on the template page shows the same five examples. **Install
+template** publishes the example's template and workflows for the registered model and
+opens the template; installed examples show **Use in configuration**. An example installed
+for one model cannot be reinstalled for another; copy its workflow and publish your own
+template instead.
+
 **Use in configuration** opens **Settings → Configuration and activation** with that
 template revision selected for **Add template binding**.
 For an existing binding, use **Binding template revision** to select the published
@@ -416,13 +474,36 @@ alone changes no active configuration and grants no source, model or output acce
 
 ### Publish evaluator profiles
 
-In an Evolution Space group, **Evaluator profile editor** requires configuration
-management permission. Choose an existing profile or enter a new definition with
-its dataset, scorer, runtime, model, tools, metric units, thresholds and minimum
-samples/coverage. Use a new ID with revision 1, or increment the revision when
-editing an existing profile. The server calculates the profile's own digest;
-referenced revisions still need their exact digests. Profile revision histories
-belong to the dataset's group and cannot move between groups.
+Evaluation is optional; without it candidates go straight to expert review. Open
+**Evaluation profiles** with configuration management permission and use **Create an
+evaluation profile**:
+
+1. **Start from a baseline** chooses a built-in preset (or **Start from scratch**) and the
+   profile ID and revision. A preset fills the metric thresholds.
+2. **Choose the held-out dataset** picks a sealed dataset of this group, or uploads one with
+   **Upload a dataset** (`.json`, `.jsonl`, `.csv` or `.txt`, up to 4 MiB). JSON and JSON
+   Lines files are checked for syntax; otherwise Aster does not interpret the bytes. The
+   evaluator service receives them unchanged, so its scorer defines the format; JSON Lines
+   with one test case per line is typical, and each preset shows an example line. Keep held-out
+   cases out of the sources workflows learn from. Uploading the same file and ID again replays;
+   a different file under the same ID is refused. Ask an operator to seal larger datasets.
+3. **Pin the scorer** enters the exact scorer, runtime and model revisions your operator
+   registered for the evaluator service. Keep **Require the exact model** on to report a
+   result from a different model as inconclusive.
+4. **Set pass thresholds** edits each metric's name, unit, rule (≥ or ≤), value, minimum
+   samples and minimum coverage. A result passes only when every metric is reported with
+   enough samples and coverage and meets its threshold. Delta metrics compare the candidate
+   with the reference content, so 0 means no worse than the current content.
+
+**Publish evaluation profile** creates the revision; select it in a binding's evaluation
+policy. An administrator must still [authorize evaluator dataset use](#authorize-evaluator-dataset-use)
+for the sealed dataset before an evaluation runs. Uploaded datasets are never exposed as
+generation artifacts or reports.
+
+**Published profiles and JSON editor** lists existing revisions and edits the exact profile
+document. Use a new ID with revision 1, or increment the revision when editing. The server
+calculates the profile's own digest; referenced revisions still need their exact digests.
+Profile revision histories belong to the dataset's group and cannot move between groups.
 
 Use **Load more profiles** for additional catalog pages. Publication creates an
 immutable revision; existing runs and reports keep their original conditions.

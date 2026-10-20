@@ -23,6 +23,10 @@ type artifactQuery interface {
 // jobs. Recheck at use/download because a later profile can protect retained bytes.
 func requireNonDatasetArtifact(ctx context.Context, q artifactQuery, ref evolution.ArtifactRef) error {
 	var protected bool
+	// Uploaded evaluation datasets are held out even before a profile names them.
+	if ref.SchemaDigest == DatasetSchema {
+		return ErrNotFound
+	}
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM catalog_definitions WHERE kind='profile' AND (json_extract(body,'$.dataset.digest')=? OR (json_extract(body,'$.dataset.group_id')=? AND json_extract(body,'$.dataset.id')=?)))`, ref.Digest, ref.GroupID, ref.ID).Scan(&protected)
 	if err != nil {
 		return err

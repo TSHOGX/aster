@@ -16,7 +16,7 @@ export type Preview = { catalog_valid?: boolean; catalog_error?: string; draft_r
 export type Operation = { operation_id: string; revision: number; state: string; current: boolean; participants: { participant: string; state: string; error?: string }[] };
 export const emptyRef: Revision = { id: "", revision: 0, digest: "" };
 export const offPolicy: EvaluationPolicy = { mode: "disabled", reference_strategy: "none" };
-export const initialBudget: Budget = { max_tokens: 10000, max_cost_micros: 1000000, max_attempts: 20, timeout_seconds: 600, max_artifact_bytes: 4194304 };
+export const initialBudget: Budget = { max_tokens: 500000, max_cost_micros: 1000000, max_attempts: 20, timeout_seconds: 3600, max_artifact_bytes: 4194304 };
 export const refKey = (ref: Revision) => `${ref.id}@${ref.revision}:${ref.digest}`;
 export function freshConfiguration(group: string): EditableConfiguration { return { group_id: group, revision: 0, auto_enabled: false, sources: [], bindings: [], budget: { ...initialBudget } }; }
 export function draftConfiguration(config: EditableConfiguration): EditableConfiguration { return { ...config, revision: 0, auto_enabled: false }; }

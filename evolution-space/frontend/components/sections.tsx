@@ -10,6 +10,8 @@ import type { TemplateDefinition } from "../lib/evolution-config";
 import { useGroup } from "./group-context";
 import { PageHeading, useDirtyGuard } from "./group-layout";
 import { CatalogEditor } from "./catalog-editor";
+import { ExampleGallery } from "./example-gallery";
+import { ProfileWizard } from "./profile-wizard";
 import { RunHistory, EvaluationHistory } from "./execution-history";
 import { WorkflowDrafts } from "./workflow-drafts";
 import { TemplateForm, profiles, refQuery } from "./template-form";
@@ -37,6 +39,7 @@ export function TemplatesPage() {
           <tbody>{read.data.revisions.map(ref => <tr key={`${ref.id}:${ref.revision}`}><th scope="row"><Link prefetch={false} href={`${root}/templates/${enc(ref.id)}/${ref.revision}/?digest=${enc(ref.digest)}`}>{ref.id}</Link></th><td>{ref.revision}</td><td><code title={ref.digest}>{ref.digest.slice(0, 19)}…</code></td></tr>)}</tbody></table>)}
       <div className="pagination">{cursor.length > 0 && <button onClick={() => setCursor([])}>{tr("First page")}</button>}{read.data?.has_more && <button onClick={() => setCursor(items => [...items, { id: read.data!.next_id, revision: read.data!.next_revision }])}>{tr("Next page")}</button>}</div>
     </section>
+    <ExampleGallery group={group.id} mode="templates" />
   </>;
 }
 export function TemplateCreatePage() {
@@ -73,12 +76,15 @@ export function TemplateDetailPage({ id, revision }: { id: string; revision: num
 export function WorkflowsPage() {
   const tr = useT(); const { group } = useGroup();
   return <><PageHeading title={tr("Workflows")} description="Workflows are typed graphs of agents and deterministic steps. Edit and test a draft, publish an immutable revision, then select it in a goal template." />
-    <WorkflowDrafts group={group.id} editable={group.can_edit_workflows} evidence={group.can_read_evidence} /></>;
+    <WorkflowDrafts group={group.id} editable={group.can_edit_workflows} evidence={group.can_read_evidence} />
+    <ExampleGallery group={group.id} mode="workflows" /></>;
 }
 export function ProfilesPage() {
-  const tr = useT(); const { group } = useGroup();
-  return <><PageHeading title={tr("Evaluation profiles")} description="Profiles pin the test dataset, scorer, runtime, model and thresholds an optional evaluation uses. Evaluation stays off unless a configuration requests it." />
-    {group.can_manage ? <CatalogEditor group={group.id} kind="profiles" editable /> : <p role="status">{tr("Requires permission to manage configuration.")}</p>}</>;
+  const tr = useT(); const { group } = useGroup(); const [published, setPublished] = useState(0);
+  return <><PageHeading title={tr("Evaluation profiles")} description="Evaluation is optional. Without it, candidates go straight to expert review in Volume Studio. A profile defines how to measure a candidate; a configuration binding decides whether that measurement is informational or required for merge." />
+    {group.can_manage ? <><ProfileWizard group={group.id} onPublished={() => setPublished(value => value + 1)} />
+      <details className="card advanced-section"><summary>{tr("Published profiles and JSON editor")}</summary><CatalogEditor key={published} group={group.id} kind="profiles" editable /></details></>
+      : <p role="status">{tr("Requires permission to manage configuration.")}</p>}</>;
 }
 export function RunsPage() {
   const tr = useT(); const { group } = useGroup();

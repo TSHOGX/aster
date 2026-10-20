@@ -14,10 +14,7 @@ for (const width of [390, 1440]) test(`binary oversized and structural conflict 
   const headers = { Origin: origin, "X-CSRF-Token": session.csrf };
   const created = await page.request.post("/volumes-studio/api/v1/libraries", { headers, data: { request_id: crypto.randomUUID(), name: `Conflict kinds ${crypto.randomUUID()}` } });
   expect(created.ok()).toBe(true); const library = await created.json();
-  for (const action of ["volume.read", "volume.author", "volume.review", "volume.merge", "volume.publish"]) {
-    const response = await page.request.post("/api/admin/studio-grants", { headers: { Origin: origin }, data: { request_id: crypto.randomUUID(), kind: "account", subject_id: session.subject, library_id: library.id, action, effect: "allow", expected_revision: 0 } });
-    expect(response.ok(), await response.text()).toBe(true);
-  }
+  // Creating a library grants its creator every Studio action; no self-grant is needed.
   const root = `/volumes-studio/api/v1/libraries/${library.id}`;
   const get = async (suffix: string) => { const response = await page.request.get(root + suffix); expect(response.ok(), await response.text()).toBe(true); return response.json(); };
   const post = async (suffix: string, data: object) => { const response = await page.request.post(root + suffix, { headers, data: { request_id: crypto.randomUUID(), ...data } }); expect(response.ok(), await response.text()).toBe(true); return response.json(); };

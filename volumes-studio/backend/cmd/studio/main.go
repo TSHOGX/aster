@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"aster/contracts/evolution"
 	"volume-studio/backend/internal/authoring"
 	"volume-studio/backend/internal/distribution"
 	"volume-studio/backend/internal/evolutionspaceclient"
@@ -71,7 +72,7 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	store, err := authoring.Open(ctx, authoring.Config{RunResults: client, RunArtifacts: resultArtifacts, Evaluator: evaluator, Authority: client, SeedSharedAssets: true, Directory: *directory, PublisherID: *publisher, QuotaBytes: *quota})
+	store, err := authoring.Open(ctx, authoring.Config{RunResults: client, RunArtifacts: resultArtifacts, Evaluator: evaluator, Authority: client, Owners: libraryOwners{client}, SeedSharedAssets: true, Directory: *directory, PublisherID: *publisher, QuotaBytes: *quota})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -201,4 +202,16 @@ func main() {
 		}
 	}
 	workers.Wait()
+}
+
+// libraryOwners reports a refused claim as missing authority, so the browser
+// sees the same 403 as any other denied action; outages stay unavailable.
+type libraryOwners struct{ client *identity.Client }
+
+func (o libraryOwners) ClaimLibrary(ctx context.Context, principal evolution.Principal, library string) error {
+	err := o.client.ClaimLibrary(ctx, principal, library)
+	if errors.Is(err, identity.ErrUnauthorized) {
+		return authoring.ErrAuthority
+	}
+	return err
 }

@@ -880,6 +880,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
       await login(page, user);
       await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/profiles/`);
       await page.getByRole("link", { name: text("Sign in", "登录"), exact: true }).click();
+      await page.getByText(text("Published profiles and JSON editor", "已发布配置与 JSON 编辑器"), { exact: true }).click();
       const editor = page.locator("section.card").filter({ has: page.getByRole("heading", { name: text("Evaluator profile editor", "评估器配置编辑器"), exact: true }) });
       const input = editor.getByRole("textbox", { name: text("Profile JSON", "配置 JSON"), exact: true });
       const select = editor.getByLabel(text("Existing profile", "现有配置"), { exact: true });

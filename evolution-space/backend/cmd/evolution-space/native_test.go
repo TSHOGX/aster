@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"aster/contracts/evolution"
+	"aster/evolution-space/internal/examples"
 	"aster/evolution-space/internal/projections"
 )
 
@@ -68,7 +69,7 @@ func TestNativeRegistryRejectsUnregisteredInputsAndLoadsExamples(t *testing.T) {
 			if err = registry.Check(context.Background(), node); err == nil {
 				t.Fatal("unregistered tool revision accepted")
 			}
-			if len(registry.Models) != 1 || len(registry.Transforms) != 3 || len(registry.Schemas) < 3 {
+			if len(registry.Models) != 1 || len(registry.Transforms) != len(examples.Implementations()) || len(registry.Schemas) < 10 {
 				t.Fatal("example registry incomplete")
 			}
 		})

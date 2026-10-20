@@ -69,7 +69,7 @@ func TestEvolutionSpaceIdentityIsSeparateFromStudioAndRechecksGroupAccess(t *tes
 	}
 }
 
-func TestEvolutionSpaceIdentityAdministratorGetsOnlyEvolutionSpaceEntitlement(t *testing.T) {
+func TestEvolutionSpaceIdentityAdministratorGetsEvolutionSpaceAndModelEntitlements(t *testing.T) {
 	s, admin := accountStore(t)
 	token := adminTestToken(t, s, admin)
 	challenge, _ := pkceChallenge(identityVerifier)
@@ -78,7 +78,7 @@ func TestEvolutionSpaceIdentityAdministratorGetsOnlyEvolutionSpaceEntitlement(t 
 	must(t, err)
 	assertion, _, err := s.ExchangeIdentityCode(ctx, "evolution-space", callback, code, identityVerifier)
 	must(t, err)
-	if len(assertion.Entitlements) != 1 || assertion.Entitlements[0] != EvolutionSpaceAccessEntitlement {
+	if len(assertion.Entitlements) != 2 || assertion.Entitlements[0] != EvolutionSpaceAccessEntitlement || assertion.Entitlements[1] != EvolutionSpaceModelsEntitlement {
 		t.Fatal(assertion)
 	}
 	if _, err = s.AdmitIdentityCode(ctx, token, "unknown", identityCallback, challenge); !errors.Is(err, ErrForbidden) {

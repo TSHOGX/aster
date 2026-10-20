@@ -111,3 +111,33 @@ func grantFixture(s *Store, ctx context.Context, token, kind, subject, library, 
 	_, err := s.ApplyStudioGrant(ctx, token, StudioGrantCommand{RequestID: fmt.Sprintf("%s-%s-%s-%s-%d", kind, library, strings.ReplaceAll(action, ".", "-"), effect, expected), Kind: kind, SubjectID: subject, LibraryID: library, Action: action, Effect: effect, ExpectedRevision: expected})
 	return err
 }
+
+func TestStudioLibraryOwnerClaimIsAdminOnlyIdempotentAndKeepsDenials(t *testing.T) {
+	s, admin := accountStore(t)
+	ctx := context.Background()
+	token := adminTestToken(t, s, admin)
+	must(t, grantFixture(s, ctx, token, "account", admin.ID, "fresh", "volume.publish", "deny", 0))
+	must(t, s.ClaimStudioLibrary(ctx, admin.ID, "fresh"))
+	must(t, s.ClaimStudioLibrary(ctx, admin.ID, "fresh"))
+	for _, action := range studioActions {
+		decision, err := s.StudioAccess(ctx, evolution.AccessRequest{Principal: evolution.Principal{Subject: admin.ID, Kind: "human"}, LibraryID: "fresh", Action: action})
+		must(t, err)
+		if decision.Allowed != (action != "volume.publish") {
+			t.Fatal("owner claim", action, decision)
+		}
+	}
+	user, _, err := createTestAccount(t, s, admin.ID, "member", "Member", "user")
+	must(t, err)
+	if err = s.ClaimStudioLibrary(ctx, user.ID, "other"); !errors.Is(err, ErrForbidden) {
+		t.Fatal("non-admin claimed a library", err)
+	}
+	must(t, grantFixture(s, ctx, token, "account", user.ID, "shared", "volume.read", "allow", 0))
+	if err = s.ClaimStudioLibrary(ctx, admin.ID, "shared"); !errors.Is(err, ErrConflict) {
+		t.Fatal("claim took over a configured library", err)
+	}
+	var audits int
+	must(t, s.reader.QueryRowContext(ctx, "SELECT count(*) FROM audit_events WHERE action='studio.library.owner' AND target_id='fresh'").Scan(&audits))
+	if audits != 1 {
+		t.Fatal("owner claim audit", audits)
+	}
+}

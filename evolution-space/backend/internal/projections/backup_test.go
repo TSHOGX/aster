@@ -367,3 +367,35 @@ func TestBackupExcludesBrowserAuthorityWithoutLoggingOutSource(t *testing.T) {
 	count(restored.db, 0)
 	count(store.db, 2)
 }
+
+func TestBackupIncludesCompanionAndRestoreVerifiesIt(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store, err := Open(ctx, filepath.Join(root, "state", "projections.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	companion := []byte("model connection snapshot")
+	write := func(_ context.Context, path string) error { return os.WriteFile(path, companion, 0600) }
+	backup := filepath.Join(root, "backup")
+	if err = store.BackupWith(ctx, backup, []SnapshotFile{{Path: "modelconn.db", Write: write}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.BackupWith(ctx, filepath.Join(root, "other"), []SnapshotFile{{Path: "../escape.db", Write: write}}); err == nil {
+		t.Fatal("unsupported companion path accepted")
+	}
+	store.Close()
+	restored := filepath.Join(root, "restored")
+	if err = Restore(ctx, backup, restored); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(restored, "modelconn.db")); err != nil || string(raw) != string(companion) {
+		t.Fatal("companion not restored", err)
+	}
+	if err = os.WriteFile(filepath.Join(backup, "modelconn.db"), []byte("tampered snapshot data!!"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = Restore(ctx, backup, filepath.Join(root, "again")); err == nil {
+		t.Fatal("tampered companion restored")
+	}
+}

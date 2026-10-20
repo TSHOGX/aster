@@ -32,20 +32,30 @@ type nativeConfig struct {
 	Models          []nativeModelConfig        `json:"models"`
 	Schemas         map[string]json.RawMessage `json:"schemas"`
 	ExampleBuilders bool                       `json:"example_builders"`
+	// ModelConnections enables administrator-managed connections; with it the
+	// static model list may be empty.
+	ModelConnections bool `json:"model_connections,omitempty"`
 }
 
+// examplePreviewModel only computes model-independent example schemas.
+var examplePreviewModel = evolution.Revision{ID: "schema-preview", Revision: 1, Digest: evolution.Digest([]byte("schema-preview"))}
+
 func readNativeRegistry(path string, store *projections.Store) (*runner.NativeRegistry, func(), error) {
+	registry, close, _, err := readNativeRegistryConfig(path, store)
+	return registry, close, err
+}
+func readNativeRegistryConfig(path string, store *projections.Store) (*runner.NativeRegistry, func(), nativeConfig, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nativeConfig{}, err
 	}
 	defer file.Close()
 	config, err := evolution.Decode[nativeConfig](file)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, config, err
 	}
-	if len(config.Models) < 1 || len(config.Models) > 32 || len(config.Schemas) > 1000 {
-		return nil, nil, fmt.Errorf("invalid native registry limits")
+	if len(config.Models) < 1 && !config.ModelConnections || len(config.Models) > 32 || len(config.Schemas) > 1000 {
+		return nil, nil, config, fmt.Errorf("invalid native registry limits")
 	}
 	registry := &runner.NativeRegistry{Store: store, Schemas: map[string]json.RawMessage{}, Transforms: map[evolution.Revision]runner.Transform{}, Models: map[evolution.Revision]runner.Model{}}
 	clients := []*runner.HTTPModel{}
@@ -58,55 +68,55 @@ func readNativeRegistry(path string, store *projections.Store) (*runner.NativeRe
 	for _, model := range config.Models {
 		if !environment.MatchString(model.SecretEnv) || model.Ceiling.Tokens < 1 || model.Ceiling.CostMicros < 0 {
 			close()
-			return nil, nil, fmt.Errorf("invalid model budget/credential reference")
+			return nil, nil, config, fmt.Errorf("invalid model budget/credential reference")
 		}
 		if _, exists := registry.Models[model.Reference]; exists {
 			close()
-			return nil, nil, fmt.Errorf("duplicate native model")
+			return nil, nil, config, fmt.Errorf("duplicate native model")
 		}
 		if len(model.Tools) > 128 {
 			close()
-			return nil, nil, fmt.Errorf("native model tool limit exceeded")
+			return nil, nil, config, fmt.Errorf("native model tool limit exceeded")
 		}
 		allowedTools := map[evolution.Revision]bool{}
 		for _, tool := range model.Tools {
 			if tool.Validate() != nil || allowedTools[tool] {
 				close()
-				return nil, nil, fmt.Errorf("invalid or duplicate native tool revision")
+				return nil, nil, config, fmt.Errorf("invalid or duplicate native tool revision")
 			}
 			allowedTools[tool] = true
 		}
 		client, err := runner.NewHTTPModel(store, runner.ModelConnection{Endpoint: model.Endpoint, ClientID: model.ClientID, Secret: os.Getenv(model.SecretEnv), Model: model.Reference, Tools: model.Tools})
 		if err != nil {
 			close()
-			return nil, nil, err
+			return nil, nil, config, err
 		}
 		clients = append(clients, client)
 		registry.Models[model.Reference] = runner.Model{Provider: client, Ceiling: model.Ceiling, Tools: allowedTools}
-		if config.ExampleBuilders {
-			packages, err := examples.Packages(model.Reference)
-			if err != nil {
-				close()
-				return nil, nil, err
-			}
-			for _, pkg := range packages {
-				for digest, raw := range pkg.Schemas {
-					registry.Schemas[digest] = raw
-				}
-			}
-		}
 	}
 	for digest, raw := range config.Schemas {
 		if !manifest.ValidDigest(digest) || evolution.Digest(raw) != digest {
 			close()
-			return nil, nil, fmt.Errorf("native schema digest mismatch")
+			return nil, nil, config, fmt.Errorf("native schema digest mismatch")
 		}
 		registry.Schemas[digest] = raw
 	}
 	if config.ExampleBuilders {
+		// Example schemas do not depend on the model; register them once so a
+		// registry with only managed connections still validates example ports.
+		packages, err := examples.Packages(examplePreviewModel)
+		if err != nil {
+			close()
+			return nil, nil, config, err
+		}
+		for _, pkg := range packages {
+			for digest, raw := range pkg.Schemas {
+				registry.Schemas[digest] = raw
+			}
+		}
 		registry.Transforms = examples.Implementations()
 	}
-	return registry, close, nil
+	return registry, close, config, nil
 }
 
 type candidatePlanner struct{}

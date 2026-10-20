@@ -5,6 +5,7 @@ import (
 	manifest "aster/contracts/volumemanifest"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -96,4 +97,18 @@ func (s *Store) definitionBytes(ctx context.Context, tx *sql.Tx, kind string, re
 		return nil, ErrConflict
 	}
 	return raw, nil
+}
+
+// LatestDefinition returns the highest published revision reference of one
+// catalog ID, or ErrNotFound. It discloses reference metadata only.
+func (s *Store) LatestDefinition(ctx context.Context, kind, id string) (evolution.Revision, error) {
+	var ref evolution.Revision
+	if (kind != "service" && kind != "template" && kind != "profile") || !manifest.ValidID(id) {
+		return ref, fmt.Errorf("invalid catalog lookup")
+	}
+	err := s.db.QueryRowContext(ctx, "SELECT id,revision,digest FROM catalog_definitions WHERE kind=? AND id=? ORDER BY revision DESC LIMIT 1", kind, id).Scan(&ref.ID, &ref.Revision, &ref.Digest)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ref, ErrNotFound
+	}
+	return ref, err
 }

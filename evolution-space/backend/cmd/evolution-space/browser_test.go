@@ -2,6 +2,7 @@ package main
 
 import (
 	"aster/contracts/appidentity"
+	"aster/evolution-space/internal/httpapi"
 	"aster/evolution-space/internal/projections"
 	"context"
 	"crypto/sha256"
@@ -100,7 +101,7 @@ func TestBrowserGatewayPersistsSessionsAndSeparatesPrivateRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	makeHandler := func() http.Handler {
-		server, listener, err := browserServer(store, "127.0.0.1:0", "https://app", frontend.URL, central.URL, strings.Repeat("s", 32))
+		server, listener, err := browserServer(store, "127.0.0.1:0", "https://app", frontend.URL, central.URL, strings.Repeat("s", 32), httpapi.BrowserOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}

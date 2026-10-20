@@ -50,14 +50,20 @@ func (a Actor) valid() bool {
 }
 
 type Config struct {
-	RunResults       RunResultAuthority
-	RunArtifacts     RunResultArtifacts
-	Evaluator        Evaluator
-	Authority        evolution.Authority
+	RunResults   RunResultAuthority
+	RunArtifacts RunResultArtifacts
+	Evaluator    Evaluator
+	Authority    evolution.Authority
+	// Owners records the creator's library grants centrally. Without it, a new
+	// library is only reachable after an administrator grants access manually.
+	Owners           LibraryOwners
 	SeedSharedAssets bool
 	Directory        string
 	PublisherID      string
 	QuotaBytes       int64
+}
+type LibraryOwners interface {
+	ClaimLibrary(context.Context, evolution.Principal, string) error
 }
 type Store struct {
 	branchCrash func(string) error
@@ -465,6 +471,11 @@ func (s *Store) Create(ctx context.Context, a Actor, input CreateInput) (Library
 		return l, ErrConflict
 	}
 	l = Library{ID: randomID(), Name: input.Name, Description: input.Description, Profile: input.Profile, MetadataRevision: 1}
+	if s.config.Owners != nil {
+		if err = s.config.Owners.ClaimLibrary(ctx, evolution.Principal{Issuer: a.Issuer, Subject: a.Subject, Kind: "human"}, l.ID); err != nil {
+			return Library{}, err
+		}
+	}
 	if l.Profile == "" {
 		l.Profile = manifest.Profile
 	}

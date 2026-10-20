@@ -1,6 +1,7 @@
 // Translation catalog without React so browser specs can import it.
 import { settingsZH } from "./i18n-settings";
 import { workspaceZH } from "./i18n-workspace";
+import { examplesZH } from "./i18n-examples";
 const zh: Record<string, string> = {
 "Run configured workflows": "运行已配置工作流",
 "Loading workflow…": "正在加载工作流…",
@@ -199,4 +200,4 @@ const zh: Record<string, string> = {
   "The output reference is unavailable. Refresh to recover the review link.": "输出引用不可用，请刷新以恢复审核链接。",
 
 };
-export const spaceZH: Record<string, string> = { ...settingsZH, ...zh, ...workspaceZH };
+export const spaceZH: Record<string, string> = { ...settingsZH, ...zh, ...workspaceZH, ...examplesZH };

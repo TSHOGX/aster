@@ -27,7 +27,7 @@ test("composition pages pin heads and recover failed or denied continuations", a
     const response = await page.request.post("/api/admin/studio-grants", { headers: { Origin: origin }, data: { request_id: crypto.randomUUID(), kind: "account", subject_id: session.subject, library_id: library.id, action, effect, expected_revision: revision } });
     expect(response.ok(), await response.text()).toBe(true);
   };
-  for (const action of ["volume.read", "volume.author", "volume.review", "volume.merge", "volume.publish"]) await grant(action, "allow", 0);
+  // Creating a library grants its creator every Studio action.
   const root = `/volumes-studio/api/v1/libraries/${library.id}`;
   const get = async (suffix: string) => { const response = await page.request.get(root + suffix); expect(response.ok(), await response.text()).toBe(true); return response.json(); };
   const post = async (suffix: string, data: object) => { const response = await page.request.post(root + suffix, { headers, data: { request_id: crypto.randomUUID(), ...data } }); expect(response.ok(), await response.text()).toBe(true); return response.json(); };

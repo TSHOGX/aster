@@ -418,7 +418,9 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 				return
 			}
 		}
-		proposal := map[string]any{"id": "verified", "title": "Verified task", "body": "Perform the task and verify the output.", "evidence_ids": []string{"episode"}, "status": "supported"}
+		lesson := map[string]string{"scope": "task", "trigger": "Running the task", "mistaken_assumption": "The output needs no check.", "corrective_action": "Verify the output.", "expected_result": "The verified output is reported."}
+		proposal := map[string]any{"id": "verified", "title": "Verified task", "body": "Perform the task and verify the output.", "evidence_ids": []string{"episode"}, "status": "supported", "attributes": lesson}
+		skill := map[string]any{"id": "verified", "title": "Verified task", "body": "Perform the task and verify the output.", "evidence_ids": []string{"episode"}, "status": "supported", "attributes": map[string]string{"when_to_use": "Running the task", "verification": "The output is verified."}}
 		var outputs any
 		switch submission.Call.Node.ID {
 		case "integrate":
@@ -429,7 +431,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		case "extract":
 			items := []any{proposal}
 			if dynamic {
-				items = append(items, map[string]any{"id": "followup", "title": "Follow-up verification", "body": "Inspect the retained result.", "evidence_ids": []string{"episode"}, "status": "supported"})
+				items = append(items, map[string]any{"id": "followup", "title": "Follow-up verification", "body": "Inspect the retained result.", "evidence_ids": []string{"episode"}, "status": "supported", "attributes": lesson})
 			}
 			outputs = map[string]any{"items": items}
 		case "review-item":
@@ -442,7 +444,7 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 			}
 			outputs = map[string]any{"items": submission.Call.Inputs["items"]}
 		case "draft":
-			outputs = map[string]any{"state": map[string]any{"corpus": submission.Call.Inputs["corpus"], "items": []any{proposal}, "valid": false}}
+			outputs = map[string]any{"state": map[string]any{"corpus": submission.Call.Inputs["corpus"], "items": []any{skill}, "valid": false}}
 		case "critic", "review":
 			var state map[string]any
 			if err := json.Unmarshal(submission.Call.Inputs["state"], &state); err != nil {
@@ -513,6 +515,15 @@ func nativeGenerationProcesses(t *testing.T, mode string) {
 		Schemas map[string]json.RawMessage `json:"schemas"`
 	}
 	must(t, json.Unmarshal(output, &packages))
+	// These journeys exercise the skills and corrections graphs; the other starter
+	// packages are published but left unbound. Unit tests execute every starter.
+	retained := packages[:0]
+	for _, pkg := range packages {
+		if pkg.Template.Ref.ID == "example-skills" || pkg.Template.Ref.ID == "example-corrections" {
+			retained = append(retained, pkg)
+		}
+	}
+	packages = retained
 	if mode == "tool-inspection" || mode == "tool-checkpoint" || mode == "numbered-retry" {
 		publishInspectionDefinition := func(kind string, ref evolution.Revision, body any) {
 			raw, _ := json.Marshal(map[string]any{"kind": kind, "ref": ref, "body": body})

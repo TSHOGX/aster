@@ -12,10 +12,7 @@ test("branch creation and selection use real scoped authority", async ({ page })
   const created = await page.request.post("/volumes-studio/api/v1/libraries", { headers, data: { request_id: crypto.randomUUID(), name: `Branch browser fixture ${crypto.randomUUID()}` } });
   expect(created.ok(), await created.text()).toBeTruthy();
   const library = await created.json();
-  for (const action of ["volume.read", "volume.author", "volume.review", "volume.merge", "volume.publish"]) {
-    const grant = await page.request.post("/api/admin/studio-grants", { headers: { Origin: origin }, data: { request_id: crypto.randomUUID(), kind: "account", subject_id: session.subject, library_id: library.id, action, effect: "allow", expected_revision: 0 } });
-    expect(grant.ok(), await grant.text()).toBeTruthy();
-  }
+  // Creating a library grants its creator every Studio action; no self-grant is needed.
   await page.goto(`/volumes-studio/libraries/${library.id}`);
   await page.getByLabel("New branch name", { exact: true }).fill("Human edits");
   await page.getByRole("button", { name: "Create branch from main", exact: true }).click();
@@ -106,7 +103,7 @@ test("non-admin experts enter with scoped grants and cannot create or merge libr
     const response=await page.request.post("/api/admin/studio-grants",{headers:{Origin:origin},data:{request_id:crypto.randomUUID(),kind:"account",subject_id:subject,library_id:library.id,action,effect,expected_revision:revision}});
     expect(response.ok(),await response.text()).toBeTruthy();
   };
-  for(const action of ["volume.read","volume.author"]) await grant(session.subject,action);
+  // The creating administrator already owns the library.
   for(const action of ["volume.read","volume.review"]) await grant(user.user.id,action);
   const root=`/volumes-studio/api/v1/libraries/${library.id}`;
   const post=async(path:string,data:object)=>{
@@ -158,10 +155,7 @@ for (const width of [390, 1440]) test(`browser composes selected paths and later
   const created = await page.request.post("/volumes-studio/api/v1/libraries", { headers, data: { request_id: crypto.randomUUID(), name: `Composition ${crypto.randomUUID()}` } });
   expect(created.ok(), await created.text()).toBeTruthy();
   const library = await created.json();
-  for (const action of ["volume.read", "volume.author", "volume.review", "volume.merge", "volume.publish"]) {
-    const grant = await page.request.post("/api/admin/studio-grants", { headers: { Origin: origin }, data: { request_id: crypto.randomUUID(), kind: "account", subject_id: session.subject, library_id: library.id, action, effect: "allow", expected_revision: 0 } });
-    expect(grant.ok(), await grant.text()).toBeTruthy();
-  }
+  // Creating a library grants its creator every Studio action; no self-grant is needed.
   const root = `/volumes-studio/api/v1/libraries/${library.id}`;
   const post = async (path: string, data: object) => {
     const response = await page.request.post(root + path, { headers, data });
@@ -256,10 +250,7 @@ test("browser explicitly rebinds a stale prepared policy", async ({ page }) => {
   const created = await page.request.post("/volumes-studio/api/v1/libraries", { headers, data: { request_id: crypto.randomUUID(), name: `Rebind ${crypto.randomUUID()}` } });
   expect(created.ok(), await created.text()).toBeTruthy();
   const library = await created.json();
-  for (const action of ["volume.read", "volume.author", "volume.configure", "volume.review"]) {
-    const grant = await page.request.post("/api/admin/studio-grants", { headers: { Origin: origin }, data: { request_id: crypto.randomUUID(), kind: "account", subject_id: session.subject, library_id: library.id, action, effect: "allow", expected_revision: 0 } });
-    expect(grant.ok(), await grant.text()).toBeTruthy();
-  }
+  // Creating a library grants its creator every Studio action; no self-grant is needed.
   const root = `/volumes-studio/api/v1/libraries/${library.id}`;
   const post = async (path: string, data: object) => {
     const response = await page.request.post(root + path, { headers, data });

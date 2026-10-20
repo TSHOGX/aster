@@ -31,10 +31,7 @@ async function provisionBranch(page: Page) {
   await expect(page).toHaveURL(/\/libraries\/[^/?]+/);
   const id = libraryID(page);
   const identity = await session(page);
-  for (const action of ["volume.read", "volume.author", "volume.review", "volume.merge", "volume.publish"]) {
-    const grant = await page.request.post("/api/admin/studio-grants", { headers: { Origin: origin }, data: { request_id: crypto.randomUUID(), kind: "account", subject_id: identity.subject, library_id: id, action, effect: "allow", expected_revision: 0 } });
-    expect(grant.ok(), await grant.text()).toBeTruthy();
-  }
+  // Creating a library grants its creator every Studio action; no self-grant is needed.
   await page.reload();
   await page.getByLabel("New branch name", { exact: true }).fill("Human edits");
   await page.getByRole("button", { name: "Create branch from main", exact: true }).click();

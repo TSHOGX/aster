@@ -11,7 +11,7 @@ for(const width of [390,1440])test(`reviewed inverse draft survives lost creatio
  const session=await(await page.request.get("/volumes-studio/api/v1/session")).json();const headers={Origin:origin,"X-CSRF-Token":session.csrf};
  const created=await page.request.post("/volumes-studio/api/v1/libraries",{headers,data:{request_id:crypto.randomUUID(),name:`Revert ${crypto.randomUUID()}`}});expect(created.ok()).toBe(true);const library=await created.json();
  const grant=async(action:string,effect:string,revision:number)=>{const r=await page.request.post("/api/admin/studio-grants",{headers:{Origin:origin},data:{request_id:crypto.randomUUID(),kind:"account",subject_id:session.subject,library_id:library.id,action,effect,expected_revision:revision}});expect(r.ok(),await r.text()).toBe(true);};
- for(const action of ["volume.read","volume.author","volume.review","volume.merge","volume.publish"])await grant(action,"allow",0);
+ // Creating a library grants its creator every Studio action.
  const root=`/volumes-studio/api/v1/libraries/${library.id}`;
  const get=async(path:string)=>{const r=await page.request.get(root+path);expect(r.ok(),await r.text()).toBe(true);return r.json();};
  const post=async(path:string,body:object)=>{const r=await page.request.post(root+path,{headers,data:{request_id:crypto.randomUUID(),...body}});expect(r.ok(),await r.text()).toBe(true);return r.json();};

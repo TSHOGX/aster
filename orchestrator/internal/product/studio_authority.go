@@ -2,6 +2,7 @@ package product
 
 import (
 	"context"
+	"database/sql"
 	"slices"
 
 	"aster/contracts/evolution"
@@ -39,4 +40,44 @@ func studioAccess(ctx context.Context, q queryer, request evolution.AccessReques
 		reason = "deny"
 	}
 	return evolution.AccessDecision{Allowed: allows > 0 && denies == 0, PolicyRevision: revision, Reason: reason}, nil
+}
+
+// ClaimStudioLibrary gives the creating administrator explicit allow grants on a
+// library Studio is about to create. Library IDs are fresh random values, so the
+// claim never touches grants another administrator configured. Existing rows,
+// including denials, are kept; replays are idempotent.
+func (s *Store) ClaimStudioLibrary(ctx context.Context, subject, library string) error {
+	if !validID(subject) || !validID(library) {
+		return ErrInvalid
+	}
+	return s.write(ctx, func(tx *sql.Tx) error {
+		var admin int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM accounts WHERE id=? AND status='active' AND role='admin' AND must_change_password=0`, subject).Scan(&admin); err != nil {
+			return err
+		}
+		if admin != 1 {
+			return ErrForbidden
+		}
+		var other int
+		if err := tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM studio_library_grants WHERE library_id=? AND account_id<>?)+(SELECT count(*) FROM studio_group_grants WHERE library_id=?)`, library, subject, library).Scan(&other); err != nil {
+			return err
+		}
+		if other != 0 {
+			return ErrConflict
+		}
+		added := []string{}
+		for _, action := range studioActions {
+			result, err := tx.ExecContext(ctx, "INSERT INTO studio_library_grants VALUES(?,?,?,'allow',1) ON CONFLICT(account_id,library_id,action) DO NOTHING", subject, library, action)
+			if err != nil {
+				return err
+			}
+			if n, _ := result.RowsAffected(); n == 1 {
+				added = append(added, action)
+			}
+		}
+		if len(added) == 0 {
+			return nil
+		}
+		return s.auditEvent(ctx, tx, subject, "studio.library.owner", "studio_library", library, "", 1, map[string]any{"actions": added})
+	})
 }

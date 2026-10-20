@@ -70,8 +70,9 @@ func publish(ctx context.Context, directory string, input io.Reader, output io.W
 }
 func main() {
 	directory := flag.String("state-directory", "", "absolute private Evolution Space state directory")
-	action := flag.String("action", "publish", "publish, list, inspect-service, service-state, seal-artifact, inspect-artifact, expire-artifact or examples")
+	action := flag.String("action", "publish", "publish, list, inspect-service, service-state, seal-artifact, inspect-artifact, expire-artifact, examples, baseline-profile or model-connection")
 	source := flag.String("artifact-file", "", "Absolute regular file to seal; reference JSON is read from stdin")
+	sealEnv := flag.String("model-key-secret-env", "EVOLUTION_SPACE_MODEL_KEY_SECRET", "Environment variable with the model key encryption secret")
 	flag.Parse()
 	if flag.NArg() != 0 {
 		fmt.Fprintln(os.Stderr, "publication JSON is read from stdin")
@@ -79,8 +80,12 @@ func main() {
 	}
 	var err error
 	switch *action {
+	case "model-connection":
+		err = provisionConnection(context.Background(), *directory, *sealEnv, os.Stdin, os.Stdout)
 	case "examples":
 		err = provisionExamples(context.Background(), *directory, os.Stdin, os.Stdout)
+	case "baseline-profile":
+		err = provisionBaseline(context.Background(), *directory, os.Stdin, os.Stdout)
 	case "inspect-artifact":
 		err = inspectArtifact(context.Background(), *directory, os.Stdin, os.Stdout)
 	case "expire-artifact":

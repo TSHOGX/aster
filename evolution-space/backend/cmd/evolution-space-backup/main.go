@@ -5,8 +5,10 @@ import (
 	"context"
 	"flag"
 	"log"
+	"os"
 	"path/filepath"
 
+	"aster/evolution-space/internal/modelconn"
 	"aster/evolution-space/internal/projections"
 )
 
@@ -22,7 +24,18 @@ func main() {
 		log.Fatal(err)
 	}
 	defer store.Close()
-	if err = store.Backup(context.Background(), *target); err != nil {
+	// Model connections are a companion database; keys stay encrypted and need
+	// the same host secret after restore.
+	var extra []projections.SnapshotFile
+	if _, err := os.Stat(filepath.Join(*state, "modelconn.db")); err == nil {
+		connections, err := modelconn.Open(context.Background(), filepath.Join(*state, "modelconn.db"), "")
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer connections.Close()
+		extra = append(extra, projections.SnapshotFile{Path: "modelconn.db", Write: connections.Backup})
+	}
+	if err = store.BackupWith(context.Background(), *target, extra); err != nil {
 		log.Fatal(err)
 	}
 	log.Print("Evolution Space backup complete; retain backup.json with the private snapshot")

@@ -31,6 +31,7 @@ func (a *Authentication) IdentityServiceHandler() http.Handler {
 	mux.HandleFunc("POST /api/identity/v1/introspect", a.identityIntrospect)
 	mux.HandleFunc("POST /api/identity/v1/revoke", a.identityRevoke)
 	mux.HandleFunc("POST /api/identity/v1/studio-access", a.identityStudioAccess)
+	mux.HandleFunc("POST /api/identity/v1/studio-library-owner", a.identityStudioLibraryOwner)
 	mux.HandleFunc("POST /api/identity/v1/evolution-space-access", a.identityEvolutionSpaceAccess)
 	mux.HandleFunc("POST /api/identity/v1/evolution-space-workflow-access", a.identityEvolutionSpaceWorkflowAccess)
 	mux.HandleFunc("POST /api/identity/v1/projection-authority", a.identityProjectionAuthority)
@@ -237,6 +238,33 @@ func (a *Authentication) identityStudioAccess(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, 200, decision)
+}
+
+func (a *Authentication) identityStudioLibraryOwner(w http.ResponseWriter, r *http.Request) {
+	client, ok := a.identityService(w, r)
+	if !ok {
+		return
+	}
+	if client.ID != "studio" {
+		writeError(w, 403, "studio service required")
+		return
+	}
+	var request struct {
+		Principal evolution.Principal `json:"principal"`
+		LibraryID string              `json:"library_id"`
+	}
+	if !decode(w, r, 4096, &request) {
+		return
+	}
+	if request.Principal.Issuer != a.Config.Identity.Issuer || request.Principal.Kind != "human" {
+		writeError(w, 403, "issuer mismatch")
+		return
+	}
+	if err := a.Store.ClaimStudioLibrary(r.Context(), request.Principal.Subject, request.LibraryID); err != nil {
+		fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *Authentication) identityProjectionAuthority(w http.ResponseWriter, r *http.Request) {

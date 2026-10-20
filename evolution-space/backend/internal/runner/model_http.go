@@ -36,7 +36,33 @@ type HTTPModel struct {
 	store      *projections.Store
 	connection ModelConnection
 	client     *http.Client
+	exchange   ModelExchange
 }
+
+// ModelExchange carries the native model protocol. HTTP services and in-process
+// adapters both return raw observations; HTTPModel authenticates and seals them.
+type ModelExchange interface {
+	Lookup(context.Context, ModelCallKey) ([]byte, error)
+	Submit(context.Context, ModelCallKey, ModelSubmission) ([]byte, error)
+	Cancel(context.Context, ModelCallKey) ([]byte, error)
+}
+type ModelCallKey struct {
+	RunID          string
+	CallID         string
+	IdempotencyKey string
+	RequestDigest  string
+	Model          evolution.Revision
+}
+
+// NewExchangeModel uses an in-process exchange with the same identity checks,
+// tool validation and artifact sealing as an HTTP model service.
+func NewExchangeModel(store *projections.Store, model evolution.Revision, exchange ModelExchange) (*HTTPModel, error) {
+	if store == nil || exchange == nil || model.Validate() != nil {
+		return nil, fmt.Errorf("registered model, store and exchange required")
+	}
+	return &HTTPModel{store: store, connection: ModelConnection{Model: model}, exchange: exchange}, nil
+}
+
 type ModelSubmission struct {
 	RunID          string               `json:"run_id"`
 	CallID         string               `json:"call_id"`
@@ -64,6 +90,8 @@ type ModelObservation struct {
 	ResponseModel     string                 `json:"response_model"`
 	ToolTraceState    string                 `json:"tool_trace_state"`
 	Tools             []ModelToolObservation `json:"tools"`
+	// Error is a bounded, credential-free reason shown in provider evidence.
+	Error string `json:"error,omitempty"`
 }
 type ModelToolObservation struct {
 	ID     string             `json:"id"`
@@ -98,7 +126,11 @@ func NewHTTPModel(store *projections.Store, connection ModelConnection) (*HTTPMo
 	transport := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 15 * time.Second, IdleConnTimeout: time.Minute, MaxIdleConnsPerHost: 8}
 	return &HTTPModel{store: store, connection: connection, client: &http.Client{Transport: transport, Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
-func (p *HTTPModel) Close() { p.client.CloseIdleConnections() }
+func (p *HTTPModel) Close() {
+	if p.client != nil {
+		p.client.CloseIdleConnections()
+	}
+}
 func (p *HTTPModel) frozen(ctx context.Context, call projections.ProviderCall) (workflow.Call, evolution.Run, error) {
 	var node workflow.Call
 	var run evolution.Run
@@ -166,7 +198,35 @@ func (p *HTTPModel) Cancel(ctx context.Context, call projections.ProviderCall) (
 	return p.call(ctx, http.MethodPost, "/cancel", call, node, run, input, false)
 }
 func (p *HTTPModel) call(ctx context.Context, method, suffix string, call projections.ProviderCall, node workflow.Call, run evolution.Run, input any, allowAbsent bool) (projections.ProviderOutcome, error) {
-	var outcome projections.ProviderOutcome
+	var raw []byte
+	var err error
+	if p.exchange != nil {
+		key := ModelCallKey{RunID: call.RunID, CallID: call.ID, IdempotencyKey: call.IdempotencyKey, RequestDigest: call.Request.Digest, Model: p.connection.Model}
+		switch {
+		case method == http.MethodGet:
+			raw, err = p.exchange.Lookup(ctx, key)
+		case suffix == "/cancel":
+			raw, err = p.exchange.Cancel(ctx, key)
+		default:
+			submission, ok := input.(ModelSubmission)
+			if !ok {
+				return projections.ProviderOutcome{}, ErrModelDenied
+			}
+			raw, err = p.exchange.Submit(ctx, key, submission)
+		}
+		if errors.Is(err, projections.ErrProviderCallNotFound) && !allowAbsent {
+			return projections.ProviderOutcome{}, ErrModelUnavailable
+		}
+	} else {
+		raw, err = p.httpExchange(ctx, method, suffix, call, input, allowAbsent)
+	}
+	if err != nil {
+		return projections.ProviderOutcome{}, err
+	}
+	return p.settle(ctx, call, node, run, raw)
+}
+func (p *HTTPModel) httpExchange(ctx context.Context, method, suffix string, call projections.ProviderCall, input any, allowAbsent bool) ([]byte, error) {
+	var outcome []byte
 	var body io.Reader
 	if input != nil {
 		raw, err := json.Marshal(input)
@@ -220,6 +280,15 @@ func (p *HTTPModel) call(ctx context.Context, method, suffix string, call projec
 	if err != nil || len(raw) > evolution.MaxDocumentBytes {
 		return outcome, ErrModelUnavailable
 	}
+	return raw, nil
+}
+
+// settle authenticates one exact observation and seals its evidence and output.
+func (p *HTTPModel) settle(ctx context.Context, call projections.ProviderCall, node workflow.Call, run evolution.Run, raw []byte) (projections.ProviderOutcome, error) {
+	var outcome projections.ProviderOutcome
+	if len(raw) > evolution.MaxDocumentBytes {
+		return outcome, ErrModelUnavailable
+	}
 	observation, err := evolution.Decode[ModelObservation](bytes.NewReader(raw))
 	if err != nil {
 		return outcome, ErrModelUnavailable
@@ -236,7 +305,7 @@ func (p *HTTPModel) call(ctx context.Context, method, suffix string, call projec
 	if observation.State != "completed" && observation.State != "failed" && observation.State != "cancelled" {
 		return outcome, ErrModelUnavailable
 	}
-	if observation.ProviderRequestID == "" || len(observation.ProviderRequestID) > 512 || len(observation.ResponseModel) > 512 || observation.Usage.Tokens < 0 || observation.Usage.CostMicros < 0 {
+	if observation.ProviderRequestID == "" || len(observation.ProviderRequestID) > 512 || len(observation.ResponseModel) > 512 || len(observation.Error) > 512 || observation.Usage.Tokens < 0 || observation.Usage.CostMicros < 0 {
 		return outcome, ErrModelUnavailable
 	}
 	if err = validateToolObservations(node, observation); err != nil {

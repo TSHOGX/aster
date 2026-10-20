@@ -16,6 +16,11 @@ type browserSessionKey struct{}
 // BrowserAPI exposes explicitly selected human APIs. Private participant handlers
 // are never mounted here, and the grant is carried only in server-owned context.
 func BrowserAPI(client *appidentity.Client, store *projections.Store) func(appidentity.Session, http.ResponseWriter, *http.Request) {
+	return BrowserAPIWith(client, store, BrowserOptions{})
+}
+
+// BrowserAPIWith adds operator registry facts, such as registered models.
+func BrowserAPIWith(client *appidentity.Client, store *projections.Store, options BrowserOptions) func(appidentity.Session, http.ResponseWriter, *http.Request) {
 	mux := http.NewServeMux()
 	groups := func(w http.ResponseWriter, r *http.Request) {
 		query, err := url.ParseQuery(r.URL.RawQuery)
@@ -67,6 +72,8 @@ func BrowserAPI(client *appidentity.Client, store *projections.Store) func(appid
 	evaluations := BrowserEvaluationAPI(client, store)
 	profiles := BrowserProfileAPI(client, store)
 	templates := BrowserTemplateAPI(client, store)
+	catalogExamples := BrowserExampleAPI(client, store, options)
+	modelConnections := BrowserModelConnectionAPI(options)
 	return func(session appidentity.Session, w http.ResponseWriter, r *http.Request) {
 		request := r.WithContext(context.WithValue(r.Context(), browserSessionKey{}, session))
 		if strings.HasPrefix(r.URL.Path, "/evolution-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/workflows/") || strings.HasSuffix(r.URL.Path, "/workflows")) {
@@ -87,6 +94,14 @@ func BrowserAPI(client *appidentity.Client, store *projections.Store) func(appid
 		}
 		if strings.HasPrefix(r.URL.Path, "/evolution-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/templates/") || strings.HasSuffix(r.URL.Path, "/templates") || strings.Contains(r.URL.Path, "/published-workflows/") || strings.HasSuffix(r.URL.Path, "/published-workflows")) {
 			templates(session, w, r)
+			return
+		}
+		if r.URL.Path == "/evolution-space/api/v1/model-connections" || strings.HasPrefix(r.URL.Path, "/evolution-space/api/v1/model-connections/") {
+			modelConnections(session, w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/evolution-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/examples/") || strings.HasSuffix(r.URL.Path, "/examples") || strings.HasSuffix(r.URL.Path, "/models") || strings.HasSuffix(r.URL.Path, "/datasets")) {
+			catalogExamples(session, w, r)
 			return
 		}
 		mux.ServeHTTP(w, request)

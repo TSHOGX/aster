@@ -9,7 +9,7 @@ for(const width of [390,1440])test(`immutable history and snapshot comparison at
  const headers={Origin:origin,"X-CSRF-Token":session.csrf};
  const created=await page.request.post("/volumes-studio/api/v1/libraries",{headers,data:{request_id:crypto.randomUUID(),name:`History ${crypto.randomUUID()}`}});
  expect(created.ok()).toBeTruthy();const library=await created.json();
- for(const action of ["volume.read","volume.author"])expect((await page.request.post("/api/admin/studio-grants",{headers:{Origin:origin},data:{request_id:crypto.randomUUID(),kind:"account",subject_id:session.subject,library_id:library.id,action,effect:"allow",expected_revision:0}})).ok()).toBeTruthy();
+ // The creating administrator already owns the library.
  const root=`/volumes-studio/api/v1/libraries/${library.id}`;
  const post=async(path:string,data:object)=>{const response=await page.request.post(root+path,{headers,data});expect(response.ok(),await response.text()).toBeTruthy();return response.json();};
  const main=await(await page.request.get(root+"/main")).json();

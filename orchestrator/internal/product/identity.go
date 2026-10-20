@@ -16,6 +16,10 @@ import (
 const StudioAccessEntitlement = "volumes_studio.access"
 const StudioCreateEntitlement = "volumes_studio.create"
 const EvolutionSpaceAccessEntitlement = "evolution_space.access"
+
+// EvolutionSpaceModelsEntitlement lets administrators manage installation-wide
+// model connections. Group managers cannot change shared credentials or spend.
+const EvolutionSpaceModelsEntitlement = "evolution_space.models"
 const IdentityEvidenceTTL = 60 * time.Second
 
 // IdentityAssertion contains central authority evidence for a registered client.
@@ -119,6 +123,9 @@ func (s *Store) identitySession(ctx context.Context, q queryer, session, client 
 			}
 		}
 		a.Entitlements = []string{EvolutionSpaceAccessEntitlement}
+		if role == "admin" {
+			a.Entitlements = append(a.Entitlements, EvolutionSpaceModelsEntitlement)
+		}
 	case "studio":
 		a.Entitlements = []string{StudioAccessEntitlement}
 		if role == "admin" {

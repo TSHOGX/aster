@@ -6,9 +6,10 @@ Volume Studio at `/volumes-studio/` prepares reusable file libraries and publish
 immutable versions. Aster imports a version into local storage before Projects
 can use it. Studio publication and Aster availability are separate steps.
 Studio sign-in requires an active central account with a library read grant, or an
-administrator account. Only administrators can create libraries. Read, author,
-review, merge, publish and configure permissions are separate grants; administrator status
-alone does not grant those actions. Ask your installation administrator to
+administrator account. Only administrators can create libraries. The creating
+administrator receives explicit read, author, review, merge, publish and configure grants on
+the new library, so it opens immediately; adjust or deny them under Studio permissions.
+These are separate grants; administrator status alone does not grant them on other libraries. Ask your installation administrator to
 provision the required library permissions before editing. The catalog lists only
 libraries with a current read grant; removing that grant also removes their summaries
 and search results.

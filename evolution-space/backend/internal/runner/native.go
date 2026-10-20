@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,7 +20,7 @@ type NativeAuthority interface {
 	AuthorizeArtifact(context.Context, evolution.Run, evolution.ArtifactRef) error
 	OutputGrant(context.Context, evolution.Run) (string, error)
 }
-type Transform func(context.Context, workflow.Call) (workflow.Values, error)
+type Transform = func(context.Context, workflow.Call) (workflow.Values, error)
 type ModelProvider interface {
 	projections.Provider
 	projections.ProviderRecovery
@@ -28,6 +29,14 @@ type Model struct {
 	Provider ModelProvider
 	Ceiling  projections.RunUsage
 	Tools    map[evolution.Revision]bool
+	// Disabled models still reconcile retained calls but admit no new work.
+	Disabled bool
+}
+
+// ModelSource resolves administrator-managed models at call time, so saved
+// connection revisions apply without restarting the worker.
+type ModelSource interface {
+	Model(context.Context, evolution.Revision) (Model, bool)
 }
 
 // NativeRegistry contains only operator-registered pure implementations and
@@ -37,8 +46,31 @@ type NativeRegistry struct {
 	Schemas    map[string]json.RawMessage
 	Transforms map[evolution.Revision]Transform
 	Models     map[evolution.Revision]Model
+	Source     ModelSource
 }
 
+// Model returns a static registration first, then a managed connection.
+func (r *NativeRegistry) Model(ctx context.Context, ref evolution.Revision) (Model, bool) {
+	if model, ok := r.Models[ref]; ok {
+		return model, true
+	}
+	if r.Source != nil {
+		return r.Source.Model(ctx, ref)
+	}
+	return Model{}, false
+}
+
+// ModelRevisions lists registered model pins in stable order for browsers.
+func (r *NativeRegistry) ModelRevisions() []evolution.Revision {
+	result := make([]evolution.Revision, 0, len(r.Models))
+	for ref := range r.Models {
+		result = append(result, ref)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].ID < result[j].ID || result[i].ID == result[j].ID && result[i].Revision < result[j].Revision
+	})
+	return result
+}
 func (r *NativeRegistry) ResolveWorkflow(ctx context.Context, ref evolution.Revision) (evolution.Workflow, error) {
 	return r.Store.Workflow(ctx, ref)
 }
@@ -49,7 +81,7 @@ func (r *NativeRegistry) Schema(_ context.Context, digest string) (json.RawMessa
 	}
 	return bytes.Clone(raw), nil
 }
-func (r *NativeRegistry) Check(_ context.Context, node evolution.Node) error {
+func (r *NativeRegistry) Check(ctx context.Context, node evolution.Node) error {
 	switch node.Kind {
 	case "transform", "validator":
 		if node.ImplementationRef == nil || r.Transforms[*node.ImplementationRef] == nil {
@@ -59,9 +91,12 @@ func (r *NativeRegistry) Check(_ context.Context, node evolution.Node) error {
 		if node.ModelRef == nil {
 			return fmt.Errorf("model reference required")
 		}
-		model, ok := r.Models[*node.ModelRef]
+		model, ok := r.Model(ctx, *node.ModelRef)
 		if !ok || model.Provider == nil || model.Ceiling.Tokens < 1 || model.Ceiling.CostMicros < 0 {
 			return fmt.Errorf("budgeted model not registered")
+		}
+		if model.Disabled {
+			return fmt.Errorf("model connection is disabled or has no key")
 		}
 		for _, tool := range node.Tools {
 			if !model.Tools[tool] {
@@ -99,7 +134,7 @@ func (r nativeRuntime) Execute(ctx context.Context, call workflow.Call) (workflo
 	if call.Node.Kind != "agent" {
 		return r.executor.Registry.Transforms[*call.Node.ImplementationRef](ctx, call)
 	}
-	model := r.executor.Registry.Models[*call.Node.ModelRef]
+	model, _ := r.executor.Registry.Model(ctx, *call.Node.ModelRef)
 	raw, err := json.Marshal(call)
 	if err != nil {
 		return nil, err
@@ -297,7 +332,7 @@ func (e *NativeExecutor) Cleanup(ctx context.Context, lease projections.RunLease
 			if err != nil || frozen.Node.ModelRef == nil {
 				return fmt.Errorf("invalid retained native call")
 			}
-			model, ok := e.Registry.Models[*frozen.Node.ModelRef]
+			model, ok := e.Registry.Model(ctx, *frozen.Node.ModelRef)
 			if !ok || model.Provider == nil {
 				return fmt.Errorf("retained model unavailable")
 			}

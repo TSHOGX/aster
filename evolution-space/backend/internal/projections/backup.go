@@ -36,6 +36,18 @@ type BackupManifest struct {
 }
 
 func (s *Store) Backup(ctx context.Context, target string) error {
+	return s.BackupWith(ctx, target, nil)
+}
+
+// SnapshotFile writes one additional consistent database into a backup.
+type SnapshotFile struct {
+	Path  string
+	Write func(context.Context, string) error
+}
+
+// BackupWith also includes companion databases, such as model connections, in
+// the same manifest. Each is written to a fresh file and digested.
+func (s *Store) BackupWith(ctx context.Context, target string, extra []SnapshotFile) error {
 	if s == nil || s.db == nil || s.path == "" {
 		return fmt.Errorf("projection store is not open")
 	}
@@ -71,6 +83,23 @@ func (s *Store) Backup(ctx context.Context, target string) error {
 		return err
 	}
 	manifest := BackupManifest{Format: backupFormat, Files: []BackupFile{{Path: "projections.db", Size: size, Digest: digest}}}
+	for _, file := range extra {
+		if file.Path != "modelconn.db" {
+			return fmt.Errorf("unsupported companion snapshot")
+		}
+		path := filepath.Join(target, file.Path)
+		if err := file.Write(ctx, path); err != nil {
+			return err
+		}
+		if err := syncFile(path); err != nil {
+			return err
+		}
+		size, digest, err := fileDigest(path)
+		if err != nil {
+			return err
+		}
+		manifest.Files = append(manifest.Files, BackupFile{Path: file.Path, Size: size, Digest: digest})
+	}
 	raw, err := json.Marshal(manifest)
 	if err != nil {
 		return err
@@ -110,8 +139,19 @@ func Restore(ctx context.Context, source, target string) error {
 		return err
 	}
 	var manifest BackupManifest
-	if err = json.Unmarshal(raw, &manifest); err != nil || manifest.Format != backupFormat || len(manifest.Files) != 1 || manifest.Files[0].Path != "projections.db" {
+	if err = json.Unmarshal(raw, &manifest); err != nil || manifest.Format != backupFormat || len(manifest.Files) < 1 || len(manifest.Files) > 2 || manifest.Files[0].Path != "projections.db" || len(manifest.Files) == 2 && manifest.Files[1].Path != "modelconn.db" {
 		return fmt.Errorf("invalid backup manifest")
+	}
+	var companion *BackupFile
+	if len(manifest.Files) == 2 {
+		companion = &manifest.Files[1]
+		info, err := os.Stat(filepath.Join(source, companion.Path))
+		if err != nil || !info.Mode().IsRegular() || info.Size() != companion.Size {
+			return fmt.Errorf("backup model connection inventory mismatch")
+		}
+		if _, digest, err := fileDigest(filepath.Join(source, companion.Path)); err != nil || digest != companion.Digest {
+			return fmt.Errorf("backup model connection digest mismatch")
+		}
 	}
 	entry := manifest.Files[0]
 	if entry.Size < 1 || entry.Digest == "" {
@@ -157,6 +197,18 @@ func Restore(ctx context.Context, source, target string) error {
 	}
 	if err = clearSnapshotSessions(ctx, targetDB); err != nil {
 		return err
+	}
+	if companion != nil {
+		targetCompanion := filepath.Join(target, companion.Path)
+		if err = copyPrivate(filepath.Join(source, companion.Path), targetCompanion, ctx); err != nil {
+			return err
+		}
+		if size, digest, err := fileDigest(targetCompanion); err != nil || size != companion.Size || digest != companion.Digest {
+			return fmt.Errorf("restored model connection inventory mismatch")
+		}
+		if err = syncFile(targetCompanion); err != nil {
+			return err
+		}
 	}
 	if err = ctx.Err(); err != nil {
 		return err

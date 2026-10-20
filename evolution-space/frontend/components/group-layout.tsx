@@ -5,11 +5,11 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { useUnsavedNavigation } from "../../../web/unsaved-navigation";
 import { base, type Group } from "../lib/api";
 import { useT } from "../lib/i18n";
-import { GroupProvider, useGroup } from "./group-context";
+import { GroupProvider, useGroup, useSession } from "./group-context";
 import { GroupList } from "./group-list";
 
 type Item = { href: string; label: string; allowed?: boolean; reason?: string; exact?: boolean };
-function sections(group: Group): { label: string; items: Item[] }[] {
+function sections(group: Group, admin: boolean): { label: string; items: Item[] }[] {
   return [
     { label: "", items: [{ href: "", label: "Overview", exact: true }] },
     { label: "Build", items: [
@@ -25,6 +25,7 @@ function sections(group: Group): { label: string; items: Item[] }[] {
       { href: "settings/configuration/", label: "Configuration and activation" },
       { href: "settings/sources/", label: "Sources and corpus" },
       { href: "settings/permissions/", label: "Permissions" },
+      { href: "settings/models/", label: "Model connections", allowed: admin, reason: "Requires platform administrator." },
     ] },
   ];
 }
@@ -34,6 +35,7 @@ export function GroupLayout({ id, children }: { id: string; children: ReactNode 
 }
 function Workspace({ children }: { children: ReactNode }) {
   const tr = useT(); const { group } = useGroup(); const pathname = usePathname();
+  const admin = useSession().entitlements.includes("evolution_space.models");
   const root = `/groups/${encodeURIComponent(group.id)}/`;
   const [switching, setSwitching] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -41,7 +43,7 @@ function Workspace({ children }: { children: ReactNode }) {
   return <div className="group-workspace">
     <aside className="sidebar" aria-label={tr("Group navigation")}>
       <div className="group-switcher"><span>{tr("Group")}</span><strong>{group.name}</strong><button aria-haspopup="dialog" onClick={() => setSwitching(true)}>{tr("Switch group")}</button></div>
-      <nav aria-label={tr("Group sections")}>{sections(group).map(section => <div key={section.label || "overview"} className="sidebar-section">
+      <nav aria-label={tr("Group sections")}>{sections(group, admin).map(section => <div key={section.label || "overview"} className="sidebar-section">
         {section.label && <h2>{tr(section.label)}</h2>}
         <ul>{section.items.map(item => {
           const href = root + item.href;

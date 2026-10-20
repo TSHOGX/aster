@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,6 +19,8 @@ import (
 
 	"aster/evolution-space/internal/httpapi"
 	"aster/evolution-space/internal/identity"
+	"aster/evolution-space/internal/modelconn"
+	"aster/evolution-space/internal/modelconn/native"
 	"aster/evolution-space/internal/projections"
 	"aster/evolution-space/internal/studioclient"
 )
@@ -41,6 +44,7 @@ func run() error {
 	studioInputs := flag.String("studio-input-endpoint", "", "Private Studio participant origin for assigned content reads")
 	studioInputSecretEnv := flag.String("studio-input-secret-env", "STUDIO_EVOLUTION_SPACE_INPUT_SECRET", "Environment with outbound Studio input credential")
 	nativePath := flag.String("native-config", "", "Optional private native model/implementation registry JSON")
+	modelKeyEnv := flag.String("model-key-secret-env", "EVOLUTION_SPACE_MODEL_KEY_SECRET", "Environment variable with the host secret that encrypts model connection keys")
 	flag.Parse()
 	if (*browserListen != "" || *publicOrigin != "" || *frontend != "") && (*browserListen == "" || *publicOrigin == "" || *frontend == "") {
 		return fmt.Errorf("browser-listen, public-origin and frontend are required together")
@@ -103,12 +107,28 @@ func run() error {
 		go func() { defer close(evaluationDone); runEvaluations(workerCtx, store, authority, connections) }()
 		defer func() { cancel(); <-evaluationDone }()
 	}
+	browserOptions := httpapi.BrowserOptions{}
 	if *nativePath != "" {
-		registry, closeRegistry, err := readNativeRegistry(*nativePath, store)
+		registry, closeRegistry, config, err := readNativeRegistryConfig(*nativePath, store)
 		if err != nil {
 			return err
 		}
 		defer closeRegistry()
+		browserOptions = httpapi.BrowserOptions{Models: registry.ModelRevisions(), ExampleBuilders: len(registry.Transforms) > 0}
+		if config.ModelConnections {
+			connections, err := modelconn.Open(ctx, filepath.Join(*directory, "modelconn.db"), os.Getenv(*modelKeyEnv))
+			if err != nil {
+				return err
+			}
+			defer connections.Close()
+			schemas := registry.Schemas
+			adapter := native.NewAdapter(connections, store, func(digest string) (json.RawMessage, bool) {
+				raw, ok := schemas[digest]
+				return raw, ok
+			})
+			registry.Source = adapter
+			browserOptions.Connections = adapter
+		}
 		studio, err := studioclient.New(*studioInputs, os.Getenv(*studioInputSecretEnv))
 		if err != nil {
 			return err
@@ -169,7 +189,7 @@ func run() error {
 	var browser *http.Server
 	if *browserListen != "" {
 		var browserListener net.Listener
-		browser, browserListener, err = browserServer(store, *browserListen, *publicOrigin, *frontend, *endpoint, os.Getenv(*clientSecretEnv))
+		browser, browserListener, err = browserServer(store, *browserListen, *publicOrigin, *frontend, *endpoint, os.Getenv(*clientSecretEnv), browserOptions)
 		if err != nil {
 			return err
 		}
