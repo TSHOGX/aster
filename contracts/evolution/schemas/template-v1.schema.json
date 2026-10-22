@@ -1,0 +1,135 @@
+{
+  "$defs": {
+    "EvaluationPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/Revision"
+        },
+        "reference_release": {
+          "$ref": "#/$defs/ReleaseRef"
+        },
+        "reference_strategy": {
+          "type": "string"
+        },
+        "service": {
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "required": [
+        "mode",
+        "reference_strategy"
+      ],
+      "type": "object"
+    },
+    "ReleaseRef": {
+      "additionalProperties": false,
+      "properties": {
+        "descriptor_digest": {
+          "type": "string"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "publisher_id": {
+          "type": "string"
+        },
+        "version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "publisher_id",
+        "library_id",
+        "version_id",
+        "descriptor_digest"
+      ],
+      "type": "object"
+    },
+    "Revision": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "type": "object"
+    },
+    "Template": {
+      "additionalProperties": false,
+      "properties": {
+        "evaluation": {
+          "$ref": "#/$defs/EvaluationPolicy"
+        },
+        "goal": {
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "outputs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "parameters_schema": {},
+        "profile": {
+          "type": "string"
+        },
+        "ref": {
+          "$ref": "#/$defs/Revision"
+        },
+        "suggested_prefix": {
+          "type": "string"
+        },
+        "workflows": {
+          "items": {
+            "$ref": "#/$defs/Revision"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "ref",
+        "goal",
+        "parameters_schema",
+        "inputs",
+        "outputs",
+        "profile",
+        "workflows",
+        "suggested_prefix",
+        "evaluation"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/Template",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

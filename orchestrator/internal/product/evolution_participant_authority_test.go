@@ -1,0 +1,78 @@
+package product
+
+import "testing"
+
+func TestEvolutionParticipantUsesSavedActorAndCurrentGrant(t *testing.T) {
+	s, admin := accountStore(t)
+	token := adminTestToken(t, s, admin)
+	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
+	must(t, err)
+	scope := ProjectionScope{StandardUsersGroup, pending.OperationID, 1, pending.DesiredDigest}
+	for _, action := range []string{"reserve", "lookup", "adopt"} {
+		subject, err := s.EvolutionParticipantActor(ctx, scope, action)
+		must(t, err)
+		if subject != admin.ID {
+			t.Fatal("wrong operation actor", subject)
+		}
+	}
+	if _, err = s.EvolutionParticipantActor(ctx, scope, "cancel"); err != ErrForbidden {
+		t.Fatal("live operation cancelled", err)
+	}
+	changed := scope
+	changed.Revision++
+	if _, err = s.EvolutionParticipantActor(ctx, changed, "adopt"); err != ErrForbidden {
+		t.Fatal("substituted scope", err)
+	}
+	must(t, s.FailEvolutionParticipant(ctx, token, pending.OperationID, "studio", pending.DesiredDigest, "offline"))
+	if _, err = s.EvolutionParticipantActor(ctx, scope, "adopt"); err != ErrForbidden {
+		t.Fatal("failed operation adopted", err)
+	}
+	if _, err = s.EvolutionParticipantActor(ctx, scope, "lookup"); err != nil {
+		t.Fatal("failed operation lookup denied", err)
+	}
+	subject, err := s.EvolutionParticipantActor(ctx, scope, "cancel")
+	must(t, err)
+	if subject != admin.ID {
+		t.Fatal(subject)
+	}
+	must(t, s.RetryEvolutionOperation(ctx, token, StandardUsersGroup, pending.OperationID, EvolutionRetryInput{RequestID: "retry", ExpectedRevision: pending.DesiredRevision}))
+	_, err = s.SetEvolutionGroupGrant(ctx, token, StandardUsersGroup, EvolutionGroupGrantInput{"deny", admin.ID, "config.manage", "deny", 0})
+	must(t, err)
+	if _, err = s.EvolutionParticipantActor(ctx, scope, "adopt"); err != ErrForbidden {
+		t.Fatal("revoked actor still authorized", err)
+	}
+	allowed, err := s.AuthorizeEvolutionProjection(ctx, scope)
+	must(t, err)
+	if allowed {
+		t.Fatal("evaluation dispatch ignored actor revocation")
+	}
+}
+
+func TestEvolutionBasesRequireCurrentlyActiveAutomaticOperation(t *testing.T) {
+	s, admin := accountStore(t)
+	token := adminTestToken(t, s, admin)
+	pending, err := s.ActivateEvolutionConfig(ctx, token, StandardUsersGroup, EvolutionActivationInput{"activate", 0, activationConfigFixture(1, true)})
+	must(t, err)
+	scope := ProjectionScope{StandardUsersGroup, pending.OperationID, 1, pending.DesiredDigest}
+	if _, err = s.EvolutionParticipantActor(ctx, scope, "bases"); err != ErrForbidden {
+		t.Fatal("pending operation read generation bases", err)
+	}
+	for _, participant := range []string{"studio", "evolution-space"} {
+		must(t, acceptEvolutionFixture(s, ctx, token, pending.OperationID, participant, pending.DesiredDigest))
+	}
+	_, err = s.SettleEvolutionActivation(ctx, token, pending.OperationID)
+	must(t, err)
+	subject, err := s.EvolutionParticipantActor(ctx, scope, "bases")
+	must(t, err)
+	if subject != admin.ID {
+		t.Fatal("caller selected base reader", subject)
+	}
+	_, err = s.DisableEvolution(ctx, token, StandardUsersGroup, DisableEvolutionInput{"disable", 1})
+	must(t, err)
+	if _, err = s.EvolutionParticipantActor(ctx, scope, "bases"); err != ErrForbidden {
+		t.Fatal("disabled operation read generation bases", err)
+	}
+	if subject, err := s.EvolutionParticipantActor(ctx, scope, "manual-bases"); err != nil || subject != admin.ID {
+		t.Fatal("manual backfill bases denied with automation off", subject, err)
+	}
+}

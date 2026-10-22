@@ -142,7 +142,7 @@ run() {
  listed=$("$output/$package.test" -test.list "$selection")
  [[ $listed == *Test* ]] || { echo "no tests selected for $name" >&2; return 2; }
  mkdir -p "$output/$name"
- sudo -n env STUDIO_TEST_BINARY="$output/studio" PROJECT_TEST_ENGINE="$engine" PROJECT_TEST_TEMPLATE="$(realpath "$template")" PROJECT_TEST_SECONDARY_TEMPLATE="$secondary_template" PROJECT_TEST_SECONDARY_MANIFEST="$secondary_manifest" PROJECT_TEST_MANIFEST="$(realpath "$manifest")" PROJECT_TEST_OUTPUT="$output/$name" PROJECT_TEST_BIN_DIR="$output" PROJECT_TEST_REPO="$repo" PROJECT_TEST_CANDIDATE="$candidate" PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-}" PROJECT_PROVIDER_SOCKET="${PROJECT_PROVIDER_SOCKET:-}" PROJECT_PROVIDER_REPORT="${PROJECT_PROVIDER_REPORT:-}" PROJECT_PROVIDER_MODEL="${PROJECT_PROVIDER_MODEL:-}" \
+ sudo -n env STUDIO_TEST_MAX_SIZE="${STUDIO_TEST_MAX_SIZE:-}" STUDIO_TEST_BINARY="$output/studio" PROJECT_TEST_ENGINE="$engine" PROJECT_TEST_TEMPLATE="$(realpath "$template")" PROJECT_TEST_SECONDARY_TEMPLATE="$secondary_template" PROJECT_TEST_SECONDARY_MANIFEST="$secondary_manifest" PROJECT_TEST_MANIFEST="$(realpath "$manifest")" PROJECT_TEST_OUTPUT="$output/$name" PROJECT_TEST_BIN_DIR="$output" PROJECT_TEST_REPO="$repo" PROJECT_TEST_CANDIDATE="$candidate" PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-}" PROJECT_PROVIDER_SOCKET="${PROJECT_PROVIDER_SOCKET:-}" PROJECT_PROVIDER_REPORT="${PROJECT_PROVIDER_REPORT:-}" PROJECT_PROVIDER_MODEL="${PROJECT_PROVIDER_MODEL:-}" \
  "$repo/dev/project-substrate.sh" "$output/$package.test" -test.v -test.run "$selection" -test.timeout "$timeout" 2>&1 | tee "$output/$name.log"
 }
 if [[ $suite == release || $suite == all ]]; then run application '^(TestReleasedNativeSchedules|TestReleasedExecutableOnKhora|TestReleasedBaseContext|TestReleasedActivationTarget|TestReleasedGatewaySurvivesOwnerOutage|TestReleasedOwnerHandoff|TestReleasedNativeRetrySettlement|TestReleasedNativeCompactionSettlement|TestReleasedQueuedSteerConsumption|TestReleasedQueuedSteerStopRemovesUnconsumedInput)$' release 5m;fi
@@ -169,4 +169,4 @@ fi
 
 if [[ $suite == publication || $suite == all ]]; then run application '^TestReleasedBuiltinVolumePublication$' publication 4m;fi
 
-if [[ $suite == imports ]]; then run application "^(TestStudioImportOnRealKhora|TestSharedAssetsImportOnRealKhora)$" imports 10m;fi
+if [[ $suite == imports ]]; then run application "^(TestStudioImportOnRealKhora|TestSharedAssetsImportOnRealKhora|TestSharedAssetsProjectAdoptionOnRealKhora)$" imports 10m;fi

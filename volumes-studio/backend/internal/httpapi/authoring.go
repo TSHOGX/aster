@@ -26,31 +26,27 @@ type AuthoringAPI struct {
 
 func NewAuthoringAPI(store *authoring.Store) *AuthoringAPI {
 	a := &AuthoringAPI{Store: store, mux: http.NewServeMux(), mutations: make(chan struct{}, 4)}
+	a.registerBranches()
+	a.registerHistory()
+	a.registerEvaluations()
+	a.registerReviews()
 	m := a.mux
 	m.HandleFunc("GET "+apiPrefix+"capabilities", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"profiles": []string{manifest.Profile, manifest.SharedAssetsProfile}, "max_file_bytes": strconv.FormatInt(manifest.MaxFileBytes, 10), "max_tree_bytes": strconv.FormatInt(manifest.MaxTreeBytes, 10), "max_entries": manifest.MaxEntries, "max_chunk_bytes": strconv.Itoa(authoring.MaxChunkBytes), "max_text_bytes": strconv.Itoa(authoring.MaxTextBytes), "page_size": 200})
 	})
 	m.HandleFunc("GET "+apiPrefix+"libraries", a.libraries)
 	m.HandleFunc("POST "+apiPrefix+"libraries", a.create)
-	m.HandleFunc("GET "+apiPrefix+"libraries/{library}", a.library)
-	m.HandleFunc("PATCH "+apiPrefix+"libraries/{library}", a.metadata)
-	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/draft/validation", a.validation)
-	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}/validation", a.validation)
-	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/draft/tree", a.tree)
-	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/draft/search", a.search)
-	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/draft/entry", a.entry)
-	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}/search", a.search)
-	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/draft/content", a.content)
-	m.HandleFunc("POST "+apiPrefix+"libraries/{library}/draft/mutations", a.mutate)
-	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/draft/diff", a.diff)
-	m.HandleFunc("POST "+apiPrefix+"libraries/{library}/publish-preview", a.preview)
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}", a.libraryAction("volume.read", a.library))
+	m.HandleFunc("PATCH "+apiPrefix+"libraries/{library}", a.libraryAction("volume.configure", a.metadata))
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}/validation", a.libraryAction("volume.read", a.validation))
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}/search", a.libraryAction("volume.read", a.search))
 	m.HandleFunc("POST "+apiPrefix+"libraries/{library}/versions", a.publish)
-	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions", a.versions)
-	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}", a.version)
-	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}/tree", a.versionTree)
-	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}/content", a.content)
-	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}/retention", a.retention)
-	m.HandleFunc("POST "+apiPrefix+"libraries/{library}/versions/{version}/lifecycle", a.lifecycle)
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions", a.libraryAction("volume.read", a.versions))
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}", a.libraryAction("volume.read", a.version))
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}/tree", a.libraryAction("volume.read", a.versionTree))
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}/content", a.libraryAction("volume.read", a.content))
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/versions/{version}/retention", a.libraryAction("volume.read", a.retention))
+	m.HandleFunc("POST "+apiPrefix+"libraries/{library}/versions/{version}/lifecycle", a.libraryAction("volume.publish", a.lifecycle))
 	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/uploads", a.uploads)
 	m.HandleFunc("POST "+apiPrefix+"libraries/{library}/uploads", a.uploadStart)
 	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/uploads/{upload}", a.uploadStatus)
@@ -59,10 +55,14 @@ func NewAuthoringAPI(store *authoring.Store) *AuthoringAPI {
 	m.HandleFunc("DELETE "+apiPrefix+"libraries/{library}/uploads/{upload}", a.uploadCancel)
 	m.HandleFunc("GET "+apiPrefix+"operations/{operation}", a.operation)
 	m.HandleFunc("POST "+apiPrefix+"operations/{operation}/{action}", a.operationAction)
-	m.HandleFunc("GET "+apiPrefix+"events", a.events)
+	m.HandleFunc("GET "+apiPrefix+"libraries/{library}/events", a.events)
 	return a
 }
 func (a *AuthoringAPI) Serve(session identity.Session, w http.ResponseWriter, r *http.Request) {
+	if r.Method == "POST" && r.URL.Path == apiPrefix+"libraries" && !session.CanCreateLibrary {
+		authoringError(w, authoring.ErrAuthority)
+		return
+	}
 	if r.Method != "GET" && r.Method != "HEAD" {
 		select {
 		case a.mutations <- struct{}{}:
@@ -96,6 +96,8 @@ func authoringError(w http.ResponseWriter, err error) {
 		return
 	}
 	switch {
+	case errors.Is(err, authoring.ErrAuthority), errors.Is(err, identity.ErrUnauthorized):
+		writeError(w, 403, "authority_required")
 	case errors.Is(err, authoring.ErrInvalid):
 		writeError(w, 422, "invalid_input")
 	case errors.Is(err, authoring.ErrNotFound):
@@ -106,6 +108,8 @@ func authoringError(w http.ResponseWriter, err error) {
 		writeError(w, 409, "unfinished_work")
 	case errors.Is(err, authoring.ErrQuota):
 		writeError(w, 507, "storage_quota_exceeded")
+	case errors.Is(err, identity.ErrUnavailable):
+		writeError(w, 503, "identity_unavailable")
 	default:
 		writeError(w, 500, "storage_unavailable")
 	}
@@ -126,11 +130,11 @@ func revision(r *http.Request) int64 {
 }
 func (a *AuthoringAPI) libraries(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("mode") == "workbench" {
-		p, err := a.Store.WorkbenchCatalog(r.Context(), workbenchQuery(r))
+		p, err := a.Store.WorkbenchCatalog(r.Context(), actor(r), workbenchQuery(r))
 		respond(w, 200, p, err)
 		return
 	}
-	list, err := a.Store.Libraries(r.Context(), r.URL.Query().Get("after"))
+	list, err := a.Store.Libraries(r.Context(), actor(r), r.URL.Query().Get("after"))
 	next := ""
 	if len(list) == 200 {
 		next = list[199].ID
@@ -162,48 +166,12 @@ func (a *AuthoringAPI) metadata(w http.ResponseWriter, r *http.Request) {
 	l, err := a.Store.Update(r.Context(), actor(r), r.PathValue("library"), b)
 	respond(w, 200, l, err)
 }
-func (a *AuthoringAPI) tree(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("mode") == "workbench" {
-		p, err := a.Store.WorkbenchTree(r.Context(), r.PathValue("library"), "", workbenchQuery(r), false)
-		respond(w, 200, p, err)
-		return
-	}
-	page, err := a.Store.Tree(r.Context(), r.PathValue("library"), r.URL.Query().Get("parent"), r.URL.Query().Get("after"), revision(r))
-	respond(w, 200, page, err)
-}
-func (a *AuthoringAPI) mutate(w http.ResponseWriter, r *http.Request) {
-	var b authoring.Mutation
-	if !decodeBody(w, r, &b) {
-		return
-	}
-	result, err := a.Store.Mutate(r.Context(), actor(r), r.PathValue("library"), b)
-	respond(w, 200, result, err)
-}
-func (a *AuthoringAPI) diff(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("mode") == "workbench" {
-		p, err := a.Store.WorkbenchDiff(r.Context(), r.PathValue("library"), workbenchQuery(r))
-		respond(w, 200, p, err)
-		return
-	}
-	changes, next, err := a.Store.Diff(r.Context(), r.PathValue("library"), r.URL.Query().Get("after"), revision(r))
-	respond(w, 200, map[string]any{"changes": changes, "next": next}, err)
-}
-func (a *AuthoringAPI) preview(w http.ResponseWriter, r *http.Request) {
-	var b struct {
-		ExpectedRevision int64 `json:"expected_revision"`
-	}
-	if !decodeBody(w, r, &b) {
-		return
-	}
-	d, err := a.Store.Preview(r.Context(), r.PathValue("library"), b.ExpectedRevision)
-	respond(w, 200, d, err)
-}
 func (a *AuthoringAPI) publish(w http.ResponseWriter, r *http.Request) {
-	var b authoring.PublishInput
+	var b authoring.ReleaseInput
 	if !decodeBody(w, r, &b) {
 		return
 	}
-	v, err := a.Store.Freeze(r.Context(), actor(r), r.PathValue("library"), b)
+	v, err := a.Store.Release(r.Context(), actor(r), r.PathValue("library"), b)
 	respond(w, 202, v, err)
 }
 func (a *AuthoringAPI) versions(w http.ResponseWriter, r *http.Request) {
@@ -249,15 +217,12 @@ func (a *AuthoringAPI) content(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 416, "single_range_required")
 		return
 	}
-	reader, e, err := a.Store.Content(r.Context(), r.PathValue("library"), r.URL.Query().Get("path"), r.PathValue("version"), revision(r))
+	reader, e, err := a.Store.Content(r.Context(), r.PathValue("library"), r.URL.Query().Get("path"), r.PathValue("version"))
 	if err != nil {
 		authoringError(w, err)
 		return
 	}
 	defer reader.Close()
-	if revision(r) > 0 {
-		w.Header().Set("X-Draft-Revision", strconv.FormatInt(revision(r), 10))
-	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(e.Path)}))
 	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
@@ -267,7 +232,7 @@ func (a *AuthoringAPI) content(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, path.Base(e.Path), time.Time{}, reader)
 }
 func (a *AuthoringAPI) uploads(w http.ResponseWriter, r *http.Request) {
-	list, err := a.Store.Uploads(r.Context(), r.PathValue("library"))
+	list, err := a.Store.BranchUploads(r.Context(), actor(r), r.PathValue("library"), r.URL.Query().Get("branch_id"))
 	respond(w, 200, map[string]any{"uploads": list}, err)
 }
 func (a *AuthoringAPI) uploadStart(w http.ResponseWriter, r *http.Request) {
@@ -279,7 +244,7 @@ func (a *AuthoringAPI) uploadStart(w http.ResponseWriter, r *http.Request) {
 	respond(w, 201, u, err)
 }
 func (a *AuthoringAPI) upload(w http.ResponseWriter, r *http.Request) (authoring.Upload, bool) {
-	u, err := a.Store.Upload(r.Context(), r.PathValue("upload"))
+	u, err := a.Store.ActorUpload(r.Context(), actor(r), r.PathValue("library"), r.PathValue("upload"))
 	if err == nil && u.LibraryID != r.PathValue("library") {
 		err = authoring.ErrNotFound
 	}
@@ -343,6 +308,9 @@ func (a *AuthoringAPI) uploadCancel(w http.ResponseWriter, r *http.Request) {
 }
 func (a *AuthoringAPI) operation(w http.ResponseWriter, r *http.Request) {
 	v, err := a.Store.Version(r.Context(), r.PathValue("operation"))
+	if err == nil {
+		err = a.Store.AuthorizeLibrary(r.Context(), actor(r), v.LibraryID, "volume.read")
+	}
 	respond(w, 200, v, err)
 }
 func (a *AuthoringAPI) operationAction(w http.ResponseWriter, r *http.Request) {
@@ -355,6 +323,15 @@ func (a *AuthoringAPI) operationAction(w http.ResponseWriter, r *http.Request) {
 		RequestID string `json:"request_id"`
 	}
 	if !decodeBody(w, r, &b) {
+		return
+	}
+	version, err := a.Store.Version(r.Context(), r.PathValue("operation"))
+	if err != nil {
+		authoringError(w, err)
+		return
+	}
+	if err = a.Store.AuthorizeLibrary(r.Context(), actor(r), version.LibraryID, "volume.publish"); err != nil {
+		authoringError(w, err)
 		return
 	}
 	v, err := a.Store.Operation(r.Context(), actor(r), r.PathValue("operation"), authoring.OperationInput{RequestID: b.RequestID, Action: action})
@@ -403,12 +380,16 @@ func (a *AuthoringAPI) retention(w http.ResponseWriter, r *http.Request) {
 // Bounded cursor polling is the durable invalidation path. It does not hold a
 // session authority decision open indefinitely as an unaudited event stream.
 func (a *AuthoringAPI) events(w http.ResponseWriter, r *http.Request) {
-	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	if after < 0 {
+	raw := r.URL.Query().Get("after")
+	if raw == "" {
+		raw = "0"
+	}
+	after, parseErr := strconv.ParseInt(raw, 10, 64)
+	if parseErr != nil || after < 0 || strconv.FormatInt(after, 10) != raw {
 		writeError(w, 422, "invalid_cursor")
 		return
 	}
-	events, err := a.Store.Events(r.Context(), after)
+	events, err := a.Store.Events(r.Context(), actor(r), r.PathValue("library"), after)
 	next := after
 	if len(events) > 0 {
 		next = events[len(events)-1].Sequence

@@ -1,6 +1,7 @@
 /* eslint-disable react-hooks/immutability -- Imperative editor controller publishes every mutation through notify; React state only owns its stable lifetime. */
 "use client";
 import { message, useT } from "../lib/i18n";
+import { branchAPI, branchRoot, type Branch } from "../lib/branches";
 
 import {
   createContext,
@@ -43,7 +44,9 @@ import { useAccountPreferences } from "../../../web/account-preferences";
 import type { Message } from "../../../web/i18n/locale";
 import { Modal } from "./ui";
 import { useSession, SessionGate } from "./session";
+export const workspaceKey = (library: string, branch: string, version = "") => JSON.stringify([library, branch, version]);
 export type BufferFile = {
+  branch: string;
   key: string;
   library: string;
   version: string;
@@ -71,6 +74,7 @@ export type BufferFile = {
   };
 };
 export type Task = {
+  branch: string;
   id: string;
   library: string;
   path: string;
@@ -92,6 +96,7 @@ type Model = {
   tasks: Task[];
   uploads: Record<string, Upload[]>;
   libraries: Record<string, Library>;
+  branches: Record<string, Branch>;
   questions: Question[];
   notice: string;
   recoveryError: string;
@@ -107,6 +112,7 @@ function makeModel(): Model {
     tasks: [],
     uploads: {},
     libraries: {},
+    branches: {},
     questions: [],
     notice: "",
     recoveryError: "",
@@ -153,18 +159,22 @@ function useStudioController(session: Session | null) {
       return api<T>(path, { method, body: exact }, auth.current.csrf);
     }
   };
-  const snapshot = (library: string, path: string) =>
-    api<{ entry: Entry | null; revision: number }>(
-      `/libraries/${library}/draft/entry?${query({ path })}`,
-    );
+  const selectedBranch = (library: string) => {
+    const branch = model.current.branches[library];
+    if (!branch) throw new Error("Select a working branch before editing.");
+    return branch;
+  };
+  const snapshot = (library: string, path: string, branch = selectedBranch(library).id) =>
+    branchAPI.entry(library, branch, path);
   const read = async (
     library: string,
     version: string,
     entry: Entry,
     revision: number,
+    branch = version ? "" : selectedBranch(library).id,
   ) => {
     const response = await fetch(
-      `${base}/api/v1/libraries/${library}/${version ? `versions/${version}` : "draft"}/content?${query({ path: entry.path, revision: version ? undefined : revision })}`,
+      `${base}/api/v1/libraries/${library}/${version ? `versions/${version}` : `branches/${encodeURIComponent(branch)}/draft`}/content?${query({ path: entry.path, revision: version ? undefined : revision })}`,
       { credentials: "same-origin", cache: "no-store" },
     );
     if (!response.ok) throw new APIError(response.status, "file_read_failed");
@@ -181,6 +191,7 @@ function useStudioController(session: Session | null) {
               id: b.recoveryID,
               account,
               library: b.library,
+              branch: b.branch,
               path: b.entry.path,
               session: sessionID.current,
               text: b.text,
@@ -218,25 +229,28 @@ function useStudioController(session: Session | null) {
     version: string,
     entry: Entry,
     revision = 0,
+    branch = version ? "" : selectedBranch(library).id,
   ) => {
-    const generation = (model.current.selectionGeneration[library] || 0) + 1;
-    model.current.selectionGeneration[library] = generation;
-    const key = JSON.stringify([library, version, entry.path]);
+    const scope = workspaceKey(library, branch, version);
+    const generation = (model.current.selectionGeneration[scope] || 0) + 1;
+    model.current.selectionGeneration[scope] = generation;
+    const key = JSON.stringify([library, branch, version, entry.path]);
     let b = model.current.buffers.find((x) => x.key === key);
     if (b) {
-      model.current.active[library] = key;
+      model.current.active[scope] = key;
       notify();
       return b;
     }
     if (entry.kind !== "file") return;
     if (!version) {
-      const current = await snapshot(library, entry.path);
+      const current = await snapshot(library, entry.path, branch);
       if (!current.entry) throw new Error("File no longer exists.");
       entry = current.entry;
       revision = current.revision;
     }
     b = {
       key,
+      branch,
       library,
       version,
       entry,
@@ -251,12 +265,13 @@ function useStudioController(session: Session | null) {
         account,
         sessionID.current,
         library,
+        branch,
         entry.path,
       ]),
     };
     const image = /\.(png|jpe?g|gif|webp)$/i.test(entry.path);
     if (Number(entry.size) <= (image ? 16 << 20 : 1 << 20)) {
-      const data = await read(library, version, entry, revision);
+      const data = await read(library, version, entry, revision, branch);
       if (image) {
         const ext = entry.path.split(".").at(-1)!.toLowerCase();
         b.image = URL.createObjectURL(
@@ -282,10 +297,10 @@ function useStudioController(session: Session | null) {
       b = concurrent;
     } else model.current.buffers.push(b);
     if (
-      model.current.selectionGeneration[library] === generation &&
+      model.current.selectionGeneration[scope] === generation &&
       !model.current.expired
     )
-      model.current.active[library] = key;
+      model.current.active[scope] = key;
     notify();
     return b;
   };
@@ -299,7 +314,7 @@ function useStudioController(session: Session | null) {
     if (current.entry && Number(current.entry.size) <= 1 << 20) {
       try {
         const decoded = decodeText(
-          await read(b.library, "", current.entry, current.revision),
+          await read(b.library, "", current.entry, current.revision, b.branch),
         );
         text = decoded.text;
         format = decoded.format;
@@ -314,7 +329,7 @@ function useStudioController(session: Session | null) {
     notify();
   };
   const save = (b: BufferFile) =>
-    queue.current.run(b.library, async () => {
+    queue.current.run(`${b.library}:${b.branch}`, async () => {
       if (b.version || !b.editable || (b.text === b.saved && !b.pending))
         return;
       if (model.current.expired) throw new Error("Sign in again to save.");
@@ -325,7 +340,7 @@ function useStudioController(session: Session | null) {
       try {
         for (let attempt = 0; attempt < 2; attempt++) {
           if (!b.pending) {
-            const current = await snapshot(b.library, b.entry.path);
+            const current = await snapshot(b.library, b.entry.path, b.branch);
             if (entryIdentity(current.entry) !== entryIdentity(b.entry)) {
               await conflict(b, current);
               throw new Error(b.error);
@@ -338,7 +353,7 @@ function useStudioController(session: Session | null) {
               body: JSON.stringify({
                 request_id: requestID(),
                 expected_revision: current.revision,
-                action: "text",
+                expected_head: current.head,
                 path: b.entry.path,
                 text: raw,
               }),
@@ -347,7 +362,7 @@ function useStudioController(session: Session | null) {
           const pending = b.pending;
           try {
             const result = await api<{ revision: number }>(
-              `/libraries/${b.library}/draft/mutations`,
+              `${branchRoot(b.library, b.branch)}/draft/text`,
               { method: "POST", body: pending.body },
               auth.current!.csrf,
             );
@@ -394,7 +409,7 @@ function useStudioController(session: Session | null) {
         await save(b);
   };
   const discard = (b: BufferFile) =>
-    queue.current.run(b.library, async () => {
+    queue.current.run(`${b.library}:${b.branch}`, async () => {
       // Wait for an in-flight save before changing its buffer. An uncertain
       // write must retain its receipt until the user can resolve its outcome.
       if (b.pending)
@@ -413,7 +428,7 @@ function useStudioController(session: Session | null) {
   const close = async (b: BufferFile) => {
     // A disabled Save button also means an in-flight save. Settle it before
     // deciding whether closing needs an unsaved-content confirmation.
-    await queue.current.run(b.library, async () => {});
+    await queue.current.run(`${b.library}:${b.branch}`, async () => {});
     if (b.text !== b.saved || !!b.pending) {
       const answer = await ask(
         "Unsaved changes",
@@ -433,17 +448,18 @@ function useStudioController(session: Session | null) {
     if (b.image) URL.revokeObjectURL(b.image);
     if (!b.version) await removeLocalCopy(b.recoveryID);
     model.current.buffers = model.current.buffers.filter((x) => x !== b);
-    if (model.current.active[b.library] === b.key)
-      model.current.active[b.library] =
-        model.current.buffers.filter((x) => x.library === b.library).at(-1)
+    if (model.current.active[workspaceKey(b.library,b.branch,b.version)] === b.key)
+      model.current.active[workspaceKey(b.library,b.branch,b.version)] =
+        model.current.buffers.filter((x) => x.library === b.library && x.branch === b.branch && x.version === b.version).at(-1)
           ?.key || "";
     notify();
   };
-  const settle = async (library: string, path = "") => {
-    await queue.current.run(library, async () => {});
+  const settle = async (library: string, path = "", branch = selectedBranch(library).id) => {
+    await queue.current.run(`${library}:${branch}`, async () => {});
     const dirty = model.current.buffers.filter(
       (b) =>
         b.library === library &&
+        b.branch === branch &&
         !b.version &&
         (b.text !== b.saved || !!b.pending) &&
         (!path || b.entry.path === path || b.entry.path.startsWith(path + "/")),
@@ -472,20 +488,21 @@ function useStudioController(session: Session | null) {
     library: string,
     input: Record<string, unknown>,
     expectedRevision?: number,
-  ) =>
-    queue.current.run(library, async () => {
-      const l = await api<Library>(`/libraries/${library}`);
+  ) => {
+    const branchID = selectedBranch(library).id;
+    return queue.current.run(`${library}:${branchID}`, async () => {
+      const branch = await branchAPI.read(library, branchID);
+      const text = input.action === "text";
+      const payload = { ...input };
+      if (text) delete payload.action;
       const result = await write<{ revision: number }>(
-        `/libraries/${library}/draft/mutations`,
-        {
-          request_id: requestID(),
-          expected_revision: expectedRevision ?? l.draft_revision,
-          ...input,
-        },
+        `${branchRoot(library, branchID)}/draft/${text ? "text" : "structure"}`,
+        { request_id: requestID(), expected_revision: expectedRevision ?? branch.draft_revision, expected_head: branch.head, ...payload },
       );
       changed();
       return result;
     });
+  };
   const uploadOne = async (task: Task) => {
     if (!task.file) return;
     const file = task.file;
@@ -504,12 +521,13 @@ function useStudioController(session: Session | null) {
         abort.signal,
       );
       for (const directory of ancestors(task.path)) {
-        await queue.current.run(task.library, async () => {
-          const current = await snapshot(task.library, directory);
+        await queue.current.run(`${task.library}:${task.branch}`, async () => {
+          const current = await snapshot(task.library, directory, task.branch);
           if (!current.entry)
-            await write(`/libraries/${task.library}/draft/mutations`, {
+            await write(`${branchRoot(task.library, task.branch)}/draft/structure`, {
               request_id: requestID(),
               expected_revision: current.revision,
+              expected_head: current.head,
               action: "mkdir",
               path: directory,
             });
@@ -518,9 +536,10 @@ function useStudioController(session: Session | null) {
         });
       }
       const root = `/libraries/${task.library}`;
-      const all = await api<{ uploads: Upload[] }>(`${root}/uploads`);
+      const all = await api<{ uploads: Upload[] }>(`${root}/uploads?branch_id=${encodeURIComponent(task.branch)}`);
       let u = all.uploads.find(
         (x) =>
+          x.branch_id === task.branch &&
           x.state === "open" &&
           x.path === task.path &&
           x.digest === digest &&
@@ -529,8 +548,8 @@ function useStudioController(session: Session | null) {
           x.owner.subject === auth.current?.subject,
       );
       if (!u) {
-        u = await queue.current.run(task.library, async () => {
-          const target = await snapshot(task.library, task.path);
+        u = await queue.current.run(`${task.library}:${task.branch}`, async () => {
+          const target = await snapshot(task.library, task.path, task.branch);
           if (
             target.entry &&
             (await ask(
@@ -542,6 +561,7 @@ function useStudioController(session: Session | null) {
             throw new Error("Replacement canceled.");
           return write<Upload>(`${root}/uploads`, {
             request_id: requestID(),
+            branch_id: task.branch,
             expected_revision: target.revision,
             path: task.path,
             size: String(file.size),
@@ -573,7 +593,7 @@ function useStudioController(session: Session | null) {
         task.progress = file.size ? offset / file.size : 1;
         notify();
       }
-      await queue.current.run(task.library, async () => {
+      await queue.current.run(`${task.library}:${task.branch}`, async () => {
         const current = await api<Upload>(`${root}/uploads/${u!.id}`);
         let confirm_target: string | undefined;
         if (current.current_target !== current.target_identity) {
@@ -609,12 +629,15 @@ function useStudioController(session: Session | null) {
     }
   };
   const upload = async (library: string, parent: string, files: File[]) => {
+    const branch = selectedBranch(library).id;
+    const tasks: Task[] = [];
     for (const file of files) {
       const path = [parent, file.webkitRelativePath || file.name]
         .filter(Boolean)
         .join("/");
       const task: Task = {
         id: requestID(),
+        branch,
         library,
         path,
         state: "Queued",
@@ -622,13 +645,15 @@ function useStudioController(session: Session | null) {
         file,
       };
       model.current.tasks.push(task);
+      tasks.push(task);
       notify();
       await uploadOne(task);
     }
+    return tasks;
   };
   const logout = async () => {
-    for (const id of new Set(model.current.buffers.map((b) => b.library)))
-      if (!(await settle(id))) return;
+    for (const b of model.current.buffers.filter(b => !b.version))
+      if (!(await settle(b.library,"",b.branch))) return;
     const response = await fetch(`${base}/auth/logout`, {
       method: "POST",
       headers: { "X-CSRF-Token": auth.current!.csrf },
@@ -701,8 +726,10 @@ function useStudioController(session: Session | null) {
     return () => window.removeEventListener("pagehide", flush);
   });
   const restore = async (r: Recovery) => {
+    if (!r.branch) throw new Error("Recovery has no branch identity and cannot be restored into a working branch.");
+    model.current.branches[r.library] = await branchAPI.read(r.library, r.branch);
     const existing = model.current.buffers.find(
-      (b) => b.library === r.library && !b.version && b.entry.path === r.path,
+      (b) => b.library === r.library && b.branch === r.branch && !b.version && b.entry.path === r.path,
     );
     if (
       existing &&
@@ -733,11 +760,12 @@ function useStudioController(session: Session | null) {
         await persist();
       }
     }
-    let b = await open(r.library, "", r.entry).catch(() => undefined);
+    let b = await open(r.library, "", r.entry, 0, r.branch).catch(() => undefined);
     if (!b) {
       b = {
-        key: JSON.stringify([r.library, "", r.path]),
+        key: JSON.stringify([r.library, r.branch, "", r.path]),
         library: r.library,
+        branch: r.branch,
         version: "",
         entry: r.entry,
         revision: r.revision,
@@ -760,8 +788,8 @@ function useStudioController(session: Session | null) {
     b.pending = r.pending;
     b.editorState = undefined;
     b.reset = (b.reset || 0) + 1;
-    model.current.active[r.library] = b.key;
-    const current = await snapshot(r.library, r.path);
+    model.current.active[workspaceKey(r.library,r.branch)] = b.key;
+    const current = await snapshot(r.library, r.path, r.branch);
     if (entryIdentity(current.entry) !== entryIdentity(r.entry))
       await conflict(b, current);
     else b.status = "Unsaved";
@@ -772,6 +800,7 @@ function useStudioController(session: Session | null) {
   };
   return {
     model: model.current,
+    selectBranch: (branch: Branch) => { model.current.branches[branch.library_id] = branch; notify(); },
     session,
     notify,
     changed,
@@ -804,7 +833,7 @@ function ancestors(path: string) {
   const parts = parentPath(path).split("/").filter(Boolean);
   return parts.map((_, i) => parts.slice(0, i + 1).join("/"));
 }
-type Studio = ReturnType<typeof useStudioController>;
+type Studio = ReturnType<typeof useStudioController> & { preferences: ReturnType<typeof useAccountPreferences> };
 const StudioContext = createContext<Studio | null>(null);
 export function useStudio() {
   const value = useContext(StudioContext);
@@ -813,15 +842,16 @@ export function useStudio() {
 }
 export function StudioProvider({ children }: { children: ReactNode }) {
   const tr = useT();
-  const { session, error, loading } = useSession();
-  const studio = useStudioController(session);
-  useAccountPreferences(session?.subject, true);
+  const { session, error, loading, refresh } = useSession();
+  const controller = useStudioController(session);
+  const preferences = useAccountPreferences(session?.subject, true);
+  const studio = { ...controller, preferences };
   useEffect(() => { document.title = "Volume Studio"; }, []);
   const question = studio.model.questions[0];
   return (
     <StudioContext.Provider value={studio}>
       {!session ? (
-        <SessionGate loading={loading} error={tr(error)} />
+        <SessionGate loading={loading} error={tr(error)} retry={refresh} />
       ) : studio.model.expired ? (
         <main className="session-gate">
           <h1>{tr("Sign in again")}</h1>
@@ -833,7 +863,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
              {tr("Sign in")} </a>
         </main>
       ) : (
-        children
+        <>{error && <div role="alert" className="notice error">{tr(error)} <button onClick={refresh}>{tr("Retry")}</button></div>}{children}</>
       )}
       {question && (
         <Modal

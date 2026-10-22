@@ -1,0 +1,274 @@
+package authoring
+
+import (
+	"context"
+	"fmt"
+	"testing"
+)
+
+func TestEvolutionPrefixReservationsRejectNestedAndAllowDisjoint(t *testing.T) {
+	s, _ := testStore(t)
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	ctx := context.Background()
+	token := testActor
+	group := "group"
+	first, err := s.ReserveEvolutionPrefix(ctx, token, PrefixReservation{l.ID, "skills", group, "skills-binding", 1, "", "op-one"}, "op-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.State != "pending" {
+		t.Fatal(first)
+	}
+	if _, err := s.ReserveEvolutionPrefix(ctx, token, PrefixReservation{l.ID, "skills/sql", group, "sql-binding", 1, "", "op-two"}, "op-two"); err != ErrConflict {
+		t.Fatal("nested prefix won", err)
+	}
+	second, err := s.ReserveEvolutionPrefix(ctx, token, PrefixReservation{l.ID, "lessons", group, "lessons-binding", 1, "", "op-three"}, "op-three")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ActivateEvolutionPrefix(ctx, token, "op-one", l.ID, "skills", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ActivateEvolutionPrefix(ctx, token, "op-three", l.ID, "lessons", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseEvolutionPrefix(ctx, token, "op-one", l.ID, "skills"); err != ErrConflict {
+		t.Fatal(err)
+	}
+	_ = second
+}
+
+func TestEvolutionReservationCannotBeStolenOrRewound(t *testing.T) {
+	s, _ := testStore(t)
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	ctx := context.Background()
+	token := testActor
+	r := PrefixReservation{l.ID, "skills", "group", "binding", 1, "", "reserve"}
+	_, err := s.ReserveEvolutionPrefix(ctx, token, r, r.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := s.ActivateEvolutionPrefix(ctx, token, r.OperationID, r.LibraryID, r.Prefix, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.ReserveEvolutionPrefix(ctx, token, r, r.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.State != active.State {
+		t.Fatal("retry rewound reservation")
+	}
+	r.BindingID = "other"
+	if _, err := s.ReserveEvolutionPrefix(ctx, token, r, r.OperationID); err != ErrConflict {
+		t.Fatal("binding stole prefix", err)
+	}
+	r.Prefix = "../escape"
+	if _, err := s.ReserveEvolutionPrefix(ctx, token, r, r.OperationID); err != ErrInvalid {
+		t.Fatal("unclean prefix accepted", err)
+	}
+}
+
+func TestReservationCompensationOnlyOwnsPendingOperation(t *testing.T) {
+	s, _ := testStore(t)
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	ctx := context.Background()
+	r := PrefixReservation{l.ID, "skills", "group", "binding", 1, "", "owned"}
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseEvolutionPrefix(ctx, testActor, "other", l.ID, r.Prefix); err == nil {
+		t.Fatal("foreign compensation accepted")
+	}
+	if _, err := s.ActivateEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix); err != ErrConflict {
+		t.Fatal("active ownership released by compensation", err)
+	}
+	r.Prefix = "lessons"
+	r.BindingID = "lessons"
+	r.OperationID = "pending"
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.ReleaseEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix); err != nil {
+			t.Fatal("pending compensation failed", err)
+		}
+	}
+}
+
+func TestConcurrentPrefixReservations(t *testing.T) {
+	for _, scenario := range []struct {
+		name, left, right, secondGroup string
+		winners                        int
+	}{{"nested", "skills", "skills/sql", "alpha", 1}, {"disjoint", "skills", "lessons", "alpha", 2}, {"different-owner", "skills", "lessons", "beta", 1}} {
+		t.Run(scenario.name, func(t *testing.T) {
+			s, _ := testStore(t)
+			l := library(t, s)
+			s.config.Authority = &branchAuthority{true}
+			ctx := context.Background()
+			start := make(chan struct{})
+			results := make(chan error, 2)
+			for i, prefix := range []string{scenario.left, scenario.right} {
+				go func(i int, prefix string) {
+					<-start
+					group := "alpha"
+					if i == 1 {
+						group = scenario.secondGroup
+					}
+					operation := fmt.Sprintf("operation-%d", i)
+					_, err := s.ReserveEvolutionPrefix(ctx, testActor, PrefixReservation{LibraryID: l.ID, Prefix: prefix, GroupID: group, BindingID: operation, Generation: 1, OperationID: operation}, operation)
+					results <- err
+				}(i, prefix)
+			}
+			close(start)
+			winners := 0
+			for i := 0; i < 2; i++ {
+				err := <-results
+				if err == nil {
+					winners++
+				} else if err != ErrConflict {
+					t.Fatal(err)
+				}
+			}
+			if winners != scenario.winners {
+				t.Fatalf("got %d winners, expected %d", winners, scenario.winners)
+			}
+		})
+	}
+}
+
+func TestArchivedLibraryBlocksReservationEffectsButAllowsCompensation(t *testing.T) {
+	s, _ := testStore(t)
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	ctx := context.Background()
+	r := PrefixReservation{LibraryID: l.ID, Prefix: "skills", GroupID: "group", BindingID: "binding", Generation: 1, OperationID: "pending"}
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, "UPDATE libraries SET archived=1 WHERE id=?", l.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ActivateEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix, 1); err != ErrConflict {
+		t.Fatal("archived library activated", err)
+	}
+	r.Prefix = "lessons"
+	r.BindingID = "second"
+	r.OperationID = "second"
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != ErrConflict {
+		t.Fatal("archived library reserved", err)
+	}
+	if err := s.ReleaseEvolutionPrefix(ctx, testActor, "pending", l.ID, "skills"); err != nil {
+		t.Fatal("cleanup blocked", err)
+	}
+}
+
+func TestCompensationDoesNotTransferLibraryOwner(t *testing.T) {
+	s, _ := testStore(t)
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	ctx := context.Background()
+	r := PrefixReservation{LibraryID: l.ID, Prefix: "skills", GroupID: "alpha", BindingID: "skills", Generation: 1, OperationID: "alpha-op"}
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix); err != nil {
+		t.Fatal(err)
+	}
+	r.GroupID = "beta"
+	r.Prefix = "lessons"
+	r.BindingID = "lessons"
+	r.OperationID = "beta-op"
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != ErrConflict {
+		t.Fatal("compensation silently transferred owner", err)
+	}
+	r.GroupID = "alpha"
+	r.OperationID = "alpha-lessons"
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != nil {
+		t.Fatal("original owner cannot reserve disjoint output", err)
+	}
+}
+
+func TestReleasedReservationRequiresNextGeneration(t *testing.T) {
+	s, _ := testStore(t)
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	ctx := context.Background()
+	r := PrefixReservation{LibraryID: l.ID, Prefix: "skills", GroupID: "group", BindingID: "binding", Generation: 2, OperationID: "first"}
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != ErrConflict {
+		t.Fatal("uninitialized generation accepted", err)
+	}
+	r.Generation = 1
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix); err != nil {
+		t.Fatal(err)
+	}
+	old := r
+	r.OperationID = "second"
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != ErrConflict {
+		t.Fatal("reused stale generation", err)
+	}
+	r.Generation = 3
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != ErrConflict {
+		t.Fatal("skipped generation", err)
+	}
+	r.Generation = 2
+	next, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID)
+	if err != nil || next.State != "pending" {
+		t.Fatal(next, err)
+	}
+	if err := s.ReleaseEvolutionPrefix(ctx, testActor, old.OperationID, l.ID, r.Prefix); err == nil {
+		t.Fatal("old compensation released new owner")
+	}
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, old, old.OperationID); err != ErrConflict {
+		t.Fatal("old request rewound generation", err)
+	}
+	active, err := s.ActivateEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix, 2)
+	if err != nil || active.Generation != 2 {
+		t.Fatal(active, err)
+	}
+}
+
+func TestBindingCannotImplicitlyTransferRetainedOutput(t *testing.T) {
+	s, _ := testStore(t)
+	l := library(t, s)
+	s.config.Authority = &branchAuthority{true}
+	ctx := context.Background()
+	r := PrefixReservation{LibraryID: l.ID, Prefix: "skills", GroupID: "group", BindingID: "binding", Generation: 1, OperationID: "first"}
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, r, r.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	moved := r
+	moved.Prefix = "lessons"
+	moved.OperationID = "move"
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, moved, moved.OperationID); err != ErrConflict {
+		t.Fatal("pending ownership moved", err)
+	}
+	if _, err := s.ActivateEvolutionPrefix(ctx, testActor, r.OperationID, l.ID, r.Prefix, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReserveEvolutionPrefix(ctx, testActor, moved, moved.OperationID); err != ErrConflict {
+		t.Fatal("active ownership moved", err)
+	}
+	second, err := s.Create(ctx, testActor, CreateInput{RequestID: "second", Name: "Second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved.LibraryID = second.ID
+	moved.Prefix = "skills"
+	if _, err = s.ReserveEvolutionPrefix(ctx, testActor, moved, moved.OperationID); err != ErrConflict {
+		t.Fatal("cross-library ownership moved", err)
+	}
+	moved.BindingID = "independent"
+	if _, err = s.ReserveEvolutionPrefix(ctx, testActor, moved, moved.OperationID); err != nil {
+		t.Fatal("independent binding denied", err)
+	}
+}

@@ -2,6 +2,12 @@
 /* eslint-disable react-hooks/set-state-in-effect -- Hydrate browser navigation and synchronize external workspace snapshots. */
 "use client";
 import { message, useT } from "../lib/i18n";
+import { History } from "./history";
+import { IntegrationReview } from "./integration-review";
+import { PathPolicies } from "./path-policies";
+import { LibraryBar, useLifecycleSteps, type Stage } from "./library-header";
+import { Guide } from "../../../web/guide";
+import { branchAPI, branchRoot, type Branch } from "../lib/branches";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -27,7 +33,7 @@ import { Page, parentPath, query, encodeText } from "../lib/workbench";
 import { deleteRecovery } from "../lib/recovery";
 import { SharedAssetsValidation } from "./shared-assets-validation";
 import { ShellHeader, LibraryDetails, contentURL } from "./shell";
-import { BufferFile, useStudio } from "./studio-provider";
+import { BufferFile, useStudio, workspaceKey } from "./studio-provider";
 import { Menu, Modal, TextDialog } from "./ui";
 import { FileTree } from "./file-tree";
 import { CodeEditor } from "./code-editor";
@@ -61,21 +67,16 @@ export function LibraryEditor({ id }: { id: string }) {
     [position, setPosition] = useState([1, 1]),
     [ready, setReady] = useState(false),
     [drag, setDrag] = useState(false),
-    [publish, setPublish] = useState(false),
-    [preview, setPreview] = useState<{
-      entry_count: number;
-      total_bytes: string;
-      tree_digest: string;
-      revision: number;
-      base_version: string;
-    } | null>(null),
-    [label, setLabel] = useState(""),
-    [note, setNote] = useState(""),
-    [publishing, setPublishing] = useState(false),
-    [reviewing, setReviewing] = useState(false),
     [activePublication, setActivePublication] = useState(false),
     [opened, setOpened] = useState(false),
     [moveEntry, setMoveEntry] = useState<Entry | null>(null);
+  const branch = studio.model.branches[id];
+  const branchID = branch?.id ?? "";
+  const draftRevision = branch?.draft_revision ?? 0;
+  const [creating, setCreating] = useState(false);
+  const stage: Stage = version ? "publish" : !branch ? "branch" : view === "review" ? "review" : "edit";
+  const lifecycle = useLifecycleSteps(stage);
+  const scope = workspaceKey(id, version ? "" : branchID, version);
   const input = useRef<HTMLInputElement>(null),
     folderInput = useRef<HTMLInputElement>(null),
     search = useRef<HTMLInputElement>(null),
@@ -93,23 +94,30 @@ export function LibraryEditor({ id }: { id: string }) {
   const refreshGeneration = useRef(0);
   const openGeneration = useRef(0);
   const refresh = useCallback(
+    // eslint-disable-next-line react-hooks/preserve-manual-memoization -- Stable imperative controller bridge; reading its latest value must not retrigger refresh on each notification.
     async (signal?: AbortSignal) => {
+      const controller = refs.current;
       const turn = ++refreshGeneration.current;
       const [l, u, v] = await Promise.all([
         api<Library>(`${root}?mode=workbench`, { signal }),
-        api<{ uploads: Upload[] }>(`${root}/uploads`, { signal }),
+        controller.model.branches[id] ? api<{ uploads: Upload[] }>(`${root}/uploads?branch_id=${encodeURIComponent(controller.model.branches[id].id)}`, { signal }) : Promise.resolve({ uploads: [] as Upload[] }),
         api<Page<Version>>(`${root}/versions?mode=workbench&limit=50`, {
           signal,
         }),
       ]);
       if (signal?.aborted || turn !== refreshGeneration.current) return;
+      if (controller.model.branches[id]) {
+        const branch = await branchAPI.read(id, controller.model.branches[id].id, signal);
+        if (signal?.aborted || turn !== refreshGeneration.current) return;
+        controller.model.branches[id] = branch;
+      }
       setLibrary(l);
       setActivePublication(
         v.items.some((x) => x.state === "pending" || x.state === "validating"),
       );
-      refs.current.model.libraries[id] = l;
-      refs.current.model.uploads[id] = u.uploads;
-      refs.current.notify();
+      controller.model.libraries[id] = l;
+      controller.model.uploads[id] = u.uploads;
+      controller.notify();
     },
     [id, root, refs],
   );
@@ -125,16 +133,17 @@ export function LibraryEditor({ id }: { id: string }) {
   }, []);
   useEffect(() => {
     const p = new URLSearchParams(location.search);
+    const initialScope = workspaceKey(id, p.get("version") ? "" : p.get("branch") || "", p.get("version") || "");
     setVersion(p.get("version") || "");
     setView(
-      ["files", "changes", "versions"].includes(p.get("view") || "")
+      ["files", "changes", "review", "versions", "history", "evaluation policies"].includes(p.get("view") || "")
         ? p.get("view")!
-        : "files",
+        : p.get("integration") || p.get("conflict") ? "review" : "files",
     );
     setSelected(
       p.get("path") ||
         refs.current.model.buffers.find(
-          (b) => b.key === refs.current.model.active[id],
+          (b) => b.key === refs.current.model.active[initialScope],
         )?.entry.path ||
         "",
     );
@@ -167,15 +176,16 @@ export function LibraryEditor({ id }: { id: string }) {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", update);
     };
-  }, [refresh, activePublication, studio.model.epoch, refs]);
+  }, [refresh, activePublication, studio.model.epoch, refs, branchID]);
   useEffect(() => {
     if (!ready) return;
-    history.replaceState(
-      null,
-      "",
-      `?${query({ view, version: version || undefined, path: selected || undefined })}`,
-    );
-  }, [ready, view, version, selected]);
+    const params = new URLSearchParams(location.search);
+    params.set("view", view);
+    if (version) params.set("version",version); else params.delete("version");
+    if (selected) params.set("path",selected); else params.delete("path");
+    if (branchID) params.set("branch",branchID);
+    history.replaceState(null,"",`?${params}`);
+  }, [ready, view, version, selected, branchID]);
   useEffect(() => {
     if (!version) {
       setVersionLabel("Draft");
@@ -190,10 +200,10 @@ export function LibraryEditor({ id }: { id: string }) {
     return () => abort.abort();
   }, [root, version]);
   const active = studio.model.buffers.find(
-    (b) => b.key === studio.model.active[id] && b.version === version,
+    (b) => b.key === studio.model.active[scope] && b.version === version,
   );
   const buffers = studio.model.buffers.filter(
-    (b) => b.library === id && b.version === version,
+    (b) => b.library === id && b.version === version && (version || b.branch === branchID),
   );
   const open = async (entry: Entry) => {
     const turn = ++openGeneration.current;
@@ -201,7 +211,7 @@ export function LibraryEditor({ id }: { id: string }) {
       setDirectory(entry.path);
       return;
     }
-    await studio.open(id, version, entry, library?.draft_revision);
+    await studio.open(id, version, entry, draftRevision);
     if (turn !== openGeneration.current) return;
     setSelected(entry.path);
     setDirectory(parentPath(entry.path));
@@ -224,12 +234,12 @@ export function LibraryEditor({ id }: { id: string }) {
     }
   };
   useEffect(() => {
-    if (!ready || !library || opened) return;
+    if (!ready || !library || opened || (!version && !branchID)) return;
     setOpened(true);
     if (selected) void openPath(selected).catch((e) => setError(String(e)));
     // Load the initial deep link once. Further navigation is explicit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, library, opened]);
+  }, [ready, library, opened, branchID, version]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "p") {
@@ -263,14 +273,15 @@ export function LibraryEditor({ id }: { id: string }) {
       submit: "Create",
       action: async (name) => {
         const path = [directory, name].filter(Boolean).join("/");
-        await studio.queue.run(id, async () => {
+        await studio.queue.run(`${id}:${branchID}`, async () => {
           const target = await studio.snapshot(id, path);
           if (target.entry)
             throw new Error("An entry already exists at this path.");
-          await studio.write(`${root}/draft/mutations`, {
+          await studio.write(`${branchRoot(id,branchID)}/draft/${kind === "text" ? "text" : "structure"}`, {
             request_id: requestID(),
             expected_revision: target.revision,
-            action: kind,
+            expected_head:target.head,
+            ...(kind === "mkdir" ? {action:kind} : {}),
             path,
             ...(kind === "text" ? { text: "" } : {}),
           });
@@ -291,6 +302,7 @@ export function LibraryEditor({ id }: { id: string }) {
     for (const b of studio.model.buffers) {
       if (
         b.library === id &&
+        b.branch === branchID &&
         !b.version &&
         (b.entry.path === entry.path ||
           b.entry.path.startsWith(entry.path + "/"))
@@ -303,9 +315,9 @@ export function LibraryEditor({ id }: { id: string }) {
         recoveryIdentity[recoveryIdentity.length - 1] = next;
         b.recoveryID = JSON.stringify(recoveryIdentity);
         b.entry = { ...b.entry, path: next };
-        b.key = JSON.stringify([id, "", next]);
+        b.key = JSON.stringify([id, b.branch, "", next]);
         b.editorState = undefined;
-        if (studio.model.active[id] === old) studio.model.active[id] = b.key;
+        if (studio.model.active[scope] === old) studio.model.active[scope] = b.key;
       }
     }
     studio.changed();
@@ -319,7 +331,7 @@ export function LibraryEditor({ id }: { id: string }) {
     let count = 1;
     if (entry.kind === "directory") {
       const tree = await api<{ descendant_count: number }>(
-        `${root}/draft/tree?${query({ parent: entry.path, revision: state.revision })}`,
+        `${branchRoot(id,branchID)}/draft/tree?${query({ parent: entry.path, revision: state.revision })}`,
       );
       count += tree.descendant_count;
     }
@@ -339,6 +351,7 @@ export function LibraryEditor({ id }: { id: string }) {
     for (const b of [...studio.model.buffers])
       if (
         b.library === id &&
+        b.branch === branchID &&
         !b.version &&
         (b.entry.path === entry.path ||
           b.entry.path.startsWith(entry.path + "/"))
@@ -360,7 +373,7 @@ export function LibraryEditor({ id }: { id: string }) {
           {
             label: message("Download"),
             action: () => {
-              window.location.assign(contentURL(id, version, entry.path));
+              window.location.assign(contentURL(id, version, entry.path,draftRevision,branchID));
             },
           },
         ]
@@ -377,95 +390,6 @@ export function LibraryEditor({ id }: { id: string }) {
         ]
       : []),
   ];
-  const review = async () => {
-    if (reviewing) return;
-    setReviewing(true);
-    try {
-      // A save already requested by the user should finish before deciding
-      // whether publication needs another unsaved-edits decision.
-      await studio.queue.run(id, async () => {});
-      if (
-        studio.model.buffers.some(
-          (b) =>
-            b.library === id &&
-            !b.version &&
-            (b.text !== b.saved || !!b.pending),
-        )
-      ) {
-        if (
-          (await studio.ask(
-            "Save before publishing",
-            "Save all unsaved files before reviewing this version?",
-            ["Return to editing", "Save all and review"],
-          )) !== "Save all and review"
-        )
-          return;
-        await studio.saveAll(id);
-        if (
-          studio.model.buffers.some(
-            (b) =>
-              b.library === id &&
-              !b.version &&
-              (b.text !== b.saved || b.pending),
-          )
-        )
-          throw new Error(
-            "Some files changed while saving. Save them before publication review.",
-          );
-      }
-      const l = await api<Library>(root);
-      const p = await studio.write<{
-        entry_count: number;
-        total_bytes: string;
-      tree_digest: string;
-        revision: number;
-      }>(`${root}/publish-preview`, { expected_revision: l.draft_revision });
-      setPreview({
-        ...p,
-        revision: l.draft_revision,
-        base_version: l.base_version,
-      });
-      setLibrary(l);
-      setPublish(true);
-    } finally {
-      setReviewing(false);
-    }
-  };
-  const finishPublish = async () => {
-    if (!preview) return;
-    setPublishing(true);
-    try {
-      await studio.write(`${root}/versions`, {
-        request_id: requestID(),
-        expected_revision: preview.revision,
-        expected_base_version: preview.base_version,
-        label,
-        note,
-      });
-      setPublish(false);
-      setLabel("");
-      setNote("");
-      setView("versions");
-      studio.changed();
-      await refresh();
-    } finally {
-      setPublishing(false);
-    }
-  };
-  const activeUploads =
-    studio.model.uploads[id]?.filter((u) => u.state === "open").length || 0;
-  const localUploads = studio.model.tasks.some(
-    (t) => t.library === id && t.controller,
-  );
-  const blocked = library?.archived
-    ? "This library is archived."
-    : version
-      ? "Switch to Draft to publish."
-      : activeUploads || localUploads
-        ? "Unfinished uploads block publication. Open Tasks to resolve them."
-        : activePublication
-          ? "A publication is already in progress."
-          : "";
   const tabsLabel = (b: BufferFile) => {
     const same = buffers.filter(
       (x) => x.entry.path.split("/").at(-1) === b.entry.path.split("/").at(-1),
@@ -524,9 +448,11 @@ export function LibraryEditor({ id }: { id: string }) {
       />
       {library && (
         <FileTree
+          key={`${id}:${studio.model.branches[id]?.id ?? ""}:${version}`}
+          branch={studio.model.branches[id]?.id ?? ""}
           library={id}
           version={version}
-          revision={library.draft_revision}
+          revision={draftRevision}
           selected={selected}
           onOpen={(entry) => void run(() => open(entry))}
           onDirectory={setDirectory}
@@ -536,13 +462,16 @@ export function LibraryEditor({ id }: { id: string }) {
         />
       )}
       <div className="sidebar-footer">
-        {version ? tr("Read-only version") : tr("Draft · revision {value0}", { value0: library?.draft_revision ?? "…" })}
+        {version ? tr("Read-only version") : tr("Draft · revision {value0}", { value0: draftRevision || "…" })}
       </div>
     </aside>
   );
   return (
     <main className="studio-shell">
       <ShellHeader library={library} />
+      <LibraryBar id={id} library={library} branch={studio.model.branches[id]} version={version} stage={stage} creating={creating} setCreating={setCreating}
+        onBranch={() => { setVersion(""); setSelected(""); setDirectory(""); void run(() => refresh()); }}
+        onCommitted={() => { void run(() => refresh()); }} />
       <div
         className="workbench"
         style={{ "--sidebar-width": `${width}px` } as React.CSSProperties}
@@ -615,7 +544,7 @@ export function LibraryEditor({ id }: { id: string }) {
           </>
         )}
         <section className="workspace-main">
- {library?.profile === "shared-assets-v1" && <SharedAssetsValidation key={`${id}:${version}:${library.draft_revision}:${studio.model.epoch}`} library={id} version={version} onOpen={()=>void run(()=>openPath("AGENTS.md"))} />}
+ {library?.profile === "shared-assets-v1" && (version || branchID) && <SharedAssetsValidation key={`${id}:${version}:${draftRevision}:${studio.model.epoch}`} library={id} version={version} branch={branchID} revision={draftRevision} onOpen={()=>void run(()=>openPath("AGENTS.md"))} />}
           <div className="workspace-nav">
             {(!sidebar || mobile) && (
               <button
@@ -627,7 +556,7 @@ export function LibraryEditor({ id }: { id: string }) {
               </button>
             )}
             <nav aria-label={tr("Library views")}>
-              {["files", "changes", "versions"].map((v) => (
+              {["files", "changes", "review", "history", "versions", "evaluation policies"].map((v) => (
                 <button
                   key={v}
                   aria-current={view === v ? "page" : undefined}
@@ -651,19 +580,9 @@ export function LibraryEditor({ id }: { id: string }) {
                   { label: message("Refresh"), action: () => void run(() => refresh()) },
                 ]}
               />
-              <button
-                className="primary publish-button"
-                disabled={!!blocked || !library || reviewing}
-                title={tr(blocked) || tr("Review saved draft and publish")}
-                onClick={() => void run(review)}
-              >
-                {reviewing ? tr("Preparing review…") : tr("Review & publish")}
-              </button>
+
             </div>
           </div>
-          {blocked && view === "files" && (
-            <div className="inline-status">{tr(blocked)}</div>
-          )}
           {error && (
             <div className="notice error" role="alert">
               <span>{tr(error)}</span>
@@ -688,7 +607,7 @@ export function LibraryEditor({ id }: { id: string }) {
                       role="tab"
                       aria-selected={active === b}
                       onClick={() => {
-                        studio.model.active[id] = b.key;
+                        studio.model.active[scope] = b.key;
                         studio.notify();
                         setSelected(b.entry.path);
                         setDirectory(parentPath(b.entry.path));
@@ -716,7 +635,7 @@ export function LibraryEditor({ id }: { id: string }) {
                       ...buffers.map((b) => ({
                         label: b.entry.path,
                         action: () => {
-                          studio.model.active[id] = b.key;
+                          studio.model.active[scope] = b.key;
                           studio.notify();
                           setSelected(b.entry.path);
                         },
@@ -775,6 +694,7 @@ export function LibraryEditor({ id }: { id: string }) {
                                   id,
                                   active.version,
                                   active.entry.path,
+                                  active.revision, active.branch,
                                 ),
                               ),
                           },
@@ -862,6 +782,7 @@ export function LibraryEditor({ id }: { id: string }) {
                             id,
                             active.version,
                             active.entry.path,
+                            active.revision, active.branch,
                           )}
                         >
                            {tr("Download")} </a>
@@ -878,9 +799,11 @@ export function LibraryEditor({ id }: { id: string }) {
               ) : (
                 <div className="editor-empty">
                   <FileText size={30} />
-                  <h2>{version ? tr("Browse version files") : tr("Select a file")}</h2>
-                  <p>{tr("Open a file from the sidebar, or use Go to file.")}</p>
+                  <h2>{version ? tr("Browse version files") : !studio.model.branches[id] ? tr("Choose or start a branch") : tr("Select a file")}</h2>
+                  <p>{version ? tr("Open a file from the sidebar, or use Go to file.") : !studio.model.branches[id] ? tr("Files open read-only until a working branch is selected. Pick a branch in the toolbar, or create one from main.") : tr("Open a file from the sidebar, or use Go to file.")}</p>
+                  {!version && !branch && <div className="empty-guide"><Guide label={tr("How changes reach a published version")} steps={lifecycle} current="branch" /></div>}
                   <div className="actions">
+                    {!version && !branch && !library?.archived && <button className="primary" onClick={() => setCreating(true)}>{tr("Start a branch")}</button>}
                     <button
                       onClick={() => {
                         setSidebar(true);
@@ -888,7 +811,7 @@ export function LibraryEditor({ id }: { id: string }) {
                       }}
                     >
                        {tr("Go to file")} </button>
-                    {!version && !library?.archived && (
+                    {!version && !library?.archived && studio.model.branches[id] && (
                       <button onClick={() => input.current?.click()}>
                         <UploadCloud size={16} />
                          {tr("Upload files")} </button>
@@ -899,6 +822,13 @@ export function LibraryEditor({ id }: { id: string }) {
             </>
           )}
           {view === "changes" && library && <Changes library={library} />}{" "}
+          {!version && branch && <div className="review-view" hidden={view !== "review"}><IntegrationReview key={`${id}:${branchID}`} branch={branch} /></div>}
+          {view === "review" && (version || !branch) && <div className="editor-empty">
+            <h2>{tr(version ? "Reviews run on branches" : "Choose or start a branch")}</h2>
+            <p>{tr(version ? "Published versions are immutable. Switch to a working branch to prepare an integration with main." : "Select a working branch to prepare its committed changes for review against main.")}</p>
+          </div>}
+          {view === "history" && <History key={id} library={id} branch={branchID} />}
+          {view === "evaluation policies" && <PathPolicies key={id} library={id} />}
           {view === "versions" && library && (
             <Versions
               library={library}
@@ -949,78 +879,10 @@ export function LibraryEditor({ id }: { id: string }) {
           onSaved={setLibrary}
         />
       )}
-      <Modal
-        title={tr("Review & publish")}
-        open={publish}
-        onClose={() => setPublish(false)}
-        drawer
-      >
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void run(finishPublish);
-          }}
-        >
-          <p>
-            {preview?.entry_count}  {tr("entries ·")} {bytes(preview?.total_bytes || 0)}{" "}
-             {tr("· revision")} {preview?.revision}
-          </p>
-          <p className="muted">
-             {tr("This publishes the exact saved draft reviewed here.")} </p>
- <details><summary>{tr("Immutable content digest")}</summary><code>{preview?.tree_digest}</code></details>
- <p>{tr("Content profile: {profile} · Immutable version", { profile: tr(library?.profile === "shared-assets-v1" ? "Shared assets" : "Ordinary data") })}</p>
- {library?.profile === "shared-assets-v1" && <SharedAssetsValidation key={preview?.revision} library={id} version="" />}
-          {preview &&
-            library &&
-            (preview.revision !== library.draft_revision ||
-              preview.base_version !== library.base_version) && (
-              <p role="alert" className="error">
-                 {tr("The draft changed.")}{" "}
-                <button type="button" onClick={() => void run(review)}>
-                   {tr("Review latest draft")} </button>
-              </p>
-            )}
-          <label>
-             {tr("Version label")} <input
-              autoFocus
-              required
-              maxLength={128}
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-            />
-          </label>
-          <label>
-             {tr("Release note")} <textarea
-              maxLength={4000}
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
-          </label>
-          {error && (
-            <p className="error" role="alert">
-              {tr(error)}
-            </p>
-          )}
-          <div className="dialog-actions">
-            <button type="button" onClick={() => setPublish(false)}>
-               {tr("Cancel")} </button>
-            <button
-              className="primary"
-              disabled={
-                publishing ||
-                !!blocked ||
-                preview?.revision !== library?.draft_revision ||
-                preview?.base_version !== library?.base_version
-              }
-            >
-               {tr("Publish version")} </button>
-          </div>
-        </form>
-      </Modal>
       {active?.conflict && <Conflict buffer={active} onError={setError} />}{" "}
-      {moveEntry && (
+      {moveEntry && studio.model.branches[id] && (
         <MoveDialog
-          library={id}
+          branch={studio.model.branches[id]}
           entry={moveEntry}
           onClose={() => setMoveEntry(null)}
           onMove={(to) => move(moveEntry, to)}
@@ -1118,15 +980,15 @@ function Conflict({
           initial={buffer.entry.path + ".copy"}
           onClose={() => setCopy(false)}
           onSubmit={async (path) => {
-            await studio.queue.run(buffer.library, async () => {
-              const target = await studio.snapshot(buffer.library, path);
+            await studio.queue.run(`${buffer.library}:${buffer.branch}`, async () => {
+              const target = await studio.snapshot(buffer.library, path,buffer.branch);
               if (target.entry) throw new Error("That path already exists.");
               await studio.write(
-                `/libraries/${buffer.library}/draft/mutations`,
+                `${branchRoot(buffer.library,buffer.branch)}/draft/text`,
                 {
                   request_id: requestID(),
                   expected_revision: target.revision,
-                  action: "text",
+                  expected_head:target.head,
                   path,
                   text: encodeText(buffer.text, buffer.format),
                 },
@@ -1144,12 +1006,12 @@ function Conflict({
   );
 }
 function MoveDialog({
-  library,
+  branch,
   entry,
   onClose,
   onMove,
 }: {
-  library: string;
+  branch: Branch;
   entry: Entry;
   onClose: () => void;
   onMove: (to: string) => Promise<void>;
@@ -1160,16 +1022,14 @@ function MoveDialog({
     [error, setError] = useState("");
   useEffect(() => {
     const abort = new AbortController();
-    void api<Page<Entry>>(
-      `/libraries/${library}/draft/tree?${query({ mode: "workbench", parent })}`,
-      { signal: abort.signal },
-    )
+    void branchAPI.tree(branch, parent, "", abort.signal)
+      .then(value => ({items:value.entries,next:value.next ?? "",revision:value.revision,total:value.descendant_count}))
       .then(setPage)
       .catch((e) => {
         if (!abort.signal.aborted) setError(String(e));
       });
     return () => abort.abort();
-  }, [library, parent]);
+  }, [branch, parent]);
   return (
     <Modal title={tr("Move {value0}", { value0: entry.path })} open onClose={onClose}>
       <p>{tr("Destination: /")}{parent}</p>
@@ -1193,9 +1053,8 @@ function MoveDialog({
         {page?.next && (
           <button
             onClick={() =>
-              void api<Page<Entry>>(
-                `/libraries/${library}/draft/tree?${query({ mode: "workbench", parent, revision: page.revision, cursor: page.next })}`,
-              )
+              void branchAPI.tree({...branch,draft_revision:page.revision}, parent, page.next)
+                .then(value => ({items:value.entries,next:value.next ?? "",revision:value.revision,total:value.descendant_count}))
                 .then((p) =>
                   setPage({ ...p, items: [...page.items, ...p.items] }),
                 )

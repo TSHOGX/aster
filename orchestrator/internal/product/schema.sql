@@ -1787,6 +1787,7 @@ CREATE TABLE bundle_messages (
 CREATE TABLE bundle_turns (
  bundle_id TEXT NOT NULL REFERENCES conversation_bundles(id) ON DELETE CASCADE,
  id TEXT NOT NULL, sequence INTEGER NOT NULL, content TEXT NOT NULL, data TEXT NOT NULL,
+ family_id TEXT NOT NULL,
  PRIMARY KEY(bundle_id,id)
 );
 CREATE TABLE session_imports (
@@ -1827,3 +1828,399 @@ END;
 CREATE TRIGGER received_owner_update AFTER UPDATE OF display_name,username,status ON accounts BEGIN
  UPDATE received_revisions SET revision=revision+1 WHERE reader_id IN (SELECT g.reader_id FROM conversation_grants g JOIN sessions s ON s.id=g.session_id JOIN projects p ON p.id=s.project_id WHERE p.owner_id=NEW.id);
 END;
+
+CREATE TABLE studio_library_grants (
+ account_id TEXT NOT NULL REFERENCES accounts(id),
+ library_id TEXT NOT NULL,
+ action TEXT NOT NULL CHECK(action IN('volume.read','volume.author','volume.review','volume.merge','volume.publish','volume.configure')),
+ effect TEXT NOT NULL CHECK(effect IN('allow','deny')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ PRIMARY KEY(account_id,library_id,action)
+);
+CREATE TABLE studio_group_grants (
+ group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
+ library_id TEXT NOT NULL,
+ action TEXT NOT NULL CHECK(action IN('volume.read','volume.author','volume.review','volume.merge','volume.publish','volume.configure')),
+ effect TEXT NOT NULL CHECK(effect IN('allow','deny')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ PRIMARY KEY(group_id,library_id,action)
+);
+
+CREATE TABLE evolution_group_configs (
+ group_id TEXT PRIMARY KEY REFERENCES account_groups(id) ON DELETE CASCADE,
+ desired_revision INTEGER NOT NULL CHECK(desired_revision>0),
+ active_revision INTEGER NOT NULL CHECK(active_revision>=0),
+ desired_digest TEXT NOT NULL,
+ active_digest TEXT NOT NULL,
+ auto_enabled INTEGER NOT NULL CHECK(auto_enabled IN(0,1)),
+ state TEXT NOT NULL CHECK(state IN('draft','activating','active','failed','discarding','discarded')),
+ operation_id TEXT NOT NULL DEFAULT '',
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE evolution_activation_receipts (
+ operation_id TEXT NOT NULL,
+ participant TEXT NOT NULL,
+ config_digest TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN('accepted','failed')),
+ error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(operation_id,participant)
+);
+
+CREATE TABLE evolution_configuration_revisions (
+ actor_id TEXT NOT NULL REFERENCES accounts(id),
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ operation_id TEXT NOT NULL UNIQUE,
+ digest TEXT NOT NULL,
+ body TEXT NOT NULL CHECK(json_valid(body)),
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(group_id,revision)
+);
+
+CREATE TABLE evolution_configuration_drafts (
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ body TEXT NOT NULL CHECK(json_valid(body)),
+ settings TEXT NOT NULL CHECK(json_valid(settings)),
+ updated_at TEXT NOT NULL,
+ PRIMARY KEY(group_id,revision)
+);
+
+CREATE TABLE evolution_source_policies (
+ issuer_id TEXT NOT NULL REFERENCES accounts(id),
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ source_id TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),
+ body TEXT NOT NULL CHECK(json_valid(body)),
+ PRIMARY KEY(group_id,source_id)
+);
+
+CREATE TABLE evolution_group_grants (
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ account_id TEXT NOT NULL REFERENCES accounts(id),
+ action TEXT NOT NULL CHECK(action IN ('config.read','config.manage','run.start','source.read','workflow.edit')),
+ effect TEXT NOT NULL CHECK(effect IN ('allow','deny')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ PRIMARY KEY(group_id,account_id,action)
+);
+
+CREATE TABLE evolution_operation_states (
+ operation_id TEXT PRIMARY KEY,
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ digest TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('draft','activating','active','failed','discarding','discarded'))
+);
+CREATE TRIGGER evolution_operation_created AFTER INSERT ON evolution_group_configs
+BEGIN
+ INSERT INTO evolution_operation_states(operation_id,group_id,revision,digest,state)
+ VALUES(NEW.operation_id,NEW.group_id,NEW.desired_revision,NEW.desired_digest,NEW.state);
+END;
+CREATE TRIGGER evolution_operation_changed AFTER UPDATE OF operation_id,state ON evolution_group_configs
+BEGIN
+ INSERT INTO evolution_operation_states(operation_id,group_id,revision,digest,state)
+ VALUES(NEW.operation_id,NEW.group_id,NEW.desired_revision,NEW.desired_digest,NEW.state)
+ ON CONFLICT(operation_id) DO UPDATE SET state=excluded.state;
+END;
+CREATE TRIGGER retained_evolution_operation BEFORE DELETE ON evolution_operation_states
+BEGIN SELECT RAISE(ABORT,'retain evolution operation provenance'); END;
+CREATE TRIGGER immutable_evolution_operation_identity BEFORE UPDATE OF operation_id,group_id,revision,digest ON evolution_operation_states
+BEGIN SELECT RAISE(ABORT,'immutable evolution operation identity'); END;
+
+CREATE TABLE evolution_operation_events (
+ operation_id TEXT NOT NULL REFERENCES evolution_operation_states(operation_id),
+ sequence INTEGER NOT NULL CHECK(sequence>0),
+ state TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(operation_id,sequence)
+);
+CREATE TRIGGER evolution_operation_initial_event AFTER INSERT ON evolution_operation_states
+BEGIN
+ INSERT INTO evolution_operation_events VALUES(NEW.operation_id,1,NEW.state,strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+END;
+CREATE TRIGGER evolution_operation_transition_event AFTER UPDATE OF state ON evolution_operation_states
+WHEN OLD.state<>NEW.state
+BEGIN
+ INSERT INTO evolution_operation_events
+ SELECT NEW.operation_id,coalesce(max(sequence),0)+1,NEW.state,strftime('%Y-%m-%dT%H:%M:%fZ','now')
+ FROM evolution_operation_events WHERE operation_id=NEW.operation_id;
+END;
+CREATE TRIGGER immutable_evolution_operation_event BEFORE UPDATE ON evolution_operation_events
+BEGIN SELECT RAISE(ABORT,'immutable activation event'); END;
+CREATE TRIGGER retained_evolution_operation_event BEFORE DELETE ON evolution_operation_events
+BEGIN SELECT RAISE(ABORT,'retain activation event'); END;
+
+CREATE TRIGGER immutable_evolution_configuration BEFORE UPDATE ON evolution_configuration_revisions
+BEGIN SELECT RAISE(ABORT,'immutable evolution configuration'); END;
+CREATE TRIGGER retained_evolution_configuration BEFORE DELETE ON evolution_configuration_revisions
+BEGIN SELECT RAISE(ABORT,'retain evolution configuration provenance'); END;
+CREATE TRIGGER immutable_evolution_draft_revision BEFORE UPDATE ON evolution_configuration_drafts
+BEGIN SELECT RAISE(ABORT,'immutable evolution draft revision'); END;
+CREATE TRIGGER retained_evolution_draft_revision BEFORE DELETE ON evolution_configuration_drafts
+BEGIN SELECT RAISE(ABORT,'retain evolution draft replay provenance'); END;
+
+CREATE TABLE evolution_source_policy_revisions (
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ source_id TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),
+ issuer_id TEXT NOT NULL REFERENCES accounts(id),
+ body TEXT NOT NULL CHECK(json_valid(body)),
+ PRIMARY KEY(group_id,source_id,revision)
+);
+CREATE TRIGGER evolution_source_policy_created AFTER INSERT ON evolution_source_policies
+BEGIN
+ INSERT INTO evolution_source_policy_revisions VALUES(NEW.group_id,NEW.source_id,NEW.revision,NEW.issuer_id,NEW.body);
+END;
+CREATE TRIGGER evolution_source_policy_revised AFTER UPDATE ON evolution_source_policies
+BEGIN
+ INSERT INTO evolution_source_policy_revisions VALUES(NEW.group_id,NEW.source_id,NEW.revision,NEW.issuer_id,NEW.body);
+END;
+CREATE TRIGGER immutable_evolution_source_policy_revision BEFORE UPDATE ON evolution_source_policy_revisions
+BEGIN SELECT RAISE(ABORT,'immutable source policy revision'); END;
+CREATE TRIGGER retained_evolution_source_policy_revision BEFORE DELETE ON evolution_source_policy_revisions
+BEGIN SELECT RAISE(ABORT,'retain source policy provenance'); END;
+
+CREATE TRIGGER evolution_operation_state_transition
+BEFORE UPDATE OF state ON evolution_operation_states
+WHEN OLD.state<>NEW.state AND NOT (
+ (OLD.state='activating' AND NEW.state IN ('active','failed')) OR
+ (OLD.state='failed' AND NEW.state IN ('activating','discarding')) OR
+ (OLD.state='discarding' AND NEW.state='discarded')
+)
+BEGIN SELECT RAISE(ABORT,'invalid activation state transition'); END;
+
+CREATE TABLE evaluation_dataset_grants(
+ group_id TEXT NOT NULL REFERENCES account_groups(id),artifact_id TEXT NOT NULL,service_id TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),
+ artifact BLOB NOT NULL,service BLOB NOT NULL,
+ PRIMARY KEY(group_id,artifact_id,service_id)
+);
+CREATE TABLE evaluation_authorizations(
+ id TEXT PRIMARY KEY,job_id TEXT NOT NULL UNIQUE,group_id TEXT NOT NULL REFERENCES account_groups(id),
+ actor_id TEXT NOT NULL REFERENCES accounts(id),assignment BLOB NOT NULL,assignment_digest TEXT NOT NULL,
+ grant BLOB NOT NULL,state TEXT NOT NULL CHECK(state IN('admitted','settled')),
+ reserved_tokens INTEGER NOT NULL CHECK(reserved_tokens>=0),reserved_cost INTEGER NOT NULL CHECK(reserved_cost>=0),
+ used_tokens INTEGER NOT NULL DEFAULT 0 CHECK(used_tokens>=0),used_cost INTEGER NOT NULL DEFAULT 0 CHECK(used_cost>=0),
+ settlement BLOB,created_at TEXT NOT NULL
+);
+CREATE TRIGGER immutable_evaluation_authorization BEFORE UPDATE OF id,job_id,group_id,actor_id,assignment,assignment_digest,grant,reserved_tokens,reserved_cost,created_at ON evaluation_authorizations BEGIN SELECT RAISE(ABORT,'immutable evaluation authorization'); END;
+CREATE TRIGGER retained_evaluation_authorization BEFORE DELETE ON evaluation_authorizations BEGIN SELECT RAISE(ABORT,'retain evaluation authorization'); END;
+CREATE TRIGGER settled_evaluation_authorization BEFORE UPDATE ON evaluation_authorizations WHEN OLD.state='settled' BEGIN SELECT RAISE(ABORT,'settled evaluation authorization'); END;
+
+CREATE TABLE generation_input_grants(
+ group_id TEXT NOT NULL REFERENCES account_groups(id),artifact_id TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),
+ artifact BLOB NOT NULL,sources BLOB NOT NULL,PRIMARY KEY(group_id,artifact_id)
+);
+CREATE TABLE generation_authorizations(
+ id TEXT PRIMARY KEY,run_id TEXT NOT NULL UNIQUE,group_id TEXT NOT NULL REFERENCES account_groups(id),
+ binding_id TEXT NOT NULL,configuration_revision INTEGER NOT NULL,occurrence_id TEXT NOT NULL,
+ actor_id TEXT NOT NULL REFERENCES accounts(id),assignment BLOB NOT NULL,assignment_digest TEXT NOT NULL,grant BLOB NOT NULL,
+ state TEXT NOT NULL CHECK(state IN('admitted','running','paused','cancelling','completed','failed','cancelled')),
+ fence INTEGER NOT NULL DEFAULT 0 CHECK(fence>=0),patch_digest TEXT NOT NULL DEFAULT '',
+ reserved_tokens INTEGER NOT NULL CHECK(reserved_tokens>=0),reserved_cost INTEGER NOT NULL CHECK(reserved_cost>=0),
+ used_tokens INTEGER NOT NULL DEFAULT 0 CHECK(used_tokens>=0),used_cost INTEGER NOT NULL DEFAULT 0 CHECK(used_cost>=0),
+ settlement BLOB,created_at TEXT NOT NULL,
+ UNIQUE(group_id,binding_id,configuration_revision,occurrence_id)
+);
+CREATE UNIQUE INDEX one_active_generation_authorization ON generation_authorizations(group_id,binding_id) WHERE state IN('admitted','running','paused','cancelling') AND json_extract(assignment,'$.experiment') IS NULL AND json_extract(assignment,'$.draft_test') IS NULL;
+CREATE TRIGGER immutable_generation_assignment BEFORE UPDATE OF id,run_id,group_id,binding_id,configuration_revision,occurrence_id,actor_id,assignment,assignment_digest,grant,reserved_tokens,reserved_cost,created_at ON generation_authorizations BEGIN SELECT RAISE(ABORT,'immutable generation assignment'); END;
+CREATE TRIGGER monotonic_generation_fence BEFORE UPDATE OF fence ON generation_authorizations WHEN NEW.fence<OLD.fence BEGIN SELECT RAISE(ABORT,'generation fence cannot decrease'); END;
+CREATE TRIGGER terminal_generation_authority BEFORE UPDATE OF state,fence ON generation_authorizations WHEN OLD.state IN('completed','failed','cancelled') AND (NEW.state<>OLD.state OR NEW.fence<>OLD.fence) BEGIN SELECT RAISE(ABORT,'terminal generation identity'); END;
+CREATE TRIGGER immutable_generation_patch BEFORE UPDATE OF patch_digest ON generation_authorizations WHEN OLD.patch_digest<>'' AND NEW.patch_digest<>OLD.patch_digest BEGIN SELECT RAISE(ABORT,'immutable generation patch'); END;
+CREATE TRIGGER retained_generation_authorization BEFORE DELETE ON generation_authorizations BEGIN SELECT RAISE(ABORT,'retain generation provenance'); END;
+
+CREATE TRIGGER immutable_generation_settlement BEFORE UPDATE OF settlement,used_tokens,used_cost ON generation_authorizations WHEN OLD.settlement IS NOT NULL BEGIN SELECT RAISE(ABORT,'immutable generation settlement'); END;
+
+CREATE TABLE corpus_episodes(
+ group_id TEXT NOT NULL REFERENCES account_groups(id),source_id TEXT NOT NULL,episode_id TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),source_revision INTEGER NOT NULL,body BLOB NOT NULL,digest TEXT NOT NULL,
+ created_at TEXT NOT NULL,PRIMARY KEY(group_id,source_id,episode_id,revision),UNIQUE(group_id,source_id,episode_id,digest)
+);
+CREATE TRIGGER immutable_corpus_episode BEFORE UPDATE ON corpus_episodes BEGIN SELECT RAISE(ABORT,'immutable corpus episode'); END;
+CREATE TRIGGER retained_corpus_episode BEFORE DELETE ON corpus_episodes BEGIN SELECT RAISE(ABORT,'retain corpus provenance'); END;
+CREATE TABLE corpus_snapshots(
+ id TEXT PRIMARY KEY,group_id TEXT NOT NULL REFERENCES account_groups(id),source_id TEXT NOT NULL,source_revision INTEGER NOT NULL,
+ body BLOB NOT NULL,members BLOB NOT NULL,digest TEXT NOT NULL,sealed_through INTEGER NOT NULL,created_at TEXT NOT NULL
+);
+CREATE TRIGGER immutable_corpus_snapshot BEFORE UPDATE ON corpus_snapshots BEGIN SELECT RAISE(ABORT,'immutable corpus snapshot'); END;
+CREATE TRIGGER retained_corpus_snapshot BEFORE DELETE ON corpus_snapshots BEGIN SELECT RAISE(ABORT,'retain corpus snapshot'); END;
+CREATE TABLE corpus_consumption(
+ group_id TEXT NOT NULL REFERENCES account_groups(id),binding_id TEXT NOT NULL,source_id TEXT NOT NULL,
+ through_sequence INTEGER NOT NULL CHECK(through_sequence>=0),snapshot_id TEXT NOT NULL REFERENCES corpus_snapshots(id),run_id TEXT NOT NULL,
+ PRIMARY KEY(group_id,binding_id,source_id)
+);
+
+-- Durable observable changes, recorded with the execution/capture transaction.
+-- Terminal eligibility is distinct from late evidence so enabling collection
+-- never implicitly backfills an old execution whose trace arrives afterwards.
+CREATE TABLE corpus_discovery_events (
+ sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+ execution_id TEXT NOT NULL,
+ kind TEXT NOT NULL CHECK(kind IN ('terminal','evidence'))
+);
+CREATE INDEX corpus_discovery_execution ON corpus_discovery_events(execution_id,kind,sequence);
+CREATE TRIGGER corpus_execution_insert AFTER INSERT ON execution_runs
+WHEN NEW.state IN ('settled','failed','unknown') BEGIN
+ INSERT INTO corpus_discovery_events(execution_id,kind) VALUES(NEW.id,'terminal');
+END;
+CREATE TRIGGER corpus_execution_update AFTER UPDATE OF state,outcome ON execution_runs
+WHEN NEW.state IN ('settled','failed','unknown') AND (NEW.state<>OLD.state OR NEW.outcome<>OLD.outcome) BEGIN
+ INSERT INTO corpus_discovery_events(execution_id,kind) VALUES(NEW.id,
+ CASE WHEN OLD.state IN ('settled','failed','unknown') THEN 'evidence' ELSE 'terminal' END);
+END;
+CREATE TRIGGER corpus_native_insert AFTER INSERT ON native_captures
+WHEN NEW.state IN ('exported','archived') BEGIN
+ INSERT INTO corpus_discovery_events(execution_id,kind)
+ SELECT id,'evidence' FROM execution_runs WHERE prompt_id=NEW.turn_id AND substr(NEW.path,-length(id)-7)='/'||id||'.jsonl';
+END;
+CREATE TRIGGER corpus_native_update AFTER UPDATE OF state,digest ON native_captures
+WHEN NEW.state IN ('exported','archived') AND (NEW.state<>OLD.state OR NEW.digest<>OLD.digest) BEGIN
+ INSERT INTO corpus_discovery_events(execution_id,kind)
+ SELECT id,'evidence' FROM execution_runs WHERE prompt_id=NEW.turn_id AND substr(NEW.path,-length(id)-7)='/'||id||'.jsonl';
+END;
+CREATE TRIGGER corpus_message_insert AFTER INSERT ON messages BEGIN
+ INSERT INTO corpus_discovery_events(execution_id,kind)
+ SELECT id,'evidence' FROM execution_runs WHERE prompt_id=NEW.turn_id AND state IN ('settled','failed','unknown');
+END;
+CREATE TRIGGER corpus_message_update AFTER UPDATE OF content ON messages WHEN NEW.content<>OLD.content BEGIN
+ INSERT INTO corpus_discovery_events(execution_id,kind)
+ SELECT id,'evidence' FROM execution_runs WHERE prompt_id=NEW.turn_id AND state IN ('settled','failed','unknown');
+END;
+CREATE TABLE corpus_collectors (
+ group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
+ source_id TEXT NOT NULL,
+ source_revision INTEGER NOT NULL CHECK(source_revision>0),
+ configuration_revision INTEGER NOT NULL CHECK(configuration_revision>0),
+ baseline INTEGER NOT NULL CHECK(baseline>=0),
+ after_event INTEGER NOT NULL CHECK(after_event>=baseline),
+ sealed_through INTEGER NOT NULL CHECK(sealed_through>=0),
+ snapshot_id TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(group_id,source_id)
+);
+
+CREATE TABLE evolution_trigger_clocks (
+ group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
+ binding_id TEXT NOT NULL,
+ configuration_revision INTEGER NOT NULL,
+ next_at TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(group_id,binding_id)
+);
+CREATE TABLE evolution_trigger_sources (
+ group_id TEXT NOT NULL,
+ binding_id TEXT NOT NULL,
+ source_id TEXT NOT NULL,
+ source_revision INTEGER NOT NULL,
+ baseline INTEGER NOT NULL CHECK(baseline>=0),
+ observed_through INTEGER NOT NULL CHECK(observed_through>=baseline),
+ PRIMARY KEY(group_id,binding_id,source_id),
+ FOREIGN KEY(group_id,binding_id) REFERENCES evolution_trigger_clocks(group_id,binding_id) ON DELETE CASCADE
+);
+CREATE TABLE evolution_trigger_occurrences (
+ id TEXT PRIMARY KEY,
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ binding_id TEXT NOT NULL,
+ configuration_revision INTEGER NOT NULL,
+ trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('event','schedule','backfill','manual')),
+ state TEXT NOT NULL CHECK(state IN ('pending','frozen','superseded')),
+ first_at TEXT NOT NULL,
+ latest_at TEXT NOT NULL,
+ ranges BLOB NOT NULL CHECK(json_valid(ranges)),
+ last_error TEXT NOT NULL DEFAULT '',
+ run_id TEXT NOT NULL DEFAULT '',
+ UNIQUE(group_id,binding_id,configuration_revision,id)
+);
+CREATE UNIQUE INDEX one_pending_evolution_occurrence ON evolution_trigger_occurrences(group_id,binding_id) WHERE state='pending';
+CREATE TRIGGER frozen_evolution_occurrence BEFORE UPDATE ON evolution_trigger_occurrences WHEN OLD.state<>'pending'
+BEGIN SELECT RAISE(ABORT,'immutable trigger occurrence'); END;
+
+CREATE INDEX execution_corpus_prompt ON execution_runs(prompt_id,id);
+CREATE INDEX corpus_snapshot_source_frontier ON corpus_snapshots(group_id,source_id,source_revision,sealed_through);
+CREATE INDEX evolution_occurrence_group ON evolution_trigger_occurrences(group_id);
+
+CREATE TABLE generation_dispatches (
+ run_id TEXT PRIMARY KEY,
+ batch_id TEXT NOT NULL,
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ binding_id TEXT NOT NULL,
+ occurrence_id TEXT NOT NULL UNIQUE REFERENCES evolution_trigger_occurrences(id),
+ assignment BLOB NOT NULL CHECK(json_valid(assignment)),
+ state TEXT NOT NULL CHECK(state IN ('pending','dispatched','superseded')),
+ last_error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL
+);
+CREATE INDEX generation_dispatch_group ON generation_dispatches(group_id,binding_id,state);
+CREATE TRIGGER immutable_generation_dispatch BEFORE UPDATE OF run_id,batch_id,group_id,binding_id,occurrence_id,assignment,created_at ON generation_dispatches
+BEGIN SELECT RAISE(ABORT,'immutable dispatch assignment'); END;
+CREATE TABLE generation_input_payloads (
+ artifact_id TEXT PRIMARY KEY,
+ body BLOB NOT NULL
+);
+CREATE TRIGGER immutable_generation_payload BEFORE UPDATE ON generation_input_payloads
+BEGIN SELECT RAISE(ABORT,'immutable generation input'); END;
+
+CREATE TABLE generation_preparations (
+ run_id TEXT PRIMARY KEY,
+ batch_id TEXT NOT NULL,
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ binding_id TEXT NOT NULL,
+ occurrence_id TEXT NOT NULL UNIQUE REFERENCES evolution_trigger_occurrences(id),
+ assignment BLOB NOT NULL CHECK(json_valid(assignment)),
+ dependencies BLOB NOT NULL CHECK(json_valid(dependencies)),
+ state TEXT NOT NULL CHECK(state IN ('waiting','resolved','skipped','superseded')),
+ last_error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL
+);
+CREATE INDEX generation_preparation_group ON generation_preparations(group_id,binding_id,state);
+CREATE TRIGGER immutable_generation_preparation BEFORE UPDATE OF run_id,batch_id,group_id,binding_id,occurrence_id,assignment,dependencies,created_at ON generation_preparations
+BEGIN SELECT RAISE(ABORT,'immutable dependency preparation'); END;
+CREATE TRIGGER terminal_generation_preparation BEFORE UPDATE ON generation_preparations WHEN OLD.state<>'waiting'
+BEGIN SELECT RAISE(ABORT,'terminal dependency preparation'); END;
+CREATE TABLE generation_dependency_artifacts (
+ run_id TEXT NOT NULL REFERENCES generation_dispatches(run_id),
+ port TEXT NOT NULL,
+ receipt BLOB NOT NULL CHECK(json_valid(receipt)),
+ PRIMARY KEY(run_id,port)
+);
+CREATE TRIGGER immutable_generation_dependency_artifact BEFORE UPDATE ON generation_dependency_artifacts
+BEGIN SELECT RAISE(ABORT,'immutable dependency output'); END;
+
+CREATE TABLE turn_evidence_families (
+ turn_id TEXT PRIMARY KEY REFERENCES turns(id) ON DELETE CASCADE,
+ family_id TEXT NOT NULL,
+ origin_bundle TEXT NOT NULL
+);
+CREATE TRIGGER immutable_turn_evidence_family BEFORE UPDATE ON turn_evidence_families
+BEGIN SELECT RAISE(ABORT,'immutable evidence family'); END;
+
+CREATE INDEX corpus_message_execution ON agent_records(command_id,incarnation_id,sequence);
+
+CREATE TABLE evolution_backfills (
+ id TEXT PRIMARY KEY,
+ group_id TEXT NOT NULL REFERENCES account_groups(id),
+ actor_id TEXT NOT NULL REFERENCES accounts(id),
+ configuration_revision INTEGER NOT NULL,
+ operation_id TEXT NOT NULL,
+ digest TEXT NOT NULL,
+ preview BLOB NOT NULL CHECK(json_valid(preview) AND coalesce(json_type(preview,'$.requested_by'),'')='text' AND json_extract(preview,'$.requested_by')=actor_id AND coalesce(json_type(preview,'$.download_inputs'),'')='object'),
+ assignments BLOB NOT NULL CHECK(json_valid(assignments)),
+ state TEXT NOT NULL CHECK(state IN ('preview','queued','prepared','cancelled','stale')),
+ last_error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL
+);
+CREATE INDEX evolution_backfill_work ON evolution_backfills(state,id);
+CREATE TRIGGER immutable_evolution_backfill BEFORE UPDATE OF id,group_id,actor_id,configuration_revision,operation_id,digest,preview,assignments,created_at ON evolution_backfills
+BEGIN SELECT RAISE(ABORT,'immutable backfill selection'); END;
+
+CREATE INDEX backfill_project_range ON execution_runs(project_id,started_at,id) WHERE state IN ('settled','failed','unknown');
+CREATE INDEX backfill_session_range ON execution_runs(session_id,started_at,id) WHERE state IN ('settled','failed','unknown');
+
+CREATE TABLE evolution_output_reads (
+ id TEXT PRIMARY KEY,
+ session_digest TEXT NOT NULL REFERENCES auth_sessions(token_digest) ON DELETE CASCADE,
+ group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
+ query_digest TEXT NOT NULL,
+ expires_at TEXT NOT NULL
+);
+CREATE INDEX evolution_output_read_expiry ON evolution_output_reads(expires_at);

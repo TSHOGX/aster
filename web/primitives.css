@@ -1,0 +1,96 @@
+/* Shared interaction primitives for Administration, Volume Studio and Evolution
+   Space. Apps import this after surfaces.css and appearance.css; each app keeps
+   its own layout, but controls, guides, badges and dialogs share one look. */
+:root {
+  --space-1: .25rem; --space-2: .5rem; --space-3: .75rem; --space-4: 1rem; --space-5: 1.5rem; --space-6: 2rem;
+  --radius-sm: 6px; --radius-md: 8px; --radius-lg: 10px;
+  --control-height: 2.25rem; --control-height-sm: 2rem; --control-height-lg: 2.5rem;
+  --font-xs: .78rem; --font-sm: .875rem;
+  --warning-soft: color-mix(in srgb, var(--warning) 14%, var(--surface));
+  --success-soft: color-mix(in srgb, var(--success) 12%, var(--surface));
+}
+
+/* Button variants. Apps keep their base button; these classes add intent. */
+:is(button, .button).secondary { background: var(--surface); border: 1px solid var(--border-strong); color: var(--foreground); }
+:is(button, .button).secondary:hover:not(:disabled) { background: var(--surface-muted); }
+:is(button, .button).ghost { background: transparent; border-color: transparent; color: var(--foreground); }
+:is(button, .button).ghost:hover:not(:disabled) { background: var(--surface-muted); }
+:is(button, .button).danger { background: var(--surface); border: 1px solid color-mix(in srgb, var(--danger) 55%, var(--border)); color: var(--danger); }
+:is(button, .button).danger:hover:not(:disabled) { background: var(--danger-soft); }
+:is(button, .button).danger.solid { background: var(--danger); border-color: var(--danger); color: #fff; }
+:is(button, .button).danger.solid:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 85%, #000); }
+:is(button, .button):disabled { cursor: not-allowed; }
+.button-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.button-row.end { justify-content: flex-end; }
+
+/* Step guide: an ordered explanation of how one area's pieces fit together. */
+.guide { margin: var(--space-4) 0 var(--space-5); padding: var(--space-4) var(--space-5); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+.guide > header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: var(--space-2) var(--space-4); }
+.guide > header h2 { margin: 0; font-size: 1.05rem; }
+.guide > header p { margin: 0; color: var(--foreground-muted); font-size: var(--font-sm); }
+.guide-steps { list-style: none; margin: var(--space-4) 0 0; padding: 0; display: grid; grid-template-columns: repeat(var(--guide-columns, 4), minmax(0, 1fr)); gap: var(--space-3); }
+.guide-steps > li { position: relative; min-width: 0; }
+.guide-steps > li + li::before { content: "→"; position: absolute; left: calc(var(--space-3) / -2); top: 1.15rem; transform: translateX(-50%); color: var(--foreground-muted); font-size: var(--font-sm); }
+.guide-step { display: grid; align-content: start; gap: var(--space-1); height: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--foreground); text-decoration: none; text-align: left; }
+a.guide-step:hover { border-color: var(--accent); color: var(--foreground); }
+.guide-title { display: flex; align-items: center; gap: var(--space-2); }
+.guide-step strong { font-size: .95rem; }
+.guide-step small { display: block; margin: 0; color: var(--foreground-muted); font-size: var(--font-sm); line-height: 1.45; }
+.guide-index { display: inline-grid; place-items: center; flex: none; width: 1.6rem; height: 1.6rem; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: .8rem; font-weight: 650; }
+.guide-steps > li[aria-current="step"] .guide-step { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.guide-steps > li[aria-current="step"] .guide-index { background: var(--accent); color: var(--accent-foreground); }
+.guide-steps > li[data-state="done"] .guide-index { background: var(--success-soft); color: var(--success); }
+.guide-note { margin: var(--space-3) 0 0; padding: var(--space-2) var(--space-3); border: 1px dashed var(--border-strong); border-radius: var(--radius-md); color: var(--foreground-muted); font-size: var(--font-sm); }
+.guide-note a { font-weight: 600; }
+/* Compact form: a one-line breadcrumb of the same steps for section pages. */
+.guide.compact { padding: var(--space-2) var(--space-3); margin: 0 0 var(--space-4); }
+.guide.compact .guide-steps { margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
+.guide.compact .guide-steps > li + li::before { position: static; transform: none; margin-right: var(--space-2); }
+.guide.compact .guide-steps > li { display: flex; align-items: center; }
+.guide.compact .guide-step { display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-2); border-color: transparent; font-size: var(--font-sm); }
+.guide.compact .guide-step small { display: none; }
+.guide.compact .guide-index { width: 1.3rem; height: 1.3rem; font-size: .72rem; }
+.guide.compact .guide-steps > li[aria-current="step"] .guide-step { background: var(--accent-soft); box-shadow: none; border-color: transparent; font-weight: 600; }
+@media (max-width: 900px) { .guide-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } .guide-steps > li + li::before { display: none; } }
+@media (max-width: 560px) { .guide { padding: var(--space-3); } .guide-steps { grid-template-columns: minmax(0, 1fr); } }
+
+/* Empty state: what is missing, why it matters, and the next action. */
+.empty-panel { display: grid; justify-items: start; gap: var(--space-2); padding: var(--space-5); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); background: var(--surface); }
+.empty-panel h2, .empty-panel h3 { margin: 0; font-size: 1rem; }
+.empty-panel p { margin: 0; color: var(--foreground-muted); max-width: 46rem; }
+.empty-panel .button-row { margin-top: var(--space-2); }
+
+/* Status badge: text always states the state; color only reinforces it. */
+.state-badge { display: inline-flex; align-items: center; gap: .35rem; padding: .1rem .55rem; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--foreground); font-size: var(--font-xs); font-weight: 500; line-height: 1.5; white-space: nowrap; }
+.state-badge::before { content: ""; width: .45rem; height: .45rem; border-radius: 50%; background: var(--foreground-muted); }
+.state-badge.success { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); background: var(--success-soft); }
+.state-badge.success::before { background: var(--success); }
+.state-badge.warning { border-color: color-mix(in srgb, var(--warning) 50%, var(--border)); background: var(--warning-soft); }
+.state-badge.warning::before { background: var(--warning); }
+.state-badge.danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); background: var(--danger-soft); }
+.state-badge.danger::before { background: var(--danger); }
+.state-badge.info::before { background: var(--accent); }
+
+/* Callout: inline guidance or a blocking problem with its fix. */
+.callout { display: grid; gap: var(--space-1); margin: var(--space-3) 0; padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-left-width: 3px; border-radius: var(--radius-md); background: var(--surface); }
+.callout > strong { font-size: .95rem; }
+.callout > p { margin: 0; }
+.callout.warning { border-left-color: var(--warning); background: var(--warning-soft); }
+.callout.danger { border-left-color: var(--danger); background: var(--danger-soft); }
+.callout.info { border-left-color: var(--accent); }
+.callout .button-row { margin-top: var(--space-2); }
+
+/* Confirmation dialog, rendered with the native <dialog> element. */
+dialog.confirm-dialog { width: min(32rem, calc(100vw - 2rem)); max-height: 85dvh; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); color: var(--foreground); box-shadow: var(--shadow-lg); }
+dialog.confirm-dialog::backdrop { background: var(--overlay); }
+.confirm-dialog form { display: grid; gap: var(--space-3); padding: var(--space-5); margin: 0; }
+.confirm-dialog h2 { margin: 0; font-size: 1.1rem; line-height: 1.35; }
+.confirm-dialog p { margin: 0; color: var(--foreground-muted); line-height: 1.5; }
+.confirm-dialog ul { margin: 0; padding-left: 1.2rem; color: var(--foreground-muted); }
+.confirm-dialog label { display: grid; gap: var(--space-1); font-size: var(--font-sm); font-weight: 500; }
+.confirm-dialog textarea, .confirm-dialog input { width: 100%; min-width: 0; padding: .5rem .6rem; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--foreground); font: inherit; }
+.confirm-dialog textarea { min-height: 5rem; resize: vertical; }
+.confirm-dialog .button-row { justify-content: flex-end; margin-top: var(--space-2); }
+
+/* Visually hidden text for screen readers. */
+.visually-hidden { position: absolute !important; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

@@ -1,0 +1,125 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "grant_id": {
+          "type": "string"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "policy_revision": {
+          "type": "integer"
+        },
+        "schema_digest": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "group_id",
+        "schema_digest",
+        "digest",
+        "size",
+        "media_type",
+        "grant_id",
+        "policy_revision"
+      ],
+      "type": "object"
+    },
+    "Attempt": {
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "cost_micros": {
+          "type": "integer"
+        },
+        "effective_prompt": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "error_code": {
+          "type": "string"
+        },
+        "fence": {
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "instance_id": {
+          "type": "string"
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "number": {
+          "type": "integer"
+        },
+        "outputs": {
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "parent_instance_id": {
+          "type": "string"
+        },
+        "provider_request_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "tokens": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "run_id",
+        "node_id",
+        "instance_id",
+        "number",
+        "fence",
+        "state",
+        "inputs",
+        "outputs",
+        "cost_micros",
+        "tokens"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/Attempt",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

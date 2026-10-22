@@ -27,16 +27,22 @@ import (
 	"harness-platform/orchestrator/internal/identityconfig"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/producthttp"
+	"harness-platform/orchestrator/internal/runtimerelease"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sandbox/khora"
 	"harness-platform/orchestrator/internal/volumeimport"
 )
 
-func TestStudioImportOnRealKhora(t *testing.T) { qualifyStudioImport(t, content.AuthoredProfile) }
-func TestSharedAssetsImportOnRealKhora(t *testing.T) {
-	qualifyStudioImport(t, content.SharedAssetsProfile)
+func TestStudioImportOnRealKhora(t *testing.T) {
+	qualifyStudioImport(t, content.AuthoredProfile, false)
 }
-func qualifyStudioImport(t *testing.T, profile string) {
+func TestSharedAssetsImportOnRealKhora(t *testing.T) {
+	qualifyStudioImport(t, content.SharedAssetsProfile, false)
+}
+func TestSharedAssetsProjectAdoptionOnRealKhora(t *testing.T) {
+	qualifyStudioImport(t, content.SharedAssetsProfile, true)
+}
+func qualifyStudioImport(t *testing.T, profile string, adoption bool) {
 	endpoint := os.Getenv("PROJECT_TEST_ENDPOINT")
 	studioBinary := os.Getenv("STUDIO_TEST_BINARY")
 	if endpoint == "" || studioBinary == "" {
@@ -64,6 +70,21 @@ func qualifyStudioImport(t *testing.T, profile string) {
 	must(err)
 	config, configPath := configurationFixture(t)
 	config.Engine.StoreID = identity.StoreID
+	if adoption {
+		manifestPath := os.Getenv("PROJECT_TEST_MANIFEST")
+		manifestBytes, err := os.ReadFile(manifestPath)
+		must(err)
+		digest, err := runtimerelease.Digest(manifestBytes)
+		must(err)
+		config.Template = Template{Version: "v1", ID: "agent-runtime", Manifest: manifestPath, Digest: digest}
+		sources := t.TempDir()
+		config.Content.AgentConfig = filepath.Join(sources, "config")
+		config.Content.SharedAssets = filepath.Join(sources, "shared-assets")
+		must(os.MkdirAll(config.Content.AgentConfig, 0700))
+		must(os.MkdirAll(filepath.Join(config.Content.SharedAssets, "skills"), 0700))
+		must(os.WriteFile(filepath.Join(config.Content.AgentConfig, "settings.json"), []byte("{}"), 0600))
+		must(os.WriteFile(filepath.Join(config.Content.SharedAssets, "AGENTS.md"), []byte("Initial guidance"), 0600))
+	}
 	raw, err := json.Marshal(config)
 	must(err)
 	must(os.WriteFile(configPath, raw, 0600))
@@ -74,7 +95,7 @@ func qualifyStudioImport(t *testing.T, profile string) {
 	store, err := product.Open(ctx, cfg.DatabasePath())
 	must(err)
 	defer store.Close()
-	_, token, err := store.Authenticate(ctx, "import-admin", "permanent-admin-password")
+	admin, token, err := store.Authenticate(ctx, "import-admin", "permanent-admin-password")
 	must(err)
 	const issuer = "https://studio-test.example"
 	secret := strings.Repeat("s", 48)
@@ -182,24 +203,49 @@ func qualifyStudioImport(t *testing.T, profile string) {
 		ID string `json:"id"`
 	}
 	must(json.Unmarshal(jsonCall("POST", "/libraries", map[string]any{"request_id": "library", "name": "Engine qualification", "profile": profile}, 201), &library))
+	for _, action := range []string{"volume.read", "volume.author", "volume.review", "volume.merge", "volume.publish"} {
+		_, err = store.ApplyStudioGrant(ctx, token, product.StudioGrantCommand{RequestID: strings.ReplaceAll(action, ".", "-"), Kind: "account", SubjectID: admin.Account.ID, LibraryID: library.ID, Action: action, Effect: "allow"})
+		must(err)
+	}
 	base := "/libraries/" + library.ID
+	var main struct {
+		Commit string `json:"commit_id"`
+	}
+	must(json.Unmarshal(jsonCall("GET", base+"/main", nil, 200), &main))
+	var branch struct {
+		ID   string `json:"id"`
+		Head string `json:"head"`
+	}
+	must(json.Unmarshal(jsonCall("POST", base+"/branches", map[string]any{"request_id": "branch", "name": "Import qualification", "base_commit": main.Commit}, 201), &branch))
+	draft := base + "/branches/" + branch.ID
 	fileBytes := int64(32 << 20)
 	fileCount := 1
 	if profile == content.SharedAssetsProfile {
 		fileBytes = 8 << 20
 	}
-	if os.Getenv("STUDIO_TEST_MAX_SIZE") == "1" {
-		fileBytes = 256 << 20
-		fileCount = 4
+	if os.Getenv("STUDIO_TEST_MAX_SIZE") == "1" && !adoption {
+		if profile == content.SharedAssetsProfile {
+			fileBytes, fileCount = 8<<20, 8
+		} else {
+			fileBytes, fileCount = 256<<20, 4
+		}
 	}
 	chunk := make([]byte, 8<<20)
 	var revision int64 = 1
 	if profile == content.SharedAssetsProfile {
-		jsonCall("POST", base+"/draft/mutations", map[string]any{"request_id": "agents", "expected_revision": revision, "action": "text", "path": "AGENTS.md", "text": "Shared import qualification"}, 200)
-		revision++
-		jsonCall("POST", base+"/draft/mutations", map[string]any{"request_id": "skills", "expected_revision": revision, "action": "mkdir", "path": "skills"}, 200)
+		guidance := "Shared import qualification"
+		if adoption {
+			guidance = "Shared adoption qualification"
+		}
+		if os.Getenv("STUDIO_TEST_MAX_SIZE") == "1" && !adoption {
+			// Eight maximum files exactly fill the profile; required AGENTS.md
+			// is empty UTF-8 so its bytes do not push the tree over 64 MiB.
+			guidance = ""
+		}
+		jsonCall("POST", draft+"/draft/text", map[string]any{"request_id": "agents", "expected_revision": revision, "expected_head": branch.Head, "path": "AGENTS.md", "text": guidance}, 200)
 		revision++
 	}
+
 	started := time.Now()
 	for file := 0; file < fileCount; file++ {
 		for i := range chunk {
@@ -216,7 +262,7 @@ func qualifyStudioImport(t *testing.T, profile string) {
 		var upload struct {
 			ID string `json:"id"`
 		}
-		must(json.Unmarshal(jsonCall("POST", base+"/uploads", map[string]any{"request_id": fmt.Sprintf("upload-%d", file), "expected_revision": revision, "path": name, "size": strconv.FormatInt(fileBytes, 10), "digest": whole}, 201), &upload))
+		must(json.Unmarshal(jsonCall("POST", base+"/uploads", map[string]any{"request_id": fmt.Sprintf("upload-%d", file), "expected_revision": revision, "branch_id": branch.ID, "path": name, "size": strconv.FormatInt(fileBytes, 10), "digest": whole}, 201), &upload))
 		for offset := int64(0); offset < fileBytes; offset += int64(len(chunk)) {
 			r, err := http.NewRequestWithContext(ctx, "PUT", "http://"+gatewayAddr+"/volumes-studio/api/v1"+base+"/uploads/"+upload.ID+"/chunks/"+strconv.FormatInt(offset, 10), bytes.NewReader(chunk))
 			must(err)
@@ -237,12 +283,25 @@ func qualifyStudioImport(t *testing.T, profile string) {
 		jsonCall("POST", base+"/uploads/"+upload.ID+"/complete", map[string]any{"request_id": fmt.Sprintf("complete-%d", file), "expected_revision": revision}, 200)
 		revision++
 	}
+	var checkpoint struct {
+		Commit string `json:"commit_id"`
+	}
+	must(json.Unmarshal(jsonCall("POST", draft+"/commits", map[string]any{"request_id": "commit", "expected_revision": revision, "expected_head": branch.Head, "message": "Reviewed import qualification"}, 201), &checkpoint))
+	var prepared struct {
+		Digest string `json:"digest"`
+	}
+	must(json.Unmarshal(jsonCall("POST", base+"/integrations/prepare", map[string]any{"request_id": "prepare", "branch_id": branch.ID, "expected_head": checkpoint.Commit, "expected_main": main.Commit, "expected_policy_revision": 1}, 200), &prepared))
+	jsonCall("POST", base+"/integrations/reviews", map[string]any{"request_id": "review", "prepared_digest": prepared.Digest, "verdict": "approve", "rationale": "Exact qualification bytes"}, 201)
+	var accepted struct {
+		Commit string `json:"accepted_commit"`
+	}
+	must(json.Unmarshal(jsonCall("POST", base+"/integrations/merge", map[string]any{"request_id": "merge", "prepared_digest": prepared.Digest, "expected_main": main.Commit}, 200), &accepted))
 	var version struct {
 		ID     string `json:"id"`
 		Digest string `json:"descriptor_digest"`
 		State  string `json:"state"`
 	}
-	must(json.Unmarshal(jsonCall("POST", base+"/versions", map[string]any{"request_id": "publish", "expected_revision": revision, "label": "qualified"}, 202), &version))
+	must(json.Unmarshal(jsonCall("POST", base+"/versions", map[string]any{"request_id": "publish", "accepted_commit": accepted.Commit, "label": "qualified"}, 202), &version))
 	for n := 0; n < 180; n++ {
 		must(json.Unmarshal(jsonCall("GET", base+"/versions/"+version.ID, nil, 200), &version))
 		if version.State == "published" {
@@ -259,10 +318,27 @@ func qualifyStudioImport(t *testing.T, profile string) {
 	descriptor, raw, err := connector.Manifest(ctx, version.ID, version.Digest)
 	must(err)
 	input := product.VolumeImportInput{RequestID: "import", SourceID: source.ID, VersionID: version.ID, ExpectedManifestDigest: version.Digest, ConsumerProfile: profile}
-	imported, err := store.AdmitVolumeImport(ctx, token, input, raw, identity.StoreID, "central/author", 4<<30, 10<<30)
-	must(err)
 	cfg.VolumeImports = &VolumeImportConfig{Sources: []volumeimport.Source{source}, TransferBytes: 4 << 30, EngineBytes: 10 << 30}
 	app := &Application{Store: store, Backend: backend, Config: cfg}
+	auth.VolumeImports = app.volumeImportHandler()
+	importAPI := auth.Handler(http.NotFoundHandler())
+	importCall := func(method, path string, body any, expected int) []byte {
+		t.Helper()
+		payload, err := json.Marshal(body)
+		must(err)
+		request := httptest.NewRequest(method, issuer+path, bytes.NewReader(payload))
+		request.AddCookie(&http.Cookie{Name: "project_login", Value: token})
+		request.Header.Set("Origin", issuer)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		importAPI.ServeHTTP(response, request)
+		if response.Code != expected {
+			t.Fatalf("%s %s: %d %s", method, path, response.Code, response.Body.String())
+		}
+		return response.Body.Bytes()
+	}
+	var imported product.VolumeImport
+	must(json.Unmarshal(importCall("POST", "/api/admin/volume-imports", input, 202), &imported))
 	cache, err := volumeimport.Admit(filepath.Join(cfg.StateDirectory, "volume-transfers", imported.ID), volumeimport.Identity{ID: imported.ID, SourceID: source.ID, PublisherID: "publisher", VersionID: version.ID, DescriptorDigest: version.Digest, Profile: profile}, raw)
 	must(err)
 	must(connector.Acquire(ctx, cache))
@@ -270,7 +346,24 @@ func qualifyStudioImport(t *testing.T, profile string) {
 	must(process.Process.Signal(os.Interrupt))
 	must(process.Wait())
 	stopped = true
+	// Reconcile a lost admission reply after the source has shut down. This must
+	// use the authorized durable receipt without a new remote manifest request.
+	var replay product.VolumeImport
+	must(json.Unmarshal(importCall("POST", "/api/admin/volume-imports", input, 202), &replay))
+	if replay.ID != imported.ID {
+		t.Fatal("admission replay duplicated import", imported, replay)
+	}
+	changed := input
+	changed.ConsumerProfile = "wrong-profile"
+	importCall("POST", "/api/admin/volume-imports", changed, 409)
+	// Retry itself must also replay after its successful transition changed state.
+	must(store.AdvanceVolumeImport(ctx, imported.ID, "acquiring", "failed", "interrupted transfer"))
+	retry := map[string]string{"request_id": "retry-original"}
+	importCall("POST", "/api/admin/volume-imports/"+imported.ID+"/retry", retry, 200)
+	importCall("POST", "/api/admin/volume-imports/"+imported.ID+"/retry", retry, 200)
 	// Both engine materialization and final registry admission now use local bytes.
+	imported, err = store.VolumeImport(ctx, imported.ID)
+	must(err)
 	must(app.performVolumeImport(ctx, imported))
 	ready, err := store.VolumeImport(ctx, imported.ID)
 	must(err)
@@ -284,6 +377,10 @@ func qualifyStudioImport(t *testing.T, profile string) {
 	}
 	ref := sandbox.VolumeReference{StoreID: identity.StoreID, VolumeID: volume}
 	must(content.VerifyVolume(ctx, backend, ref, descriptor.TreeDigest, profile))
+	if adoption {
+		qualifyImportedProjectAdoption(t, ctx, app, token, admin.Account.ID, ready)
+		return
+	}
 	copyA, err := backend.SnapshotVolume(ctx, ref, "qualified-owned-a-"+profile, ready.Capacity)
 	must(err)
 	copyB, err := backend.SnapshotVolume(ctx, ref, "qualified-owned-b-"+profile, ready.Capacity)

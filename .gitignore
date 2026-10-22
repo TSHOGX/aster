@@ -104,6 +104,8 @@ admin-frontend/test-results/
 admin-frontend/playwright-report/
 volumes-studio/frontend/test-results/
 volumes-studio/frontend/playwright-report/
+evolution-space/frontend/test-results/
+evolution-space/frontend/playwright-report/
 !admin-frontend/AGENTS.md
 
 # Shared documentation maintenance instructions.

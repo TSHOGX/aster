@@ -1,0 +1,51 @@
+import { expect, test } from "@playwright/test";
+import { settingsFixture, openSettings } from "./fixture";
+import { chooseValue } from "./picker";
+for (const width of [390, 1440]) test(`scoped grant review retains original request across reload and resolves conflicts at ${width}px`, async ({ page }) => {
+ await settingsFixture(page); await page.setViewportSize({ width, height: 1000 });
+ const actions = ["config.read", "config.manage", "run.start", "source.read", "workflow.edit"];
+ let grants = actions.map(action => ({ action, effect: "unset", revision: 0, allowed: false }));
+ let lose = true, conflict = false;
+ const requests: Record<string, unknown>[] = [], receipts = new Map<string, number>();
+ await page.route("**/api/admin/groups/standard-users/optimization/grants**", async route => {
+  if (route.request().method() === "GET") return route.fulfill({ json: { account_id: "user-id", display_name: "ordinary", role: "user", status: "active", member: true, grants } });
+  const body = route.request().postDataJSON(); requests.push(body);
+  if (receipts.has(body.request_id)) return route.fulfill({ json: { revision: receipts.get(body.request_id) } });
+  if (conflict) { conflict = false; grants = grants.map(grant => grant.action === body.action ? { ...grant, effect: "deny", revision: grant.revision + 1, allowed: false } : grant); return route.fulfill({ status: 409, json: { error: "grant changed" } }); }
+  grants = grants.map(grant => grant.action === body.action ? { ...grant, effect: body.effect, revision: grant.revision + 1, allowed: body.effect === "allow" } : grant);
+  receipts.set(body.request_id, grants.find(grant => grant.action === body.action)!.revision);
+  if (lose) { lose = false; return route.abort("failed"); }
+  return route.fulfill({ json: { revision: receipts.get(body.request_id) } });
+ });
+ await openSettings(page, "settings/permissions/");
+ await chooseValue(page.getByRole("combobox", { name: "Account permissions", exact: true }), "user-id");
+ const row = page.getByRole("row").filter({ hasText: "Read source evidence" });
+ await row.getByRole("button", { name: "Allow", exact: true }).click();
+ await expect(page.getByRole("region", { name: "Review permission change", exact: true })).toContainText("Read source evidence → allow");
+ expect(requests).toHaveLength(0);
+ await page.getByRole("button", { name: "Apply reviewed permission", exact: true }).click();
+ await expect(page.getByRole("button", { name: "Check original request", exact: true })).toBeVisible();
+ page.on("dialog", dialog => dialog.accept()); await page.reload();
+ await page.getByRole("button", { name: "Check original request", exact: true }).click();
+ await expect(page.getByRole("status").filter({ hasText: "Permission change confirmed." })).toBeVisible();
+ expect(requests).toHaveLength(2); expect(requests[0]).toEqual(requests[1]);
+ await expect(row.getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
+ conflict = true;
+ const config = page.getByRole("row").filter({ hasText: "Manage group configuration" });
+ await config.getByRole("button", { name: "Allow", exact: true }).click();
+ await page.getByRole("button", { name: "Apply reviewed permission", exact: true }).click();
+ await expect(page.getByRole("alert").filter({ hasText: "The grant changed. Refresh permissions and review a new change." })).toBeVisible();
+ await page.getByRole("button", { name: "Refresh permissions", exact: true }).click();
+ await expect(config).toContainText("Revision 1");
+ await config.getByRole("button", { name: "Allow", exact: true }).click();
+ await page.getByRole("button", { name: "Apply reviewed permission", exact: true }).click();
+ await expect(page.getByRole("status").filter({ hasText: "Permission change confirmed." })).toBeVisible();
+ expect(requests.at(-1)!.expected_revision).toBe(1);
+ expect(requests.at(-1)!.request_id).not.toBe(requests.at(-2)!.request_id);
+ const workflow = page.getByRole("row").filter({ hasText: "Edit and publish group workflows" });
+ await workflow.getByRole("button", { name: "Allow", exact: true }).click();
+ await page.getByRole("button", { name: "Apply reviewed permission", exact: true }).click();
+ await expect(workflow.getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
+ expect(requests.at(-1)!.action).toBe("workflow.edit");
+ expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+});

@@ -1,0 +1,34 @@
+{
+  "$defs": {
+    "RunResultReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "branch_id": {
+          "type": "string"
+        },
+        "commit_id": {
+          "type": "string"
+        },
+        "patch_digest": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "patch_digest",
+        "state",
+        "branch_id",
+        "commit_id"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/RunResultReceipt",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -16,6 +16,9 @@ function close() {
   setTimeout(() => { for (const child of children) child.kill('SIGKILL'); rmSync(scratch, { recursive: true, force: true }); process.exit(0); }, 1000).unref();
 }
 process.on('SIGTERM', close); process.on('SIGINT', close);
+// The close timer is unref'd, so Node can exit before it fires once the
+// children are gone. Always kill stragglers and remove scratch state on exit.
+process.on('exit', () => { for (const child of children) if (child.exitCode === null) child.kill('SIGKILL'); rmSync(scratch, { recursive: true, force: true }); });
 function run(command, args, cwd = repo) {
   const result = spawnSync(command, args, { cwd, env, stdio: command === 'openssl' ? 'pipe' : 'inherit' });
   if (result.status !== 0) { close(); throw new Error(`fixture preparation failed: ${command}`); }

@@ -12,6 +12,7 @@ import (
 )
 
 type Validation struct {
+	AcceptedCommit   string             `json:"accepted_commit,omitempty"`
 	Profile          string             `json:"profile"`
 	Revision         int64              `json:"revision"`
 	Valid            bool               `json:"valid"`
@@ -23,30 +24,25 @@ type Validation struct {
 }
 
 func (s *Store) Validation(ctx context.Context, library, version string) (Validation, error) {
+	if !manifest.ValidID(version) {
+		return Validation{}, ErrInvalid
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	l, err := s.Library(ctx, library)
+	v, err := s.Version(ctx, version)
 	if err != nil {
 		return Validation{}, err
 	}
-	out := Validation{Profile: l.Profile, Revision: l.DraftRevision, Findings: []manifest.Finding{}, Valid: true}
-	var tree []manifest.Entry
-	if version == "" {
-		tree, err = entries(ctx, s.db, "draft_entries", "library_id", library)
-	} else {
-		v, e := s.Version(ctx, version)
-		if e != nil {
-			return out, e
-		}
-		if v.LibraryID != library || v.State != "published" && v.State != "archived" {
-			return out, ErrNotFound
-		}
-		out.Profile, out.Revision = v.Profile, v.SourceRevision
-		tree, err = entries(ctx, s.db, "version_entries", "version_id", version)
+	if v.LibraryID != library || (v.State != "published" && v.State != "archived") {
+		return Validation{}, ErrNotFound
 	}
+	tree, err := entries(ctx, s.db, "version_entries", "version_id", version)
 	if err != nil {
-		return out, err
+		return Validation{}, err
 	}
+	return s.validateTree(Validation{Profile: v.Profile, AcceptedCommit: v.AcceptedCommit, Findings: []manifest.Finding{}, Valid: true}, tree)
+}
+func (s *Store) validateTree(out Validation, tree []manifest.Entry) (Validation, error) {
 	if out.Profile != manifest.SharedAssetsProfile {
 		return out, nil
 	}
@@ -87,4 +83,28 @@ func (s *Store) Validation(ctx context.Context, library, version string) (Valida
 		}
 	}
 	return out, nil
+}
+
+func (s *Store) BranchValidation(ctx context.Context, a Actor, library, branch string, revision int64) (Validation, error) {
+	if err := s.authorizeLibrary(ctx, a, library, "volume.read"); err != nil {
+		return Validation{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, err := s.branch(ctx, library, branch)
+	if err != nil {
+		return Validation{}, err
+	}
+	if b.DraftRevision != revision {
+		return Validation{}, ErrConflict
+	}
+	l, err := s.Library(ctx, library)
+	if err != nil {
+		return Validation{}, err
+	}
+	tree, err := entries(ctx, s.db, "branch_entries", "branch_id", branch)
+	if err != nil {
+		return Validation{}, err
+	}
+	return s.validateTree(Validation{Profile: l.Profile, Revision: b.DraftRevision, Findings: []manifest.Finding{}, Valid: true}, tree)
 }

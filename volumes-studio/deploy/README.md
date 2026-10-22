@@ -1,7 +1,7 @@
 # Deploy and back up Volume Studio
 
 Volume Studio serves `/volumes-studio/` behind an independent HTTPS front door.
-It uses central Aster administrator accounts and keeps its own authoring state,
+It uses central Aster accounts with scoped library grants and keeps its own authoring state,
 blobs and application sessions. Aster imports source versions into separate local
 storage. Ready Aster imports remain usable while Studio is offline.
 
@@ -74,8 +74,15 @@ changes in its normal service-upgrade procedure.
 
 Callbacks must match exactly. The identity adapter is private and is not a general
 OIDC provider. Keep its loopback listener private; cross-host access requires an
-authenticated TLS tunnel. Studio authoring requires an active, unrestricted central
-administrator. Studio cannot grant that permission locally.
+authenticated TLS tunnel. Studio sign-in requires an active, unrestricted central
+account with a library read grant, or an administrator account. Administrators can
+create libraries; read, author, review, merge and publish actions require separate
+library grants. Configure access separately controls Volume policies. Assign these
+in Aster Administration: open the account or group, choose **Studio permissions**,
+enter the library ID, refresh, and review each allowance or denial. The built-in
+shared-assets library ID is `aster-shared-assets`. Account inspection includes
+inherited group denials; administrator status never overrides them. Studio cannot
+grant those permissions locally.
 
 Identity outages deny privileged operations rather than extending cached authority.
 Retry sign-in after service recovery. A lost callback exchange needs a fresh login.
@@ -127,6 +134,12 @@ filters cookies for each application. Unexpected upstream cookies fail the respo
 Studio receives only its own cookies, scoped to `/volumes-studio/`; it does not
 receive the Aster login cookie. Stopping Studio does not stop the Aster route, but
 the shared proxy and central identity remain deployment dependencies.
+
+When Evolution Space is installed, add `-evolution-space` with its separate
+browser gateway origin to the front-door command, for example
+`-evolution-space http://127.0.0.1:18485`. Its public prefix is `/evolution-space/`
+and its cookies are isolated from Studio and Aster. The unconfigured route returns
+unavailable. Never point this option at the private worker listener.
 
 Before enabling access, check central login, Studio library creation, save/upload,
 publication, logout and the Aster route. Confirm assets and deep links load under

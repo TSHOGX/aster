@@ -9,94 +9,17 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"syscall"
 
 	"aster/contracts/volumemanifest"
 )
 
-type PublishInput struct {
-	RequestID           string  `json:"request_id"`
-	ExpectedRevision    int64   `json:"expected_revision"`
-	ExpectedBaseVersion *string `json:"expected_base_version,omitempty"`
-	Label               string  `json:"label"`
-	Note                string  `json:"note"`
-}
-
-const versionColumns = "id,library_id,label,note,source_revision,descriptor_digest,state,issuer,subject,error,generation,(SELECT value FROM metadata WHERE key='publisher_id'),json_extract(descriptor,'$.profile')"
+const versionColumns = "id,library_id,label,note,descriptor_digest,state,issuer,subject,error,generation,(SELECT value FROM metadata WHERE key='publisher_id'),json_extract(descriptor,'$.profile'),accepted_commit"
 
 func scanVersion(row scanner) (Version, error) {
 	var v Version
-	err := row.Scan(&v.ID, &v.LibraryID, &v.Label, &v.Note, &v.SourceRevision, &v.DescriptorDigest, &v.State, &v.Publisher.Issuer, &v.Publisher.Subject, &v.Error, &v.Generation, &v.PublisherID, &v.Profile)
+	err := row.Scan(&v.ID, &v.LibraryID, &v.Label, &v.Note, &v.DescriptorDigest, &v.State, &v.Publisher.Issuer, &v.Publisher.Subject, &v.Error, &v.Generation, &v.PublisherID, &v.Profile, &v.AcceptedCommit)
 	return v, normalizeDB(err)
-}
-func (s *Store) Freeze(ctx context.Context, a Actor, id string, input PublishInput) (Version, error) {
-	if !manifest.ValidID(id) || input.ExpectedRevision < 1 || !validText(input.Label, 128) || strings.TrimSpace(input.Label) == "" || strings.TrimSpace(input.Label) != input.Label || !validText(input.Note, 4000) {
-		return Version{}, ErrInvalid
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.poisoned {
-		return Version{}, ErrBusy
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Version{}, err
-	}
-	defer tx.Rollback()
-	var v Version
-	body := requestDigest("publish", id, input)
-	if replay, err := receipt(ctx, tx, a, input.RequestID, body, &v); err != nil || replay {
-		return v, err
-	}
-	l, err := scanLibrary(tx.QueryRowContext(ctx, "SELECT "+libraryColumns+" FROM libraries WHERE id=?", id))
-	if err != nil {
-		return v, err
-	}
-	if l.Archived || l.DraftRevision != input.ExpectedRevision || input.ExpectedBaseVersion != nil && *input.ExpectedBaseVersion != l.BaseVersion {
-		return v, ErrConflict
-	}
-	if err = unfinishedUploads(ctx, tx, id); err != nil {
-		return v, err
-	}
-	var count int
-	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM versions WHERE library_id=? AND (label=? OR state IN ('pending','validating'))", id, input.Label).Scan(&count); err != nil {
-		return v, err
-	}
-	if count != 0 {
-		return v, ErrBusy
-	}
-	source, err := entries(ctx, tx, "draft_entries", "library_id", id)
-	if err != nil {
-		return v, err
-	}
-	versionID := randomID()
-	descriptor, err := manifest.NewProfile(s.config.PublisherID, id, versionID, l.Profile, source)
-	if err != nil {
-		return v, errors.Join(ErrInvalid, err)
-	}
-	if err = s.validateProfileContent(descriptor); err != nil {
-		return v, errors.Join(ErrInvalid, err)
-	}
-	raw, err := descriptor.Canonical()
-	if err != nil {
-		return v, err
-	}
-	digest, err := descriptor.Digest()
-	if err != nil {
-		return v, err
-	}
-	v = Version{Profile: l.Profile, ID: versionID, LibraryID: id, Label: input.Label, Note: input.Note, SourceRevision: l.DraftRevision, DescriptorDigest: digest, State: "pending", Publisher: a, PublisherID: s.config.PublisherID}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO versions(id,library_id,label,note,source_revision,descriptor,descriptor_digest,state,issuer,subject,created_at) VALUES(?,?,?,?,?,?,?,'pending',?,?,?)`, v.ID, id, v.Label, v.Note, v.SourceRevision, raw, digest, a.Issuer, a.Subject, s.now().Unix()); err != nil {
-		return v, err
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO version_entries SELECT ?,path,kind,size,digest FROM draft_entries WHERE library_id=?`, v.ID, id); err != nil {
-		return v, err
-	}
-	if err = s.record(ctx, tx, a, input.RequestID, body, "version.freeze", id, l.DraftRevision, v); err != nil {
-		return v, err
-	}
-	return v, tx.Commit()
 }
 func (s *Store) Version(ctx context.Context, id string) (Version, error) {
 	return scanVersion(s.db.QueryRowContext(ctx, "SELECT "+versionColumns+" FROM versions WHERE id=?", id))
@@ -122,10 +45,7 @@ func (s *Store) Versions(ctx context.Context, library, after string) ([]Version,
 // an interrupted 'validating' job from its frozen tree. Current principal checks
 // gate both admission to hashing and publication finalization; session logout
 // does not revoke a principal's already admitted work.
-func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context, Actor) error) (bool, error) {
-	if authorize == nil {
-		return false, ErrInvalid
-	}
+func (s *Store) ValidateNext(ctx context.Context) (bool, error) {
 	s.mu.Lock()
 	v, err := scanVersion(s.db.QueryRowContext(ctx, "SELECT "+versionColumns+" FROM versions WHERE state IN ('pending','validating') AND error!='principal_authority_required' ORDER BY created_at,id LIMIT 1"))
 	s.mu.Unlock()
@@ -135,7 +55,7 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 	if err != nil {
 		return false, err
 	}
-	if err = authorize(ctx, v.Publisher); err != nil {
+	if err = s.authorizePublication(ctx, v); err != nil {
 		if errors.Is(err, ErrAuthority) {
 			s.mu.Lock()
 			_, persist := s.db.ExecContext(ctx, "UPDATE versions SET error='principal_authority_required' WHERE id=? AND generation=?", v.ID, v.Generation)
@@ -198,7 +118,7 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 		_, persist := s.db.ExecContext(ctx, "UPDATE versions SET state='failed',error='source_integrity_failed' WHERE id=? AND state='validating' AND generation=?", v.ID, generation)
 		return true, errors.Join(err, persist)
 	}
-	if err = authorize(ctx, v.Publisher); err != nil {
+	if err = s.authorizePublication(ctx, v); err != nil {
 		if errors.Is(err, ErrAuthority) {
 			s.mu.Lock()
 			_, persist := s.db.ExecContext(ctx, "UPDATE versions SET error='principal_authority_required' WHERE id=? AND generation=?", v.ID, generation)
@@ -225,11 +145,7 @@ func (s *Store) ValidateNext(ctx context.Context, authorize func(context.Context
 	if n != 1 {
 		return true, ErrConflict
 	}
-	// Publishing establishes the comparison base, but never changes later edits.
-	if _, err = tx.ExecContext(ctx, "UPDATE libraries SET base_version=? WHERE id=?", v.ID, v.LibraryID); err != nil {
-		return true, err
-	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO audit(issuer,subject,action,library_id,request_id,revision,created_at) VALUES(?,?,'version.published',?,'',?,?)", v.Publisher.Issuer, v.Publisher.Subject, v.LibraryID, v.SourceRevision, s.now().Unix()); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO audit(issuer,subject,action,library_id,request_id,revision,created_at) VALUES(?,?,'version.published',?,'',?,?)", v.Publisher.Issuer, v.Publisher.Subject, v.LibraryID, 0, s.now().Unix()); err != nil {
 		return true, err
 	}
 	return true, tx.Commit()
@@ -272,7 +188,7 @@ func (s *Store) Collect(ctx context.Context) (int, error) {
 	if s.poisoned {
 		return 0, ErrBusy
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT digest FROM blobs b WHERE state='live' AND NOT EXISTS(SELECT 1 FROM draft_entries d WHERE d.digest=b.digest) AND NOT EXISTS(SELECT 1 FROM version_entries v WHERE v.digest=b.digest) AND NOT EXISTS(SELECT 1 FROM reader_pins p WHERE p.digest=b.digest) ORDER BY digest LIMIT 200`)
+	rows, err := s.db.QueryContext(ctx, `SELECT digest FROM blobs b WHERE state='live' AND NOT EXISTS(SELECT 1 FROM branch_entries be WHERE be.digest=b.digest) AND NOT EXISTS(SELECT 1 FROM version_entries v WHERE v.digest=b.digest) AND NOT EXISTS(SELECT 1 FROM reader_pins p WHERE p.digest=b.digest) ORDER BY digest LIMIT 200`)
 	if err != nil {
 		return 0, err
 	}
@@ -312,35 +228,6 @@ func (s *Store) Collect(ctx context.Context) (int, error) {
 	return removed, nil
 }
 
-// Preview is a validation of the current revision, not a binding engine capacity
-// promise. The final freeze repeats these checks inside its admission transaction.
-func (s *Store) Preview(ctx context.Context, id string, expected int64) (manifest.Descriptor, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	l, err := s.Library(ctx, id)
-	if err != nil {
-		return manifest.Descriptor{}, err
-	}
-	if l.DraftRevision != expected || l.Archived {
-		return manifest.Descriptor{}, ErrConflict
-	}
-	if err = unfinishedUploads(ctx, s.db.DB, id); err != nil {
-		return manifest.Descriptor{}, err
-	}
-	es, err := entries(ctx, s.db, "draft_entries", "library_id", id)
-	if err != nil {
-		return manifest.Descriptor{}, err
-	}
-	d, err := manifest.NewProfile(s.config.PublisherID, id, "preview", l.Profile, es)
-	if err != nil {
-		return d, errors.Join(ErrInvalid, err)
-	}
-	if err = s.validateProfileContent(d); err != nil {
-		return d, errors.Join(ErrInvalid, err)
-	}
-	return d, nil
-}
-
 func (s *Store) validateProfileContent(d manifest.Descriptor) error {
 	return d.ValidateContent(func(name string) (io.ReadCloser, error) {
 		for _, e := range d.Entries {
@@ -350,4 +237,23 @@ func (s *Store) validateProfileContent(d manifest.Descriptor) error {
 		}
 		return nil, ErrNotFound
 	})
+}
+
+// Publication requires current scoped authority and a settled accepted commit.
+func (s *Store) authorizePublication(ctx context.Context, v Version) error {
+	commit := v.AcceptedCommit
+	if commit == "" {
+		return ErrConflict
+	}
+	if err := s.authorizeLibrary(ctx, v.Publisher, v.LibraryID, "volume.publish"); err != nil {
+		return err
+	}
+	var accepted int
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM merge_operations WHERE library_id=? AND new_head=? AND state='settled'", v.LibraryID, commit).Scan(&accepted); err != nil {
+		return err
+	}
+	if accepted != 1 {
+		return ErrConflict
+	}
+	return nil
 }

@@ -1,0 +1,230 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "grant_id": {
+          "type": "string"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "policy_revision": {
+          "type": "integer"
+        },
+        "schema_digest": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "group_id",
+        "schema_digest",
+        "digest",
+        "size",
+        "media_type",
+        "grant_id",
+        "policy_revision"
+      ],
+      "type": "object"
+    },
+    "ContentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "commit_id": {
+          "type": "string"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "tree_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "library_id",
+        "commit_id",
+        "profile",
+        "tree_digest"
+      ],
+      "type": "object"
+    },
+    "EvaluationResult": {
+      "additionalProperties": false,
+      "properties": {
+        "fence": {
+          "type": "integer"
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/Metric"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "reports": {
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "reproducibility_limit": {
+          "type": "string"
+        },
+        "service": {
+          "$ref": "#/$defs/Revision"
+        },
+        "state": {
+          "type": "string"
+        },
+        "subject": {
+          "$ref": "#/$defs/EvaluationSubject"
+        }
+      },
+      "required": [
+        "job_id",
+        "service",
+        "fence",
+        "subject",
+        "state",
+        "outcome",
+        "metrics",
+        "reports"
+      ],
+      "type": "object"
+    },
+    "EvaluationSubject": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate": {
+          "$ref": "#/$defs/ContentRef"
+        },
+        "dataset": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "model": {
+          "$ref": "#/$defs/Revision"
+        },
+        "prepared_digest": {
+          "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/Revision"
+        },
+        "reference": {
+          "$ref": "#/$defs/ContentRef"
+        },
+        "requirement_digest": {
+          "type": "string"
+        },
+        "runtime": {
+          "$ref": "#/$defs/Revision"
+        },
+        "scorer": {
+          "$ref": "#/$defs/Revision"
+        },
+        "seed": {
+          "type": "integer"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/Revision"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "candidate",
+        "prepared_digest",
+        "requirement_digest",
+        "profile",
+        "dataset",
+        "scorer",
+        "runtime",
+        "model",
+        "tools",
+        "seed"
+      ],
+      "type": "object"
+    },
+    "Metric": {
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        },
+        "samples": {
+          "type": "integer"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "unit",
+        "value",
+        "samples",
+        "coverage"
+      ],
+      "type": "object"
+    },
+    "Revision": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/EvaluationResult",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

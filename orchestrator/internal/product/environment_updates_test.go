@@ -195,6 +195,44 @@ func TestEnvironmentPublicationUnavailableFallsBackWithoutUserFailure(t *testing
 		t.Fatal("update leaked to daily UI", p.Failure)
 	}
 }
+
+func TestEnvironmentPublicationRetryRecoversFailedDeployment(t *testing.T) {
+	l, a, _, token, id := updateFixture(t)
+	must(t, l.EnsureActive(ctx, a, testProfile().Bindings()))
+	drive(t, l, a.ProjectID)
+	second := publicationFixture(t, l.Store, "retry-v2")
+	selectPublicationFixture(t, l.Store, second, false)
+	release := publishUpdateFixture(t, l.Store, token, id)
+	_, err := l.Store.db.Exec(`UPDATE builtin_volumes SET enabled=0 WHERE id=? AND version=?`, second.ID, second.Version)
+	must(t, err)
+	for i := 0; i < 3; i++ {
+		pausePolicyProject(t, l, a)
+		must(t, l.Resume(ctx, a, testProfile().Bindings()))
+		drive(t, l, a.ProjectID)
+	}
+	failed, err := updateStatus(ctx, l.Store.reader, a.ProjectID)
+	must(t, err)
+	if failed.State != "failed" || failed.Attempts != 3 || failed.Current[0].Source.Version != "v1" {
+		t.Fatal("deployment did not retain failed target", failed)
+	}
+	controlUpdateFixture(t, l.Store, token, id, EnvironmentUpdateEdit{Action: "retry", ReleaseID: release.ID, ExpectedRevision: release.Revision})
+	retried, err := updateStatus(ctx, l.Store.reader, a.ProjectID)
+	must(t, err)
+	if retried.State != "pending" || retried.Attempts != 0 || retried.TargetID != release.ID {
+		t.Fatal("retry did not reopen the same deployment", retried)
+	}
+	_, err = l.Store.db.Exec(`UPDATE builtin_volumes SET enabled=1 WHERE id=? AND version=?`, second.ID, second.Version)
+	must(t, err)
+	pausePolicyProject(t, l, a)
+	must(t, l.Resume(ctx, a, testProfile().Bindings()))
+	drive(t, l, a.ProjectID)
+	ready, err := updateStatus(ctx, l.Store.reader, a.ProjectID)
+	must(t, err)
+	if ready.State != "current" || ready.AppliedID != release.ID || ready.Current[0].Source.Version != "retry-v2" {
+		t.Fatal("deployment retry did not converge", ready)
+	}
+}
+
 func TestEnvironmentPublicationBeforeFirstStart(t *testing.T) {
 	l, a, _, token, id := updateFixture(t)
 	selectPublicationFixture(t, l.Store, publicationFixture(t, l.Store, "v2"), false)

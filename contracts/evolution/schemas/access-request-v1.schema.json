@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "AccessRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "fence": {
+          "type": "integer"
+        },
+        "grant_id": {
+          "type": "string"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "principal": {
+          "$ref": "#/$defs/Principal"
+        },
+        "resource_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "principal",
+        "action",
+        "group_id"
+      ],
+      "type": "object"
+    },
+    "Principal": {
+      "additionalProperties": false,
+      "properties": {
+        "issuer": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "issuer",
+        "subject",
+        "kind"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/AccessRequest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

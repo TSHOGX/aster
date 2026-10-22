@@ -1,6 +1,7 @@
 "use client";
 import { formatQuantity } from "@web/i18n/locale";
 import { useT } from "@/lib/i18n";
+import { useConfirm } from "@web/confirm";
 
 import { Select } from "@web/select";
 import Link from "next/link";
@@ -11,7 +12,7 @@ import { productActions } from "@web/capabilities";
 import type { Policy, PolicyEffect, PolicyResult } from "@/lib/policy-models";
 import { MutationStatus, usePolicyMutation } from "./policy-mutation";
 export function PolicyEditor({id,onDirty}:{id?:string;onDirty:(value:boolean)=>void}) {
-  const tr = useT();
+  const tr = useT(); const confirm = useConfirm();
   const [policy,setPolicy]=useState<Policy|null>(null), [name,setName]=useState(""), [description,setDescription]=useState(""), [statements,setStatements]=useState<Policy["statements"]>({}), [error,setError]=useState(""), [deleted,setDeleted]=useState(false),[loadAttempt,setLoadAttempt]=useState(0);
   const mutation=usePolicyMutation();
  const [draftResources,setDraftResources]=useState<Grant[]>([]);
@@ -36,6 +37,6 @@ export function PolicyEditor({id,onDirty}:{id?:string;onDirty:(value:boolean)=>v
     </form>}
     {(!id||policy)&&<PolicyResourceGrants key={policy?.id||"new"} policy={policy||undefined} onDraft={setDraftResources} saved={accept} onDirty={setResourceDirty} disabled={mutation.busy||!!mutation.pending||!!policy&&(name!==policy.name||description!==policy.description||productActions.some(action=>(statements[action]||"unset")!==(policy.statements[action]||"unset")))} />}
     {!id&&!policy&&<button type="submit" form="policy-details-form" className="primary" disabled={!dirty||mutation.busy||!!mutation.pending}>{tr("Save policy")}</button>}
-    {policy&&<section className="panel"><p>{tr("Revision")} {formatQuantity(policy.revision)}</p><div className="form-actions"><button disabled={mutation.busy||!!mutation.pending||resourceDirty} onClick={()=>void reload()}>{tr("Reload current data")}</button><button disabled={mutation.busy||!!mutation.pending||resourceDirty} onClick={()=>accept(policy)}>{tr("Discard edits")}</button><button disabled={dirty||mutation.busy} onClick={()=>{if(window.confirm(tr("Delete policy “{name}”? Bound policies must be detached first.", { name: policy.name })))void mutation.submit({path:`/api/admin/policies/${encodeURIComponent(policy.id)}`,method:"DELETE",body:{request_id:crypto.randomUUID(),expected_revision:policy.revision}},saved);}}>{tr("Delete policy")}</button><Link href={`/audit?target=${encodeURIComponent(policy.id)}`}>{tr("View policy audit")}</Link></div></section>}
+    {policy&&<section className="panel"><p>{tr("Revision")} {formatQuantity(policy.revision)}</p><div className="form-actions"><button disabled={mutation.busy||!!mutation.pending||resourceDirty} onClick={()=>void reload()}>{tr("Reload current data")}</button><button disabled={mutation.busy||!!mutation.pending||resourceDirty} onClick={()=>accept(policy)}>{tr("Discard edits")}</button><button className="danger" disabled={dirty||mutation.busy} onClick={()=>{void confirm({title:tr("Delete policy “{name}”?", { name: policy.name }),body:tr("Bound policies must be detached first. The deletion is recorded in the audit log."),confirm:tr("Delete policy"),cancel:tr("Cancel"),danger:true}).then(answer=>{if(answer.confirmed)void mutation.submit({path:`/api/admin/policies/${encodeURIComponent(policy.id)}`,method:"DELETE",body:{request_id:crypto.randomUUID(),expected_revision:policy.revision}},saved);});}}>{tr("Delete policy")}</button><Link href={`/audit?target=${encodeURIComponent(policy.id)}`}>{tr("View policy audit")}</Link></div></section>}
   </section>;
 }

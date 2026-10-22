@@ -15,30 +15,31 @@ func TestSharedAssetsDraftPublicationAndCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	b := newDraftBranch(t, s, l.ID)
 	revision := int64(1)
 	mutateDraft := func(action, path, text string) {
-		revision = mutate(t, s, l.ID, Mutation{RequestID: fmt.Sprint(revision), ExpectedRevision: revision, Action: action, Path: path, Text: text}).Revision
+		revision = editDraft(t, s, b, draftEdit{RequestID: fmt.Sprint(revision), ExpectedRevision: revision, Action: action, Path: path, Text: text}).Revision
 	}
-	mutateDraft("mkdir", "skills", "")
-	if _, err = s.Preview(ctx, l.ID, revision); err == nil {
+	mutateDraft("remove", "AGENTS.md", "")
+	if v, err := s.BranchValidation(ctx, testActor, l.ID, b.ID, revision); err != nil || v.Valid {
 		t.Fatal("incomplete draft published")
 	}
 	mutateDraft("text", "AGENTS.md", "Use the tools available to this Project.")
 	mutateDraft("mkdir", "skills/reference", "")
-	if _, err = s.Freeze(ctx, testActor, l.ID, PublishInput{RequestID: "incomplete", ExpectedRevision: revision, Label: "incomplete"}); err == nil {
+	if _, err = releaseDraft(s, ctx, testActor, b, draftRelease{RequestID: "incomplete", ExpectedRevision: revision, Label: "incomplete"}); err == nil {
 		t.Fatal("missing SKILL.md accepted")
 	}
 	mutateDraft("text", "skills/reference/SKILL.md", "# Reference\nConsult the supplied reference.")
 	mutateDraft("text", "skills/reference/example.txt", "reference bytes")
-	d, err := s.Preview(ctx, l.ID, revision)
-	if err != nil {
-		t.Fatal(err)
+	d, err := s.BranchValidation(ctx, testActor, l.ID, b.ID, revision)
+	if err != nil || !d.Valid {
+		t.Fatal(d, err)
 	}
 	if d.Profile != manifest.SharedAssetsProfile {
 		t.Fatal(d)
 	}
-	v := publish(t, s, l.ID, revision)
-	if _, err = s.ValidateNext(ctx, allow); err != nil {
+	v := publishDraft(t, s, b, revision)
+	if _, err = s.ValidateNext(ctx); err != nil {
 		t.Fatal(err)
 	}
 	before, err := s.Descriptor(ctx, v.ID)
@@ -50,7 +51,7 @@ func TestSharedAssetsDraftPublicationAndCatalog(t *testing.T) {
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("published bytes changed", err)
 	}
-	page, err := s.WorkbenchCatalog(ctx, Query{Profile: manifest.SharedAssetsProfile})
+	page, err := s.WorkbenchCatalog(ctx, testActor, Query{Profile: manifest.SharedAssetsProfile})
 	if err != nil || len(page.Items) != 1 {
 		t.Fatal(page, err)
 	}
@@ -69,7 +70,7 @@ func TestSharedAssetsDraftPublicationAndCatalog(t *testing.T) {
 
 func TestSharedAssetsBaseSeedIsStableAcrossRestart(t *testing.T) {
 	ctx := context.Background()
-	cfg := Config{Directory: t.TempDir(), PublisherID: "publisher", QuotaBytes: 32 << 20, SeedSharedAssets: true}
+	cfg := Config{Directory: t.TempDir(), PublisherID: "publisher", QuotaBytes: 32 << 20, SeedSharedAssets: true, Authority: &branchAuthority{true}}
 	s, err := Open(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +86,17 @@ func TestSharedAssetsBaseSeedIsStableAcrossRestart(t *testing.T) {
 	if len(d.Entries) != 2 || d.Entries[1].Path != "skills" || d.Entries[1].Kind != "directory" {
 		t.Fatal(d)
 	}
-	mutate(t, s, "aster-shared-assets", Mutation{RequestID: "edit-base", ExpectedRevision: 1, Action: "text", Path: "AGENTS.md", Text: "Draft edit"})
+	main, err := s.MainCommit(ctx, testActor, "aster-shared-assets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch, err := s.CreateBranch(ctx, testActor, "aster-shared-assets", CreateBranchInput{"edit-branch", "Seed edits", main.CommitID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SaveBranchText(ctx, testActor, "aster-shared-assets", branch.ID, SaveBranchTextInput{"edit-base", 1, main.CommitID, "AGENTS.md", "Draft edit"}); err != nil {
+		t.Fatal(err)
+	}
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -98,8 +109,29 @@ func TestSharedAssetsBaseSeedIsStableAcrossRestart(t *testing.T) {
 	if err != nil || !bytes.Equal(raw, after) {
 		t.Fatal("base overwritten", err)
 	}
-	validation, err := s.Validation(ctx, "aster-shared-assets", "")
+	validation, err := s.BranchValidation(ctx, testActor, "aster-shared-assets", branch.ID, 2)
 	if err != nil || validation.AgentsPreview != "Draft edit" {
 		t.Fatal(validation, err)
+	}
+}
+
+func TestBuiltinReleaseHasVerifiedBranchOrigin(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, Config{Directory: t.TempDir(), PublisherID: "publisher", QuotaBytes: 32 << 20, SeedSharedAssets: true, Authority: &branchAuthority{true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	v, err := s.Version(ctx, "aster-shared-assets-v1")
+	if err != nil || v.AcceptedCommit == "" {
+		t.Fatal("missing seed lineage", v, err)
+	}
+	b, err := s.CreateBranch(ctx, testActor, v.LibraryID, CreateBranchInput{"branch-seed", "Extend seed", v.AcceptedCommit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := s.BranchTree(ctx, testActor, v.LibraryID, b.ID, "", "", 1)
+	if err != nil || len(tree.Entries) != 2 {
+		t.Fatal("seed branch lost required content", tree, err)
 	}
 }

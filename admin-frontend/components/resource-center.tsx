@@ -62,9 +62,11 @@ async function inventory(kind: "sandbox" | "volume", signal?: AbortSignal) {
 }
 export function ResourceCenter({
   section: raw = "network",
+  accountID,
   onDirty,
 }: {
   section?: string;
+  accountID: string;
   onDirty: (value: boolean) => void;
 }) {
   const tr = useT();
@@ -94,7 +96,7 @@ export function ResourceCenter({
         <Inventory kind="sandbox" />
       ) : section.id === "volumes" ? (
         <>
-          <VolumeImports onDirty={setImportDirty} />
+          <VolumeImports accountID={accountID} onDirty={setImportDirty} />
           <SharedVolumes onDirty={setSharedDirty} />
           <details className="panel">
             <summary>{tr("Initialization sources")}</summary>

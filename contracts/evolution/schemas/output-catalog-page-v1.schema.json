@@ -1,0 +1,64 @@
+{
+  "$defs": {
+    "OutputCatalogPage": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/OutputLibrary"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "next": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "items",
+        "next",
+        "total"
+      ],
+      "type": "object"
+    },
+    "OutputLibrary": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "type": "boolean"
+        },
+        "can_configure": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "owner_group": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "profile",
+        "archived",
+        "owner_group",
+        "can_configure"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/OutputCatalogPage",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

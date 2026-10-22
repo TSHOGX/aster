@@ -35,3 +35,38 @@ func TestRegisteredClientValidationAndRotation(t *testing.T) {
 		}
 	}
 }
+
+func TestEvolutionSpaceCallbackIsServiceSpecific(t *testing.T) {
+	c := &Config{Issuer: "https://example.com", Listen: "127.0.0.1:8083", Clients: []Client{{ID: "evolution-space", Callback: "https://example.com/evolution-space/auth/callback", SecretEnvs: []string{"EVOLUTION_SPACE_IDENTITY_SECRET"}}}}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c.Clients[0].Callback = "https://example.com/volumes-studio/auth/callback"
+	if err := c.Validate(); err == nil {
+		t.Fatal("Evolution Space accepted Studio callback")
+	}
+	c.Clients[0].ID = "studio"
+	c.Clients[0].Callback = "https://example.com/evolution-space/auth/callback"
+	if err := c.Validate(); err == nil {
+		t.Fatal("Studio accepted Evolution Space callback")
+	}
+}
+
+func TestUnknownApplicationCannotBorrowStudioCallback(t *testing.T) {
+	c := &Config{Issuer: "https://example.com", Listen: "127.0.0.1:8083", Clients: []Client{{ID: "unknown", Callback: "https://example.com/volumes-studio/auth/callback", SecretEnvs: []string{"IDENTITY_SECRET"}}}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("unknown client treated as Studio")
+	}
+}
+
+func TestRetiredSpaceIdentityAndCallbackAreRejected(t *testing.T) {
+	for _, client := range []Client{
+		{ID: "evaluation-space", Callback: "https://example.com/evolution-space/auth/callback", SecretEnvs: []string{"IDENTITY_SECRET"}},
+		{ID: "evolution-space", Callback: "https://example.com/evaluation-space/auth/callback", SecretEnvs: []string{"IDENTITY_SECRET"}},
+	} {
+		c := &Config{Issuer: "https://example.com", Listen: "127.0.0.1:8083", Clients: []Client{client}}
+		if err := c.Validate(); err == nil {
+			t.Fatal("retired application configuration accepted", client.ID, client.Callback)
+		}
+	}
+}

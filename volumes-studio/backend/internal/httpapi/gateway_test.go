@@ -21,7 +21,7 @@ func TestGatewayLoginCookieCSRFAndPrefix(t *testing.T) {
 			w.WriteHeader(204)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(identity.Assertion{Issuer: "https://example.com", Subject: "subject", CentralSession: "central", Epoch: 1, Entitlements: []string{identity.AuthorEntitlement}, ExpiresAt: time.Now().Add(time.Minute), Grant: strings.Repeat("g", 43)})
+		_ = json.NewEncoder(w).Encode(identity.Assertion{Issuer: "https://example.com", Subject: "subject", CentralSession: "central", Epoch: 1, Entitlements: []string{identity.AccessEntitlement}, ExpiresAt: time.Now().Add(time.Minute), Grant: strings.Repeat("g", 43)})
 	}))
 	defer central.Close()
 	client, err := identity.NewClient(identity.Config{Issuer: "https://example.com", Endpoint: central.URL, ClientID: "studio", ClientSecret: strings.Repeat("s", 32)})

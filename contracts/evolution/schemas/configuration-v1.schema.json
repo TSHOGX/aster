@@ -1,0 +1,382 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "grant_id": {
+          "type": "string"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "policy_revision": {
+          "type": "integer"
+        },
+        "schema_digest": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "group_id",
+        "schema_digest",
+        "digest",
+        "size",
+        "media_type",
+        "grant_id",
+        "policy_revision"
+      ],
+      "type": "object"
+    },
+    "Binding": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "evaluation": {
+          "$ref": "#/$defs/EvaluationPolicy"
+        },
+        "id": {
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "$ref": "#/$defs/BindingInput"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "output": {
+          "$ref": "#/$defs/OutputBinding"
+        },
+        "parameters": {},
+        "schedule": {
+          "type": "string"
+        },
+        "service": {
+          "$ref": "#/$defs/Revision"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "template": {
+          "$ref": "#/$defs/Revision"
+        },
+        "timezone": {
+          "type": "string"
+        },
+        "trigger": {
+          "type": "string"
+        },
+        "workflow": {
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "required": [
+        "id",
+        "enabled",
+        "template",
+        "workflow",
+        "service",
+        "parameters",
+        "source_ids",
+        "output",
+        "evaluation",
+        "budget",
+        "trigger",
+        "depends_on"
+      ],
+      "type": "object"
+    },
+    "BindingDependency": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_id": {
+          "type": "string"
+        },
+        "output_port": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_id",
+        "output_port"
+      ],
+      "type": "object"
+    },
+    "BindingInput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "dependency": {
+          "$ref": "#/$defs/BindingDependency"
+        },
+        "sources": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "Budget": {
+      "additionalProperties": false,
+      "properties": {
+        "max_artifact_bytes": {
+          "type": "integer"
+        },
+        "max_attempts": {
+          "type": "integer"
+        },
+        "max_cost_micros": {
+          "type": "integer"
+        },
+        "max_tokens": {
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_cost_micros",
+        "max_tokens",
+        "max_attempts",
+        "timeout_seconds",
+        "max_artifact_bytes"
+      ],
+      "type": "object"
+    },
+    "Configuration": {
+      "additionalProperties": false,
+      "properties": {
+        "auto_enabled": {
+          "type": "boolean"
+        },
+        "bindings": {
+          "items": {
+            "$ref": "#/$defs/Binding"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/SourceBinding"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "group_id",
+        "revision",
+        "auto_enabled",
+        "sources",
+        "bindings",
+        "budget"
+      ],
+      "type": "object"
+    },
+    "EvaluationPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/Revision"
+        },
+        "reference_release": {
+          "$ref": "#/$defs/ReleaseRef"
+        },
+        "reference_strategy": {
+          "type": "string"
+        },
+        "service": {
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "required": [
+        "mode",
+        "reference_strategy"
+      ],
+      "type": "object"
+    },
+    "OutputBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "library_id": {
+          "type": "string"
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "reservation_generation": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "library_id",
+        "prefix",
+        "profile",
+        "reservation_generation"
+      ],
+      "type": "object"
+    },
+    "ReleaseRef": {
+      "additionalProperties": false,
+      "properties": {
+        "descriptor_digest": {
+          "type": "string"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "publisher_id": {
+          "type": "string"
+        },
+        "version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "publisher_id",
+        "library_id",
+        "version_id",
+        "descriptor_digest"
+      ],
+      "type": "object"
+    },
+    "Revision": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "type": "object"
+    },
+    "SourceBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "audience_groups": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "capture_frontier": {
+          "type": "string"
+        },
+        "derivative_publication": {
+          "type": "boolean"
+        },
+        "exclusions": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "policy_revision": {
+          "type": "integer"
+        },
+        "resource_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "resource_id",
+        "policy_revision",
+        "audience_groups",
+        "derivative_publication",
+        "exclusions",
+        "capture_frontier"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/Configuration",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

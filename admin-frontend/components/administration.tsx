@@ -7,22 +7,29 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react
 import { api, APIError } from "@/lib/api";
 import type { Identity } from "@web/identity";
 import { displayName } from "@web/brand";
-import { ACTIVE_APPEARANCE_KEY, clearAppearanceBinding } from "@web/appearance";
+import { clearAppearanceBinding } from "@web/appearance";
 import { useAccountPreferences } from "@web/account-preferences";
+import { useSessionRefresh } from "@web/session-refresh";
 import { PolicyList } from "./policy-list";
 import { PolicyEditor } from "./policy-editor";
+import { StudioPermissionsEditor } from "./studio-permissions";
 import { GroupEditor } from "./group-editor";
 import { ProjectList, ProjectView } from "./project-views";
+import { AdminOverview } from "./admin-overview";
+import { ConfirmProvider } from "@web/confirm";
 import { UserList } from "./user-list";
 import { ResourceEditor } from "./resource-editor";
 import { UserConfiguration } from "./configuration-controls";
 import { ResourceCenter } from "./resource-center";
 import { UserEditor } from "./user-editor";
 import { AuditView, OperationView } from "./audit-view";
+const evolutionRoutes: Record<string, string> = { optimization: "settings/configuration/", run: "runs/new/", corpus: "settings/sources/", "evolution-permissions": "settings/permissions/" };
 export function Administration() {
   const tr = useT();
   const pathname = usePathname();
   const route = pathname.replace(/^\/admin(?=\/|$)/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  // Group evolution work moved to Evolution Space; keep old links working.
+  const evolutionDestination = route[0] === "groups" && route.length === 3 ? evolutionRoutes[route[2]] : undefined;
   const [identity, setIdentity] = useState<Identity | null>(null), [status, setStatus] = useState("loading"), [dirty, setDirty] = useState(false), [error, setError] = useState("");
   const generation = useRef(0);
   const dirtyRef = useRef(false);
@@ -38,16 +45,18 @@ export function Administration() {
       setStatus("unavailable");
     });
   }, []);
+  const evolutionGroup = evolutionDestination ? route[1] : "";
+  useEffect(() => {
+    if (evolutionDestination) location.replace(`/evolution-space/groups/${encodeURIComponent(evolutionGroup)}/${evolutionDestination}`);
+  }, [evolutionDestination, evolutionGroup]);
   useEffect(() => {
     void reloadIdentity();
     const changed = () => void reloadIdentity();
-    const visible = () => { if (!document.hidden) changed(); };
-    const storage = (event: StorageEvent) => { if (event.key === ACTIVE_APPEARANCE_KEY || event.key === null) changed(); };
     window.addEventListener("admin-auth-expired", changed); window.addEventListener("admin-authority-denied", changed);
-    window.addEventListener("storage", storage); document.addEventListener("visibilitychange", visible);
-    return () => { window.removeEventListener("admin-auth-expired", changed); window.removeEventListener("admin-authority-denied", changed); window.removeEventListener("storage", storage); document.removeEventListener("visibilitychange", visible); };
+    return () => { window.removeEventListener("admin-auth-expired", changed); window.removeEventListener("admin-authority-denied", changed); };
   }, [reloadIdentity]);
   useAccountPreferences(identity?.id);
+  useSessionRefresh(() => void reloadIdentity());
   useEffect(() => { document.title = `${tr("Administration")} — ${displayName}`; }, [tr]);
   useEffect(() => {
     if (!dirty) return;
@@ -71,9 +80,9 @@ export function Administration() {
     try { await api("/api/auth/logout", { method: "POST" }); clearAppearanceBinding(); location.assign(new URL("/", location.origin).href); }
     catch (error) { setError(String(error)); }
   };
-  return <div className="admin-shell">
+  return <ConfirmProvider><div className="admin-shell">
     <header className="admin-header"><strong>{displayName} <span>{tr("Administration")}</span></strong><nav aria-label={tr("Administration")} onClickCapture={guardNavigation}>
-      {status === "ready" && <><Link href="/users" aria-current={!route.length || route[0] === "users" ? "page" : undefined}>{tr("Users")}</Link><Link href="/groups" aria-current={route[0] === "groups" ? "page" : undefined}>{tr("Groups")}</Link><Link href="/policies" aria-current={route[0] === "policies" ? "page" : undefined}>{tr("Policies")}</Link><Link href="/projects" aria-current={route[0] === "projects" ? "page" : undefined}>{tr("Projects")}</Link><Link href="/resources/network" aria-current={route[0] === "resources" ? "page" : undefined}>{tr("Resource Center")}</Link><Link href="/audit" aria-current={route[0] === "audit" ? "page" : undefined}>{tr("Audit")}</Link></>}
+      {status === "ready" && <><Link href="/" aria-current={!route.length ? "page" : undefined}>{tr("Overview")}</Link><Link href="/users" aria-current={route[0] === "users" ? "page" : undefined}>{tr("Users")}</Link><Link href="/groups" aria-current={route[0] === "groups" ? "page" : undefined}>{tr("Groups")}</Link><Link href="/policies" aria-current={route[0] === "policies" ? "page" : undefined}>{tr("Policies")}</Link><Link href="/projects" aria-current={route[0] === "projects" ? "page" : undefined}>{tr("Projects")}</Link><Link href="/resources/network" aria-current={route[0] === "resources" ? "page" : undefined}>{tr("Resource Center")}</Link><Link href="/audit" aria-current={route[0] === "audit" ? "page" : undefined}>{tr("Audit")}</Link></>}
       <WorkbenchLink />{identity && <button onClick={() => void logout()}>{tr("Sign out")}</button>}
     </nav></header>
     <main>
@@ -82,22 +91,24 @@ export function Administration() {
       {status === "denied" && <><h1>{tr("Access denied")}</h1><p>{tr("A platform administrator role is required.")}</p></>}
       {status === "unavailable" && <><p role="alert">{tr("Account access is unavailable.")}</p><button onClick={() => void reloadIdentity()}>{tr("Retry access check")}</button></>}
       {status === "ready" && identity && <div key={identity.id} onClickCapture={guardNavigation}>
-        {(!route.length || route[0] === "users" && route.length === 1) ? <UserList />
+        {!route.length ? <AdminOverview />
+          : route[0] === "users" && route.length === 1 ? <UserList />
           : route[0] === "users" && route.length === 2 ? <UserEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : (route[0] === "groups" || route[0] === "policies") && route.length === 1 ? <PolicyList key={route[0]} kind={route[0]} />
+          : (route[0] === "users" || route[0] === "groups") && route.length === 3 && route[2] === "studio-permissions" ? <StudioPermissionsEditor key={`${route[0]}-${route[1]}`} kind={route[0] === "users" ? "account" : "group"} subject={route[1]} actor={identity.id} onDirty={setEditorDirty} />
           : route[0] === "groups" && route.length === 2 ? <GroupEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : route[0] === "policies" && route.length === 2 ? <PolicyEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : route[0] === "users" && route.length === 3 && route[2] === "configuration" ? <UserConfiguration key={route[1]} id={route[1]} onDirty={setEditorDirty} />
           : (route[0] === "users" || route[0] === "groups") && route.length === 3 && route[2] === "resources" ? <ResourceEditor key={`${route[0]}-${route[1]}-resources`} kind={route[0] === "users" ? "user" : "group"} id={route[1]} onDirty={setEditorDirty} />
           : route[0] === "projects" && route.length === 1 ? <ProjectList />
           : route[0] === "projects" && route.length === 2 ? <ProjectView key={route[1]} id={route[1]} onDirty={setEditorDirty} />
-          : route[0] === "resources" ? <ResourceCenter section={route[1]} onDirty={setEditorDirty} />
+          : route[0] === "resources" ? <ResourceCenter key={identity.id} accountID={identity.id} section={route[1]} onDirty={setEditorDirty} />
           : route[0] === "audit" && route.length === 1 ? <AuditView />
           : route[0] === "operations" && route.length === 2 ? <OperationView id={route[1]} />
-          : <><h1>{tr("Page not found")}</h1><Link href="/users">{tr("Open users")}</Link></>}
+          : <><h1>{tr("Page not found")}</h1><Link href="/">{tr("Open the administration overview")}</Link></>}
       </div>}
     </main>
-  </div>;
+  </div></ConfirmProvider>;
 }
 function WorkbenchLink() {
   const tr = useT();

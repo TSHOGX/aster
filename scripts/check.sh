@@ -4,6 +4,20 @@ set -euo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo"
 case "${1:-all}" in
+  evolution-space)
+    go -C evolution-space/backend build -mod=readonly ./...
+    go -C evolution-space/backend vet -mod=readonly ./...
+    go -C evolution-space/backend test -mod=readonly -race ./...
+    ;;
+  evolution-space-frontend)
+    npm --prefix evolution-space/frontend run lint
+    npm --prefix evolution-space/frontend run build
+    npm --prefix evolution-space/frontend run typecheck
+    ;;
+  evolution-space-browser)
+    # Optional second argument selects one Playwright project (browser).
+    npm --prefix evolution-space/frontend run test:browser -- ${2:+--project="$2"}
+    ;;
   studio)
     go -C volumes-studio/backend build -mod=readonly ./...
     go -C volumes-studio/backend vet -mod=readonly ./...
@@ -16,14 +30,46 @@ case "${1:-all}" in
     npm --prefix volumes-studio/frontend run build
     npm --prefix volumes-studio/frontend run typecheck
     ;;
+  evolution-browser)
+    # Every frontend these real-process gates serve is built here, so the gate
+    # does not depend on an earlier job or step having built Studio.
+    npm --prefix admin-frontend run build
+    npm --prefix evolution-space/frontend run build
+    npm --prefix volumes-studio/frontend run build
+    ADMIN_EVOLUTION_BROWSER_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses/backfill$' -count=1
+    go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeMultiGroupRealProcesses$' -count=1
+    ADMIN_EVOLUTION_MANUAL_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeManualRunRealProcesses$' -count=1
+    ADMIN_EVOLUTION_CONFIG_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses/backfill$' -count=1
+    go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^(TestNativeDynamicBudgetFailureRealProcesses|TestNativeToolCheckpointRealProcesses)$' -count=1
+    EVOLUTION_SPACE_DYNAMIC_BROWSER_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeDynamicInspectionRealProcesses$' -count=1
+    EVOLUTION_SPACE_NUMBERED_RETRY_BROWSER_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeNumberedRetryRealProcesses$' -count=1
+    EVOLUTION_SPACE_TOOLS_BROWSER_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeToolInspectionRealProcesses$' -count=1
+    EVOLUTION_SPACE_RETENTION_BROWSER_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeArtifactRetentionRealProcesses$' -count=1
+    STUDIO_TEST_EVALUATION_BROWSER=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestStudioPermissionProvisioningRealProcesses$' -count=1
+    ADMIN_EVOLUTION_UPGRADE_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses/browser-retry$' -count=1
+    ;;
   studio-browser)
-    npm --prefix volumes-studio/frontend run test:browser
+    "$0" studio-browser-suite
+    "$0" studio-integration
+    ;;
+  studio-browser-suite)
+    # Optional second argument selects one Playwright project (browser).
+    npm --prefix volumes-studio/frontend run test:browser -- ${2:+--project="$2"}
+    ;;
+  studio-integration)
+    go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses$' -count=1
+    STUDIO_TEST_EVALUATION_BROWSER=1 STUDIO_TEST_EVALUATION_CANCEL=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^Test(RequiredEvaluation|PartialCompositionEvaluation|ReviewedRevertEvaluation)RealProcesses$' -count=1
+    STUDIO_TEST_EVALUATION_BROWSER=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestEvaluationPolicyRealProcesses$' -count=1
+    STUDIO_TEST_EVALUATION_BROWSER=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestManualPathEvaluationRealProcesses$' -count=1
+    STUDIO_TEST_EVALUATION_BROWSER=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestComparativeEvaluationRealProcesses$' -count=1
+    STUDIO_TEST_EVALUATION_BROWSER=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestEvaluationReplacementRealProcesses$' -count=1
     ;;
   source)
     python3 scripts/check-public-docs.py
     scripts/check-lockfile-registry.sh
     scripts/check-lockfile-registry.sh admin-frontend/package-lock.json
     scripts/check-lockfile-registry.sh volumes-studio/frontend/package-lock.json
+    scripts/check-lockfile-registry.sh evolution-space/frontend/package-lock.json
     scripts/check-lockfile-registry.sh orchestrator/internal/runtimerelease/package-lock.json
     while IFS= read -r -d '' script; do bash -n "$script"; done < <(git ls-files -z '*.sh')
     python3 -m unittest discover -s scripts/tests -p 'test_*.py'
@@ -78,11 +124,15 @@ case "${1:-all}" in
     ;;
   all)
     "$0" source
+    "$0" evolution-space
+    "$0" evolution-space-frontend
+    "$0" evolution-space-browser
     "$0" studio
     "$0" studio-frontend
     "$0" studio-browser
+    "$0" evolution-browser
     "$0" backend
     "$0" frontend
     ;;
-  *) echo 'Usage: scripts/check.sh [source|studio|studio-frontend|studio-browser|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|frontend-edge|all]' >&2; exit 2 ;;
+  *) echo 'Usage: scripts/check.sh [source|evolution-space|evolution-space-frontend|evolution-space-browser [project]|evolution-browser|studio|studio-frontend|studio-browser|studio-browser-suite [project]|studio-integration|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|frontend-edge|all]' >&2; exit 2 ;;
 esac

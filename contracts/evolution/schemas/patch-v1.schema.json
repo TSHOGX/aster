@@ -1,0 +1,127 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "grant_id": {
+          "type": "string"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "policy_revision": {
+          "type": "integer"
+        },
+        "schema_digest": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "group_id",
+        "schema_digest",
+        "digest",
+        "size",
+        "media_type",
+        "grant_id",
+        "policy_revision"
+      ],
+      "type": "object"
+    },
+    "ContentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "commit_id": {
+          "type": "string"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "tree_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "library_id",
+        "commit_id",
+        "profile",
+        "tree_digest"
+      ],
+      "type": "object"
+    },
+    "Patch": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "$ref": "#/$defs/ContentRef"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/PatchEntry"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "fence": {
+          "type": "integer"
+        },
+        "reservation_generation": {
+          "type": "integer"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "fence",
+        "base",
+        "reservation_generation",
+        "entries"
+      ],
+      "type": "object"
+    },
+    "PatchEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation",
+        "path",
+        "kind"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/Patch",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

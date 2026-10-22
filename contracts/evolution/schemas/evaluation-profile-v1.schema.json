@@ -1,0 +1,150 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "grant_id": {
+          "type": "string"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "policy_revision": {
+          "type": "integer"
+        },
+        "schema_digest": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "group_id",
+        "schema_digest",
+        "digest",
+        "size",
+        "media_type",
+        "grant_id",
+        "policy_revision"
+      ],
+      "type": "object"
+    },
+    "EvaluationProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "fixed_model_required": {
+          "type": "boolean"
+        },
+        "model": {
+          "$ref": "#/$defs/Revision"
+        },
+        "ref": {
+          "$ref": "#/$defs/Revision"
+        },
+        "runtime": {
+          "$ref": "#/$defs/Revision"
+        },
+        "scorer": {
+          "$ref": "#/$defs/Revision"
+        },
+        "thresholds": {
+          "items": {
+            "$ref": "#/$defs/MetricThreshold"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/Revision"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "ref",
+        "dataset",
+        "scorer",
+        "runtime",
+        "model",
+        "tools",
+        "thresholds",
+        "fixed_model_required"
+      ],
+      "type": "object"
+    },
+    "MetricThreshold": {
+      "additionalProperties": false,
+      "properties": {
+        "minimum_coverage": {
+          "type": "number"
+        },
+        "minimum_samples": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "operator": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "unit",
+        "operator",
+        "value",
+        "minimum_samples",
+        "minimum_coverage"
+      ],
+      "type": "object"
+    },
+    "Revision": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/EvaluationProfile",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -48,6 +48,10 @@
     "operator_broadcast": true
   },
   "admin_frontend": "http://127.0.0.1:3001",
+  "evolution_space": {
+    "endpoint": "https://evolution-space.internal.example:18448",
+    "credential_env": "EVOLUTION_SPACE_CENTRAL_SECRET"
+  },
   "work_template": {
     "id": "sandbox-work-v1",
     "manifest": "../sandbox-image/runtime-work.manifest.json",

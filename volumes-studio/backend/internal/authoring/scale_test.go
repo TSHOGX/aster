@@ -16,12 +16,13 @@ import (
 	"time"
 )
 
-// Measures the freeze transaction separately from ingress using already durable
-// blob references. This isolates the 10k relational-copy design's release gate.
-func TestTenThousandEntryFreezeAndOneOver(t *testing.T) {
+// Exercise a full-size branch through checkpoint, review and merge, then measure
+// release admission separately from validation using the exact accepted commit.
+func TestTenThousandEntryBranchReleaseAndOneOver(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	l := library(t, s)
+	b := newDraftBranch(t, s, l.ID)
 	s.mu.Lock()
 	digest, err := s.install(ctx, []byte("source"))
 	s.mu.Unlock()
@@ -32,12 +33,12 @@ func TestTenThousandEntryFreezeAndOneOver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	statement, err := tx.PrepareContext(ctx, "INSERT INTO draft_entries VALUES(?,?,'file',6,?)")
+	statement, err := tx.PrepareContext(ctx, "INSERT INTO branch_entries VALUES(?,?,'file',6,?)")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for n := 0; n < 10000; n++ {
-		if _, err = statement.ExecContext(ctx, l.ID, fmt.Sprintf("file-%05d", n), digest); err != nil {
+		if _, err = statement.ExecContext(ctx, b.ID, fmt.Sprintf("file-%05d", n), digest); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -45,42 +46,46 @@ func TestTenThousandEntryFreezeAndOneOver(t *testing.T) {
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Mutate(ctx, testActor, l.ID, Mutation{RequestID: "over", ExpectedRevision: 1, Action: "text", Path: "one-more", Text: "x"}); err == nil {
+	if _, err = editDraftAs(s, ctx, testActor, b, draftEdit{RequestID: "over", ExpectedRevision: 1, Action: "text", Path: "one-more", Text: "x"}); err == nil {
 		t.Fatal("10001 entries accepted")
 	}
-	page, err := s.Tree(ctx, l.ID, "", "", 1)
+	page, err := s.BranchTree(ctx, testActor, l.ID, b.ID, "", "", 1)
 	if err != nil || len(page.Entries) != 200 || page.Next == "" || page.DescendantCount != 10000 {
 		t.Fatal("bounded list", len(page.Entries), err)
 	}
 	searchStarted := time.Now()
-	search, err := s.WorkbenchTree(ctx, l.ID, "", Query{Q: "file-09999", Revision: 1}, true)
-	if err != nil || search.Total != 1 || search.Items[0].Path != "file-09999" {
+	search, err := s.SearchBranch(ctx, testActor, l.ID, b.ID, "file-09999", "", 1)
+	if err != nil || search.DescendantCount != 1 || search.Entries[0].Path != "file-09999" {
 		t.Fatal("global workbench search", search, err)
 	}
-	window, err := s.WorkbenchTree(ctx, l.ID, "", Query{Revision: 1}, false)
-	if err != nil || len(window.Items) != 200 || window.Total != 10000 || window.Next == "" {
-		t.Fatal("bounded workbench window", len(window.Items), err)
+	window, err := s.BranchTree(ctx, testActor, l.ID, b.ID, "", "", 1)
+	if err != nil || len(window.Entries) != 200 || window.DescendantCount != 10000 || window.Next == "" {
+		t.Fatal("bounded workbench window", len(window.Entries), err)
 	}
 	t.Logf("10000-entry workbench search and first window: %s", time.Since(searchStarted))
+	accepted, err := acceptDraft(s, ctx, testActor, b, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var times []time.Duration
 	for n := 0; n < 5; n++ {
 		started := time.Now()
-		v, err := s.Freeze(ctx, testActor, l.ID, PublishInput{RequestID: fmt.Sprintf("freeze-%d", n), ExpectedRevision: 1, Label: fmt.Sprintf("v%d", n)})
+		v, err := s.Release(ctx, testActor, l.ID, ReleaseInput{RequestID: fmt.Sprintf("freeze-%d", n), AcceptedCommit: accepted.AcceptedCommit, Label: fmt.Sprintf("v%d", n)})
 		if err != nil {
 			t.Fatal(err)
 		}
 		times = append(times, time.Since(started))
-		if _, err = s.ValidateNext(ctx, allow); err != nil {
+		if _, err = s.ValidateNext(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if v.SourceRevision != 1 {
-			t.Fatal("freeze changed draft revision")
+		if v.AcceptedCommit != accepted.AcceptedCommit {
+			t.Fatal("release changed accepted commit")
 		}
 	}
 	sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	t.Logf("10000-entry freeze p95=%s, median=%s; metadata heap=%d bytes (race instrumentation changes timing)", times[4], times[2], m.HeapAlloc)
+	t.Logf("10000-entry release p95=%s, median=%s; metadata heap=%d bytes (race instrumentation changes timing)", times[4], times[2], m.HeapAlloc)
 	// Time is reported rather than made flaky under unrelated CI load. Entry and
 	// wire bounds are assertions; representative-host measurements set targets.
 }
@@ -95,6 +100,7 @@ func TestConcurrentMaximumUploadsBoundedMemory(t *testing.T) {
 	s.config.QuotaBytes = 2 << 30
 	ctx := context.Background()
 	l := library(t, s)
+	b := newDraftBranch(t, s, l.ID)
 	const size = 256 << 20
 	var peak atomic.Uint64
 	stop := make(chan struct{})
@@ -135,7 +141,7 @@ func TestConcurrentMaximumUploadsBoundedMemory(t *testing.T) {
 				_, _ = h.Write(chunk)
 			}
 			digest := "sha256:" + hex.EncodeToString(h.Sum(nil))
-			input := UploadInput{RequestID: fmt.Sprintf("large-%d", index), ExpectedRevision: 1, Path: fmt.Sprintf("large-%d", index), Size: strconv.Itoa(size), Digest: digest}
+			input := UploadInput{BranchID: b.ID, RequestID: fmt.Sprintf("large-%d", index), ExpectedRevision: 1, Path: fmt.Sprintf("large-%d", index), Size: strconv.Itoa(size), Digest: digest}
 			u, err := s.StartUpload(ctx, testActor, l.ID, input)
 			if err != nil {
 				failures <- err

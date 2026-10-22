@@ -1,0 +1,143 @@
+{
+  "$defs": {
+    "ContentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "commit_id": {
+          "type": "string"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "tree_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "library_id",
+        "commit_id",
+        "profile",
+        "tree_digest"
+      ],
+      "type": "object"
+    },
+    "OutputLibrary": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "type": "boolean"
+        },
+        "can_configure": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "owner_group": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "profile",
+        "archived",
+        "owner_group",
+        "can_configure"
+      ],
+      "type": "object"
+    },
+    "OutputLibraryDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "library": {
+          "$ref": "#/$defs/OutputLibrary"
+        },
+        "main": {
+          "$ref": "#/$defs/ContentRef"
+        },
+        "published": {
+          "$ref": "#/$defs/ReleaseRef"
+        },
+        "reservations": {
+          "items": {
+            "$ref": "#/$defs/OutputReservation"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "library",
+        "main",
+        "reservations"
+      ],
+      "type": "object"
+    },
+    "OutputReservation": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_id": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "integer"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "prefix",
+        "group_id",
+        "binding_id",
+        "generation",
+        "state"
+      ],
+      "type": "object"
+    },
+    "ReleaseRef": {
+      "additionalProperties": false,
+      "properties": {
+        "descriptor_digest": {
+          "type": "string"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "publisher_id": {
+          "type": "string"
+        },
+        "version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "publisher_id",
+        "library_id",
+        "version_id",
+        "descriptor_digest"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/OutputLibraryDetail",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

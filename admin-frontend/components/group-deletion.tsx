@@ -23,7 +23,7 @@ export function GroupDeletion({group,disabled,onDelete}:{group:GroupDetail;disab
       </article>)}
       {preview.next_cursor&&<button disabled={disabled||loading} onClick={()=>void load(preview.next_cursor)}>{tr("Next affected accounts")}</button>}
       <label className="check-label"><input type="checkbox" checked={confirmed} disabled={disabled||loading||!current} onChange={e=>setConfirmed(e.target.checked)}/>{tr("I reviewed the impact and understand that affected accounts receive no replacement membership.")}</label>
-      <button disabled={disabled||loading||!current||!confirmed} onClick={()=>onDelete(preview)}>{tr("Delete group")}</button>
+      <button className="danger solid" disabled={disabled||loading||!current||!confirmed} onClick={()=>onDelete(preview)}>{tr("Delete group")}</button>
     </>}
   </section>;
 }

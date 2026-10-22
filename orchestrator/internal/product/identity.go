@@ -1,6 +1,7 @@
 package product
 
 import (
+	"aster/contracts/appidentity"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -12,7 +13,13 @@ import (
 	"harness-platform/orchestrator/internal/sqlitex"
 )
 
-const StudioAuthorEntitlement = "volumes_studio.author"
+const StudioAccessEntitlement = "volumes_studio.access"
+const StudioCreateEntitlement = "volumes_studio.create"
+const EvolutionSpaceAccessEntitlement = "evolution_space.access"
+
+// EvolutionSpaceModelsEntitlement lets administrators manage installation-wide
+// model connections. Group managers cannot change shared credentials or spend.
+const EvolutionSpaceModelsEntitlement = "evolution_space.models"
 const IdentityEvidenceTTL = 60 * time.Second
 
 // IdentityAssertion contains central authority evidence for a registered client.
@@ -43,7 +50,7 @@ func pkceChallenge(verifier string) (string, error) {
 }
 
 // AdmitIdentityCode requires the HTTP boundary to resolve a registered client and
-// exact callback first. Current session and administrator authority are rechecked
+// exact callback first. Current session and scoped application access are rechecked
 // transactionally here. Codes are single-use and expire in at most 60 seconds.
 func (s *Store) AdmitIdentityCode(ctx context.Context, token, client, callback, challenge string) (string, error) {
 	if !validID(client) || len(callback) == 0 || len(callback) > 2048 || !validPKCEChallenge(challenge) {
@@ -54,7 +61,7 @@ func (s *Store) AdmitIdentityCode(ctx context.Context, token, client, callback, 
 		return "", err
 	}
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		a, err := s.adminSession(ctx, tx, token)
+		a, err := s.identitySession(ctx, tx, tokenDigest(token), client)
 		if err != nil {
 			return err
 		}
@@ -72,7 +79,7 @@ func (s *Store) AdmitIdentityCode(ctx context.Context, token, client, callback, 
 		if err != nil {
 			return err
 		}
-		return s.auditEvent(ctx, tx, a.ID, "identity.authorize", "identity_client", client, "", a.SessionRevision, nil)
+		return s.auditEvent(ctx, tx, a.Subject, "identity.authorize", "identity_client", client, "", a.Epoch, nil)
 	})
 	if err != nil {
 		return "", err
@@ -80,16 +87,16 @@ func (s *Store) AdmitIdentityCode(ctx context.Context, token, client, callback, 
 	return code, nil
 }
 
-// identitySession uses one joined statement so revocation cannot be mixed with an
-// older account read. It returns bounded evidence, not the underlying credential.
-func (s *Store) identitySession(ctx context.Context, q queryer, session string) (IdentityAssertion, error) {
+// identitySession is called inside a transaction so session, account and grant
+// checks share one snapshot. It returns bounded evidence, not a credential.
+func (s *Store) identitySession(ctx context.Context, q queryer, session, client string) (IdentityAssertion, error) {
 	var a IdentityAssertion
-	var expires string
-	err := q.QueryRowContext(ctx, `SELECT a.id,a.session_revision,s.expires_at
+	var expires, role string
+	err := q.QueryRowContext(ctx, `SELECT a.id,a.session_revision,s.expires_at,a.role
  FROM auth_sessions s JOIN accounts a ON a.id=s.account_id
  WHERE s.token_digest=? AND s.expires_at>? AND s.restricted=0
- AND a.status='active' AND a.role='admin' AND a.must_change_password=0
- AND a.session_revision=s.session_revision`, session, s.timestamp()).Scan(&a.Subject, &a.Epoch, &expires)
+ AND a.status='active' AND a.must_change_password=0
+ AND a.session_revision=s.session_revision`, session, s.timestamp()).Scan(&a.Subject, &a.Epoch, &expires, &role)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrUnauthorized
 	}
@@ -97,7 +104,51 @@ func (s *Store) identitySession(ctx context.Context, q queryer, session string) 
 		return a, err
 	}
 	a.CentralSession = session
-	a.Entitlements = []string{StudioAuthorEntitlement}
+	switch client {
+	case "evolution-space":
+		// Entrance carries no group, content or execution authority. A scoped user
+		// must have current read access to at least one group; each API rechecks its
+		// exact group and capability independently.
+		if role != "admin" {
+			var visible int
+			err = q.QueryRowContext(ctx, `SELECT count(*) FROM evolution_group_grants g
+ JOIN account_memberships m ON m.group_id=g.group_id AND m.account_id=g.account_id
+ JOIN account_groups a ON a.id=g.group_id
+ WHERE g.account_id=? AND g.action='config.read' AND g.effect='allow'`, a.Subject).Scan(&visible)
+			if err != nil {
+				return IdentityAssertion{}, err
+			}
+			if visible == 0 {
+				return IdentityAssertion{}, ErrForbidden
+			}
+		}
+		a.Entitlements = []string{EvolutionSpaceAccessEntitlement}
+		if role == "admin" {
+			a.Entitlements = append(a.Entitlements, EvolutionSpaceModelsEntitlement)
+		}
+	case "studio":
+		a.Entitlements = []string{StudioAccessEntitlement}
+		if role == "admin" {
+			a.Entitlements = append(a.Entitlements, StudioCreateEntitlement)
+		} else {
+			// Entrance grants no content authority; it requires at least one effective
+			// read grant and all subsequent resource actions remain separately checked.
+			var visible int
+			err = q.QueryRowContext(ctx, `WITH grants AS (
+   SELECT library_id,effect FROM studio_library_grants WHERE account_id=? AND action='volume.read'
+   UNION ALL
+   SELECT g.library_id,g.effect FROM studio_group_grants g JOIN account_memberships m ON m.group_id=g.group_id WHERE m.account_id=? AND g.action='volume.read'
+  ) SELECT count(*) FROM (SELECT library_id FROM grants GROUP BY library_id HAVING sum(effect='allow')>0 AND sum(effect='deny')=0)`, a.Subject, a.Subject).Scan(&visible)
+			if err != nil {
+				return IdentityAssertion{}, err
+			}
+			if visible == 0 {
+				return IdentityAssertion{}, ErrForbidden
+			}
+		}
+	default:
+		return IdentityAssertion{}, ErrForbidden
+	}
 	a.ExpiresAt = sqlitex.FormatTime(s.now().Add(IdentityEvidenceTTL))
 	if expires < a.ExpiresAt {
 		a.ExpiresAt = expires
@@ -127,7 +178,7 @@ func (s *Store) ExchangeIdentityCode(ctx context.Context, client, callback, code
 		if boundClient != client || boundCallback != callback || subtle.ConstantTimeCompare([]byte(challenge), []byte(boundChallenge)) != 1 {
 			return ErrUnauthorized
 		}
-		assertion, err = s.identitySession(ctx, tx, session)
+		assertion, err = s.identitySession(ctx, tx, session, client)
 		if err != nil {
 			return err
 		}
@@ -174,7 +225,7 @@ func (s *Store) IntrospectIdentity(ctx context.Context, client, grant string) (I
 	if err != nil {
 		return IdentityAssertion{}, err
 	}
-	return s.identitySession(ctx, tx, session)
+	return s.identitySession(ctx, tx, session, client)
 }
 
 // RevokeIdentity logs out the originating central session and all derived grants.
@@ -185,33 +236,55 @@ func (s *Store) RevokeIdentity(ctx context.Context, client, grant string) error 
 		if err != nil {
 			return err
 		}
-		a, err := s.identitySession(ctx, tx, session)
+		// The client-bound grant authorizes logout even after all content grants
+		// are revoked. Losing application access must not strand a login session.
+		var subject string
+		var revision int64
+		err = tx.QueryRowContext(ctx, `DELETE FROM auth_sessions WHERE token_digest=? RETURNING account_id,session_revision`, session).Scan(&subject, &revision)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrUnauthorized
+		}
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `DELETE FROM auth_sessions WHERE token_digest=?`, session); err != nil {
-			return err
-		}
-		return s.auditEvent(ctx, tx, a.Subject, "identity.logout", "identity_client", client, "", a.Epoch, nil)
+		return s.auditEvent(ctx, tx, subject, "identity.logout", "identity_client", client, "", revision, nil)
 	})
 }
 
-// IdentityPrincipal is worker authority, independent of browser-session lifetime.
-// Only registered service clients may call it through the HTTP adapter. Disabling
-// the principal or removing admin status refuses unfinished privileged phases.
-func (s *Store) IdentityPrincipal(ctx context.Context, subject string) (IdentityAssertion, error) {
-	if !validID(subject) {
-		return IdentityAssertion{}, ErrInvalid
+// EvolutionSpaceWorkflowAccess checks the current group read/editor grant for a
+// browser request carrying an opaque Evolution Space application grant.
+func (s *Store) EvolutionSpaceWorkflowAccess(ctx context.Context, input appidentity.EvolutionSpaceWorkflowAccessRequest) (appidentity.EvolutionSpaceWorkflowAccess, error) {
+	result := appidentity.EvolutionSpaceWorkflowAccess{GroupID: input.GroupID}
+	if !validID(input.GroupID) || (input.Action != "workflow.read" && input.Action != "workflow.edit") {
+		return result, ErrInvalid
 	}
-	var a IdentityAssertion
-	err := s.reader.QueryRowContext(ctx, `SELECT id,authorization_revision FROM accounts WHERE id=? AND status='active' AND role='admin' AND must_change_password=0`, subject).Scan(&a.Subject, &a.Epoch)
-	if errors.Is(err, sql.ErrNoRows) {
-		return a, ErrUnauthorized
-	}
+	tx, err := s.reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return a, err
+		return result, err
 	}
-	a.Entitlements = []string{StudioAuthorEntitlement}
-	a.ExpiresAt = sqlitex.FormatTime(s.now().Add(IdentityEvidenceTTL))
-	return a, nil
+	defer tx.Rollback()
+	session, err := identityGrantSession(ctx, tx, "evolution-space", input.Grant)
+	if err != nil {
+		return result, err
+	}
+	a, err := s.identitySession(ctx, tx, session, "evolution-space")
+	if err != nil {
+		return result, err
+	}
+	var role string
+	if err = tx.QueryRowContext(ctx, "SELECT role FROM accounts WHERE id=?", a.Subject).Scan(&role); err != nil {
+		return result, err
+	}
+	actor := Account{ID: a.Subject, Role: role}
+	if err = authorizeEvolutionGroup(ctx, tx, actor, input.GroupID, "config.read"); err != nil {
+		return result, err
+	}
+	if input.Action == "workflow.edit" {
+		if err = authorizeEvolutionGroup(ctx, tx, actor, input.GroupID, "workflow.edit"); err != nil {
+			return result, err
+		}
+	}
+	result.Subject, result.Allowed = a.Subject, true
+	result.ExpiresAt, err = time.Parse(time.RFC3339Nano, a.ExpiresAt)
+	return result, err
 }

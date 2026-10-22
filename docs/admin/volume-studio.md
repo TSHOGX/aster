@@ -5,21 +5,67 @@
 Volume Studio at `/volumes-studio/` prepares reusable file libraries and publishes
 immutable versions. Aster imports a version into local storage before Projects
 can use it. Studio publication and Aster availability are separate steps.
-You need an active central administrator account to author in Studio.
+Studio sign-in requires an active central account with a library read grant, or an
+administrator account. Only administrators can create libraries. The creating
+administrator receives explicit read, author, review, merge, publish and configure grants on
+the new library, so it opens immediately; adjust or deny them under Studio permissions.
+These are separate grants; administrator status alone does not grant them on other libraries. Ask your installation administrator to
+provision the required library permissions before editing. The catalog lists only
+libraries with a current read grant; removing that grant also removes their summaries
+and search results.
 
-Shared-assets libraries use the immutable `shared-assets-v1` profile and are
-available only to administrators. A published version must contain root
+Use **Account → Back to Workbench** to return to the workbench. Studio applies
+the language, theme and accent chosen in Workbench settings.
+Recovery links retain the working branch; Markdown file links retain the branch or
+immutable version being viewed. Each evaluation check offers **Open evaluation report**
+to inspect its exact group-scoped result in Evolution Space; that application
+checks your current group and evidence permissions. The report links back to the
+immutable candidate in Studio.
+
+Shared-assets libraries use the immutable `shared-assets-v1` profile and the same
+explicit library grants. A published version must contain root
 `AGENTS.md`; skill entries must be directories containing `SKILL.md`. The base
 version includes an empty `skills/` directory. These files mount read-only at
 `/opt/shared-assets` as system context rather than ordinary Project data.
+
+## Assign Studio permissions
+
+In **Administration → Users** or **Groups**, open the intended account or group
+and choose **Studio permissions**. Enter the library ID from its Studio URL and
+choose **Refresh permissions**. This policy lookup does not verify that the library
+exists or reveal its contents; you can provision access before the first content
+read. For the built-in shared-assets library, use `aster-shared-assets`.
+
+Review each capability separately: read, author, review, merge, publish and
+configure. Choose **Allow** or **Deny**, review the named account/group and Volume,
+then choose **Apply reviewed permission**. Read access is needed to discover and
+open the Volume. A reviewer, merger or publisher also needs their corresponding
+action; configure permits merge and evaluation policy management.
+
+Account rows show effective access from current account status and all group
+grants. An explicit denial overrides any allowance, including for administrators.
+Group rows show the group's rules; inspect individual accounts to check their
+effective access. Membership removal stops applying that group's grants. These
+permissions do not grant source evidence access, change saved Project mounts or
+deploy a version.
+
+If a response is lost, **Check original request** confirms the same change; reload
+preserves it. A revision conflict requires **Refresh permissions** and a newly
+reviewed change. Grant updates are audited. Revocation stops new authorized reads
+and actions; it does not erase earlier downloads or exports.
 
 ## Create and edit a library
 
 1. Open Studio and create a library. Choose **Ordinary data** or **Shared assets**;
    the content profile cannot change after creation. Filter the catalog by profile.
-2. Add directories, create text files or upload files/folders.
-3. Edit files in tabs and save changes to the draft.
-4. Review Changes against the base version before publishing.
+2. Pick a branch in the branch switcher at the start of the library toolbar, or
+   choose **New branch**, enter a **New branch name** and choose
+   **Create branch from main**. Each branch has its own saved draft and revision; publishing a version does not
+   change that branch's comparison head or saved revision.
+3. Add directories, create text files or upload files/folders. Edit files in tabs
+   and save changes to the selected branch.
+4. Review **Changes** against the branch's committed head. Save persists draft
+   content; **Commit saved draft** creates an immutable checkpoint.
 
 Text and Markdown editing supports UTF-8 files up to 1 MiB. Raster previews support
 PNG/JPEG/GIF/WebP up to 16 MiB. Other formats are available as authenticated downloads.
@@ -38,18 +84,28 @@ For shared assets, the validation panel reports path-specific problems, skill co
 reference-file warnings and an `AGENTS.md` text preview. Drafts may be incomplete;
 publication repeats structure, encoding and content-integrity checks. The built-in
 Aster library starts with published `v1`, containing only `AGENTS.md` and an empty
-`skills/` directory. Extend its draft and publish a new version; the original
-version remains immutable. Scheduling is supplied by runtime tools, not a skill.
+`skills/` directory. Create a working branch to extend it, then review and merge the changes before
+publishing a new version. The original version remains immutable. Scheduling is supplied by runtime tools, not a skill.
 
 ## Handle concurrent edits and recovery
 
 Before saving, Studio checks whether the target changed since editing began.
-A conflict retains your text for review. Changes elsewhere in the library do not
+The **Changes** view compares the exact committed head with a saved draft revision.
+Select a path to see each side's identity, file type, size and digest. Generic text
+uses the text diff regardless of filename extension. Binary files, directories and
+files above the 1 MiB preview limit show metadata instead; use **Download committed
+file** or **Download saved draft file** for file contents. An absent side is explicit,
+and a directory has no file download. The selected path survives reload. Failed or
+denied reads clear prior comparison content; use **Reload comparison** after restoring
+access or refreshing the branch revision. This view excludes unsaved editor text.
+
+A save conflict retains your text for review. Changes elsewhere in the branch do not
 automatically authorize overwriting this file. Save all stops at its first failure;
 a save acknowledges the submitted text, not additional typing made while it runs.
 
 The browser keeps local recovery records when its storage is available. Restoring
-is explicit and checks the current target. Recovery has a 50 MiB per-account budget;
+is explicit and checks the recorded branch and current target. A recovery record
+without branch identity cannot be restored into an arbitrary branch. Recovery has a 50 MiB per-account budget;
 storage failure or exhaustion is reported. It is not a backup: a sudden crash may
 lose the most recent edits, and explicit logout clears local recovery. Protect
 unsaved edits before clearing browser data or changing devices.
@@ -62,19 +118,222 @@ uploads report individual file outcomes, so check for partial failures.
 
 The Tasks drawer covers this browser session and visited libraries, not every
 upload on the server. Navigating within Studio keeps transfers alive; closing the
-browser stops active transfer. Unfinished server uploads, including another tab's,
-block publication until completed or canceled.
+browser stops active transfer. Unfinished uploads block checkpointing their own
+branch until completed or canceled; another branch can still be committed.
+
+## Review and merge committed changes
+
+The library toolbar holds the branch switcher, **New branch**, the branch's draft
+revision and head, **Commit changes** and a help button. The help button opens a
+four-step guide: start a branch, edit and commit, review and merge, publish a
+version. Branch creation, the commit form and the guide open as a single row under
+the toolbar, so the file area keeps its height. Without a branch, files open
+read-only and the editor shows the guide with **Start a branch**.
+
+The workbench tabs are **Files**, **Changes**, **Review**, **History**,
+**Versions** and **Evaluation policies**. Integration review, composition and
+publication live in the **Review** tab; review links open it directly.
+
+1. Save the content you want to include and complete or cancel that branch's uploads.
+2. Choose **Commit changes**, enter a **Commit message** and choose
+   **Commit saved draft**. Unsaved editor
+   changes are explicitly excluded from the checkpoint.
+3. Open the **Review** tab and choose **Prepare integration** to combine the committed branch head with main.
+   Inspect the changed files and the **Integrated result** before approving. Each
+   file side shows its exact commit, type, size and digest, with **Download exact
+   file** for binary, oversized or text content. Directories and absent sides are
+   explicit. If a read fails, prior review evidence is cleared; **Reload integration
+   review** reloads the same pinned identity after access or connectivity returns.
+   If preparation, composition, review, merge, evaluation request or publication is
+   unconfirmed, **Recover integration operation** resends its exact original request,
+   including after reloading this tab. Other mutations stay locked until it settles.
+   Recovery is scoped to the signed-in account, Volume and branch and appears only
+   after current access is checked. **Discard integration recovery** explicitly
+   abandons the local request; the server operation may already have succeeded.
+   If browser storage is unavailable, keep the tab open until recovery confirms it.
+   A confirmed publication stays linked in the review URL; reloading checks that
+   version without repeating merge or creating another publication.
+   When several branches contain independent work, **Compose selected changes**
+   lists immutable branch heads. **More source branches** continues the branch
+   catalog; **Load committed paths** opens another branch's first bounded page and
+   **More committed paths** continues that exact head. The loaded/total count shows
+   when paths remain unseen. **Select loaded paths** and **Clear selected paths**
+   affect only the displayed branch. Newly loaded paths are not selected automatically.
+   If a source head changes or a page read fails, reload current evidence before
+   continuing. Select only the paths to review together;
+   omitted paths are shown as deferred and remain on their source branch. This
+   selection survives reload. **Original source history** opens the frozen source;
+   **Selected candidate history** opens the commit used for the selected changes.
+   After accepting a partial selection, prepare the original branch again to review
+   its deferred changes separately, with fresh checks and approval. The
+   prepared result freezes every selected head and path, so later branch edits do
+   not change the review.
+4. If conflicts appear, open each path in **Resolve merge conflicts**. Compare the
+   common ancestor, main and branch. Choose a side, delete the path or write
+   resolved text, then **Save resolution**. **Resolution result** previews the
+   selected choice. Each side identifies its exact commit; files show size/digest
+   and **Download exact file**, including binary files and text above the 1 MiB
+   preview limit. Choosing a directory includes its complete subtree; nested
+   conflict choices must agree. Deleting a path removes its descendants.
+   To supply new bytes, select a **Replacement file**. Studio uploads it to the
+   displayed path in the working branch draft, regardless of its local filename.
+   Confirm replacement of the existing file. After it is saved, **Commit saved
+   draft** and **Prepare integration** again; the new conflict workspace includes
+   those bytes. The earlier workspace preserves its frozen inputs and choices.
+   A source directory must be replaced explicitly in branch authoring first.
+   Incomplete uploads stay in **Upload tasks** for recovery and block committing.
+   Complete every choice and choose **Prepare resolved integration**. The new
+   result needs its own approval.
+5. A qualified reviewer chooses **Approve integration**. **Request changes** and
+   **Reject integration** require a **Review rationale**. A merger then chooses
+   **Merge approved integration** and confirms **Merge** in the dialog. A hint under
+   the buttons says why approval or merge is not yet available. A changed main, source head or review policy
+   requires preparing and reviewing a new result.
+
+The **Evaluation checks** panel shows the exact profile, evaluator, path policy and
+reference commit captured for the integrated result. A target-main comparison pins
+the main commit at preparation time. If another branch merges first, prepare again:
+the new integrated tree and reference need their own passing check and approval.
+A generation-base comparison keeps the branch's initial base; a pinned-release
+comparison keeps the accepted commit of the selected published version. Those
+references stay fixed when main advances. A changed integrated tree still needs
+its own passing evidence and approval even when the comparison reference and
+policy are unchanged. The earlier report keeps its original identities for
+historical inspection.
+Off means no benchmark was
+requested. Informational evaluation remains mergeable under human approval while
+pending or after failure, error or inconclusive results. A report arriving after
+merge attaches to the original integration without changing main. Required checks
+need passing evidence before approval and merge. Adopted group output policies also apply
+to manual changes, deletes and renames in those paths. Tightening a policy requires
+repreparing; changing a binding to off does not erase checks already captured by an
+open branch's preparation. When your operator has connected Evolution Space, set the evaluation token, cost
+and time limits and choose **Request evaluation**. The group ceiling and exact
+dataset/evaluator grant must permit the request. **Retry evaluation admission**
+resumes an uncertain request with the same job identity; **Refresh evaluation**
+retrieves its result. **Cancel evaluation** records cancellation intent and preserves
+uncertain spending until the provider reconciles. A job canceled before dispatch
+records zero spending explicitly. After cancellation settles, **Request evaluation**
+creates a new attempt without changing the canceled history. Passing evidence enables approval only for the exact prepared
+result. Missing, failed, canceled, inconclusive or revoked evidence leaves required
+checks blocked. Detailed held-out reports remain in Evolution Space; Studio shows
+check status without exposing dataset contents.
+
+Main advances only after acceptance. Reviewers can also request changes or reject
+an integration. Saved conflict choices remain accessible through the workspace URL.
+Unsaved conflict text and an unconfirmed save or completion are retained in this
+browser tab for the signed-in account and exact workspace. After reloading, choose
+**Recover conflict operation** to reconcile the original request. Editing remains
+locked until it settles. Preparing another integration or composition and reloading
+the parent review are blocked while local conflict work is unsaved or uncertain.
+Save or explicitly discard it first. If another author changed the workspace, **Reload conflict
+workspace**, inspect **Current saved resolution**, and choose **Use current conflict
+revision** before saving your retained text. Changed main or source inputs require
+a new preparation.
+
+Failed or denied reads clear displayed conflict content. Reload after access is
+restored to recover the local draft. If local storage is unavailable, keep the tab
+open until the operation is confirmed; a full page reload may lose unsaved recovery.
+**Discard conflict recovery** removes the local draft and request only. It cannot
+undo a server operation that already succeeded. A malformed recovery must be
+discarded before starting another operation. If completion succeeds but its result
+cannot be loaded, reload the integration URL to retrieve it without completing again.
+For an open, single-branch integration, a user with author and reviewer authority
+can choose **Rebind current policy** and confirm replacement of retained evaluation
+requirements. Studio creates a new prepared identity requiring fresh approval while
+keeping the earlier preparation immutable. Rebinding applies to that preparation;
+later ordinary preparations still retain historical branch requirements. Accepted
+integrations and selected-path compositions cannot be rebound. Reprepare a
+composition with its explicit selections when its inputs or policies change.
+Requirements captured after a rebind can also invalidate its readiness; a rebind
+does not grant an ongoing exemption from later policy changes.
+Binary and oversized content are identified explicitly when a text preview is
+unavailable; selecting a side preserves its file bytes.
+
+## Configure evaluation for a Volume path
+
+Open a Volume's **Evaluation policies** tab. Reading policies and their revision
+history requires Volume read access; saving requires Volume configure access. The
+Volume must already belong to a group through an activated output. Evaluation
+requests also need an active group configuration containing an output to this Volume,
+available group budget and an explicit dataset/evaluator use grant.
+
+Choose an existing policy or **New policy**. Enter a clean relative **Policy path**,
+or leave it empty for the whole Volume. A selector covers its descendants, including
+manual edits, copied content, deletes and renames. Choose **Off**, **Informational
+evaluation** or **Required evaluation**. Enabled policies require the exact published
+profile and evaluator IDs, revisions and SHA-256 digests. Choose no comparison,
+accepted main, the branch's initial base, or an exact pinned published release as
+the comparison reference. **Save policy revision** records an immutable revision;
+**Policy revision history** displays earlier revisions. A Volume supports up to
+128 distinct selectors. Disable an existing selector by saving an Off revision.
+
+Overlapping Volume, ancestor, nested and group binding checks combine. Disabling
+one selector never subtracts another check. Selected-path compositions apply
+policies to the actual integrated changes; deferred changes remain on their source
+branches. Previously captured requirements remain until an explicit rebind of the
+open integration. Policy edits do not start evaluation automatically.
+
+Unsaved edits and unconfirmed requests remain in the authenticated tab's local
+recovery. **Recover policy save** retries the exact request after a lost reply.
+After a conflict, **Reload policies** retains your edits; inspect **Current policy**
+and explicitly choose **Use current policy revision** before saving a replacement.
+**Discard policy recovery** removes only the local recovery; an uncertain save may
+already have succeeded. If access is denied, the editor clears visible policy
+details and restores recovery only after an authorized reload.
+
+## Inspect history and compare snapshots
+
+Open **History** to browse immutable commits and their parent links. **Load current
+main** and **Load branch head** resolve the current head once; later edits do not
+change the displayed history. Parent links include both sides of a merge.
+
+Choose **Use as comparison base** and **Use as comparison target**, or enter exact
+commit IDs, then choose **Compare snapshots**. Open a changed path to inspect its
+before/after content. Binary files, directories and files larger than the text
+preview limit show metadata; files have authenticated download links. The URL
+retains the selected history head and comparison so refresh shows the same snapshots.
+Saved draft edits are excluded until committed. Library read grants apply to history,
+comparisons and downloads, including subsequent pages. Failed reads clear prior
+history, comparison metadata and file content. **Retry** reloads the pinned URL
+identities after access or connectivity is restored. History controls wait for the
+initial read so an older response cannot replace a newer selected head.
+
+To undo an authored change, choose **Review inverse change** on its history commit.
+Select an explicit immediate parent, enter a **Revert branch name**, and choose
+**Preview inverse change**. For merge commits, the selected parent determines which
+side is retained; root commits have no inverse parent. The preview compares the
+selected commit with that parent, with exact file downloads and paginated paths.
+Choose **Create revert branch** to save the inverse as a new branch draft. Its head
+and base remain the selected commit. Inspect and **Commit saved draft**, then
+prepare against current main. Later independent changes survive; conflicting edits
+need resolution. Fresh evaluation and expert approval apply before acceptance.
+Creating a branch from an old snapshot alone does not undo accepted changes.
+
+If creation is unconfirmed, reload and choose **Recover revert creation** to replay
+the exact original request. Recovery is scoped to this account and Volume and appears
+only after current read access succeeds. Invalid local records block creation until
+explicitly discarded. The original request may already have created a branch, so
+check branch history before discarding recovery. When local recovery storage fails,
+keep the tab open until confirmation. Reverting never rewrites old history or changes
+Project deployments; deployment rollback is a separate explicit action in Aster.
 
 ## Publish a version
 
-1. Save the draft and resolve unfinished uploads.
-2. Open publication review and inspect the exact revision and changes.
-3. Confirm publication and follow its status until published.
-4. Record the version label for selection in Aster.
+1. Open the accepted integration and enter a **Version label** and **Release note**.
+2. Choose **Publish accepted commit** and follow the separate version status until
+   it is published.
+3. Record the version label for selection in Aster.
 
-Publication freezes the reviewed draft. Subsequent edits do not change that version.
-Admitted validation can continue after browser logout. If the author's account is
-disabled or demoted, unfinished work pauses for reassignment by another administrator.
+Publication uses the accepted immutable commit, not the current saved draft.
+Subsequent edits do not change that version. Publication failure does not undo the
+accepted merge. The worker rechecks current publish authority; revoked authority
+holds unfinished publication for an authorized retry. Admitted validation can
+continue after browser logout.
+
+To edit a published version, use **Create branch from version**. It creates a
+separate working branch from that release's accepted commit and leaves existing
+drafts intact. The resulting changes still require review and merge.
 
 ## Import into Aster
 
@@ -88,6 +347,18 @@ disabled or demoted, unfinished work pauses for reassignment by another administ
    data or shared-assets mounts, separately [review a rollout](environment-updates.md).
    Importing or publishing alone never changes an environment or retained Project.
 
+If admission, retry, cancellation or retirement has an unknown result, choose
+**Check original request**. Reload preserves the exact request for your account;
+current local import access must succeed before recovery appears. Other mutations
+remain blocked until it is confirmed or explicitly discarded. Check local imports
+before discarding because the original operation may already have completed. If
+local recovery storage is unavailable, keep the tab open until confirmation.
+The confirmed import ID stays in the URL so reload can find it beyond the first page.
+**More imports** loads another page; polling refreshes all loaded pages. **Refresh
+sources and imports** deliberately returns to the first page while preserving the
+URL-selected import. Failed reads clear affected lists; a source outage leaves
+successfully authorized local imports visible.
+
 An import may be acquiring bytes, preparing runtime storage, failed or awaiting
 cleanup. Source catalog availability is separate from local readiness. Once acquired,
 preparation can continue without Studio; ready artifacts remain usable during a
@@ -96,10 +367,27 @@ to reseed the copy.
 
 ## Archive, retire and clean up
 
-Archiving a Studio source stops new discovery and exports. Existing bounded exports
-can retain access until expiry. Retirement waits for active readers and validation
-and removes source references; other versions or drafts can retain the same bytes.
-It never recalls copies already imported by Aster.
+Open **Versions** and select a version to review **Source retention**. The details
+URL preserves that exact version across reload. Active exports, reader pins and
+publication validations block retirement; reload after they settle. Reader pins
+are conservative counts and may include more than one pin for a single reader.
+Branch draft references retain shared bytes independently and do not block
+retirement. The server rechecks current state and pins when you confirm an action.
+
+**Archive source** stops new discovery and exports. Existing bounded exports can
+retain access until expiry. **Retire source** is available for archived or failed
+versions after blockers clear. It removes distribution references so unreferenced
+source blobs can be collected. Accepted Git history, independent branch drafts,
+backups and copies already imported by Aster remain separate; retirement does not
+erase them.
+
+An unconfirmed archive or retirement keeps its original request in this browser
+tab, scoped to the account and exact version. Reload and choose **Recover version
+operation** before starting another action, even if the displayed state has
+already changed. **Discard version recovery** removes only that local identity
+and cannot undo a completed operation. Failed detail reads clear old retention
+counts; restore access or connectivity and **Reload version details**. If local
+recovery is unavailable, keep the tab open until confirmation.
 
 Aster cleanup is separate. Saved environments, Projects, retained rollback releases
 and unsettled operations can prevent retirement. Failed or uncertain imports may

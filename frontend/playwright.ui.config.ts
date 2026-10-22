@@ -19,6 +19,8 @@ export default defineConfig({
   testDir: "./e2e/ui",
   workers: profiling ? 1 : 4,
   forbidOnly: !!process.env.CI,
+  // One CI retry reports transient failures as flaky; a repeat failure still fails.
+  retries: process.env.CI ? 1 : 0,
   timeout: 45000,
   expect: { timeout: 10000 },
   reporter: [["list"], ["json", { outputFile: "test-results/ui-report.json" }]],

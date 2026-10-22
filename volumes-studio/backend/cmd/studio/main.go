@@ -12,12 +12,15 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"aster/contracts/evolution"
 	"volume-studio/backend/internal/authoring"
 	"volume-studio/backend/internal/distribution"
+	"volume-studio/backend/internal/evolutionspaceclient"
 	"volume-studio/backend/internal/httpapi"
 	"volume-studio/backend/internal/identity"
 )
@@ -34,6 +37,11 @@ func main() {
 	quota := flag.Int64("quota-bytes", 8<<30, "Studio blob and upload reservation budget")
 	distributionConfig := flag.String("distribution-config", "", "private JSON service client registrations")
 	distributionListen := flag.String("distribution-listen", "127.0.0.1:8084", "private distribution listener")
+	participantListen := flag.String("participant-listen", "", "optional private loopback evolution participant listener")
+	participantSecretEnv := flag.String("participant-secret-env", "STUDIO_CENTRAL_SECRET", "environment containing the central participant credential")
+	evolutionSpaceEndpoint := flag.String("evolution-space-endpoint", "", "Optional private Evolution Space origin")
+	evolutionSpaceSecretEnv := flag.String("evolution-space-secret-env", "EVOLUTION_SPACE_STUDIO_SECRET", "Environment containing Studio evaluation credential")
+	evolutionSpaceInputSecretEnv := flag.String("evolution-space-input-secret-env", "STUDIO_EVOLUTION_SPACE_INPUT_SECRET", "Environment containing inbound Evolution Space input credential")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*listen)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
@@ -53,7 +61,18 @@ func main() {
 		log.Fatal(err)
 	}
 	defer sessions.Close()
-	store, err := authoring.Open(ctx, authoring.Config{SeedSharedAssets: true, Directory: *directory, PublisherID: *publisher, QuotaBytes: *quota})
+	var evaluator authoring.Evaluator
+	var resultArtifacts authoring.RunResultArtifacts
+	if *evolutionSpaceEndpoint != "" {
+		transport, transportErr := evolutionspaceclient.New(*evolutionSpaceEndpoint, os.Getenv(*evolutionSpaceSecretEnv), client)
+		evaluator = transport
+		resultArtifacts = transport
+		err = transportErr
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	store, err := authoring.Open(ctx, authoring.Config{RunResults: client, RunArtifacts: resultArtifacts, Evaluator: evaluator, Authority: client, Owners: libraryOwners{client}, SeedSharedAssets: true, Directory: *directory, PublisherID: *publisher, QuotaBytes: *quota})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -65,6 +84,56 @@ func main() {
 	}
 	server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 64 << 10}
 	servers := []*http.Server{server}
+	if *participantListen != "" {
+		host, _, err := net.SplitHostPort(*participantListen)
+		if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+			log.Fatal("participant requires a private loopback listener")
+		}
+		authority, err := httpapi.NewCentralEvolutionAuthority(client, os.Getenv(*participantSecretEnv))
+		if err != nil {
+			log.Fatal(err)
+		}
+		participant := httpapi.EvolutionParticipantAPI{Store: store, Authority: authority}
+		outputs, err := httpapi.NewEvolutionOutputAPI(store, client, os.Getenv(*participantSecretEnv))
+		if err != nil {
+			log.Fatal(err)
+		}
+		originalParticipant := participant.Handler()
+		outputHandler := outputs.Handler()
+		var participantHandler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/volumes-studio/internal/v1/evolution/outputs" {
+				outputHandler.ServeHTTP(w, r)
+				return
+			}
+			originalParticipant.ServeHTTP(w, r)
+		})
+		if *evolutionSpaceEndpoint != "" {
+			inputAPI, err := httpapi.NewEvaluationInputAPI(store, client, os.Getenv(*evolutionSpaceInputSecretEnv))
+			if err != nil {
+				log.Fatal(err)
+			}
+			resultAPI, err := httpapi.NewRunResultAPI(store, os.Getenv(*evolutionSpaceInputSecretEnv))
+			if err != nil {
+				log.Fatal(err)
+			}
+			resultAPI.BaseAuthority = client
+			resultHandler := resultAPI.Handler()
+			inputHandler := inputAPI.Handler()
+			original := participantHandler
+			participantHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, "/volumes-studio/internal/v1/run-results/") {
+					resultHandler.ServeHTTP(w, r)
+					return
+				}
+				if strings.HasPrefix(r.URL.Path, "/volumes-studio/internal/v1/evaluation-input") {
+					inputHandler.ServeHTTP(w, r)
+					return
+				}
+				original.ServeHTTP(w, r)
+			})
+		}
+		servers = append(servers, &http.Server{Addr: *participantListen, Handler: participantHandler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10})
+	}
 	if *distributionConfig != "" {
 		host, _, err := net.SplitHostPort(*distributionListen)
 		if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
@@ -104,16 +173,7 @@ func main() {
 			case <-ticker.C:
 				_, _ = store.ExpireUploads(ctx)
 				_ = store.ExpireExports(ctx)
-				_, err := store.ValidateNext(ctx, func(ctx context.Context, actor authoring.Actor) error {
-					if actor.Issuer != *issuer {
-						return identity.ErrUnauthorized
-					}
-					_, err := client.Principal(ctx, actor.Subject)
-					if errors.Is(err, identity.ErrUnauthorized) {
-						return authoring.ErrAuthority
-					}
-					return err
-				})
+				_, err := store.ValidateNext(ctx)
 				if err != nil && !errors.Is(err, context.Canceled) {
 					log.Print("publication awaiting integrity or principal check; inspect operation state")
 				}
@@ -142,4 +202,16 @@ func main() {
 		}
 	}
 	workers.Wait()
+}
+
+// libraryOwners reports a refused claim as missing authority, so the browser
+// sees the same 403 as any other denied action; outages stay unavailable.
+type libraryOwners struct{ client *identity.Client }
+
+func (o libraryOwners) ClaimLibrary(ctx context.Context, principal evolution.Principal, library string) error {
+	err := o.client.ClaimLibrary(ctx, principal, library)
+	if errors.Is(err, identity.ErrUnauthorized) {
+		return authoring.ErrAuthority
+	}
+	return err
 }

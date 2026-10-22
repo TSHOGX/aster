@@ -65,6 +65,23 @@ func adminPageLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
 	return n, true
 }
 func (a *Authentication) adminRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/admin/groups/{group}/optimization", a.evolutionConfiguration)
+	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/revisions/{revision}", a.evolutionConfigurationRevision)
+	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/operations/{operation}", a.evolutionOperation)
+	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/operations/{operation}/events", a.evolutionOperationEvents)
+	mux.HandleFunc("POST /api/admin/groups/{group}/optimization/operations/{operation}/retry", a.retryEvolutionOperation)
+	mux.HandleFunc("POST /api/admin/groups/{group}/optimization/operations/{operation}/discard", a.discardEvolutionOperation)
+	mux.HandleFunc("POST /api/admin/groups/{group}/optimization/preview", a.previewEvolution)
+	mux.HandleFunc("POST /api/admin/groups/{group}/optimization/activate", a.activateEvolution)
+	mux.HandleFunc("POST /api/admin/groups/{group}/optimization/disable", a.disableEvolution)
+	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/draft", a.evolutionDraft)
+	mux.HandleFunc("PUT /api/admin/groups/{group}/optimization/draft", a.evolutionDraft)
+	mux.HandleFunc("PUT /api/admin/groups/{group}/optimization/grants", a.evolutionGroupGrant)
+	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/sources", a.evolutionSources)
+	mux.HandleFunc("PUT /api/admin/groups/{group}/optimization/sources/{source}", a.setEvolutionSource)
+	mux.HandleFunc("GET /api/admin/groups/{group}/optimization/sources/{source}/revisions/{revision}", a.evolutionSourceRevision)
+	mux.HandleFunc("POST /api/admin/studio-grants", a.editStudioGrant)
+	mux.HandleFunc("GET /api/admin/studio-grants", a.inspectStudioGrants)
 	mux.HandleFunc("GET /api/admin/projects", a.adminProjects)
 	mux.HandleFunc("GET /api/admin/projects/{id}", a.adminProject)
 	for _, action := range []string{"pause", "stop", "restart", "apply-network"} {

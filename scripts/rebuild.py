@@ -51,6 +51,11 @@ def build(destination, source_ref=None, os_base=None, work_os_base=None):
         run(["bash", "scripts/check.sh", "backend"], cwd=source, env=env)
         run(["python3", "scripts/candidate.py", "build", destination / "application"], cwd=source, env=env)
         run(["python3", "volumes-studio/scripts/release.py", "build", destination / "studio"], cwd=source, env=env)
+        # Evolution Space is a first-class release in the complete deployment.
+        # Build it from the same detached source commit so its backend, frontend,
+        # maintenance commands and manifest cannot drift from the other bundles.
+        run(["python3", "evolution-space/scripts/release.py", "build", destination / "evolution-space",
+             "--source-ref", commit], cwd=source, env=env)
         module = subprocess.check_output(
             ["go", "list", "-m", "-f", "{{.Dir}}", "github.com/TSHOGX/khora"],
             cwd=source / "orchestrator", env=env, text=True,
@@ -87,14 +92,18 @@ def build(destination, source_ref=None, os_base=None, work_os_base=None):
         (destination / "content/shared-assets/skills").mkdir(exist_ok=True)
         app = json.loads((destination / "application/candidate.json").read_text())
         studio = json.loads((destination / "studio/studio-release.json").read_text())
-        if app["commit"] != commit or studio["source_commit"] != commit:
-            raise ValueError("application and Studio source identities differ")
+        evolution_space = json.loads((destination / "evolution-space/evolution-space-release.json").read_text())
+        if app["commit"] != commit or studio["source_commit"] != commit or evolution_space["source_commit"] != commit:
+            raise ValueError("application, Studio and Evolution Space source identities differ")
+        evolution_space_manifest = destination / "evolution-space/evolution-space-release.json"
         manifest = destination / "runtime.manifest.json"
         runtime_digest = (destination / "runtime.manifest.json.sha256").read_text().strip()
         run([verifier, "--root", runtime, runtime_digest])
         report = {
             "format": "aster-deployment-v1", "source_commit": commit,
             "application": "application", "studio": "studio", "engine": "bin/khora",
+            "evolution_space": "evolution-space",
+            "evolution_space_manifest_sha256": hashlib.sha256(evolution_space_manifest.read_bytes()).hexdigest(),
             "engine_revision": engine_revision,
             "runtime_verifier_sha256": hashlib.sha256(verifier.read_bytes()).hexdigest(),
             "runtime_digest": runtime_digest,

@@ -1,6 +1,6 @@
 import { intlLocale } from "../../../web/i18n/locale";
 export const base = "/volumes-studio";
-export type Session = { issuer: string; subject: string; csrf: string };
+export type Session = { can_create_library: boolean; issuer: string; subject: string; csrf: string };
 export type Library = {
   builtin?: boolean;
   id: string;
@@ -8,8 +8,6 @@ export type Library = {
   description: string;
   profile: "authored-v1" | "shared-assets-v1";
   metadata_revision: number;
-  draft_revision: number;
-  base_version: string;
   archived: boolean;
   updated_at?: number;
   draft_change_count?: number;
@@ -22,13 +20,13 @@ export type Entry = {
   digest: string;
 };
 export type Version = {
+  accepted_commit: string;
   profile: Library["profile"];
   publisher_id: string;
   id: string;
   library_id: string;
   label: string;
   note: string;
-  source_revision: number;
   descriptor_digest: string;
   state: string;
   publisher: { issuer: string; subject: string };
@@ -37,6 +35,7 @@ export type Version = {
   published_at?: number | null;
 };
 export type Upload = {
+  branch_id: string;
   id: string;
   path: string;
   size: string;
@@ -73,7 +72,7 @@ export async function api<T>(
     credentials: "same-origin",
     cache: "no-store",
   });
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
     if (typeof window !== "undefined")
       window.dispatchEvent(new Event("studio-auth-expired"));
   }

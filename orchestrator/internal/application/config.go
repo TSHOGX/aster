@@ -87,31 +87,38 @@ type ProjectDefaults struct {
 	RuntimeBytes   int64                `json:"runtime_bytes"`
 	Reachability   product.Reachability `json:"reachability"`
 }
+type ParticipantConnectionConfig struct {
+	Endpoint      string `json:"endpoint"`
+	CredentialEnv string `json:"credential_env"`
+}
+
 type Config struct {
-	PublicDNS         []netip.Addr            `json:"public_dns_resolvers"`
-	VolumeImports     *VolumeImportConfig     `json:"volume_imports,omitempty"`
-	Identity          *identityconfig.Config  `json:"identity,omitempty"`
-	FrontDoor         *edge.FrontDoor         `json:"front_door,omitempty"`
-	HTTPMetrics       bool                    `json:"http_metrics"`
-	Version           int                     `json:"version"`
-	Listen            string                  `json:"listen"`
-	ApplicationSocket string                  `json:"application_socket"`
-	Frontend          string                  `json:"frontend"`
-	AdminFrontend     string                  `json:"admin_frontend"`
-	StateDirectory    string                  `json:"state_directory"`
-	ControlSocket     string                  `json:"control_socket"`
-	Engine            engineconfig.Connection `json:"engine"`
-	WorkTemplate      *Template               `json:"work_template,omitempty"`
-	Template          Template                `json:"template"`
-	Project           ProjectDefaults         `json:"project"`
-	Content           Content                 `json:"content"`
-	Limits            Limits                  `json:"limits"`
-	Notifications     NotificationConfig      `json:"notifications"`
-	Gateways          []ServiceGateway        `json:"gateways"`
-	AgentAudience     string                  `json:"agent_audience"`
-	Titles            TitleService            `json:"titles"`
-	TLSCert           string                  `json:"tls_cert"`
-	TLSKey            string                  `json:"tls_key"`
+	StudioParticipant *ParticipantConnectionConfig `json:"studio_participant,omitempty"`
+	EvolutionSpace    *ParticipantConnectionConfig `json:"evolution_space,omitempty"`
+	PublicDNS         []netip.Addr                 `json:"public_dns_resolvers"`
+	VolumeImports     *VolumeImportConfig          `json:"volume_imports,omitempty"`
+	Identity          *identityconfig.Config       `json:"identity,omitempty"`
+	FrontDoor         *edge.FrontDoor              `json:"front_door,omitempty"`
+	HTTPMetrics       bool                         `json:"http_metrics"`
+	Version           int                          `json:"version"`
+	Listen            string                       `json:"listen"`
+	ApplicationSocket string                       `json:"application_socket"`
+	Frontend          string                       `json:"frontend"`
+	AdminFrontend     string                       `json:"admin_frontend"`
+	StateDirectory    string                       `json:"state_directory"`
+	ControlSocket     string                       `json:"control_socket"`
+	Engine            engineconfig.Connection      `json:"engine"`
+	WorkTemplate      *Template                    `json:"work_template,omitempty"`
+	Template          Template                     `json:"template"`
+	Project           ProjectDefaults              `json:"project"`
+	Content           Content                      `json:"content"`
+	Limits            Limits                       `json:"limits"`
+	Notifications     NotificationConfig           `json:"notifications"`
+	Gateways          []ServiceGateway             `json:"gateways"`
+	AgentAudience     string                       `json:"agent_audience"`
+	Titles            TitleService                 `json:"titles"`
+	TLSCert           string                       `json:"tls_cert"`
+	TLSKey            string                       `json:"tls_key"`
 	base              string
 }
 

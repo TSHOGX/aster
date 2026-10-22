@@ -1,0 +1,231 @@
+{
+  "$defs": {
+    "CheckRequirement": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "policy_id": {
+          "type": "string"
+        },
+        "policy_revision": {
+          "type": "integer"
+        },
+        "profile": {
+          "$ref": "#/$defs/Revision"
+        },
+        "reference": {
+          "$ref": "#/$defs/ContentRef"
+        },
+        "reference_strategy": {
+          "type": "string"
+        },
+        "service": {
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "required": [
+        "digest",
+        "policy_id",
+        "policy_revision",
+        "path",
+        "mode",
+        "profile",
+        "service",
+        "reference_strategy"
+      ],
+      "type": "object"
+    },
+    "ContentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "commit_id": {
+          "type": "string"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "tree_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "library_id",
+        "commit_id",
+        "profile",
+        "tree_digest"
+      ],
+      "type": "object"
+    },
+    "MergeRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_commit": {
+          "type": "string"
+        },
+        "branch_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "identity": {
+          "$ref": "#/$defs/PreparedIdentity"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "prepared_digest": {
+          "type": "string"
+        },
+        "publication_operation_id": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "library_id",
+        "branch_ids",
+        "state"
+      ],
+      "type": "object"
+    },
+    "PreparedIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/CheckRequirement"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "main": {
+          "$ref": "#/$defs/ContentRef"
+        },
+        "policy_digest": {
+          "type": "string"
+        },
+        "policy_revision": {
+          "type": "integer"
+        },
+        "result": {
+          "$ref": "#/$defs/ContentRef"
+        },
+        "selections": {
+          "items": {
+            "$ref": "#/$defs/PreparedSelection"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/ContentRef"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "library_id",
+        "main",
+        "sources",
+        "result",
+        "policy_revision",
+        "policy_digest",
+        "checks"
+      ],
+      "type": "object"
+    },
+    "PreparedSelection": {
+      "additionalProperties": false,
+      "properties": {
+        "branch_id": {
+          "type": "string"
+        },
+        "candidate_commit": {
+          "type": "string"
+        },
+        "deferred_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "head": {
+          "type": "string"
+        },
+        "selected_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "candidate_commit",
+        "branch_id",
+        "head",
+        "selected_paths"
+      ],
+      "type": "object"
+    },
+    "Revision": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/MergeRequest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -156,6 +156,8 @@ export const ZH: Record<MessageKey, string> = {
   "Choose an account": "选择账户",
   "More readers": "更多读者",
   "Administration": "管理后台",
+  "Evolution Space": "演进空间",
+  "Volume Studio": "卷工作室",
   "Opening administration…": "正在打开管理后台…",
   "Settings": "设置",
   "Close settings": "关闭设置",

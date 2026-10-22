@@ -1,0 +1,279 @@
+{
+  "$defs": {
+    "Edge": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "Limits": {
+      "additionalProperties": false,
+      "properties": {
+        "max_parallel_nodes": {
+          "type": "integer"
+        },
+        "max_total_attempts": {
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_parallel_nodes",
+        "max_total_attempts",
+        "timeout_seconds"
+      ],
+      "type": "object"
+    },
+    "Node": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/Revision"
+        },
+        "concurrency": {
+          "type": "integer"
+        },
+        "default_route": {
+          "type": "string"
+        },
+        "failure_mode": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "implementation_ref": {
+          "$ref": "#/$defs/Revision"
+        },
+        "inactive_inputs": {
+          "type": "string"
+        },
+        "input_ports": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "item_inputs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "item_outputs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "max_attempts": {
+          "type": "integer"
+        },
+        "max_depth": {
+          "type": "integer"
+        },
+        "max_items": {
+          "type": "integer"
+        },
+        "max_iterations": {
+          "type": "integer"
+        },
+        "model_ref": {
+          "$ref": "#/$defs/Revision"
+        },
+        "on_limit": {
+          "type": "string"
+        },
+        "output_ports": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "predicate": {
+          "type": "string"
+        },
+        "prompt": {
+          "$ref": "#/$defs/Prompt"
+        },
+        "routes": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "timeout_seconds": {
+          "type": "integer"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/Revision"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "input_ports",
+        "output_ports",
+        "max_attempts",
+        "timeout_seconds"
+      ],
+      "type": "object"
+    },
+    "Prompt": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "variables": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "variables",
+        "digest"
+      ],
+      "type": "object"
+    },
+    "Revision": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "digest"
+      ],
+      "type": "object"
+    },
+    "Workflow": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/Edge"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "limits": {
+          "$ref": "#/$defs/Limits"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/Node"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "outputs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "parameters_schema": {},
+        "schema_version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "parameters_schema",
+        "inputs",
+        "outputs",
+        "nodes",
+        "edges",
+        "limits",
+        "capabilities"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/Workflow",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

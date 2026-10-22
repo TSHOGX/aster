@@ -155,6 +155,8 @@ export const EN = {
   "Choose an account": "Choose an account",
   "More readers": "More readers",
   "Administration": "Administration",
+  "Evolution Space": "Evolution Space",
+  "Volume Studio": "Volume Studio",
   "Opening administration…": "Opening administration…",
   "Settings": "Settings",
   "Close settings": "Close settings",

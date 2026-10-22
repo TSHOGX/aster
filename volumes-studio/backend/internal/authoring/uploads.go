@@ -21,6 +21,7 @@ const MaxChunkBytes = 8 << 20
 const UploadLifetime = 24 * time.Hour
 
 type UploadInput struct {
+	BranchID         string `json:"branch_id"`
 	RequestID        string `json:"request_id"`
 	ExpectedRevision int64  `json:"expected_revision"`
 	Path             string `json:"path"`
@@ -28,6 +29,7 @@ type UploadInput struct {
 	Digest           string `json:"digest"`
 }
 type Upload struct {
+	BranchID         string `json:"branch_id"`
 	ID               string `json:"id"`
 	LibraryID        string `json:"library_id"`
 	Path             string `json:"path"`
@@ -46,12 +48,12 @@ type CompleteInput struct {
 	ConfirmTarget    string `json:"confirm_target,omitempty"`
 }
 
-const uploadColumns = "id,library_id,path,issuer,subject,size,digest,offset,expected_revision,target_identity,state,expires_at"
+const uploadColumns = "id,library_id,branch_id,path,issuer,subject,size,digest,offset,expected_revision,target_identity,state,expires_at"
 
 func scanUpload(row scanner) (Upload, error) {
 	var u Upload
 	var size, offset int64
-	err := row.Scan(&u.ID, &u.LibraryID, &u.Path, &u.Owner.Issuer, &u.Owner.Subject, &size, &u.Digest, &offset, &u.ExpectedRevision, &u.TargetIdentity, &u.State, &u.ExpiresAt)
+	err := row.Scan(&u.ID, &u.LibraryID, &u.BranchID, &u.Path, &u.Owner.Issuer, &u.Owner.Subject, &size, &u.Digest, &offset, &u.ExpectedRevision, &u.TargetIdentity, &u.State, &u.ExpiresAt)
 	u.Size = strconv.FormatInt(size, 10)
 	u.Offset = strconv.FormatInt(offset, 10)
 	return u, normalizeDB(err)
@@ -59,22 +61,6 @@ func scanUpload(row scanner) (Upload, error) {
 func (s *Store) uploadPath(id string) string { return filepath.Join(s.config.Directory, "uploads", id) }
 func (s *Store) Upload(ctx context.Context, id string) (Upload, error) {
 	return scanUpload(s.db.QueryRowContext(ctx, "SELECT "+uploadColumns+" FROM uploads WHERE id=?", id))
-}
-func (s *Store) Uploads(ctx context.Context, library string) ([]Upload, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+uploadColumns+" FROM uploads WHERE library_id=? AND (state='open' OR expires_at>?) ORDER BY created_at DESC,id LIMIT 200", library, s.now().Unix())
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Upload{}
-	for rows.Next() {
-		u, err := scanUpload(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, u)
-	}
-	return out, rows.Err()
 }
 func unfinishedUploads(ctx context.Context, q interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
@@ -91,8 +77,11 @@ func unfinishedUploads(ctx context.Context, q interface {
 }
 func (s *Store) StartUpload(ctx context.Context, a Actor, library string, input UploadInput) (Upload, error) {
 	size, err := manifest.ParseSize(input.Size)
-	if err != nil || size > manifest.MaxFileBytes || !manifest.ValidDigest(input.Digest) || manifest.ValidPath(input.Path, false) != nil || input.ExpectedRevision < 1 {
+	if err != nil || !manifest.ValidID(input.BranchID) || size > manifest.MaxFileBytes || !manifest.ValidDigest(input.Digest) || manifest.ValidAuthoringPath(input.Path, false) != nil || input.ExpectedRevision < 1 {
 		return Upload{}, ErrInvalid
+	}
+	if err := s.authorizeLibrary(ctx, a, library, "volume.author"); err != nil {
+		return Upload{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -108,10 +97,14 @@ func (s *Store) StartUpload(ctx context.Context, a Actor, library string, input 
 	if err != nil {
 		return u, err
 	}
-	if l.Archived || l.DraftRevision != input.ExpectedRevision {
+	b, err := s.branch(ctx, library, input.BranchID)
+	if err != nil {
+		return u, err
+	}
+	if l.Archived || b.DraftRevision != input.ExpectedRevision {
 		return u, ErrConflict
 	}
-	tree, err := entries(ctx, s.db, "draft_entries", "library_id", library)
+	tree, err := entries(ctx, s.db, "branch_entries", "branch_id", input.BranchID)
 	if err != nil {
 		return u, err
 	}
@@ -146,7 +139,7 @@ func (s *Store) StartUpload(ctx context.Context, a Actor, library string, input 
 	if err = s.checkQuota(ctx, reservation); err != nil {
 		return u, err
 	}
-	u = Upload{ID: randomID(), LibraryID: library, Path: input.Path, Owner: a, Size: input.Size, Digest: input.Digest, Offset: "0", ExpectedRevision: input.ExpectedRevision, TargetIdentity: attachmentTarget(tree, input.Path), State: "open", ExpiresAt: s.now().Add(UploadLifetime).Unix()}
+	u = Upload{BranchID: input.BranchID, ID: randomID(), LibraryID: library, Path: input.Path, Owner: a, Size: input.Size, Digest: input.Digest, Offset: "0", ExpectedRevision: input.ExpectedRevision, TargetIdentity: attachmentTarget(tree, input.Path), State: "open", ExpiresAt: s.now().Add(UploadLifetime).Unix()}
 	f, err := os.OpenFile(s.uploadPath(u.ID), os.O_CREATE|os.O_EXCL|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
 	if err != nil {
 		return u, err
@@ -165,11 +158,11 @@ func (s *Store) StartUpload(ctx context.Context, a Actor, library string, input 
 		return u, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO uploads(id,library_id,path,issuer,subject,size,digest,expected_revision,target_identity,state,reserved_bytes,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,'open',?,?,?)`, u.ID, library, u.Path, a.Issuer, a.Subject, size, u.Digest, u.ExpectedRevision, u.TargetIdentity, reservation, u.ExpiresAt, s.now().Unix()); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO uploads(id,library_id,branch_id,path,issuer,subject,size,digest,expected_revision,target_identity,state,reserved_bytes,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,'open',?,?,?)`, u.ID, library, input.BranchID, u.Path, a.Issuer, a.Subject, size, u.Digest, u.ExpectedRevision, u.TargetIdentity, reservation, u.ExpiresAt, s.now().Unix()); err != nil {
 		s.poisoned = true
 		return u, err
 	}
-	if err = s.record(ctx, tx, a, input.RequestID, body, "upload.admit", library, l.DraftRevision, u); err != nil {
+	if err = s.record(ctx, tx, a, input.RequestID, body, "upload.admit", library, b.DraftRevision, u); err != nil {
 		s.poisoned = true
 		return u, err
 	}
@@ -191,6 +184,9 @@ func (s *Store) Chunk(ctx context.Context, a Actor, id string, offset int64, dat
 	u, err := s.Upload(ctx, id)
 	if err != nil {
 		return u, err
+	}
+	if err = s.authorizeLibrary(ctx, a, u.LibraryID, "volume.author"); err != nil {
+		return Upload{}, err
 	}
 	if u.Owner != a {
 		return u, ErrNotFound
@@ -258,15 +254,18 @@ func (s *Store) CompleteUpload(ctx context.Context, a Actor, id string, input Co
 	}
 	var result MutationResult
 	body := requestDigest("complete-upload", id, input)
-	if replay, err := readReceipt(ctx, s.db.DB, a, input.RequestID, body, &result); err != nil || replay {
-		return result, err
-	}
 	u, err := s.Upload(ctx, id)
 	if err != nil {
 		return result, err
 	}
 	if u.Owner != a {
 		return result, ErrNotFound
+	}
+	if err = s.authorizeLibrary(ctx, a, u.LibraryID, "volume.author"); err != nil {
+		return result, err
+	}
+	if replay, err := readReceipt(ctx, s.db.DB, a, input.RequestID, body, &result); err != nil || replay {
+		return result, err
 	}
 	if u.State != "open" || u.ExpiresAt <= s.now().Unix() || u.Offset != u.Size {
 		return result, ErrConflict
@@ -275,10 +274,17 @@ func (s *Store) CompleteUpload(ctx context.Context, a Actor, id string, input Co
 	if err != nil {
 		return result, err
 	}
-	if l.Archived || l.DraftRevision != input.ExpectedRevision {
+	b, err := s.branch(ctx, u.LibraryID, u.BranchID)
+	if err != nil {
+		return result, err
+	}
+	if err = s.authorizeLibrary(ctx, a, u.LibraryID, "volume.author"); err != nil {
+		return result, err
+	}
+	if l.Archived || b.DraftRevision != input.ExpectedRevision {
 		return result, ErrConflict
 	}
-	tree, err := entries(ctx, s.db, "draft_entries", "library_id", u.LibraryID)
+	tree, err := entries(ctx, s.db, "branch_entries", "branch_id", u.BranchID)
 	if err != nil {
 		return result, err
 	}
@@ -302,7 +308,7 @@ func (s *Store) CompleteUpload(ctx context.Context, a Actor, id string, input Co
 	if !replaced {
 		after = append(after, replacement)
 	}
-	if err = validateDraft(after); err != nil {
+	if err = manifest.ValidateAuthoring(l.Profile, after); err != nil {
 		return result, errors.Join(ErrInvalid, err)
 	}
 	size, _ := manifest.ParseSize(u.Size)
@@ -344,11 +350,11 @@ func (s *Store) CompleteUpload(ctx context.Context, a Actor, id string, input Co
 		return result, err
 	}
 	defer tx.Rollback()
-	if err = replaceEntries(ctx, tx, u.LibraryID, tree, after); err != nil {
+	if err = replaceBranchEntries(ctx, tx, u.BranchID, after); err != nil {
 		return result, err
 	}
-	result = MutationResult{Revision: l.DraftRevision + 1, Affected: 1}
-	if _, err = tx.ExecContext(ctx, "UPDATE libraries SET draft_revision=? WHERE id=?", result.Revision, u.LibraryID); err != nil {
+	result = MutationResult{Revision: b.DraftRevision + 1, Affected: 1}
+	if _, err = tx.ExecContext(ctx, "UPDATE branches SET draft_revision=? WHERE id=?", result.Revision, u.BranchID); err != nil {
 		return result, err
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE uploads SET state='complete' WHERE id=?", id); err != nil {
@@ -386,11 +392,17 @@ func (s *Store) CancelUpload(ctx context.Context, a Actor, id, request string) e
 	}
 	var result struct{}
 	body := requestDigest("cancel-upload", id, request)
-	if replay, err := readReceipt(ctx, s.db.DB, a, request, body, &result); err != nil || replay {
-		return err
-	}
 	u, err := s.Upload(ctx, id)
 	if err != nil {
+		return err
+	}
+	if u.Owner != a {
+		return ErrNotFound
+	}
+	if err = s.authorizeLibrary(ctx, a, u.LibraryID, "volume.author"); err != nil {
+		return err
+	}
+	if replay, err := readReceipt(ctx, s.db.DB, a, request, body, &result); err != nil || replay {
 		return err
 	}
 	if u.State == "complete" {

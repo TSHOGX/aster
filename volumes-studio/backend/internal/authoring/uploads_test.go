@@ -10,9 +10,32 @@ import (
 	"time"
 )
 
+func uploadBranch(t *testing.T, s *Store, library string) Branch {
+	t.Helper()
+	s.config.Authority = &branchAuthority{true}
+	ctx := context.Background()
+	var id string
+	if err := s.db.QueryRowContext(ctx, "SELECT id FROM branches WHERE library_id=? AND name='Uploads'", library).Scan(&id); err == nil {
+		b, err := s.branch(ctx, library, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	main, err := s.MainCommit(ctx, testActor, library)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateBranch(ctx, testActor, library, CreateBranchInput{randomID(), "Uploads", main.CommitID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
 func upload(t *testing.T, s *Store, lib, path string, revision int64, data []byte) Upload {
 	t.Helper()
-	u, err := s.StartUpload(context.Background(), testActor, lib, UploadInput{RequestID: randomID(), ExpectedRevision: revision, Path: path, Size: strconv.Itoa(len(data)), Digest: digestBytes(data)})
+	branch := uploadBranch(t, s, lib)
+	u, err := s.StartUpload(context.Background(), testActor, lib, UploadInput{BranchID: branch.ID, RequestID: randomID(), ExpectedRevision: revision, Path: path, Size: strconv.Itoa(len(data)), Digest: digestBytes(data)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,11 +55,10 @@ func TestResumableUploadChunksFreezeGateAndReceipt(t *testing.T) {
 	l := library(t, s)
 	data := []byte("abcdef")
 	u := upload(t, s, l.ID, "binary", 1, data)
-	if _, err := s.Freeze(ctx, testActor, l.ID, PublishInput{RequestID: "blocked", ExpectedRevision: 1, Label: "v1"}); !errors.Is(err, ErrBusy) {
+	branch := uploadBranch(t, s, l.ID)
+	c.Authority = s.config.Authority
+	if _, err := s.Checkpoint(ctx, testActor, l.ID, branch.ID, CheckpointInput{"blocked", branch.Head, 1, "blocked"}); !errors.Is(err, ErrBusy) {
 		t.Fatal("unfinished upload not blocking", err)
-	}
-	if _, err := s.Preview(ctx, l.ID, 1); !errors.Is(err, ErrBusy) {
-		t.Fatal(err)
 	}
 	ack := chunk(t, s, u.ID, 0, data[:3])
 	if ack.Offset != "3" {
@@ -87,7 +109,7 @@ func TestResumableUploadChunksFreezeGateAndReceipt(t *testing.T) {
 	if used, err := s.usage(ctx); err != nil || used != 6 {
 		t.Fatal("upload charge not settled", used, err)
 	}
-	read, _, err := s.Content(ctx, l.ID, "binary", "")
+	read, _, err := s.BranchContent(ctx, testActor, l.ID, branch.ID, "binary", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,21 +118,28 @@ func TestResumableUploadChunksFreezeGateAndReceipt(t *testing.T) {
 	if err != nil || string(bytes) != "abcdef" {
 		t.Fatal("content mismatch", err)
 	}
-	publish(t, s, l.ID, 2)
+	if _, err := s.Checkpoint(ctx, testActor, l.ID, branch.ID, CheckpointInput{"commit", branch.Head, 2, "uploaded"}); err != nil {
+		t.Fatal(err)
+	}
 }
 func TestUploadCompletionCannotOverwriteNewTargetWithoutConfirmation(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	l := library(t, s)
-	mutate(t, s, l.ID, Mutation{RequestID: "old", ExpectedRevision: 1, Action: "text", Path: "file", Text: "old"})
+	branch := uploadBranch(t, s, l.ID)
+	if _, err := s.SaveBranchText(ctx, testActor, l.ID, branch.ID, SaveBranchTextInput{"old", 1, branch.Head, "file", "old"}); err != nil {
+		t.Fatal(err)
+	}
 	u := upload(t, s, l.ID, "file", 2, []byte("upload"))
 	chunk(t, s, u.ID, 0, []byte("upload"))
-	mutate(t, s, l.ID, Mutation{RequestID: "new", ExpectedRevision: 2, Action: "text", Path: "file", Text: "edited"})
+	if _, err := s.SaveBranchText(ctx, testActor, l.ID, branch.ID, SaveBranchTextInput{"new", 2, branch.Head, "file", "edited"}); err != nil {
+		t.Fatal(err)
+	}
 	input := CompleteInput{RequestID: "complete", ExpectedRevision: 3}
 	if _, err := s.CompleteUpload(ctx, testActor, u.ID, input); !errors.Is(err, ErrConflict) {
 		t.Fatal("fresh revision silently authorized target overwrite", err)
 	}
-	tree, err := entries(ctx, s.db, "draft_entries", "library_id", l.ID)
+	tree, err := entries(ctx, s.db, "branch_entries", "branch_id", branch.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,16 +191,16 @@ func TestUploadConcurrencyAndReservations(t *testing.T) {
 	l := library(t, s)
 	upload(t, s, l.ID, "one", 1, []byte("one"))
 	upload(t, s, l.ID, "two", 1, []byte("two"))
-	if _, err := s.StartUpload(ctx, testActor, l.ID, UploadInput{RequestID: "third", ExpectedRevision: 1, Path: "three", Size: "0", Digest: digestBytes(nil)}); !errors.Is(err, ErrBusy) {
+	if _, err := s.StartUpload(ctx, testActor, l.ID, UploadInput{BranchID: uploadBranch(t, s, l.ID).ID, RequestID: "third", ExpectedRevision: 1, Path: "three", Size: "0", Digest: digestBytes(nil)}); !errors.Is(err, ErrBusy) {
 		t.Fatal("author concurrency exceeded", err)
 	}
 	other := Actor{Issuer: testActor.Issuer, Subject: "other"}
 	for _, name := range []string{"three", "four"} {
-		if _, err := s.StartUpload(ctx, other, l.ID, UploadInput{RequestID: name, ExpectedRevision: 1, Path: name, Size: "0", Digest: digestBytes(nil)}); err != nil {
+		if _, err := s.StartUpload(ctx, other, l.ID, UploadInput{BranchID: uploadBranch(t, s, l.ID).ID, RequestID: name, ExpectedRevision: 1, Path: name, Size: "0", Digest: digestBytes(nil)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.StartUpload(ctx, Actor{Issuer: testActor.Issuer, Subject: "third"}, l.ID, UploadInput{RequestID: "fifth", ExpectedRevision: 1, Path: "five", Size: "0", Digest: digestBytes(nil)}); !errors.Is(err, ErrBusy) {
+	if _, err := s.StartUpload(ctx, Actor{Issuer: testActor.Issuer, Subject: "third"}, l.ID, UploadInput{BranchID: uploadBranch(t, s, l.ID).ID, RequestID: "fifth", ExpectedRevision: 1, Path: "five", Size: "0", Digest: digestBytes(nil)}); !errors.Is(err, ErrBusy) {
 		t.Fatal("global upload concurrency exceeded", err)
 	}
 	if used, err := s.usage(ctx); err != nil || used != 4*MaxChunkBytes+12 {

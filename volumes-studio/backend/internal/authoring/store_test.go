@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"aster/contracts/evolution"
 	"aster/contracts/volumemanifest"
 )
 
@@ -34,46 +35,30 @@ func library(t *testing.T, s *Store) Library {
 	}
 	return l
 }
-func mutate(t *testing.T, s *Store, id string, m Mutation) MutationResult {
-	t.Helper()
-	r, err := s.Mutate(context.Background(), testActor, id, m)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return r
-}
-func publish(t *testing.T, s *Store, id string, rev int64) Version {
-	t.Helper()
-	v, err := s.Freeze(context.Background(), testActor, id, PublishInput{RequestID: "publish", ExpectedRevision: rev, Label: "v1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return v
-}
-func allow(context.Context, Actor) error { return nil }
-func TestRevisionReceiptsFreezeRestoreAndRestart(t *testing.T) {
+func TestBranchReceiptsReleaseRestoreAndRestart(t *testing.T) {
 	s, c := testStore(t)
 	ctx := context.Background()
 	l := library(t, s)
-	m := Mutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "readme.txt", Text: "first"}
-	r := mutate(t, s, l.ID, m)
+	b := newDraftBranch(t, s, l.ID)
+	m := draftEdit{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "readme.txt", Text: "first"}
+	r := editDraft(t, s, b, m)
 	if r.Revision != 2 {
 		t.Fatal(r)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "edit", ExpectedRevision: 2, Action: "text", Path: "readme.txt", Text: "second"})
-	if replay := mutate(t, s, l.ID, m); replay.Revision != 2 {
+	editDraft(t, s, b, draftEdit{RequestID: "edit", ExpectedRevision: 2, Action: "text", Path: "readme.txt", Text: "second"})
+	if replay := editDraft(t, s, b, m); replay.Revision != 2 {
 		t.Fatal("receipt after stale revision lost")
 	}
 	m.Text = "different"
-	if _, err := s.Mutate(ctx, testActor, l.ID, m); !errors.Is(err, ErrConflict) {
+	if _, err := editDraftAs(s, ctx, testActor, b, m); !errors.Is(err, ErrConflict) {
 		t.Fatal("request body rebound", err)
 	}
-	v := publish(t, s, l.ID, 3)
-	mutate(t, s, l.ID, Mutation{RequestID: "later", ExpectedRevision: 3, Action: "text", Path: "readme.txt", Text: "later"})
+	v := publishDraft(t, s, b, 3)
+	editDraft(t, s, b, draftEdit{RequestID: "later", ExpectedRevision: 3, Action: "text", Path: "readme.txt", Text: "later"})
 	if _, err := s.Descriptor(ctx, v.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatal("pending source exported", err)
 	}
-	if worked, err := s.ValidateNext(ctx, allow); err != nil || !worked {
+	if worked, err := s.ValidateNext(ctx); err != nil || !worked {
 		t.Fatal(worked, err)
 	}
 	read, entry, err := s.Content(ctx, l.ID, "readme.txt", v.ID)
@@ -88,25 +73,34 @@ func TestRevisionReceiptsFreezeRestoreAndRestart(t *testing.T) {
 	if entry.Digest != digestBytes([]byte("second")) {
 		t.Fatal(entry)
 	}
-	diff, _, err := s.Diff(ctx, l.ID, "", 4)
-	if err != nil || len(diff) != 1 || diff[0].Kind != "changed" {
+	current, err := s.Branch(ctx, testActor, l.ID, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff, err := s.BranchDiff(ctx, testActor, l.ID, b.ID, current.Head, "", 4)
+	if err != nil || len(diff.Changes) != 1 || diff.Changes[0].Kind != "changed" {
 		t.Fatal(diff, err)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "restore", ExpectedRevision: 4, Action: "restore", VersionID: v.ID})
+	restore := CreateBranchInput{"restore", "Restored release", v.AcceptedCommit}
+	restored, err := s.CreateBranch(ctx, testActor, l.ID, restore)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}
+	c.Authority = &branchAuthority{true}
 	s, err = Open(ctx, c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	page, err := s.Tree(ctx, l.ID, "", "", 5)
-	if err != nil || page.Revision != 5 || page.Entries[0].Digest != entry.Digest {
+	page, err := s.BranchTree(ctx, testActor, l.ID, restored.ID, "", "", 1)
+	if err != nil || page.Revision != 1 || page.Entries[0].Digest != entry.Digest {
 		t.Fatal(page, err)
 	}
-	if got := mutate(t, s, l.ID, Mutation{RequestID: "restore", ExpectedRevision: 4, Action: "restore", VersionID: v.ID}); got.Revision != 5 {
-		t.Fatal("restore receipt lost")
+	if got, err := s.CreateBranch(ctx, testActor, l.ID, restore); err != nil || got.ID != restored.ID {
+		t.Fatal("restore branch receipt lost", got, err)
 	}
 	raw, err := s.Descriptor(ctx, v.ID)
 	if err != nil {
@@ -130,6 +124,7 @@ func TestRevisionReceiptsFreezeRestoreAndRestart(t *testing.T) {
 func TestTwoTabsCannotOverwriteAndParentsRemainValid(t *testing.T) {
 	s, _ := testStore(t)
 	l := library(t, s)
+	b := newDraftBranch(t, s, l.ID)
 	ctx := context.Background()
 	var wg sync.WaitGroup
 	outcomes := make(chan error, 2)
@@ -137,7 +132,7 @@ func TestTwoTabsCannotOverwriteAndParentsRemainValid(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, err := s.Mutate(ctx, testActor, l.ID, Mutation{RequestID: fmt.Sprintf("tab-%d", i), ExpectedRevision: 1, Action: "text", Path: "file", Text: fmt.Sprint(i)})
+			_, err := editDraftAs(s, ctx, testActor, b, draftEdit{RequestID: fmt.Sprintf("tab-%d", i), ExpectedRevision: 1, Action: "text", Path: "file", Text: fmt.Sprint(i)})
 			outcomes <- err
 		}(i)
 	}
@@ -156,27 +151,27 @@ func TestTwoTabsCannotOverwriteAndParentsRemainValid(t *testing.T) {
 	if success != 1 || conflict != 1 {
 		t.Fatal(success, conflict)
 	}
-	for _, m := range []Mutation{{Action: "text", Path: "missing/file"}, {Action: "text", Path: "file/child"}, {Action: "mkdir", Path: " bad "}, {Action: "text", Path: "../escape"}} {
+	for _, m := range []draftEdit{{Action: "text", Path: "missing/file"}, {Action: "text", Path: "file/child"}, {Action: "mkdir", Path: " bad "}, {Action: "text", Path: "../escape"}} {
 		m.RequestID = randomID()
 		m.ExpectedRevision = 2
-		if _, err := s.Mutate(ctx, testActor, l.ID, m); err == nil {
+		if _, err := editDraftAs(s, ctx, testActor, b, m); err == nil {
 			t.Fatal("invalid tree accepted", m.Action, m.Path)
 		}
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "mkdir", ExpectedRevision: 2, Action: "mkdir", Path: "目录"})
-	mutate(t, s, l.ID, Mutation{RequestID: "child", ExpectedRevision: 3, Action: "text", Path: "目录/child", Text: "text"})
-	page, err := s.Tree(ctx, l.ID, "目录", "", 4)
+	editDraft(t, s, b, draftEdit{RequestID: "mkdir", ExpectedRevision: 2, Action: "mkdir", Path: "目录"})
+	editDraft(t, s, b, draftEdit{RequestID: "child", ExpectedRevision: 3, Action: "text", Path: "目录/child", Text: "text"})
+	page, err := s.BranchTree(ctx, testActor, l.ID, b.ID, "目录", "", 4)
 	if err != nil || len(page.Entries) != 1 || page.Entries[0].Path != "目录/child" {
 		t.Fatal(page, err)
 	}
-	if _, err := s.Mutate(ctx, testActor, l.ID, Mutation{RequestID: "delete", ExpectedRevision: 4, Action: "remove", Path: "目录"}); !errors.Is(err, ErrConflict) {
+	if _, err := editDraftAs(s, ctx, testActor, b, draftEdit{RequestID: "delete", ExpectedRevision: 4, Action: "remove", Path: "目录"}); !errors.Is(err, ErrConflict) {
 		t.Fatal("recursive delete unconfirmed", err)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "rename", ExpectedRevision: 4, Action: "move", Path: "目录", To: "renamed"})
-	if page, err := s.Tree(ctx, l.ID, "renamed", "", 5); err != nil || page.Entries[0].Path != "renamed/child" {
+	editDraft(t, s, b, draftEdit{RequestID: "rename", ExpectedRevision: 4, Action: "move", Path: "目录", To: "renamed"})
+	if page, err := s.BranchTree(ctx, testActor, l.ID, b.ID, "renamed", "", 5); err != nil || page.Entries[0].Path != "renamed/child" {
 		t.Fatal(page, err)
 	}
-	removed := mutate(t, s, l.ID, Mutation{RequestID: "delete", ExpectedRevision: 5, Action: "remove", Path: "renamed", Recursive: true})
+	removed := editDraft(t, s, b, draftEdit{RequestID: "delete", ExpectedRevision: 5, Action: "remove", Path: "renamed", Recursive: true})
 	if removed.Affected != 2 {
 		t.Fatal(removed)
 	}
@@ -185,12 +180,13 @@ func TestBlobGCHonorsReaderAndFrozenVersionPins(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	l := library(t, s)
-	mutate(t, s, l.ID, Mutation{RequestID: "one", ExpectedRevision: 1, Action: "text", Path: "one", Text: "retained"})
-	reader, entry, err := s.Content(ctx, l.ID, "one", "")
+	b := newDraftBranch(t, s, l.ID)
+	editDraft(t, s, b, draftEdit{RequestID: "one", ExpectedRevision: 1, Action: "text", Path: "one", Text: "retained"})
+	reader, entry, err := s.BranchContent(ctx, testActor, l.ID, b.ID, "one", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "remove", ExpectedRevision: 2, Action: "remove", Path: "one"})
+	editDraft(t, s, b, draftEdit{RequestID: "remove", ExpectedRevision: 2, Action: "remove", Path: "one"})
 	if n, err := s.Collect(ctx); err != nil || n != 0 {
 		t.Fatal("reader collected", n, err)
 	}
@@ -202,13 +198,13 @@ func TestBlobGCHonorsReaderAndFrozenVersionPins(t *testing.T) {
 	if _, err = os.Stat(s.blobPath(entry.Digest)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("unreferenced file retained", err)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "again", ExpectedRevision: 3, Action: "text", Path: "one", Text: "retained"})
-	publish(t, s, l.ID, 4)
-	mutate(t, s, l.ID, Mutation{RequestID: "clear", ExpectedRevision: 4, Action: "remove", Path: "one"})
+	editDraft(t, s, b, draftEdit{RequestID: "again", ExpectedRevision: 3, Action: "text", Path: "one", Text: "retained"})
+	publishDraft(t, s, b, 4)
+	editDraft(t, s, b, draftEdit{RequestID: "clear", ExpectedRevision: 4, Action: "remove", Path: "one"})
 	if n, err := s.Collect(ctx); err != nil || n != 0 {
 		t.Fatal("pending validation pin collected", n, err)
 	}
-	if _, err = s.ValidateNext(ctx, allow); err != nil {
+	if _, err = s.ValidateNext(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -216,14 +212,26 @@ func TestDurableOrphansAndMissingReferencedBlobRecovery(t *testing.T) {
 	s, c := testStore(t)
 	l := library(t, s)
 	ctx := context.Background()
-	mutate(t, s, l.ID, Mutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "one", Text: "source"})
+	s.config.Authority = &branchAuthority{true}
+	c.Authority = s.config.Authority
+	main, err := s.MainCommit(ctx, testActor, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch, err := s.CreateBranch(ctx, testActor, l.ID, CreateBranchInput{"orphan-branch", "Work", main.CommitID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SaveBranchText(ctx, testActor, l.ID, branch.ID, SaveBranchTextInput{"save", 1, main.CommitID, "one", "source"}); err != nil {
+		t.Fatal(err)
+	}
 	s.Close()
 	orphan := []byte("orphan")
 	digest := digestBytes(orphan)
 	if err := os.WriteFile(filepath.Join(c.Directory, "blobs", digest[7:]), orphan, 0600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Open(ctx, c)
+	s, err = Open(ctx, c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,25 +254,27 @@ func TestDurableOrphansAndMissingReferencedBlobRecovery(t *testing.T) {
 func TestPublicationChecksPrincipalAtFinalization(t *testing.T) {
 	s, _ := testStore(t)
 	l := library(t, s)
+	b := newDraftBranch(t, s, l.ID)
 	ctx := context.Background()
-	mutate(t, s, l.ID, Mutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "file", Text: "source"})
-	v := publish(t, s, l.ID, 2)
-	checks := 0
-	denied := errors.New("principal revoked")
-	if _, err := s.ValidateNext(ctx, func(context.Context, Actor) error {
-		checks++
-		if checks == 2 {
-			return denied
-		}
-		return nil
-	}); !errors.Is(err, denied) {
-		t.Fatal(err)
+	editDraft(t, s, b, draftEdit{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "file", Text: "source"})
+	v := publishDraft(t, s, b, 2)
+	calls := 0
+	s.config.Authority = authorityFunc(func(context.Context, evolution.AccessRequest) (evolution.AccessDecision, error) {
+		calls++
+		return evolution.AccessDecision{Allowed: calls != 2, PolicyRevision: 1}, nil
+	})
+	if _, err := s.ValidateNext(ctx); !errors.Is(err, ErrAuthority) {
+		t.Fatal("revoked final authority accepted", err)
 	}
 	current, err := s.Version(ctx, v.ID)
-	if err != nil || current.State == "published" {
-		t.Fatal("revoked publication finalized", current, err)
+	if err != nil || current.State == "published" || calls != 2 {
+		t.Fatal(current, err, calls)
 	}
-	if _, err = s.ValidateNext(ctx, allow); err != nil {
+	s.config.Authority = &branchAuthority{true}
+	if _, err = s.Operation(ctx, testActor, v.ID, OperationInput{RequestID: "retry-authority", Action: "retry"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ValidateNext(ctx); err != nil {
 		t.Fatal(err)
 	}
 	current, err = s.Version(ctx, v.ID)
@@ -276,21 +286,22 @@ func TestQuotaPreservesExistingDraftAndEmptyTreeRejected(t *testing.T) {
 	s, _ := testStore(t)
 	s.config.QuotaBytes = 1 << 20
 	l := library(t, s)
+	b := newDraftBranch(t, s, l.ID)
 	ctx := context.Background()
-	if _, err := s.Freeze(ctx, testActor, l.ID, PublishInput{RequestID: "empty", ExpectedRevision: 1, Label: "empty"}); !errors.Is(err, ErrInvalid) {
+	if _, err := releaseDraft(s, ctx, testActor, b, draftRelease{RequestID: "empty", ExpectedRevision: 1, Label: "empty"}); err == nil {
 		t.Fatal("empty publication", err)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "file", Text: "kept"})
-	if _, err := s.Mutate(ctx, testActor, l.ID, Mutation{RequestID: "large", ExpectedRevision: 2, Action: "text", Path: "file", Text: strings.Repeat("a", MaxTextBytes)}); !errors.Is(err, ErrQuota) {
+	editDraft(t, s, b, draftEdit{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "file", Text: "kept"})
+	if _, err := editDraftAs(s, ctx, testActor, b, draftEdit{RequestID: "large", ExpectedRevision: 2, Action: "text", Path: "file", Text: strings.Repeat("a", MaxTextBytes)}); !errors.Is(err, ErrQuota) {
 		t.Fatal("quota", err)
 	}
-	f, _, err := s.Content(ctx, l.ID, "file", "")
+	f, _, err := s.BranchContent(ctx, testActor, l.ID, b.ID, "file", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	b, _ := io.ReadAll(f)
-	if string(b) != "kept" {
+	data, _ := io.ReadAll(f)
+	if string(data) != "kept" {
 		t.Fatal("replacement damaged prior draft")
 	}
 }
@@ -299,23 +310,24 @@ func TestCanceledValidationCannotFinalizeReplacementGeneration(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	l := library(t, s)
-	mutate(t, s, l.ID, Mutation{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "file", Text: "source"})
-	v := publish(t, s, l.ID, 2)
+	b := newDraftBranch(t, s, l.ID)
+	editDraft(t, s, b, draftEdit{RequestID: "save", ExpectedRevision: 1, Action: "text", Path: "file", Text: "source"})
+	v := publishDraft(t, s, b, 2)
 	atFinal := make(chan struct{})
 	release := make(chan struct{})
 	done := make(chan error, 1)
-	go func() {
-		calls := 0
-		_, err := s.ValidateNext(ctx, func(context.Context, Actor) error {
+	calls := 0
+	s.config.Authority = authorityFunc(func(_ context.Context, request evolution.AccessRequest) (evolution.AccessDecision, error) {
+		if request.Action == "volume.publish" {
 			calls++
 			if calls == 2 {
 				close(atFinal)
 				<-release
 			}
-			return nil
-		})
-		done <- err
-	}()
+		}
+		return evolution.AccessDecision{Allowed: true, PolicyRevision: 1}, nil
+	})
+	go func() { _, err := s.ValidateNext(ctx); done <- err }()
 	<-atFinal
 	if _, err := s.Operation(ctx, testActor, v.ID, OperationInput{RequestID: "cancel", Action: "cancel"}); err != nil {
 		t.Fatal(err)
@@ -332,12 +344,13 @@ func TestCanceledValidationCannotFinalizeReplacementGeneration(t *testing.T) {
 	if err != nil || current.State != "pending" || current.Publisher != replacement {
 		t.Fatal(current, err)
 	}
-	if _, err = s.ValidateNext(ctx, func(ctx context.Context, a Actor) error {
-		if a != replacement {
+	s.config.Authority = authorityFunc(func(_ context.Context, request evolution.AccessRequest) (evolution.AccessDecision, error) {
+		if request.Principal.Subject != replacement.Subject || request.Principal.Issuer != replacement.Issuer {
 			t.Fatal("wrong worker principal")
 		}
-		return nil
-	}); err != nil {
+		return evolution.AccessDecision{Allowed: true, PolicyRevision: 1}, nil
+	})
+	if _, err = s.ValidateNext(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -346,27 +359,26 @@ func TestRevokedPublisherPausesWithoutStarvingOtherLibrary(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	first := library(t, s)
-	mutate(t, s, first.ID, Mutation{RequestID: "one", ExpectedRevision: 1, Action: "text", Path: "file", Text: "one"})
-	v := publish(t, s, first.ID, 2)
+	b := newDraftBranch(t, s, first.ID)
+	editDraft(t, s, b, draftEdit{RequestID: "one", ExpectedRevision: 1, Action: "text", Path: "file", Text: "one"})
+	v := publishDraft(t, s, b, 2)
 	other := Actor{Issuer: testActor.Issuer, Subject: "other-admin"}
 	second, err := s.Create(ctx, other, CreateInput{RequestID: "other-library", Name: "Other"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Mutate(ctx, other, second.ID, Mutation{RequestID: "two", ExpectedRevision: 1, Action: "text", Path: "file", Text: "two"}); err != nil {
+	b2 := newDraftBranch(t, s, second.ID)
+	if _, err = editDraftAs(s, ctx, other, b2, draftEdit{RequestID: "two", ExpectedRevision: 1, Action: "text", Path: "file", Text: "two"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Freeze(ctx, other, second.ID, PublishInput{RequestID: "publish", ExpectedRevision: 2, Label: "v1"}); err != nil {
+	if _, err = releaseDraft(s, ctx, other, b2, draftRelease{RequestID: "publish", ExpectedRevision: 2, Label: "v1"}); err != nil {
 		t.Fatal(err)
 	}
-	check := func(ctx context.Context, a Actor) error {
-		if a == testActor {
-			return ErrAuthority
-		}
-		return nil
-	}
+	s.config.Authority = authorityFunc(func(_ context.Context, request evolution.AccessRequest) (evolution.AccessDecision, error) {
+		return evolution.AccessDecision{Allowed: request.Principal.Subject != testActor.Subject, PolicyRevision: 1}, nil
+	})
 	for n := 0; n < 2; n++ {
-		_, err = s.ValidateNext(ctx, check)
+		_, err = s.ValidateNext(ctx)
 		if err != nil && !errors.Is(err, ErrAuthority) {
 			t.Fatal(err)
 		}
@@ -382,7 +394,7 @@ func TestRevokedPublisherPausesWithoutStarvingOtherLibrary(t *testing.T) {
 	if _, err = s.Operation(ctx, other, v.ID, OperationInput{RequestID: "adopt", Action: "retry"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ValidateNext(ctx, check); err != nil {
+	if _, err = s.ValidateNext(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -390,17 +402,18 @@ func TestRevokedPublisherPausesWithoutStarvingOtherLibrary(t *testing.T) {
 func TestSourceContentReaderCannotBeCollectedByRepeatedClose(t *testing.T) {
 	s, _ := testStore(t)
 	l := library(t, s)
+	b := newDraftBranch(t, s, l.ID)
 	ctx := context.Background()
-	mutate(t, s, l.ID, Mutation{RequestID: "file", ExpectedRevision: 1, Action: "text", Path: "file", Text: "same"})
-	first, _, err := s.Content(ctx, l.ID, "file", "")
+	editDraft(t, s, b, draftEdit{RequestID: "file", ExpectedRevision: 1, Action: "text", Path: "file", Text: "same"})
+	first, _, err := s.BranchContent(ctx, testActor, l.ID, b.ID, "file", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := s.Content(ctx, l.ID, "file", "")
+	second, _, err := s.BranchContent(ctx, testActor, l.ID, b.ID, "file", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "remove", ExpectedRevision: 2, Action: "remove", Path: "file"})
+	editDraft(t, s, b, draftEdit{RequestID: "remove", ExpectedRevision: 2, Action: "remove", Path: "file"})
 	first.Close()
 	first.Close()
 	if n, err := s.Collect(ctx); err != nil || n != 0 {

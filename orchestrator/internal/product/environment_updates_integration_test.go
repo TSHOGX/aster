@@ -58,7 +58,7 @@ func TestEnvironmentPublicationUpdatesOnKhora(t *testing.T) {
 	token := suspensionAdmin(t, store)
 	publications := []content.Publication{}
 	references := []ArtifactReference{}
-	for _, version := range []string{"v1", "v2"} {
+	for _, version := range []string{"v1", "v2", "v3"} {
 		bytes := []byte("knowledge-" + version + "\n")
 		entries := []content.Entry{{Path: "knowledge.txt", Size: int64(len(bytes)), Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(bytes))}}
 		staged, e := backend.CreateVolume(runctx, "update-staging-"+version, 8<<20)
@@ -127,7 +127,7 @@ func TestEnvironmentPublicationUpdatesOnKhora(t *testing.T) {
 	_, err = store.CreateProject(runctx, secondScope.Actor, secondScope.ProjectID, "Another user's project")
 	must(t, err)
 	id := selectPublicationFixture(t, store, references[1], false)
-	publishUpdateFixture(t, store, token, id)
+	firstRelease := publishUpdateFixture(t, store, token, id)
 	command("still-running", `test "$(cat /data/knowledge.txt)" = knowledge-v1`)
 	project, err := store.Project(runctx, scope)
 	must(t, err)
@@ -193,6 +193,55 @@ func TestEnvironmentPublicationUpdatesOnKhora(t *testing.T) {
 	if wrapper.patches != 2 {
 		t.Fatal("no-op cancellation fence repeated", wrapper.patches)
 	}
+
+	// Rollback is a fresh reviewed deployment to retained bytes. Neither its
+	// publication nor its response replay may rewrite an active mount or the
+	// environment selected for future Projects.
+	must(t, store.RegisterBuiltinVolume(runctx, BuiltinVolume{Reference: references[2], StoreID: identity.StoreID, PublicationPurpose: "builtin", MinimumBytes: 8 << 20, Roles: []string{"data"}, Entries: publications[2].Entries}))
+	selectPublicationFixture(t, store, references[2], false)
+	latest := publishUpdateFixture(t, store, token, id)
+	command("v3-pending", `test "$(cat /data/knowledge.txt)" = knowledge-v2`)
+	project, err = store.Project(runctx, scope)
+	must(t, err)
+	must(t, lifecycle.Pause(runctx, scope, project.Revision))
+	converge()
+	must(t, lifecycle.Resume(runctx, scope, profile.Bindings()))
+	converge()
+	command("v3-observed", `set -eu; test "$(cat /data/knowledge.txt)" = knowledge-v3; test "$(cat retained)" = retained`)
+	template, err := readTemplate(runctx, store.reader, "environment", id)
+	must(t, err)
+	controlUpdateFixture(t, store, token, id, EnvironmentUpdateEdit{Action: "rollback", ReleaseID: firstRelease.ID, ExpectedRevision: template.Revision})
+	st, err = updateStatus(runctx, store.reader, scope.ProjectID)
+	must(t, err)
+	if st.State != "pending" || st.AppliedID != latest.ID || st.TargetID == firstRelease.ID || st.TargetID == latest.ID || st.Current[0].Source.Version != "v3" || st.Target[0].Source.Version != "v2" {
+		t.Fatal("rollback lost intended versus observed identity", st)
+	}
+	rollbackID := st.TargetID
+	command("rollback-pending", `test "$(cat /data/knowledge.txt)" = knowledge-v3`)
+	project, err = store.Project(runctx, scope)
+	must(t, err)
+	must(t, lifecycle.Pause(runctx, scope, project.Revision))
+	converge()
+	must(t, lifecycle.Resume(runctx, scope, profile.Bindings()))
+	wrapper.lose = true
+	if lifecycle.Reconcile(runctx, scope.ProjectID) == nil {
+		t.Fatal("rollback lost-response injection did not execute")
+	}
+	converge()
+	command("rollback-observed", `set -eu; test "$(cat /data/knowledge.txt)" = knowledge-v2; test "$(cat retained)" = retained`)
+	st, err = updateStatus(runctx, store.reader, scope.ProjectID)
+	must(t, err)
+	after, err = store.Resources(runctx, scope)
+	must(t, err)
+	if st.State != "current" || st.AppliedID != rollbackID || wrapper.patches != 4 || after.VolumeForRole("workspace") != before.VolumeForRole("workspace") || after.VolumeForRole("runtime") != before.VolumeForRole("runtime") {
+		t.Fatal("rollback did not converge exactly once", st, wrapper.patches)
+	}
+	template, err = readTemplate(runctx, store.reader, "environment", id)
+	must(t, err)
+	if publicationMounts(*template.Environment)[0].Source.Version != "v3" {
+		t.Fatal("rollback silently changed future Project defaults")
+	}
+	must(t, store.ValidateReleasedBindings(runctx, identity.StoreID))
 
 	project, err = store.Project(runctx, scope)
 	must(t, err)

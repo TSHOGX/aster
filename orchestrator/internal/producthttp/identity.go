@@ -1,6 +1,8 @@
 package producthttp
 
 import (
+	"aster/contracts/appidentity"
+	"aster/contracts/evolution"
 	"errors"
 	"net/http"
 	"net/url"
@@ -28,8 +30,61 @@ func (a *Authentication) IdentityServiceHandler() http.Handler {
 	mux.HandleFunc("POST /api/identity/v1/token", a.identityToken)
 	mux.HandleFunc("POST /api/identity/v1/introspect", a.identityIntrospect)
 	mux.HandleFunc("POST /api/identity/v1/revoke", a.identityRevoke)
-	mux.HandleFunc("POST /api/identity/v1/principal", a.identityPrincipal)
+	mux.HandleFunc("POST /api/identity/v1/studio-access", a.identityStudioAccess)
+	mux.HandleFunc("POST /api/identity/v1/studio-library-owner", a.identityStudioLibraryOwner)
+	mux.HandleFunc("POST /api/identity/v1/evolution-space-access", a.identityEvolutionSpaceAccess)
+	mux.HandleFunc("POST /api/identity/v1/evolution-space-workflow-access", a.identityEvolutionSpaceWorkflowAccess)
+	mux.HandleFunc("POST /api/identity/v1/projection-authority", a.identityProjectionAuthority)
+	mux.HandleFunc("POST /api/identity/v1/catalog-authority", a.identityCatalogAuthority)
+	mux.HandleFunc("POST /api/identity/v1/studio-output-reader", a.identityOutputReader)
+	mux.HandleFunc("POST /api/identity/v1/evaluation-authorizations", a.identityEvaluationAdmission)
+	mux.HandleFunc("POST /api/identity/v1/generation/{action}", a.identityGeneration)
+	mux.HandleFunc("POST /api/identity/v1/evaluation-authority", a.identityEvaluationAuthority)
+	mux.HandleFunc("POST /api/identity/v1/evaluation-settlements", a.identityEvaluationSettlement)
+	mux.HandleFunc("POST /api/identity/v1/evaluation-profile-authority", a.identityEvaluationProfile)
+	mux.HandleFunc("POST /api/identity/v1/run-admission-authority", a.identityRunAdmissionAuthority)
+	mux.HandleFunc("POST /api/identity/v1/studio-participant-authority", a.identityStudioParticipantAuthority)
 	return mux
+}
+func (a *Authentication) identityEvolutionSpaceAccess(w http.ResponseWriter, r *http.Request) {
+	client, ok := a.identityService(w, r)
+	if !ok {
+		return
+	}
+	if client.ID != "evolution-space" {
+		writeError(w, 403, "evaluation service required")
+		return
+	}
+	var input appidentity.EvolutionSpaceAccessRequest
+	if !decode(w, r, 4096, &input) {
+		return
+	}
+	result, err := a.Store.EvolutionSpaceAccess(r.Context(), input)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, result)
+}
+func (a *Authentication) identityEvolutionSpaceWorkflowAccess(w http.ResponseWriter, r *http.Request) {
+	client, ok := a.identityService(w, r)
+	if !ok {
+		return
+	}
+	if client.ID != "evolution-space" {
+		writeError(w, 403, "evaluation service required")
+		return
+	}
+	var input appidentity.EvolutionSpaceWorkflowAccessRequest
+	if !decode(w, r, 4096, &input) {
+		return
+	}
+	result, err := a.Store.EvolutionSpaceWorkflowAccess(r.Context(), input)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, result)
 }
 func identityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "private, no-store")
@@ -165,21 +220,145 @@ func (a *Authentication) identityRevoke(w http.ResponseWriter, r *http.Request) 
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-func (a *Authentication) identityPrincipal(w http.ResponseWriter, r *http.Request) {
-	_, ok := a.identityService(w, r)
+func (a *Authentication) identityStudioAccess(w http.ResponseWriter, r *http.Request) {
+	client, ok := a.identityService(w, r)
 	if !ok {
 		return
 	}
-	var b struct {
-		Subject string `json:"subject"`
-	}
-	if !decode(w, r, 1024, &b) {
+	if client.ID != "studio" {
+		writeError(w, 403, "studio service required")
 		return
 	}
-	assertion, err := a.Store.IdentityPrincipal(r.Context(), b.Subject)
+	var request evolution.AccessRequest
+	if !decode(w, r, 4096, &request) {
+		return
+	}
+	if request.Principal.Issuer != a.Config.Identity.Issuer {
+		writeError(w, 403, "issuer mismatch")
+		return
+	}
+	decision, err := a.Store.StudioAccess(r.Context(), request)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	a.identityResponse(w, assertion, "")
+	writeJSON(w, 200, decision)
+}
+
+func (a *Authentication) identityStudioLibraryOwner(w http.ResponseWriter, r *http.Request) {
+	client, ok := a.identityService(w, r)
+	if !ok {
+		return
+	}
+	if client.ID != "studio" {
+		writeError(w, 403, "studio service required")
+		return
+	}
+	var request struct {
+		Principal evolution.Principal `json:"principal"`
+		LibraryID string              `json:"library_id"`
+	}
+	if !decode(w, r, 4096, &request) {
+		return
+	}
+	if request.Principal.Issuer != a.Config.Identity.Issuer || request.Principal.Kind != "human" {
+		writeError(w, 403, "issuer mismatch")
+		return
+	}
+	if err := a.Store.ClaimStudioLibrary(r.Context(), request.Principal.Subject, request.LibraryID); err != nil {
+		fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *Authentication) identityProjectionAuthority(w http.ResponseWriter, r *http.Request) {
+	client, ok := a.identityService(w, r)
+	if !ok {
+		return
+	}
+	if client.ID != "evolution-space" {
+		writeError(w, 403, "evaluation service required")
+		return
+	}
+	var scope product.ProjectionScope
+	if !decode(w, r, 4096, &scope) {
+		return
+	}
+	allowed, err := a.Store.AuthorizeEvolutionProjection(r.Context(), scope)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"allowed": allowed})
+}
+
+func (a *Authentication) identityStudioParticipantAuthority(w http.ResponseWriter, r *http.Request) {
+	client, ok := a.identityService(w, r)
+	if !ok {
+		return
+	}
+	if client.ID != "studio" {
+		writeError(w, 403, "Studio service required")
+		return
+	}
+	var input struct {
+		Scope  product.ProjectionScope `json:"scope"`
+		Action string                  `json:"action"`
+	}
+	if !decode(w, r, 4096, &input) {
+		return
+	}
+	subject, err := a.Store.EvolutionParticipantActor(r.Context(), input.Scope, input.Action)
+	if err != nil {
+		adminFailure(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]string{"issuer": a.Config.Identity.Issuer, "subject": subject})
+}
+
+func (a *Authentication) identityRunAdmissionAuthority(w http.ResponseWriter, r *http.Request) {
+	client, ok := a.identityService(w, r)
+	if !ok {
+		return
+	}
+	if client.ID != "evolution-space" {
+		writeError(w, 403, "evaluation service required")
+		return
+	}
+	var scope product.EvolutionRunAdmissionScope
+	if !decode(w, r, 4096, &scope) {
+		return
+	}
+	allowed, err := a.Store.AuthorizeEvolutionRunAdmission(r.Context(), scope)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"allowed": allowed})
+}
+
+// identityCatalogAuthority validates the catalog scope only. Catalog metadata is
+// shared by every group, so the decision is not per-principal; callers still
+// authorize the requesting member before serving it.
+func (a *Authentication) identityCatalogAuthority(w http.ResponseWriter, r *http.Request) {
+	client, ok := a.identityService(w, r)
+	if !ok {
+		return
+	}
+	if client.ID != "evolution-space" {
+		writeError(w, 403, "evaluation service required")
+		return
+	}
+	var scope struct {
+		Kind   string              `json:"kind"`
+		Action string              `json:"action"`
+		Ref    *evolution.Revision `json:"ref,omitempty"`
+	}
+	if !decode(w, r, 4096, &scope) {
+		return
+	}
+	validKind := scope.Kind == "workflow" || scope.Kind == "service" || scope.Kind == "template" || scope.Kind == "profile"
+	allowed := validKind && ((scope.Action == "list" && scope.Ref == nil) || (scope.Action == "read" && scope.Ref != nil && scope.Ref.Validate() == nil))
+	writeJSON(w, 200, map[string]bool{"allowed": allowed})
 }

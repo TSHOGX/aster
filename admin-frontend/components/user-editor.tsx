@@ -1,6 +1,7 @@
 "use client";
 import { formatQuantity } from "@web/i18n/locale";
 import { useT } from "@/lib/i18n";
+import { useConfirm } from "@web/confirm";
 
 import { Select } from "@web/select";
 import Link from "next/link";
@@ -14,7 +15,7 @@ import { CredentialDialog } from "./credential-dialog";
 
 type Pending = { path: string; body: Record<string, unknown>; method: string; kind: "create" | "edit" | "reset" | "status" };
 export function UserEditor({ id, onDirty }: { id?: string; onDirty: (dirty: boolean) => void }) {
-  const tr = useT();
+  const tr = useT(); const confirm = useConfirm();
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null), [username, setUsername] = useState(""), [name, setName] = useState(""), [role, setRole] = useState("user");
   const [membership, setMembership] = useState("default"), [selected, setSelected] = useState<string[]>([]), [groups, setGroups] = useState<Group[]>([]), [groupCursor, setGroupCursor] = useState("");
@@ -106,15 +107,16 @@ export function UserEditor({ id, onDirty }: { id?: string; onDirty: (dirty: bool
       <dl><dt>{tr("Status")}</dt><dd>{tr(user.status)}</dd><dt>{tr("Memberships")}</dt><dd>{user.groups.map(group => group.name).join(", ") || tr("No groups")}</dd><dt>{tr("Last sign-in")}</dt><dd>{date(user.last_login_at)}</dd><dt>{tr("Created")}</dt><dd>{date(user.created_at)}</dd><dt>{tr("Updated")}</dt><dd>{date(user.updated_at)}</dd><dt>{tr("Revision")}</dt><dd>{formatQuantity(user.revision)}</dd></dl>
       {user.must_change_password && <p>{tr("Password setup is required.")}</p>}
       <p>{tr("Resetting issues a new one-time password and revokes this account’s sessions. Existing work is not stopped.")}</p>
-      <button disabled={busy || !!pending || changedName || changedRole} onClick={() => void submit({ path: `/api/admin/users/${encodeURIComponent(user.id)}/password-reset`, body: { request_id: crypto.randomUUID(), expected_revision: user.revision }, method: "POST", kind: "reset" })}>{tr("Reset password")}</button>
-      <button disabled={busy || !!pending || changedName || changedRole} onClick={() => {
+      <button className="secondary" disabled={busy || !!pending || changedName || changedRole} onClick={() => void confirm({ title: tr("Reset the password for {name}?", { name: user.username }), body: tr("A new one-time password is issued and every session of this account is signed out. Running work continues."), confirm: tr("Reset password"), cancel: tr("Cancel") }).then(answer => { if (answer.confirmed) void submit({ path: `/api/admin/users/${encodeURIComponent(user.id)}/password-reset`, body: { request_id: crypto.randomUUID(), expected_revision: user.revision }, method: "POST", kind: "reset" }); })}>{tr("Reset password")}</button>
+      <button className={user.status==="active" ? "danger" : "secondary"} disabled={busy || !!pending || changedName || changedRole} onClick={async () => {
         const suspend=user.status==="active";
-        if(suspend && !window.confirm(tr("Suspend {name}? Sessions and sharing access will close, schedules and queues will be held, and running work will be stopped and Projects paused. Files and history are preserved.", { name: user.username }))) return;
+        if(suspend && !(await confirm({ title: tr("Suspend {name}?", { name: user.username }), impact: [tr("Sessions and sharing access close."), tr("Schedules and queues are held."), tr("Running work stops and Projects pause.")], body: tr("Files and history are preserved, and the account can be enabled again."), confirm: tr("Suspend account"), cancel: tr("Cancel"), danger: true })).confirmed) return;
         void submit({path:`/api/admin/users/${encodeURIComponent(user.id)}/${suspend?"suspend":"enable"}`,body:{request_id:crypto.randomUUID(),expected_revision:user.revision},method:"POST",kind:"status"});
       }}>{user.status==="active" ? tr("Suspend account") : tr("Enable account")}</button>
       {operationID && <Link className="inline-link" href={`/operations/${encodeURIComponent(operationID)}`}>{tr("View suspension operation")}</Link>}
 
       <Link className="inline-link" href={`/projects?owner_id=${encodeURIComponent(user.id)}`}>{tr("Projects and Volumes")}</Link>
+      <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/studio-permissions`}>{tr("Studio permissions")}</Link>
       <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/resources`}>{tr("Resources and usage")}</Link>
       <Link className="inline-link" href={`/users/${encodeURIComponent(user.id)}/configuration`}>{tr("Effective configuration")}</Link>
       <Link className="inline-link" href={`/audit?target=${encodeURIComponent(user.id)}`}>{tr("View account audit")}</Link>

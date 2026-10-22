@@ -47,9 +47,18 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("invalid or duplicate identity client")
 		}
 		seen[client.ID] = true
+		var expectedCallback string
+		switch client.ID {
+		case "studio":
+			expectedCallback = "/volumes-studio/auth/callback"
+		case "evolution-space":
+			expectedCallback = "/evolution-space/auth/callback"
+		default:
+			return fmt.Errorf("unsupported identity application %s", client.ID)
+		}
 		callback, err := url.Parse(client.Callback)
-		if err != nil || callback.Scheme != "https" || callback.Host != issuer.Host || callback.User != nil || callback.Path != "/volumes-studio/auth/callback" || callback.RawPath != "" || callback.RawQuery != "" || callback.ForceQuery || callback.Fragment != "" {
-			return fmt.Errorf("identity callback must be the exact registered Studio callback on the issuer origin")
+		if err != nil || callback.Scheme != "https" || callback.Host != issuer.Host || callback.User != nil || callback.Path != expectedCallback || callback.RawPath != "" || callback.RawQuery != "" || callback.ForceQuery || callback.Fragment != "" {
+			return fmt.Errorf("identity callback must be the exact registered service callback on the issuer origin")
 		}
 		if len(client.SecretEnvs) == 0 || len(client.SecretEnvs) > 2 {
 			return fmt.Errorf("identity client requires one current and optionally one rotating credential reference")

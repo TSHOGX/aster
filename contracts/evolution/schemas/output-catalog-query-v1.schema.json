@@ -1,0 +1,31 @@
+{
+  "$defs": {
+    "OutputCatalogQuery": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "type": "string"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "library_id": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "search": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "group_id",
+        "limit"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/OutputCatalogQuery",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

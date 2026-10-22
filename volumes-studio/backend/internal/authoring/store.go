@@ -3,6 +3,7 @@
 package authoring
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -22,6 +23,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"aster/contracts/evolution"
 	"aster/contracts/volumemanifest"
 	"volume-studio/backend/internal/database"
 )
@@ -48,12 +50,23 @@ func (a Actor) valid() bool {
 }
 
 type Config struct {
+	RunResults   RunResultAuthority
+	RunArtifacts RunResultArtifacts
+	Evaluator    Evaluator
+	Authority    evolution.Authority
+	// Owners records the creator's library grants centrally. Without it, a new
+	// library is only reachable after an administrator grants access manually.
+	Owners           LibraryOwners
 	SeedSharedAssets bool
 	Directory        string
 	PublisherID      string
 	QuotaBytes       int64
 }
+type LibraryOwners interface {
+	ClaimLibrary(context.Context, evolution.Principal, string) error
+}
 type Store struct {
+	branchCrash func(string) error
 	mu          sync.Mutex
 	db          *database.Database
 	config      Config
@@ -69,11 +82,10 @@ type Library struct {
 	Description      string `json:"description"`
 	Profile          string `json:"profile"`
 	MetadataRevision int64  `json:"metadata_revision"`
-	DraftRevision    int64  `json:"draft_revision"`
-	BaseVersion      string `json:"base_version"`
 	Archived         bool   `json:"archived"`
 }
 type Version struct {
+	AcceptedCommit   string `json:"accepted_commit"`
 	Generation       int64  `json:"generation"`
 	PublisherID      string `json:"publisher_id"`
 	ID               string `json:"id"`
@@ -81,7 +93,6 @@ type Version struct {
 	Profile          string `json:"profile"`
 	Label            string `json:"label"`
 	Note             string `json:"note"`
-	SourceRevision   int64  `json:"source_revision"`
 	DescriptorDigest string `json:"descriptor_digest"`
 	State            string `json:"state"`
 	Publisher        Actor  `json:"publisher"`
@@ -129,10 +140,31 @@ func Open(ctx context.Context, c Config) (*Store, error) {
 	if err = s.reconcileUploads(ctx); err != nil {
 		return fail(err)
 	}
+	if err = s.reconcileRunResults(ctx); err != nil {
+		return fail(err)
+	}
+	if err = s.reconcileBranches(ctx); err != nil {
+		return fail(err)
+	}
+	if err = s.reconcileCheckpoints(ctx); err != nil {
+		return fail(err)
+	}
+	if err = s.reconcileMerges(ctx); err != nil {
+		return fail(err)
+	}
 	if c.SeedSharedAssets {
 		if err = s.seedSharedAssets(ctx); err != nil {
 			return fail(err)
 		}
+	}
+	if err = s.reconcileLibraryHistory(ctx); err != nil {
+		return fail(err)
+	}
+	if err = s.reconcileConflictPins(ctx); err != nil {
+		return fail(err)
+	}
+	if err = s.reconcilePreparedPins(ctx); err != nil {
+		return fail(err)
 	}
 	return s, nil
 }
@@ -305,54 +337,12 @@ func (s *Store) verifyFile(digest string, size int64) error {
 // row, and the row before any file-tree reference. A metadata failure fences this
 // process until startup orphan accounting has reconciled the durable directory.
 func (s *Store) install(ctx context.Context, data []byte) (string, error) {
-	if s.poisoned {
-		return "", ErrBusy
-	}
 	digest := digestBytes(data)
-	var existing int64
-	err := s.db.QueryRowContext(ctx, "SELECT size FROM blobs WHERE digest=? AND state='live'", digest).Scan(&existing)
-	if err == nil {
-		if existing != int64(len(data)) {
-			return "", ErrInvalid
-		}
-		return digest, s.verifyFile(digest, existing)
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return "", err
-	}
-	if err := s.checkQuota(ctx, int64(len(data))*2); err != nil {
-		return "", err
-	}
-	tmp, err := os.CreateTemp(filepath.Join(s.config.Directory, "tmp"), "blob-")
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err = tmp.Write(data); err == nil {
-		err = tmp.Sync()
-	}
-	err = errors.Join(err, tmp.Close())
-	if err != nil {
-		return "", err
-	}
-	// Link is no-clobber. A prior durable orphan must contain exactly these bytes.
-	if err = os.Link(tmp.Name(), s.blobPath(digest)); err != nil && !errors.Is(err, os.ErrExist) {
-		return "", err
-	}
-	if err = s.verifyFile(digest, int64(len(data))); err != nil {
-		s.poisoned = true
-		return "", err
-	}
-	if err = syncDir(filepath.Join(s.config.Directory, "blobs")); err != nil {
-		s.poisoned = true
-		return "", err
-	}
-	if _, err = s.db.ExecContext(ctx, "INSERT INTO blobs(digest,size) VALUES(?,?)", digest, len(data)); err != nil {
-		s.poisoned = true
-		return "", err
-	}
-	return digest, nil
+	entry := manifest.Entry{Kind: "file", Path: "blob", Size: strconv.Itoa(len(data)), Digest: digest}
+	err := s.materialize(ctx, entry, func(w io.Writer) error { _, err := io.Copy(w, bytes.NewReader(data)); return err })
+	return digest, err
 }
+
 func normalizeDB(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
@@ -363,21 +353,21 @@ func validText(value string, max int) bool {
 	return utf8.ValidString(value) && len(value) <= max && !strings.ContainsRune(value, 0)
 }
 
-const libraryColumns = "id,name,description,profile,metadata_revision,draft_revision,base_version,archived"
+const libraryColumns = "id,name,description,profile,metadata_revision,archived"
 
 type scanner interface{ Scan(...any) error }
 
 func scanLibrary(row scanner) (Library, error) {
 	var l Library
-	err := row.Scan(&l.ID, &l.Name, &l.Description, &l.Profile, &l.MetadataRevision, &l.DraftRevision, &l.BaseVersion, &l.Archived)
+	err := row.Scan(&l.ID, &l.Name, &l.Description, &l.Profile, &l.MetadataRevision, &l.Archived)
 	l.Builtin = l.ID == "aster-shared-assets"
 	return l, normalizeDB(err)
 }
 func (s *Store) Library(ctx context.Context, id string) (Library, error) {
 	return scanLibrary(s.db.QueryRowContext(ctx, "SELECT "+libraryColumns+" FROM libraries WHERE id=?", id))
 }
-func (s *Store) Libraries(ctx context.Context, after string) ([]Library, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+libraryColumns+" FROM libraries WHERE id>? ORDER BY id LIMIT 200", after)
+func (s *Store) Libraries(ctx context.Context, a Actor, after string) ([]Library, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+libraryColumns+" FROM libraries WHERE id>? ORDER BY id", after)
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +380,24 @@ func (s *Store) Libraries(ctx context.Context, after string) ([]Library, error) 
 		}
 		out = append(out, l)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	visible := []Library{}
+	for _, library := range out {
+		if err := s.authorizeLibrary(ctx, a, library.ID, "volume.read"); err != nil {
+			if errors.Is(err, ErrAuthority) {
+				continue
+			}
+			return nil, err
+		}
+		visible = append(visible, library)
+		if len(visible) == 200 {
+			break
+		}
+	}
+	return visible, nil
 }
 func requestDigest(action, library string, body any) string {
 	raw, _ := json.Marshal(struct {
@@ -463,7 +470,12 @@ func (s *Store) Create(ctx context.Context, a Actor, input CreateInput) (Library
 	if exists != 0 {
 		return l, ErrConflict
 	}
-	l = Library{ID: randomID(), Name: input.Name, Description: input.Description, Profile: input.Profile, MetadataRevision: 1, DraftRevision: 1}
+	l = Library{ID: randomID(), Name: input.Name, Description: input.Description, Profile: input.Profile, MetadataRevision: 1}
+	if s.config.Owners != nil {
+		if err = s.config.Owners.ClaimLibrary(ctx, evolution.Principal{Issuer: a.Issuer, Subject: a.Subject, Kind: "human"}, l.ID); err != nil {
+			return Library{}, err
+		}
+	}
 	if l.Profile == "" {
 		l.Profile = manifest.Profile
 	}
@@ -473,7 +485,24 @@ func (s *Store) Create(ctx context.Context, a Actor, input CreateInput) (Library
 	if err = s.record(ctx, tx, a, input.RequestID, body, "library.create", l.ID, 1, l); err != nil {
 		return l, err
 	}
-	return l, tx.Commit()
+	if err = initializeMergePolicy(ctx, tx, l.ID); err != nil {
+		return l, err
+	}
+	if err = tx.Commit(); err != nil {
+		return l, err
+	}
+	if err = settle(ctx, func(ctx context.Context) error { _, err := s.bootstrapHistory(ctx, l.ID, l.Profile); return err }); err != nil {
+		s.poisoned = true
+		return l, err
+	}
+	if err = settle(ctx, func(ctx context.Context) error {
+		_, err := s.db.ExecContext(ctx, "UPDATE libraries SET history_state='ready' WHERE id=?", l.ID)
+		return err
+	}); err != nil {
+		s.poisoned = true
+		return l, err
+	}
+	return l, nil
 }
 func entries(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)

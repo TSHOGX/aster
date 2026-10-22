@@ -1,6 +1,7 @@
 package authoring
 
 import (
+	manifest "aster/contracts/volumemanifest"
 	"context"
 	"strings"
 )
@@ -110,7 +111,7 @@ func (s *Store) Operation(ctx context.Context, a Actor, id string, input Operati
 	if _, err = tx.ExecContext(ctx, "UPDATE versions SET state=?,error=?,issuer=?,subject=?,generation=? WHERE id=?", v.State, v.Error, v.Publisher.Issuer, v.Publisher.Subject, v.Generation, id); err != nil {
 		return v, err
 	}
-	if err = s.record(ctx, tx, a, input.RequestID, body, "version."+input.Action, v.LibraryID, v.SourceRevision, v); err != nil {
+	if err = s.record(ctx, tx, a, input.RequestID, body, "version."+input.Action, v.LibraryID, 0, v); err != nil {
 		return v, err
 	}
 	return v, tx.Commit()
@@ -129,11 +130,11 @@ func (s *Store) UploadStatus(ctx context.Context, id string) (UploadStatus, erro
 	if err != nil {
 		return UploadStatus{}, err
 	}
-	l, err := s.Library(ctx, u.LibraryID)
+	l, err := s.branch(ctx, u.LibraryID, u.BranchID)
 	if err != nil {
 		return UploadStatus{}, err
 	}
-	tree, err := entries(ctx, s.db, "draft_entries", "library_id", u.LibraryID)
+	tree, err := entries(ctx, s.db, "branch_entries", "branch_id", u.BranchID)
 	if err != nil {
 		return UploadStatus{}, err
 	}
@@ -147,8 +148,14 @@ type Event struct {
 	Revision  int64  `json:"revision"`
 }
 
-func (s *Store) Events(ctx context.Context, after int64) ([]Event, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT sequence,action,library_id,revision FROM audit WHERE sequence>? ORDER BY sequence LIMIT 200", after)
+func (s *Store) Events(ctx context.Context, actor Actor, library string, after int64) ([]Event, error) {
+	if after < 0 || !manifest.ValidID(library) {
+		return nil, ErrInvalid
+	}
+	if err := s.authorizeLibrary(ctx, actor, library, "volume.read"); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, "WITH scoped AS (SELECT row_number() OVER (ORDER BY sequence) AS sequence,action,library_id,revision FROM audit WHERE library_id=?) SELECT sequence,action,library_id,revision FROM scoped WHERE sequence>? ORDER BY sequence LIMIT 200", library, after)
 	if err != nil {
 		return nil, err
 	}

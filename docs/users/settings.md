@@ -5,6 +5,13 @@
 Open **Settings** from the account menu. The dialog leaves your current Project,
 conversation and draft selected; on a narrow screen it opens as a full-screen panel.
 
+The account menu also opens **Evolution Space** and **Volume Studio**; each of
+those applications offers **Back to Workbench** in its own account menu. Each
+application checks its own permissions. Open tabs
+recheck login on focus and periodically; signing out ends the shared central session.
+If Studio requires sign-in again, its unsaved recovery remains tied to the original
+account. Sign in with that account to recover the edits.
+
 ## Profile, appearance, language and security
 
 Change your display name, choose system/light/dark appearance and select a neutral,
@@ -15,9 +22,9 @@ retry, reapply or revert them.
 Choose **Follow browser**, **Chinese (Simplified)**, or **English** under
 **Language**. Chinese uses Simplified Chinese; other browser languages use English
 when following the browser.
-The choice is saved with your account preferences and shared by the workspace,
-Admin and Studio across tabs and devices. Admin and Studio automatically follow
-this account setting and do not have separate language selectors. Language changes
+Language, theme mode and accent are saved with your account. You change them only
+here; administration, Volume Studio and Evolution Space apply the same preferences
+across tabs and devices without separate controls. Language changes
 preview immediately and use the same retry, reapply and revert controls as appearance changes. Switching
 language keeps your current selection and unsaved files open.
 

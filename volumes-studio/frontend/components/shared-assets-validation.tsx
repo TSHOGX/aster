@@ -15,9 +15,11 @@ type Validation = {
   preview_truncated: boolean;
 };
 
-export function SharedAssetsValidation({ library, version, onOpen }: {
+export function SharedAssetsValidation({ library, version, branch, revision, onOpen }: {
   library: string;
   version: string;
+  branch?: string;
+  revision?: number;
   onOpen?: () => void;
 }) {
   const tr = useT();
@@ -27,7 +29,7 @@ export function SharedAssetsValidation({ library, version, onOpen }: {
     result?: Validation;
     error?: string;
   }>();
-  const source = `/libraries/${encodeURIComponent(library)}/${version ? `versions/${encodeURIComponent(version)}` : "draft"}/validation`;
+  const source = `/libraries/${encodeURIComponent(library)}/${version ? `versions/${encodeURIComponent(version)}` : `branches/${encodeURIComponent(branch ?? "")}/draft`}/validation${version ? "" : `?revision=${revision ?? 0}`}`;
   const result = state?.source === source ? state.result : undefined;
   const error = state?.source === source ? state.error : undefined;
 
@@ -41,7 +43,7 @@ export function SharedAssetsValidation({ library, version, onOpen }: {
   }, [source, attempt]);
 
   return <details className="notice shared-assets-validation" open={error || result && !result.valid ? true : undefined}>
-    <summary>{tr("Shared assets")} · {tr(error ? "Validation unavailable" : !result ? "Checking saved content…" : result.valid ? version ? "Validated published version" : "Ready to publish" : "Needs attention")}</summary>
+    <summary>{tr("Shared assets")} · {tr(error ? "Validation unavailable" : !result ? "Checking saved content…" : result.valid ? version ? "Validated published version" : "Content checks passed" : "Needs attention")}</summary>
     <p>{tr("AGENTS.md is appended to the Agent system prompt. Skills are optional. Publishing creates an immutable version; existing Projects retain their current version until a reviewed rollout.")}</p>
     {error && <div role="alert">
       <p>{tr(error)}</p>

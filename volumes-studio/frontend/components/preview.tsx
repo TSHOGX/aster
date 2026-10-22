@@ -35,6 +35,7 @@ function MarkdownImage({
   const tr = useT();
   const source = JSON.stringify([
     buffer.library,
+    buffer.branch,
     buffer.version,
     buffer.entry.path,
     buffer.revision,
@@ -50,7 +51,7 @@ function MarkdownImage({
     const abort = new AbortController();
     let objectURL = "";
     void fetch(
-      contentURL(buffer.library, buffer.version, path, buffer.revision),
+      contentURL(buffer.library, buffer.version, path, buffer.revision,buffer.branch),
       { signal: abort.signal },
     )
       .then(async (r) => {
@@ -67,6 +68,7 @@ function MarkdownImage({
       if (objectURL) URL.revokeObjectURL(objectURL);
     };
   }, [
+    buffer.branch,
     buffer.library,
     buffer.version,
     buffer.entry.path,
@@ -106,7 +108,7 @@ export function MarkdownPreview({
             } catch {}
             return path ? (
               <a
-                href={`?path=${encodeURIComponent(path)}`}
+                href={`?${new URLSearchParams({ ...(buffer.version ? { version: buffer.version } : { branch: buffer.branch }), path })}`}
                 onClick={(e) => {
                   e.preventDefault();
                   onOpen(path!);

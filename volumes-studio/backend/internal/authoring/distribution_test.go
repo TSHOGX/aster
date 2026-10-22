@@ -11,9 +11,10 @@ import (
 func released(t *testing.T, s *Store) (Library, Version) {
 	t.Helper()
 	l := library(t, s)
-	mutate(t, s, l.ID, Mutation{RequestID: "file", ExpectedRevision: 1, Action: "text", Path: "file", Text: "portable bytes"})
-	v := publish(t, s, l.ID, 2)
-	if _, err := s.ValidateNext(context.Background(), allow); err != nil {
+	b := newDraftBranch(t, s, l.ID)
+	editDraft(t, s, b, draftEdit{RequestID: "file", ExpectedRevision: 1, Action: "text", Path: "file", Text: "portable bytes"})
+	v := publishDraft(t, s, b, 2)
+	if _, err := s.ValidateNext(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	v, err := s.Version(context.Background(), v.ID)
@@ -74,14 +75,29 @@ func TestExportPinsMembershipArchiveAndRetirement(t *testing.T) {
 	if _, err = s.Retire(ctx, testActor, v.ID, "retire"); err != nil {
 		t.Fatal(err)
 	}
-	// Draft references independently retain the bytes even after source retirement.
+	// Branch drafts independently retain bytes after release retirement.
+	s.config.Authority = &branchAuthority{true}
+	main, err := s.MainCommit(ctx, testActor, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch, err := s.CreateBranch(ctx, testActor, l.ID, CreateBranchInput{"retaining-branch", "Retainer", main.CommitID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SaveBranchText(ctx, testActor, l.ID, branch.ID, SaveBranchTextInput{"retain", 1, main.CommitID, "file", "portable bytes"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.ExecContext(ctx, "DELETE FROM branch_entries WHERE branch_id IN (SELECT id FROM branches WHERE library_id=? AND name='Test draft')", l.ID); err != nil {
+		t.Fatal(err)
+	}
 	if n, err := s.Collect(ctx); err != nil || n != 0 {
-		t.Fatal("draft bytes collected", n, err)
+		t.Fatal("branch bytes collected", n, err)
 	}
-	if changes, _, err := s.Diff(ctx, l.ID, "", 2); err != nil || len(changes) != 0 {
-		t.Fatal("retirement erased base diff", changes, err)
+	if _, err = s.MutateBranchStructure(ctx, testActor, l.ID, branch.ID, BranchStructureInput{"remove", 2, main.CommitID, "remove", "file", "", false}); err != nil {
+		t.Fatal(err)
 	}
-	mutate(t, s, l.ID, Mutation{RequestID: "remove", ExpectedRevision: 2, Action: "remove", Path: "file"})
+
 	if n, err := s.Collect(ctx); err != nil || n != 1 {
 		t.Fatal("unreferenced source not collected", n, err)
 	}

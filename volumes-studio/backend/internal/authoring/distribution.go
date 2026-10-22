@@ -98,7 +98,7 @@ func (s *Store) Export(ctx context.Context, g ServiceGrant, input ExportInput) (
 	if _, err = tx.ExecContext(ctx, "INSERT INTO exports VALUES(?,?,?,?,?,?,'open')", e.ID, g.ClientID, g.Revision, e.VersionID, e.DescriptorDigest, e.ExpiresAt); err != nil {
 		return e, err
 	}
-	if err = s.record(ctx, tx, actor, input.RequestID, body, "export.admit", v.LibraryID, v.SourceRevision, e); err != nil {
+	if err = s.record(ctx, tx, actor, input.RequestID, body, "export.admit", v.LibraryID, 0, e); err != nil {
 		return e, err
 	}
 	return e, tx.Commit()
@@ -321,7 +321,7 @@ func (s *Store) retention(ctx context.Context, id string) (Retention, error) {
 	}
 	// Reader totals may include both durable and in-process pins for one read;
 	// they are conservative blockers, not a billing or user-count metric.
-	err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM draft_entries d WHERE EXISTS(SELECT 1 FROM version_entries v WHERE v.version_id=? AND v.digest=d.digest)`, id).Scan(&r.DraftReferences)
+	err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM branch_entries d WHERE EXISTS(SELECT 1 FROM version_entries v WHERE v.version_id=? AND v.digest=d.digest)`, id).Scan(&r.DraftReferences)
 	return r, err
 }
 func (s *Store) Retire(ctx context.Context, a Actor, id, request string) (Version, error) {
@@ -362,7 +362,7 @@ func (s *Store) Retire(ctx context.Context, a Actor, id, request string) (Versio
 	}
 	v.State = "retired"
 	v.Generation++
-	if err = s.record(ctx, tx, a, request, body, "version.retire", v.LibraryID, v.SourceRevision, v); err != nil {
+	if err = s.record(ctx, tx, a, request, body, "version.retire", v.LibraryID, 0, v); err != nil {
 		return v, err
 	}
 	return v, tx.Commit()

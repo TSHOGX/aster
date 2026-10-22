@@ -1,0 +1,93 @@
+package producthttp
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"aster/contracts/evolution"
+	"harness-platform/orchestrator/internal/product"
+)
+
+func TestCorpusRoutesRequireCurrentEvidenceAndOrigin(t *testing.T) {
+	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "central.db"))
+	must(t, err)
+	defer store.Close()
+	admin, err := store.BootstrapAccount(ctx, "admin", "permanent-admin-password", identitySeed(t))
+	must(t, err)
+	_, token, err := store.Authenticate(ctx, admin.Username, "permanent-admin-password")
+	must(t, err)
+	_, err = store.CreateProject(ctx, admin.ID, "source-project", "Source")
+	must(t, err)
+	source := evolution.SourceBinding{ID: "source", Kind: "project", ResourceID: "source-project", PolicyRevision: 1, AudienceGroups: []string{product.StandardUsersGroup}, DerivativePublication: true}
+	_, err = store.SetEvolutionSourcePolicy(ctx, token, product.StandardUsersGroup, product.EvolutionSourcePolicyInput{RequestID: "source", Source: source})
+	must(t, err)
+	handler := NewAuthentication(store, Config{}).Handler(http.NotFoundHandler())
+	call := func(path, cookie, origin string, input any) int {
+		raw, _ := json.Marshal(input)
+		request := httptest.NewRequest("POST", "https://app"+path, bytes.NewReader(raw))
+		request.Header.Set("Origin", origin)
+		request.Header.Set("Content-Type", "application/json")
+		if cookie != "" {
+			request.AddCookie(&http.Cookie{Name: loginCookie, Value: cookie})
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response.Code
+	}
+	for _, cookie := range []string{"", token} {
+		request := httptest.NewRequest("GET", "https://app/api/admin/groups/"+product.StandardUsersGroup+"/corpus/collectors", nil)
+		if cookie != "" {
+			request.AddCookie(&http.Cookie{Name: loginCookie, Value: cookie})
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		expected := http.StatusOK
+		if cookie == "" {
+			expected = http.StatusUnauthorized
+		}
+		if response.Code != expected {
+			t.Fatal("collector metadata authorization", response.Code, response.Body.String())
+		}
+		if cookie != "" && response.Body.String() != "[]\n" {
+			t.Fatal("uninitialized collector metadata", response.Body.String())
+		}
+	}
+	path := "/api/admin/groups/" + product.StandardUsersGroup + "/corpus/capture"
+	input := product.CorpusCaptureInput{RequestID: "capture", SourceID: "source", SourceRevision: 1, ExecutionID: "missing"}
+	if code := call(path, "", "https://app", input); code != 401 {
+		t.Fatal("anonymous capture", code)
+	}
+	if code := call(path, token, "https://foreign", input); code != 403 {
+		t.Fatal("cross-origin capture", code)
+	}
+	if code := call(path, token, "https://app", input); code != 403 {
+		t.Fatal("admin implicitly reads corpus", code)
+	}
+	backfillPath := "/api/admin/groups/" + product.StandardUsersGroup + "/evolution/backfills/preview"
+	preview := product.EvolutionBackfillInput{RequestID: "preview", ConfigurationRevision: 1, From: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano), Until: time.Now().UTC().Format(time.RFC3339Nano), MaxEpisodes: 10, Budgets: map[string]evolution.Budget{"binding": {MaxTokens: 1, MaxAttempts: 1, TimeoutSeconds: 1, MaxArtifactBytes: 1024}}}
+	if code := call(backfillPath, "", "https://app", preview); code != 401 {
+		t.Fatal("anonymous backfill", code)
+	}
+	if code := call(backfillPath, token, "https://foreign", preview); code != 403 {
+		t.Fatal("foreign backfill", code)
+	}
+	if code := call(backfillPath, token, "https://app", preview); code != 403 {
+		t.Fatal("administrator implicit backfill evidence", code)
+	}
+	_, err = store.SetEvolutionGroupGrant(ctx, token, product.StandardUsersGroup, product.EvolutionGroupGrantInput{RequestID: "source-read", AccountID: admin.ID, Action: "source.read", Effect: "allow"})
+	must(t, err)
+	if code := call(backfillPath, token, "https://app", preview); code != 404 {
+		t.Fatal("missing active backfill configuration", code)
+	}
+	if code := call(path, token, "https://app", input); code != 404 {
+		t.Fatal("authorized missing episode", code)
+	}
+	if code := call("/api/admin/groups/"+product.StandardUsersGroup+"/corpus/snapshots", token, "https://app", product.CorpusSnapshotInput{RequestID: "seal", SourceID: "source", SourceRevision: 1, Limit: 10}); code != 404 {
+		t.Fatal("empty source snapshot", code)
+	}
+}

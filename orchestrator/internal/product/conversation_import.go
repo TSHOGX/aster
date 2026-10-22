@@ -20,17 +20,17 @@ func installBundle(ctx context.Context, tx *sql.Tx, session, project, bundle, st
 		return copyIdentity(session, id)
 	}
 	type turn struct {
-		id, content, raw string
-		sequence         int64
+		id, content, raw, family string
+		sequence                 int64
 	}
 	turns := []turn{}
-	rows, err := tx.QueryContext(ctx, `SELECT id,content,data,sequence FROM bundle_turns WHERE bundle_id=? ORDER BY sequence`, bundle)
+	rows, err := tx.QueryContext(ctx, `SELECT id,content,data,sequence,family_id FROM bundle_turns WHERE bundle_id=? ORDER BY sequence`, bundle)
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
 		var t turn
-		if err = rows.Scan(&t.id, &t.content, &t.raw, &t.sequence); err != nil {
+		if err = rows.Scan(&t.id, &t.content, &t.raw, &t.sequence, &t.family); err != nil {
 			break
 		}
 		turns = append(turns, t)
@@ -41,6 +41,12 @@ func installBundle(ctx context.Context, tx *sql.Tx, session, project, bundle, st
 	for _, t := range turns {
 		id := remap(t.id)
 		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO turns(id,project_id,session_id,request_id,content,initially_held,disposition,sequence,created_at,updated_at) VALUES(?,?,?,?,?,0,'handled',?,?,?)`, id, project, session, id, t.content, t.sequence, stamp, stamp); err != nil {
+			return err
+		}
+		if !validID(t.family) {
+			return ErrInvalid
+		}
+		if _, err = tx.ExecContext(ctx, "INSERT INTO turn_evidence_families VALUES(?,?,?) ON CONFLICT(turn_id) DO NOTHING", id, t.family, bundle); err != nil {
 			return err
 		}
 		var summary TurnSummary
