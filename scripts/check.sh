@@ -92,7 +92,19 @@ case "${1:-all}" in
     command -v node >/dev/null
     # Ordinary backend runs the full cancellation stress; race keeps all tests
     # but uses its bounded iteration count and allows slow instrumented SQLite.
-    go -C orchestrator test -mod=readonly -race -short -timeout 30m ./internal/product ./internal/agentrunner ./internal/runtimerelease
+    # Optional "N/TOTAL" runs one shard: shard 0 takes the small packages, and
+    # the product package's tests are spread round-robin over every shard.
+    shard=${2:-0/1}; index=${shard%/*}; total=${shard#*/}
+    if [[ ! $index =~ ^[0-9]+$ || ! $total =~ ^[1-9][0-9]*$ || $index -ge $total ]]; then
+      echo "race shard must be N/TOTAL with 0 <= N < TOTAL" >&2; exit 2
+    fi
+    if [[ $index -eq 0 ]]; then
+      go -C orchestrator test -mod=readonly -race -short -timeout 30m ./internal/agentrunner ./internal/runtimerelease
+    fi
+    tests=$(go -C orchestrator test -mod=readonly -list '.*' ./internal/product | grep -E '^(Test|Example|Fuzz)' | awk -v i="$index" -v n="$total" '(NR-1)%n==i' | paste -sd'|' -)
+    if [[ -n $tests ]]; then
+      go -C orchestrator test -mod=readonly -race -short -timeout 30m -run "^($tests)\$" ./internal/product
+    fi
     ;;
   frontend-lint)
     npm --prefix frontend run lint
@@ -134,5 +146,5 @@ case "${1:-all}" in
     "$0" backend
     "$0" frontend
     ;;
-  *) echo 'Usage: scripts/check.sh [source|evolution-space|evolution-space-frontend|evolution-space-browser [project]|evolution-browser|studio|studio-frontend|studio-browser|studio-browser-suite [project]|studio-integration|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|frontend-edge|all]' >&2; exit 2 ;;
+  *) echo 'Usage: scripts/check.sh [source|evolution-space|evolution-space-frontend|evolution-space-browser [project]|evolution-browser|studio|studio-frontend|studio-browser|studio-browser-suite [project]|studio-integration|backend|race [N/TOTAL]|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|frontend-edge|all]' >&2; exit 2 ;;
 esac
