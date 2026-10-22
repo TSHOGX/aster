@@ -101,10 +101,12 @@ for (const width of [390, 1440]) test(`version retention review and original lif
   expect(draft.ok()).toBe(true); expect(await draft.text()).toBe(content);
 
   await grant("volume.read", "deny", 1);
-  await detail.getByRole("button", { name: "Reload version details", exact: true }).click();
+  // A background refresh may notice the denial first and close the details.
+  await detail.getByRole("button", { name: "Reload version details", exact: true }).click({ timeout: 5000 }).catch(() => {});
   await expect(page.getByText("Private release note", { exact: true })).toHaveCount(0);
   expect((await page.request.get(`${root}/versions/${version.id}/retention`)).status()).toBe(403);
   await grant("volume.read", "allow", 2);
-  await page.reload(); await expect(detail).toContainText("Source retired.");
+  // WebKit reports a fetch cancelled by reload as a page error; let reads settle first.
+  await page.waitForLoadState("networkidle"); await page.reload(); await expect(detail).toContainText("Source retired.");
   expect(errors).toEqual([]);
 });

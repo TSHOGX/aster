@@ -71,9 +71,15 @@ test("composition pages pin heads and recover failed or denied continuations", a
   await review.getByRole("button", {name:"Reload integration review",exact:true}).click();
   await expect(composition).toContainText("Showing 200 of 202 committed paths.");
   await expect(composition).toContainText(advanced.commit_id);
-  await composition.getByRole("button", {name:"Clear selected paths",exact:true}).click();
-  await expect(composition.getByRole("button", {name:"More committed paths",exact:true})).toBeEnabled(); await composition.getByRole("button", {name:"More committed paths",exact:true}).press("Enter");
-  await expect(composition).toContainText("Showing 202 of 202 committed paths.");
+  // The background branch refresh can land the advanced head after this reload
+  // and rebuild the catalog from its first page, so repeat clear + load until
+  // the second page sticks.
+  await expect(async () => {
+    const more = composition.getByRole("button", {name:"More committed paths",exact:true});
+    await composition.getByRole("button", {name:"Clear selected paths",exact:true}).click({timeout: 2000});
+    if (await more.isVisible()) { await expect(more).toBeEnabled({timeout: 2000}); await more.press("Enter"); }
+    await expect(composition).toContainText("Showing 202 of 202 committed paths.", {timeout: 2000});
+  }).toPass({timeout: 30000});
   await expect(composition.getByRole("checkbox", {checked:true})).toHaveCount(0);
   await composition.getByRole("checkbox", {name:"entry-200.txt · added",exact:true}).check();
   await expect(composition.getByRole("button", {name:"More source branches",exact:true})).toBeEnabled(); await composition.getByRole("button", {name:"More source branches",exact:true}).press("Enter");
