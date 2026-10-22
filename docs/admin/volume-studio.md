@@ -58,7 +58,8 @@ and actions; it does not erase earlier downloads or exports.
 
 1. Open Studio and create a library. Choose **Ordinary data** or **Shared assets**;
    the content profile cannot change after creation. Filter the catalog by profile.
-2. Select a **Working branch**, or enter a **New branch name** and choose
+2. Pick a branch in the branch switcher at the start of the library toolbar, or
+   choose **New branch**, enter a **New branch name** and choose
    **Create branch from main**. Each branch has its own saved draft and revision; publishing a version does not
    change that branch's comparison head or saved revision.
 3. Add directories, create text files or upload files/folders. Edit files in tabs
@@ -122,16 +123,22 @@ branch until completed or canceled; another branch can still be committed.
 
 ## Review and merge committed changes
 
-The library page header shows the library name, its profile and the selected branch.
-**Show how it works** opens a four-step guide: start a branch, edit and commit,
-review and merge, publish a version. It opens automatically until a branch is
-selected. Without a branch, files open read-only and the editor asks you to choose
-or create one.
+The library toolbar holds the branch switcher, **New branch**, the branch's draft
+revision and head, **Commit changes** and a help button. The help button opens a
+four-step guide: start a branch, edit and commit, review and merge, publish a
+version. Branch creation, the commit form and the guide open as a single row under
+the toolbar, so the file area keeps its height. Without a branch, files open
+read-only and the editor shows the guide with **Start a branch**.
+
+The workbench tabs are **Files**, **Changes**, **Review**, **History**,
+**Versions** and **Evaluation policies**. Integration review, composition and
+publication live in the **Review** tab; review links open it directly.
 
 1. Save the content you want to include and complete or cancel that branch's uploads.
-2. Enter a **Commit message** and choose **Commit saved draft**. Unsaved editor
+2. Choose **Commit changes**, enter a **Commit message** and choose
+   **Commit saved draft**. Unsaved editor
    changes are explicitly excluded from the checkpoint.
-3. Choose **Prepare integration** to combine the committed branch head with main.
+3. Open the **Review** tab and choose **Prepare integration** to combine the committed branch head with main.
    Inspect the changed files and the **Integrated result** before approving. Each
    file side shows its exact commit, type, size and digest, with **Download exact
    file** for binary, oversized or text content. Directories and absent sides are

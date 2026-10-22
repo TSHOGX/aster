@@ -295,10 +295,6 @@ code {
   white-space: pre-wrap;
   flex-shrink: 0;
 }
-.notice.integration-review {
-  display: block;
-  white-space: normal;
-}
 .integration-review > button {
   margin: 0 8px 8px 0;
 }
@@ -1359,49 +1355,6 @@ dd {
 .dialog-actions > button { min-width: 0; white-space: normal; }
 
 /* Keep branch operations reachable without displacing the file workspace. */
-.branch-controls {
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: 44dvh;
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-}
-.branch-controls > section {
-  margin: 0 0 8px;
-  min-width: 0;
-}
-.branch-controls label {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 4px 12px 4px 0;
-  max-width: 100%;
-}
-.branch-controls input,
-.branch-controls select,
-.branch-controls textarea {
-  min-width: 0;
-  max-width: 100%;
-}
-.branch-controls code {
-  overflow-wrap: anywhere;
-}
-.branch-controls pre {
-  max-height: 280px;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-@media (max-width: 767px) {
-  .branch-controls { padding: 8px; max-height: 45dvh; }
-  .branch-controls label { display: flex; margin-right: 0; }
-  .branch-controls label > input,
-  .branch-controls label > select,
-  .branch-controls label > textarea { flex: 1; }
-}
 
 .history-panel { overflow: auto; padding: 1rem; min-width: 0; }
 .history-panel code { overflow-wrap: anywhere; }
@@ -1437,36 +1390,50 @@ dd {
 .topbar-right { flex-wrap: wrap; min-width: 0; max-width: 100%; }
 @media (max-width: 700px) { .topbar-right { width: 100%; justify-content: space-between; } }
 
-/* Checkpoint summaries and forms must not inherit the single-row notice layout. */
-.notice.branch-checkpoint { display: block; }
-.branch-checkpoint p { overflow-wrap: anywhere; }
-.branch-checkpoint > button { margin: .5rem 0; }
-
-/* Library header: name, branch state and the lifecycle guide. */
-.library-header { flex: none; max-height: 45dvh; overflow: auto; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface); }
-.library-title { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 10px 16px; }
-.library-title h1 { margin: 0; font-size: 18px; line-height: 1.3; }
-.library-title p { margin: 4px 0 0; color: var(--foreground-muted); max-width: 60rem; }
-.library-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.library-header .guide { margin: 10px 0 2px; padding: 10px 12px; }
-.library-header .guide-steps { margin-top: 0; }
-.library-header .guide-step { padding: 10px 12px; }
-.library-header .guide-step strong { font-size: 13px; }
-.library-header .guide-step small { font-size: 12px; }
-/* Branch, commit and review controls: one aligned toolbar row per group. */
-.branch-controls select { padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--foreground); }
-.branch-controls button:not(.ghost):not(.icon-button) { border: 1px solid var(--border-strong); background: var(--surface); }
-.branch-controls button.primary { background: var(--button-primary); border-color: var(--button-primary); color: var(--button-primary-foreground); }
-.branch-controls button.danger { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); color: var(--danger); }
+/* Library toolbar: one row for branch, state and commit; one-line panels
+   for branch creation, commit and the guide open beneath it. */
+.library-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.bar-branch { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bar-branch label { display: inline-flex; align-items: center; gap: 6px; color: var(--foreground-muted); }
+.bar-branch select { max-width: 16rem; min-height: 30px; padding: 4px 26px 4px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background-color: var(--surface); color: var(--foreground); font-size: 13px; font-weight: 600; }
+.bar-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground-muted); font-size: 12px; }
+.bar-status.warning { color: var(--warning); }
+.bar-spacer { flex: 1; }
+.library-bar > button:not(.icon-button), .bar-branch > button { min-height: 30px; padding: 4px 10px; font-size: 13px; }
+.bar-panel { order: 10; flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 -12px -6px; padding: 8px 12px; border-top: 1px solid var(--border); background: var(--surface-muted); }
+.bar-panel[hidden] { display: none; }
+.bar-panel label { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.bar-panel input { width: min(26rem, 60vw); min-height: 30px; padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--foreground); font-weight: 400; }
+.bar-panel button { min-height: 30px; padding: 4px 10px; font-size: 13px; }
+.bar-panel .hint { color: var(--foreground-muted); font-size: 12px; overflow-wrap: anywhere; }
+.bar-panel [role="status"], .bar-panel [role="alert"] { flex-basis: 100%; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.bar-panel [role="alert"] { color: var(--danger); }
+.bar-error { order: 11; flex-basis: 100%; margin: 0; color: var(--danger); font-size: 12px; }
+.branch-checkpoint { display: contents; }
+.bar-guide .guide { flex: 1 1 100%; margin: 0; padding: 0; border: 0; background: transparent; }
+/* Review tab: the integration review fills the workspace and scrolls. */
+.review-view { flex: 1; min-height: 0; overflow: auto; padding: 16px 20px 32px; }
+.review-view[hidden] { display: none; }
+.review-view .integration-review { display: block; max-width: 72rem; margin: 0; padding: 0; border: 0; background: transparent; white-space: normal; }
+.review-view .integration-review > h2 { margin: 0 0 4px; font-size: 18px; }
+.review-view .integration-review > p:first-of-type { margin: 0 0 12px; color: var(--foreground-muted); }
+.review-view .integration-review button { margin: 0 6px 6px 0; }
+.review-view .integration-review button.primary { background: var(--button-primary); border-color: var(--button-primary); color: var(--button-primary-foreground); }
+.review-view .integration-review button.danger { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); color: var(--danger); }
+.review-view .integration-review > section, .review-view .integration-review fieldset { margin-block: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+.review-view .integration-review textarea { width: 100%; max-width: 40rem; }
 .integration-review .hint { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--foreground-muted); }
-.integration-review > button { margin: 0 6px 6px 0; }
-@media (max-width: 700px) {
-  .library-header { padding: 8px 10px; max-height: 40dvh; }
-  .library-title p { display: none; }
-  .library-header .guide-note { display: none; }
-  .library-header .guide { padding: 6px; }
-  .library-header .guide-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-  .library-header .guide-step { padding: 6px 8px; }
-  .library-header .guide-step small { display: none; }
-  .library-header .guide-steps > li[aria-current="step"] .guide-step small { display: block; }
+.empty-guide { width: min(60rem, 100%); margin: 8px 0 4px; text-align: left; }
+@media (max-width: 767px) {
+  .library-bar { padding: 6px 8px; }
+  .bar-status { flex: 1 1 8rem; }
+  .bar-spacer { display: none; }
+  .bar-branch select { max-width: 11rem; }
+  .bar-panel { margin: 0 -8px -6px; padding: 8px; }
+  .bar-panel label { flex: 1 1 100%; flex-wrap: wrap; }
+  .bar-panel input { width: 100%; }
+  .bar-panel .hint { flex-basis: 100%; }
+  .review-view { padding: 12px; }
+  .empty-guide .guide-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .empty-guide .guide-step small { display: none; }
 }

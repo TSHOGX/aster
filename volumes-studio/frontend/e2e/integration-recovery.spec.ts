@@ -38,14 +38,17 @@ for (const width of [390, 1440]) test(`integration operations retain exact reque
   const review = page.getByRole("region", { name: "Integration review", exact: true });
   const recover = review.getByRole("button", { name: "Recover integration operation", exact: true });
   const key = `studio-integration:${JSON.stringify([session.issuer, session.subject, library.id, branch.id])}`;
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await expect(review.getByRole("button", { name: "Prepare integration", exact: true })).toBeEnabled();
   await page.evaluate(key => sessionStorage.setItem(key, JSON.stringify({ library: "foreign", branch: "foreign", action: "publish", digest: "", body: "{}" })), key);
   await page.reload();
   await expect(review.getByRole("alert")).toContainText("Local integration recovery is invalid.");
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await expect(review.getByRole("button", { name: "Prepare integration", exact: true })).toBeDisabled();
   await expect(recover).toHaveCount(0);
   await review.getByRole("button", { name: "Discard integration recovery", exact: true }).click();
   await page.getByRole("dialog", { name: "Discard integration recovery", exact: true }).getByRole("button", { name: "Discard", exact: true }).click();
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await expect(review.getByRole("button", { name: "Prepare integration", exact: true })).toBeEnabled();
 
   const lostOperation = async (suffix: string, trigger: () => Promise<void>, afterLoss?: () => Promise<void>, reload = true) => {
@@ -58,6 +61,7 @@ for (const width of [390, 1440]) test(`integration operations retain exact reque
     });
     await trigger();
     await expect(review.getByRole("alert").filter({ hasText: "Integration operation is unconfirmed." })).toBeVisible();
+    await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
     await expect(review.getByRole("button", { name: "Prepare integration", exact: true })).toBeDisabled();
     if (afterLoss) await afterLoss();
     if (reload) await page.reload();
@@ -75,8 +79,11 @@ for (const width of [390, 1440]) test(`integration operations retain exact reque
   expect(preparation.expected_head).toBe(commit.commit_id);
   const originalDigest = new URL(page.url()).searchParams.get("integration")!;
   expect((await get(`/integrations/${encodeURIComponent(originalDigest)}`)).identity.sources[0].commit_id).toBe(commit.commit_id);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await expect(review.getByRole("button", { name: "Approve integration", exact: true })).toBeDisabled();
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await review.getByRole("button", { name: "Prepare integration", exact: true }).click();
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await expect(review.getByRole("button", { name: "Approve integration", exact: true })).toBeEnabled();
   const preparedDigest = new URL(page.url()).searchParams.get("integration")!;
   expect(preparedDigest).not.toBe(originalDigest);
@@ -84,12 +91,14 @@ for (const width of [390, 1440]) test(`integration operations retain exact reque
 
   // Even a semantically identical composition has its own exact request body.
   await lostOperation("/integrations/compose", () => review.getByRole("button", { name: "Prepare selected composition", exact: true }).press("Enter"));
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await expect(review.getByRole("button", { name: "Approve integration", exact: true })).toBeEnabled();
   const digest = new URL(page.url()).searchParams.get("integration")!;
   expect(digest).not.toBe(preparedDigest);
   await review.getByLabel("Review rationale", { exact: true }).fill("Exact reviewed rationale");
   const approval = await lostOperation("/integrations/reviews", () => review.getByRole("button", { name: "Approve integration", exact: true }).press("Enter"), async () => {
     await grant("volume.read", "deny", 1);
+    await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
     await review.getByRole("button", { name: "Reload integration review", exact: true }).click();
     await expect(review).not.toContainText("Exact reviewed rationale");
     await expect(recover).toHaveCount(0);
@@ -118,11 +127,13 @@ for (const width of [390, 1440]) test(`integration operations retain exact reque
 
   // The retained publication identity survives a later metadata outage.
   await page.route(`**${root}/versions/${versionID}`, route => route.abort("failed"));
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await review.getByRole("button", { name: "Reload integration review", exact: true }).click();
   await expect(review.getByRole("alert")).toContainText("Integration evidence is unavailable.");
   await expect(publish).toHaveCount(0);
   expect(new URL(page.url()).searchParams.get("publication")).toBe(versionID);
   await page.unroute(`**${root}/versions/${versionID}`);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await review.getByRole("button", { name: "Reload integration review", exact: true }).click();
   await expect(publish.getByRole("status")).toContainText("Recovered publication: published");
   // When storage fails, current memory wins over an older persisted record.
@@ -134,6 +145,7 @@ for (const width of [390, 1440]) test(`integration operations retain exact reque
   }, key);
   await lostOperation("/integrations/prepare", () => review.getByRole("button", { name: "Prepare integration", exact: true }).press("Enter"), async () => {
     await expect(review.getByText("Local operation recovery is unavailable. Keep this tab open until the operation is confirmed.", { exact: true })).toBeVisible();
+    await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
     await review.getByRole("button", { name: "Reload integration review", exact: true }).click();
     await expect(review.getByText("Local integration recovery is invalid. Discard it before starting another operation.", { exact: true })).toHaveCount(0);
   }, false);

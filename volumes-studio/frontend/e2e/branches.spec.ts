@@ -14,7 +14,7 @@ test("branch creation and selection use real scoped authority", async ({ page })
   const library = await created.json();
   // Creating a library grants its creator every Studio action; no self-grant is needed.
   await page.goto(`/volumes-studio/libraries/${library.id}`);
-  await page.getByLabel("New branch name", { exact: true }).fill("Human edits");
+  { const opener = page.getByRole("button", { name: "New branch", exact: true }); await expect(opener).toBeVisible(); if (await opener.getAttribute("aria-expanded") === "false") await opener.click(); } await page.getByLabel("New branch name", { exact: true }).fill("Human edits");
   await page.getByRole("button", { name: "Create branch from main", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Working branch", exact: true })).toHaveValue(/.+/);
   const selected = await page.getByRole("combobox", { name: "Working branch", exact: true }).inputValue();
@@ -31,14 +31,16 @@ test("branch creation and selection use real scoped authority", async ({ page })
   await editor.fill("Reviewed lesson from a branch.");
   await page.getByRole("button", { name: "Save file", exact: true }).click();
   await expect(page.getByText("Unsaved editor changes are excluded from this commit.")).toHaveCount(0);
-  await page.getByLabel("Commit message", { exact: true }).fill("Add reviewed lesson");
+  { const opener = page.getByRole("button", { name: "Commit changes", exact: true }); await expect(opener).toBeVisible(); if (await opener.getAttribute("aria-expanded") === "false") await opener.click(); } await page.getByLabel("Commit message", { exact: true }).fill("Add reviewed lesson");
   await page.getByRole("button", { name: "Commit saved draft", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Committed saved revision" })).toBeVisible();
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await page.getByRole("button", { name: "Prepare integration", exact: true }).click();
   await expect(page.getByText("Ready for expert review", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "added: lesson.md", exact: true }).click();
   await expect(page.locator("pre").filter({ hasText: "Reviewed lesson from a branch." })).toBeVisible();
   await page.getByLabel("Review rationale", { exact: true }).fill("Verified result");
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await page.getByRole("button", { name: "Approve integration", exact: true }).click();
   await page.getByRole("button", { name: "Merge approved integration", exact: true }).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
   await expect(page.getByText("Acceptance is complete. Publishing creates a version; it does not deploy to Projects.")).toBeVisible();
@@ -66,6 +68,7 @@ test("branch creation and selection use real scoped authority", async ({ page })
   await post(`/branches/${competing.id}/commits`, { request_id: crypto.randomUUID(), expected_revision: 2, expected_head: competing.head, message: "Competing candidate" });
   await page.goto(`/volumes-studio/libraries/${library.id}?branch=${competing.id}`);
   await expect(page.getByRole("combobox", { name: "Working branch", exact: true })).toHaveValue(competing.id);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await page.getByRole("button", { name: "Prepare integration", exact: true }).click();
   const conflicts = page.getByRole("region", { name: "Resolve merge conflicts", exact: true });
   await expect(conflicts).toBeVisible();
@@ -79,6 +82,7 @@ test("branch creation and selection use real scoped authority", async ({ page })
   await expect(conflicts.getByText("Resolution saved", { exact: false })).toBeVisible();
   await conflicts.getByRole("button", { name: "Prepare resolved integration", exact: true }).click();
   await expect(page.getByRole("button", { name: "Merge approved integration", exact: true })).toBeDisabled();
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await page.getByRole("button", { name: "Approve integration", exact: true }).click();
   await page.getByRole("button", { name: "Merge approved integration", exact: true }).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
   await expect(page.getByText("Acceptance is complete. Publishing creates a version; it does not deploy to Projects.")).toBeVisible();
@@ -133,9 +137,11 @@ test("non-admin experts enter with scoped grants and cannot create or merge libr
     await expert.goto(`/volumes-studio/libraries/${library.id}?branch=${branch.id}&integration=${encodeURIComponent(prepared.digest)}`);
     await expert.getByRole("button",{name:"added: lesson.md",exact:true}).click();
     await expect(expert.locator("pre").filter({hasText:"Exact candidate for expert review"})).toBeVisible();
+    await expert.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
     await expert.getByRole("button",{name:"Approve integration",exact:true}).click();
     await expect(expert.getByRole("button",{name:"Merge approved integration",exact:true})).toBeEnabled();
     await expert.getByRole("button",{name:"Merge approved integration",exact:true}).click(); await expert.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
+    await expert.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
     await expect(expert.getByRole("region",{name:"Integration review",exact:true}).getByRole("alert")).toBeVisible();
     const unchanged=await (await page.request.get(root+"/main")).json();expect(unchanged.commit_id).toBe(main.commit_id);
     await grant(user.user.id,"volume.read","deny",1);
@@ -170,7 +176,7 @@ for (const width of [390, 1440]) test(`browser composes selected paths and later
   const firstCheckpoint = await post(`/branches/${first.id}/commits`, { request_id: crypto.randomUUID(), expected_revision: 3, expected_head: first.head, message: "Selected source" });
   await post(`/branches/${second.id}/draft/text`, { request_id: crypto.randomUUID(), expected_revision: 1, expected_head: second.head, path: "other.txt", text: "other source" });
   const secondCheckpoint = await post(`/branches/${second.id}/commits`, { request_id: crypto.randomUUID(), expected_revision: 2, expected_head: second.head, message: "Deferred source" });
-  await page.goto(`/volumes-studio/libraries/${library.id}?branch=${first.id}`);
+  await page.goto(`/volumes-studio/libraries/${library.id}?branch=${first.id}&view=review`);
   const composition = page.getByRole("region", { name: "Compose selected changes", exact: true });
   await expect(composition).toBeVisible();
   await expect(composition.getByText("selected.txt", { exact: true })).toBeVisible();
@@ -200,9 +206,11 @@ for (const width of [390, 1440]) test(`browser composes selected paths and later
   await expect(page.getByLabel("History head", {exact:true})).toHaveValue(selection.candidate_commit);
   // Let the destination finish its initial reads before another full-document navigation.
   await page.waitForLoadState("networkidle");
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await original.getByRole("link", {name:"Original source history",exact:true}).press("Enter");
   await expect(page.getByLabel("History head", {exact:true})).toHaveValue(firstCheckpoint.commit_id);
   expect(new URL(page.url()).searchParams.get("integration")).toBe(digest);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   const account = await (await page.request.get("/api/auth/session")).json();
   const language = async (value: string) => {
     const previous = await (await page.request.get("/api/me/preferences")).json();
@@ -216,15 +224,18 @@ for (const width of [390, 1440]) test(`browser composes selected paths and later
   await page.screenshot({path:test.info().outputPath(`partial-lineage-${width}.png`),fullPage:true});
   await language("en");
   await review.getByLabel("Review rationale", {exact:true}).fill("Accept selected changes; keep.txt remains deferred.");
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await review.getByRole("button", {name:"Approve integration",exact:true}).click();
   await review.getByRole("button", {name:"Merge approved integration",exact:true}).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
   await expect(review).toContainText("Acceptance is complete.");
   const partialMain = (await get("/main")).commit_id;
   expect((await page.request.get(`${root}/commits/${partialMain}/content?path=keep.txt`)).status()).toBe(404);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await review.getByRole("button", {name:"Prepare integration",exact:true}).click();
   await expect(review.getByRole("button", {name:"added: keep.txt",exact:true})).toBeVisible();
   expect(new URL(page.url()).searchParams.get("integration")).not.toBe(digest);
   await expect(review.getByRole("button", {name:"Merge approved integration",exact:true})).toBeDisabled();
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await review.getByRole("button", {name:"Approve integration",exact:true}).click();
   await review.getByRole("button", {name:"Merge approved integration",exact:true}).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
   await expect(review).toContainText("Acceptance is complete.");

@@ -37,12 +37,11 @@ export function BranchCheckpoint({ branch, onCommitted }: { branch: Branch; onCo
       else setUncertain(true);
     } finally { setBusy(false); }
   };
-  return <section aria-label={tr("Commit saved draft")} className="notice branch-checkpoint">
-    <p>{tr("Saved draft revision {revision}", { revision: branch.draft_revision })} · <code>{branch.head}</code></p>
-    {unsaved && <p>{tr("Unsaved editor changes are excluded from this commit.")}</p>}
-    <label>{tr("Commit message")} <input value={message} disabled={busy || uncertain} onChange={event => setMessage(event.target.value)} /></label>
-    <button disabled={busy || !message.trim()} onClick={() => void commit()}>{tr(uncertain ? "Retry commit" : "Commit saved draft")}</button>
+  return <section aria-label={tr("Commit saved draft")} className="branch-checkpoint">
+    <label>{tr("Commit message")} <input value={message} disabled={busy || uncertain} placeholder={tr("Describe what changed")} onChange={event => setMessage(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && message.trim() && !busy) void commit(); }} /></label>
+    <button className="primary" disabled={busy || !message.trim()} onClick={() => void commit()}>{tr(uncertain ? "Retry commit" : "Commit saved draft")}</button>
+    <span className="hint">{tr("Saved draft revision {revision}", { revision: branch.draft_revision })} · <code title={branch.head}>{branch.head.slice(0, 12)}</code>{unsaved && <> · {tr("Unsaved editor changes are excluded from this commit.")}</>}</span>
     {error && <p role="alert">{error}</p>}
-    {result && <p role="status">{tr("Committed saved revision {revision}", { revision: result.draft_revision })} · <code>{result.commit_id}</code></p>}
+    {result && <p role="status">{tr("Committed saved revision {revision}", { revision: result.draft_revision })} · <code title={result.commit_id}>{result.commit_id.slice(0, 12)}</code></p>}
   </section>;
 }

@@ -33,7 +33,7 @@ async function provisionBranch(page: Page) {
   const identity = await session(page);
   // Creating a library grants its creator every Studio action; no self-grant is needed.
   await page.reload();
-  await page.getByLabel("New branch name", { exact: true }).fill("Human edits");
+  { const opener = page.getByRole("button", { name: "New branch", exact: true }); await expect(opener).toBeVisible(); if (await opener.getAttribute("aria-expanded") === "false") await opener.click(); } await page.getByLabel("New branch name", { exact: true }).fill("Human edits");
   await page.getByRole("button", { name: "Create branch from main", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Working branch", exact: true })).toHaveValue(/.+/);
 }
@@ -49,11 +49,13 @@ async function savedContent(page: Page, path: string) {
 }
 async function acceptBranch(page: Page, checkpoint = true) {
  if (checkpoint) {
-  await page.getByLabel("Commit message", { exact: true }).fill("Reviewed candidate");
+  { const opener = page.getByRole("button", { name: "Commit changes", exact: true }); await expect(opener).toBeVisible(); if (await opener.getAttribute("aria-expanded") === "false") await opener.click(); } await page.getByLabel("Commit message", { exact: true }).fill("Reviewed candidate");
   await page.getByRole("button", { name: "Commit saved draft", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Committed saved revision" })).toBeVisible();
  }
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await page.getByRole("button", { name: "Prepare integration", exact: true }).click();
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await page.getByRole("button", { name: "Approve integration", exact: true }).click();
   await page.getByRole("button", { name: "Merge approved integration", exact: true }).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
   await expect(page.getByText("Acceptance is complete. Publishing creates a version; it does not deploy to Projects.")).toBeVisible();
@@ -122,10 +124,11 @@ test("central login, multi-tab edit, publish, immutable version and logout", asy
   });
   await page.getByRole("button", { name: "Save file", exact: true }).click();
   await saveArrived;
+  { const opener = page.getByRole("button", { name: "Commit changes", exact: true }); await expect(opener).toBeVisible(); if (await opener.getAttribute("aria-expanded") === "false") await opener.click(); }
   await expect(page.getByText("Unsaved editor changes are excluded from this commit.")).toBeVisible();
   let checkpoints = 0;
   page.on("request", request => { if (request.method() === "POST" && request.url().endsWith("/commits")) checkpoints++; });
-  await page.getByLabel("Commit message", {exact:true}).fill("Save then checkpoint");
+  { const opener = page.getByRole("button", { name: "Commit changes", exact: true }); await expect(opener).toBeVisible(); if (await opener.getAttribute("aria-expanded") === "false") await opener.click(); } await page.getByLabel("Commit message", {exact:true}).fill("Save then checkpoint");
   await page.getByRole("button", {name:"Commit saved draft",exact:true}).click();
   await expect(page.getByRole("button", {name:"Commit saved draft",exact:true})).toBeDisabled();
   expect(checkpoints).toBe(0);
@@ -278,7 +281,7 @@ test("resume durable upload and fit narrow workbench", async ({ page }) => {
     ).ok(),
   ).toBeTruthy();
   await page.reload();
-  await page.getByLabel("Commit message", { exact: true }).fill("Upload pending");
+  { const opener = page.getByRole("button", { name: "Commit changes", exact: true }); await expect(opener).toBeVisible(); if (await opener.getAttribute("aria-expanded") === "false") await opener.click(); } await page.getByLabel("Commit message", { exact: true }).fill("Upload pending");
   await page.getByRole("button", { name: "Commit saved draft", exact: true }).click();
   await expect(page.getByRole("region", { name: "Commit saved draft", exact: true }).getByRole("alert")).toBeVisible();
   await page.getByLabel("Select files", { exact: true }).setInputFiles({
@@ -413,7 +416,7 @@ test("file menus, changes, dark theme and responsive workspace", async ({
     page.getByRole("button", { name: "Open after.md", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("tab", { name: "after.md" })).toBeVisible();
-  await page.getByRole("button", { name: "Changes", exact: false }).click();
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: /^Changes/ }).click();
   await page.getByRole("button", { name: "after.md added" }).click();
   await expect(page.getByLabel("File differences")).toContainText("Workspace");
   await page.getByRole("button", { name: "Files", exact: true }).click();
@@ -776,6 +779,7 @@ test("language changes keep Studio unsaved content, selection, and confirmation 
   await expect(page.getByRole("textbox", { name: "English Name.md 的内容", exact: true })).toContainText("# Unsaved bilingual content");
   await page.getByRole("button", { name: "保存文件", exact: true }).click();
   await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+  { const opener = page.getByRole("button", { name: "提交更改", exact: true }); await expect(opener).toBeVisible(); if (await opener.getAttribute("aria-expanded") === "false") await opener.click(); }
   await page.getByLabel("提交说明", {exact:true}).fill("Active");
   await expect(page.getByLabel("提交说明", {exact:true})).toHaveValue("Active");
   await page.getByRole("button", {name:"提交已保存的草稿",exact:true}).click();
@@ -872,7 +876,10 @@ for (const width of [390, 1440]) test(`bilingual shared-assets controls and vali
     await expect(page.getByRole("button", {name:"Save file",exact:true})).toBeDisabled();
     await acceptBranch(page);
     await language("zh");
+    const views = page.getByRole("navigation", { name: "库视图", exact: true });
+    await views.getByRole("button", { name: /^文件/ }).click();
     await expect(page.getByRole("textbox", {name:"AGENTS.md 的内容",exact:true})).toContainText("Keep user content unchanged. 中文内容。");
+    await views.getByRole("button", { name: "审阅", exact: true }).click();
     const review = page.getByRole("region", {name:"发布已接受的提交",exact:true});
     await review.getByLabel("版本标签", {exact:true}).fill("English version name");
     await review.getByLabel("发布说明", {exact:true}).fill("English and 中文 release note");

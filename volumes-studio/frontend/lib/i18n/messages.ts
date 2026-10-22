@@ -576,5 +576,18 @@ export const ZH: Record<string, string> = {
   "Approval and merge open once required checks pass and the result is current with main.": "必需检查通过且结果与主线保持最新后，才能批准和合并。",
   "Merge opens after an approval of this exact result.": "该结果获得批准后才能合并。",
   "Ready to merge into main.": "可以合并到主线。",
-  "Requesting changes or rejecting needs a rationale.": "请求修改或拒绝时需要填写理由。"
+  "Requesting changes or rejecting needs a rationale.": "请求修改或拒绝时需要填写理由。",
+  "Review": "审阅",
+  "New branch": "新建分支",
+  "Cancel": "取消",
+  "Commit changes": "提交更改",
+  "Describe what changed": "简要说明本次修改",
+  "A new branch starts from the current main. Edits on it stay out of main until reviewed.": "新分支基于当前主分支创建，分支上的编辑在审核通过前不会进入主分支。",
+  "Draft revision {revision} · head {head}": "草稿修订 {revision} · 头提交 {head}",
+  "No branch selected · files are read-only": "未选择分支 · 文件为只读",
+  "Prepare an integration against main in the Review tab. Required checks and an approval allow merging into main.": "在“审阅”标签页基于主分支准备集成。通过必需检查并获得批准后即可合并到主分支。",
+  "Files open read-only until a working branch is selected. Pick a branch in the toolbar, or create one from main.": "选择工作分支前文件为只读。请在工具栏选择分支，或从主分支新建一个。",
+  "Reviews run on branches": "审阅在分支上进行",
+  "Published versions are immutable. Switch to a working branch to prepare an integration with main.": "已发布版本不可修改。请切换到工作分支，再基于主分支准备集成。",
+  "Select a working branch to prepare its committed changes for review against main.": "请选择工作分支，以便将其已提交的更改与主分支对比并提交审阅。"
 };

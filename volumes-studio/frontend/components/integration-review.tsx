@@ -278,7 +278,7 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
    await api(`${root}/evaluations/${encodeURIComponent(job.id)}/cancel`,{method:"POST",body:"{}"},studio.session.csrf);
    await load(view.digest);
   };
-  return <section className="notice integration-review" aria-label={tr("Integration review")}>
+  return <section className="integration-review" aria-label={tr("Integration review")}>
     <h2>{tr("Integration review")}</h2>
     <p>{tr("Prepare committed changes against main. Saved but uncommitted edits are excluded.")}</p>
     <button disabled={mutationBlocked || conflictBlocked} onClick={() => void run(() => prepare())}>{tr("Prepare integration")}</button>

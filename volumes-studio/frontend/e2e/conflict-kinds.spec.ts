@@ -64,6 +64,7 @@ for (const width of [390, 1440]) test(`binary oversized and structural conflict 
   await structure(source, "remove", "directory"); await checkpoint(source);
 
   await page.goto(`/volumes-studio/libraries/${library.id}?branch=${source.id}`);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await page.getByRole("button", { name: "Prepare integration", exact: true }).click();
   const conflicts = page.getByRole("region", { name: "Resolve merge conflicts", exact: true });
   await expect(conflicts).toBeVisible();
@@ -94,10 +95,11 @@ for (const width of [390, 1440]) test(`binary oversized and structural conflict 
   const originalBytes = await page.request.get(`${root}/commits/${oldWorkspace.source_commit}/content?path=binary.bin`);
   expect(await originalBytes.body()).toEqual(previousBinary);
   expect(draftAfterUpload.head).toBe(oldWorkspace.source_commit);
-  await page.getByLabel("Commit message", { exact: true }).fill("Reviewed binary replacement");
+  { const opener = page.getByRole("button", { name: "Commit changes", exact: true }); await expect(opener).toBeVisible(); if (await opener.getAttribute("aria-expanded") === "false") await opener.click(); } await page.getByLabel("Commit message", { exact: true }).fill("Reviewed binary replacement");
   await page.getByRole("button", { name: "Commit saved draft", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Committed saved revision" })).toBeVisible();
   expect((await get(`/conflicts/${oldID}`)).stale).toBe(true);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await page.getByRole("button", { name: "Prepare integration", exact: true }).click();
   await expect(conflicts).toBeVisible();
   const id = new URL(page.url()).searchParams.get("conflict")!;
@@ -165,16 +167,19 @@ for (const width of [390, 1440]) test(`binary oversized and structural conflict 
   await expect(review.getByRole("alert")).toContainText("Integration evidence is unavailable.");
   await expect(integrated).toHaveCount(0); await expect(review.getByRole("button", { name: "Approve integration", exact: true })).toHaveCount(0);
   await page.unroute(`**${root}/integrations/*/file?**`);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await review.getByRole("button", { name: "Reload integration review", exact: true }).click();
   await review.getByRole("button", { name: "changed: binary.bin", exact: true }).click();
   await expect(integrated).toContainText("Binary file: text preview unavailable.");
   const access = async (effect: string, revision: number) => expect((await page.request.post("/api/admin/studio-grants", { headers: { Origin: origin }, data: { request_id: crypto.randomUUID(), kind: "account", subject_id: session.subject, library_id: library.id, action: "volume.read", effect, expected_revision: revision } })).ok()).toBe(true);
   await access("deny", 1);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await review.getByRole("button", { name: "Reload integration review", exact: true }).click();
   await expect(review.getByRole("alert")).toContainText("Integration evidence is unavailable.");
   await expect(integrated).toHaveCount(0); await expect(review.getByRole("button", { name: "Approve integration", exact: true })).toHaveCount(0);
   expect(new URL(page.url()).searchParams.get("integration")).toBe(integrationDigest);
   await access("allow", 2);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await review.getByRole("button", { name: "Reload integration review", exact: true }).click();
   await review.getByRole("button", { name: "changed: binary.bin", exact: true }).click();
   await language("zh");
@@ -182,6 +187,7 @@ for (const width of [390, 1440]) test(`binary oversized and structural conflict 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   await page.screenshot({ path: test.info().outputPath(`integrated-fallback-${width}.png`), fullPage: true });
   await language("en");
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await page.getByRole("button", { name: "Approve integration", exact: true }).click();
   await page.getByRole("button", { name: "Merge approved integration", exact: true }).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
   await expect(page.getByText("Acceptance is complete. Publishing creates a version; it does not deploy to Projects.")).toBeVisible();

@@ -43,7 +43,7 @@ test("composition pages pin heads and recover failed or denied continuations", a
   await post(`/branches/${later.id}/commits`, {expected_head:later.head,expected_revision:2,message:"Later branch"});
   const reads: string[]=[];
   page.on("request", request => {if(request.url().includes("/head-diff?")) reads.push(request.url());});
-  await page.goto(`/volumes-studio/libraries/${library.id}?branch=${selected.id}`);
+  await page.goto(`/volumes-studio/libraries/${library.id}?branch=${selected.id}&view=review`);
   const review = page.getByRole("region", {name:"Integration review",exact:true});
   const composition = review.getByRole("region", {name:"Compose selected changes",exact:true});
   await expect(composition).toContainText("Showing 200 of 201 committed paths.");
@@ -56,6 +56,7 @@ test("composition pages pin heads and recover failed or denied continuations", a
   await expect(composition).toHaveCount(0);
   await expect(review.getByRole("alert")).toBeVisible();
   await page.unroute(continuation);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await review.getByRole("button", {name:"Reload integration review",exact:true}).click();
   await expect(composition).toContainText("Showing 200 of 201 committed paths.");
   await expect(composition.getByRole("checkbox", {checked:true})).toHaveCount(0);
@@ -66,6 +67,7 @@ test("composition pages pin heads and recover failed or denied continuations", a
   const stale = page.waitForResponse(response => response.url().includes("/head-diff?") && response.url().includes("after="));
   await composition.getByRole("button", {name:"More committed paths",exact:true}).click();
   expect((await stale).status()).toBe(409); await expect(composition).toHaveCount(0);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await review.getByRole("button", {name:"Reload integration review",exact:true}).click();
   await expect(composition).toContainText("Showing 200 of 202 committed paths.");
   await expect(composition).toContainText(advanced.commit_id);
@@ -87,6 +89,7 @@ test("composition pages pin heads and recover failed or denied continuations", a
   await page.screenshot({path:info.outputPath(`composition-pages-${width}.png`),fullPage:true});
   await language("en");
   await composition.getByRole("button",{name:"Prepare selected composition",exact:true}).click();
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await expect(review.getByRole("button",{name:"Approve integration",exact:true})).toBeEnabled();
   const digest = new URL(page.url()).searchParams.get("integration")!;
   const prepared = await get(`/integrations/${encodeURIComponent(digest)}`);
@@ -96,10 +99,12 @@ test("composition pages pin heads and recover failed or denied continuations", a
   expect(changed.changes.map((item:{path:string})=>item.path)).toEqual(["entry-200.txt","late.txt"]);
 
   await grant("volume.read","deny",1);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await review.getByRole("button",{name:"Reload integration review",exact:true}).click();
   await expect(composition).toHaveCount(0);
   await expect(review.getByRole("list",{name:"Composition selection result",exact:true})).toHaveCount(0);
   await grant("volume.read","allow",2);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await review.getByRole("button",{name:"Reload integration review",exact:true}).click();
   await expect(review.getByRole("list",{name:"Composition selection result",exact:true})).toContainText("entry-200.txt");
   expect(errors).toEqual([]);

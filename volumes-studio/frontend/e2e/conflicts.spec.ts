@@ -41,7 +41,9 @@ for (const width of [390, 1440]) test(`conflict edits and exact operations recov
   await post("/integrations/reviews", { prepared_digest: prepared.digest, verdict: "approve" });
   await post("/integrations/merge", { prepared_digest: prepared.digest, expected_main: main.commit_id });
   await page.goto(`/volumes-studio/libraries/${library.id}?branch=${candidate.id}`);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await expect(page.getByRole("button", { name: "Prepare integration", exact: true })).toBeEnabled();
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await page.getByRole("button", { name: "Prepare integration", exact: true }).press("Enter");
   const conflicts = page.getByRole("region", { name: "Resolve merge conflicts", exact: true });
   await conflicts.getByRole("button", { name: "lesson.md", exact: true }).press("Enter");
@@ -64,7 +66,9 @@ for (const width of [390, 1440]) test(`conflict edits and exact operations recov
   await conflicts.getByLabel("Resolution choice", { exact: true }).selectOption("text");
   // A failed storage write must not restore an older persisted draft over newer in-memory text.
   await conflicts.getByLabel("Resolved text", { exact: true }).fill("Older persisted resolution");
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await expect(page.getByRole("button", { name: "Prepare integration", exact: true })).toBeDisabled();
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await expect(page.getByRole("button", { name: "Reload integration review", exact: true })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Prepare selected composition", exact: true })).toBeDisabled();
   await page.evaluate(() => {
@@ -76,6 +80,7 @@ for (const width of [390, 1440]) test(`conflict edits and exact operations recov
   await expect(conflicts.getByRole("alert")).toContainText("Local conflict recovery is unavailable.");
   await conflicts.getByRole("button", { name: "Reload conflict workspace", exact: true }).click();
   await expect(conflicts.getByLabel("Resolved text", { exact: true })).toHaveValue("Newer in-memory resolution");
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await expect(page.getByRole("button", { name: "Prepare integration", exact: true })).toBeDisabled();
   await page.evaluate(() => (window as unknown as { restoreConflictStorage: () => void }).restoreConflictStorage());
   await conflicts.getByLabel("Resolved text", { exact: true }).fill("My retained resolution");
@@ -139,6 +144,7 @@ for (const width of [390, 1440]) test(`conflict edits and exact operations recov
   await page.route(`**${root}/integrations/*`, route => route.request().method() === "GET" ? route.abort("failed") : route.continue());
   await conflicts.getByRole("button", { name: "Recover conflict operation", exact: true }).click();
   await expect(conflicts).toHaveCount(0);
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await expect(page.getByRole("region", { name: "Integration review", exact: true }).getByRole("alert")).toBeVisible();
   await page.unroute(`**${root}/integrations/*`);
   await page.reload();
@@ -146,6 +152,7 @@ for (const width of [390, 1440]) test(`conflict edits and exact operations recov
   const digest = new URL(page.url()).searchParams.get("integration")!;
   expect(digest).toBeTruthy();
   await expect(page.getByRole("button", { name: "Merge approved integration", exact: true })).toBeDisabled();
+  await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await page.getByRole("button", { name: "Approve integration", exact: true }).click();
   await page.getByRole("button", { name: "Merge approved integration", exact: true }).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
   await expect(page.getByText("Acceptance is complete. Publishing creates a version; it does not deploy to Projects.")).toBeVisible();

@@ -64,13 +64,15 @@ for(const width of [390,1440])test(`reviewed inverse draft survives lost creatio
  expect(bodies).toHaveLength(2);expect(bodies[1]).toBe(bodies[0]);
  const branches=await get("/branches");expect(branches.branches.filter((b:{name:string})=>b.name==="Reviewed inverse")).toHaveLength(1);
  const draft=await page.request.get(`${root}/branches/${inverse!.id}/draft/content?path=note.txt&revision=1`);expect(await draft.text()).toBe("Original content");
- await expect(page.getByLabel("Commit message",{exact:true})).toBeVisible();
- await page.getByLabel("Commit message",{exact:true}).fill("Reviewed inverse of selected commit");
+ { const opener = page.getByRole("button", { name: "Commit changes", exact: true }); await expect(opener).toBeVisible(); if (await opener.getAttribute("aria-expanded") === "false") await opener.click(); } await expect(page.getByLabel("Commit message",{exact:true})).toBeVisible();
+ { const opener = page.getByRole("button", { name: "Commit changes", exact: true }); await expect(opener).toBeVisible(); if (await opener.getAttribute("aria-expanded") === "false") await opener.click(); } await page.getByLabel("Commit message",{exact:true}).fill("Reviewed inverse of selected commit");
  await page.getByRole("button",{name:"Commit saved draft",exact:true}).click();
  await expect(page.getByRole("region",{name:"Commit saved draft",exact:true})).toContainText("Committed saved revision");
  const review=page.getByRole("region",{name:"Integration review",exact:true});
+ await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
  await review.getByRole("button",{name:"Prepare integration",exact:true}).click();
  await expect(review.getByRole("button",{name:"Merge approved integration",exact:true})).toBeDisabled();
+ await page.getByRole("navigation", { name: "Library views", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
  await review.getByRole("button",{name:"Approve integration",exact:true}).click();await review.getByRole("button",{name:"Merge approved integration",exact:true}).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();await expect(review).toContainText("Acceptance is complete.");
  const final=await get("/main");
  for(const [path,want]of Object.entries({"note.txt":"Original content","human.txt":"Preserve later work"})){const r=await page.request.get(`${root}/commits/${final.commit_id}/content?path=${path}`);expect(r.ok()).toBe(true);expect(await r.text()).toBe(want);}

@@ -5,9 +5,8 @@ import { message, useT } from "../lib/i18n";
 import { History } from "./history";
 import { IntegrationReview } from "./integration-review";
 import { PathPolicies } from "./path-policies";
-import { BranchCheckpoint } from "./checkpoint";
-import { LibraryHeader } from "./library-header";
-import { BranchSelector } from "./branch-selector";
+import { LibraryBar, useLifecycleSteps, type Stage } from "./library-header";
+import { Guide } from "../../../web/guide";
 import { branchAPI, branchRoot, type Branch } from "../lib/branches";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -74,6 +73,9 @@ export function LibraryEditor({ id }: { id: string }) {
   const branch = studio.model.branches[id];
   const branchID = branch?.id ?? "";
   const draftRevision = branch?.draft_revision ?? 0;
+  const [creating, setCreating] = useState(false);
+  const stage: Stage = version ? "publish" : !branch ? "branch" : view === "review" ? "review" : "edit";
+  const lifecycle = useLifecycleSteps(stage);
   const scope = workspaceKey(id, version ? "" : branchID, version);
   const input = useRef<HTMLInputElement>(null),
     folderInput = useRef<HTMLInputElement>(null),
@@ -134,9 +136,9 @@ export function LibraryEditor({ id }: { id: string }) {
     const initialScope = workspaceKey(id, p.get("version") ? "" : p.get("branch") || "", p.get("version") || "");
     setVersion(p.get("version") || "");
     setView(
-      ["files", "changes", "versions", "history", "evaluation policies"].includes(p.get("view") || "")
+      ["files", "changes", "review", "versions", "history", "evaluation policies"].includes(p.get("view") || "")
         ? p.get("view")!
-        : "files",
+        : p.get("integration") || p.get("conflict") ? "review" : "files",
     );
     setSelected(
       p.get("path") ||
@@ -467,12 +469,9 @@ export function LibraryEditor({ id }: { id: string }) {
   return (
     <main className="studio-shell">
       <ShellHeader library={library} />
-      <LibraryHeader library={library} branch={studio.model.branches[id]} version={version} stage={version ? "publish" : !studio.model.branches[id] ? "branch" : library?.draft_change_count ? "edit" : "review"} />
-      <div className="branch-controls">
-      <BranchSelector library={id} onSelect={() => { setVersion(""); setSelected(""); setDirectory(""); void run(() => refresh()); }} />
-      {!version && studio.model.branches[id] && <BranchCheckpoint key={`${id}:${branchID}`} branch={studio.model.branches[id]} onCommitted={() => { void run(() => refresh()); }} />}
-      {!version && studio.model.branches[id] && <IntegrationReview key={`${id}:${branchID}`} branch={studio.model.branches[id]} />}
-      </div>
+      <LibraryBar id={id} library={library} branch={studio.model.branches[id]} version={version} stage={stage} creating={creating} setCreating={setCreating}
+        onBranch={() => { setVersion(""); setSelected(""); setDirectory(""); void run(() => refresh()); }}
+        onCommitted={() => { void run(() => refresh()); }} />
       <div
         className="workbench"
         style={{ "--sidebar-width": `${width}px` } as React.CSSProperties}
@@ -557,7 +556,7 @@ export function LibraryEditor({ id }: { id: string }) {
               </button>
             )}
             <nav aria-label={tr("Library views")}>
-              {["files", "changes", "versions", "history", "evaluation policies"].map((v) => (
+              {["files", "changes", "review", "history", "versions", "evaluation policies"].map((v) => (
                 <button
                   key={v}
                   aria-current={view === v ? "page" : undefined}
@@ -801,8 +800,10 @@ export function LibraryEditor({ id }: { id: string }) {
                 <div className="editor-empty">
                   <FileText size={30} />
                   <h2>{version ? tr("Browse version files") : !studio.model.branches[id] ? tr("Choose or start a branch") : tr("Select a file")}</h2>
-                  <p>{version ? tr("Open a file from the sidebar, or use Go to file.") : !studio.model.branches[id] ? tr("Files open read-only until a working branch is selected. Pick a branch above, or enter a name and create one from main.") : tr("Open a file from the sidebar, or use Go to file.")}</p>
+                  <p>{version ? tr("Open a file from the sidebar, or use Go to file.") : !studio.model.branches[id] ? tr("Files open read-only until a working branch is selected. Pick a branch in the toolbar, or create one from main.") : tr("Open a file from the sidebar, or use Go to file.")}</p>
+                  {!version && !branch && <div className="empty-guide"><Guide label={tr("How changes reach a published version")} steps={lifecycle} current="branch" /></div>}
                   <div className="actions">
+                    {!version && !branch && !library?.archived && <button className="primary" onClick={() => setCreating(true)}>{tr("Start a branch")}</button>}
                     <button
                       onClick={() => {
                         setSidebar(true);
@@ -821,6 +822,11 @@ export function LibraryEditor({ id }: { id: string }) {
             </>
           )}
           {view === "changes" && library && <Changes library={library} />}{" "}
+          {!version && branch && <div className="review-view" hidden={view !== "review"}><IntegrationReview key={`${id}:${branchID}`} branch={branch} /></div>}
+          {view === "review" && (version || !branch) && <div className="editor-empty">
+            <h2>{tr(version ? "Reviews run on branches" : "Choose or start a branch")}</h2>
+            <p>{tr(version ? "Published versions are immutable. Switch to a working branch to prepare an integration with main." : "Select a working branch to prepare its committed changes for review against main.")}</p>
+          </div>}
           {view === "history" && <History key={id} library={id} branch={branchID} />}
           {view === "evaluation policies" && <PathPolicies key={id} library={id} />}
           {view === "versions" && library && (
