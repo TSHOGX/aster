@@ -31,8 +31,12 @@ test("continuous directory windows keep DOM bounded and preserve the editor", as
     expect(await tree.locator(".file-row").count()).toBeLessThan(100);
   }
   await expect(editor).toContainText("Unsaved across directory windows");
-  await tree.evaluate(node => { node.scrollTop = 0; });
-  await expect(tree.getByRole("button", { name: "Load previous files" })).toBeVisible();
+  // The virtual window renders its top row from the scroll event; repeat the
+  // scroll in case it landed before the last page finished rendering.
+  await expect(async () => {
+    await tree.evaluate(node => { node.scrollTop = 0; node.dispatchEvent(new Event("scroll")); });
+    await expect(tree.getByRole("button", { name: "Load previous files" })).toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 20000 });
   await tree.getByRole("button", { name: "Load previous files" }).click();
   await expect.poll(() => requests.includes(700)).toBe(true);
   await expect(editor).toContainText("Unsaved across directory windows");
