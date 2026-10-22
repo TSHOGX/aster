@@ -36,6 +36,7 @@ test("real owner authenticates both builds and preserves administrative request 
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Browser user edited");
   await page.getByRole("button", { name: "Reset password", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Reset password", exact: true }).click();
   const dialog = page.getByRole("dialog"); await expect(dialog).toBeVisible();
   const temporary = await dialog.getByLabel("Temporary password", { exact: true }).inputValue();
   expect(temporary).toHaveLength(24);
@@ -318,8 +319,8 @@ test("suspension and enable preserve separate sharing fences until explicit owne
     await page.goto(`/admin/users/${created.user.id}`);
     await expect(page.getByRole("button", {name:"Suspend account",exact:true})).toBeVisible();
     const suspensionResponse=page.waitForResponse(response=>response.url().endsWith(`/users/${created.user.id}/suspend`) && response.request().method()==="POST");
-    page.once("dialog",dialog=>dialog.accept());
     await page.getByRole("button",{name:"Suspend account",exact:true}).click();
+    await page.getByRole("dialog").getByRole("button",{name:"Suspend account",exact:true}).click();
     const suspendedResponse=await suspensionResponse;expect(suspendedResponse.status()).toBe(202);
     await page.getByRole("link",{name:"View suspension operation",exact:true}).click();
     await expect(page.getByRole("link",{name:"suspension-share",exact:true})).toBeVisible();

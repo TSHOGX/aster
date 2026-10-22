@@ -43,6 +43,8 @@ const ModelsEntitlement = "evolution_space.models"
 type modelChoice struct {
 	evolution.Revision
 	Label string `json:"label,omitempty"`
+	// CallTokens is the per-call reservation; zero when not reported.
+	CallTokens int64 `json:"call_tokens,omitempty"`
 }
 
 // choices lists static models and the current revision of every enabled
@@ -54,7 +56,7 @@ func (o BrowserOptions) choices(ctx context.Context) []modelChoice {
 	}
 	if o.Connections != nil {
 		for _, choice := range o.Connections.Choices(ctx) {
-			result = append(result, modelChoice{Revision: choice.Ref, Label: choice.Label})
+			result = append(result, modelChoice{Revision: choice.Ref, Label: choice.Label, CallTokens: choice.CallTokens})
 		}
 	}
 	return result

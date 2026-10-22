@@ -1,6 +1,7 @@
 @import "../../../web/select.css";
 @import "../../../web/surfaces.css";
 @import "../../../web/appearance.css";
+@import "../../../web/primitives.css";
 @import "@fontsource-variable/jetbrains-mono/wght.css";
 :root {
   --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
@@ -1440,3 +1441,32 @@ dd {
 .notice.branch-checkpoint { display: block; }
 .branch-checkpoint p { overflow-wrap: anywhere; }
 .branch-checkpoint > button { margin: .5rem 0; }
+
+/* Library header: name, branch state and the lifecycle guide. */
+.library-header { flex: none; max-height: 45dvh; overflow: auto; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.library-title { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 10px 16px; }
+.library-title h1 { margin: 0; font-size: 18px; line-height: 1.3; }
+.library-title p { margin: 4px 0 0; color: var(--foreground-muted); max-width: 60rem; }
+.library-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.library-header .guide { margin: 10px 0 2px; padding: 10px 12px; }
+.library-header .guide-steps { margin-top: 0; }
+.library-header .guide-step { padding: 10px 12px; }
+.library-header .guide-step strong { font-size: 13px; }
+.library-header .guide-step small { font-size: 12px; }
+/* Branch, commit and review controls: one aligned toolbar row per group. */
+.branch-controls select { padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--foreground); }
+.branch-controls button:not(.ghost):not(.icon-button) { border: 1px solid var(--border-strong); background: var(--surface); }
+.branch-controls button.primary { background: var(--button-primary); border-color: var(--button-primary); color: var(--button-primary-foreground); }
+.branch-controls button.danger { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); color: var(--danger); }
+.integration-review .hint { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--foreground-muted); }
+.integration-review > button { margin: 0 6px 6px 0; }
+@media (max-width: 700px) {
+  .library-header { padding: 8px 10px; max-height: 40dvh; }
+  .library-title p { display: none; }
+  .library-header .guide-note { display: none; }
+  .library-header .guide { padding: 6px; }
+  .library-header .guide-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .library-header .guide-step { padding: 6px 8px; }
+  .library-header .guide-step small { display: none; }
+  .library-header .guide-steps > li[aria-current="step"] .guide-step small { display: block; }
+}

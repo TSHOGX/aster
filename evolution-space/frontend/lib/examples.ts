@@ -15,7 +15,7 @@ export type ExampleDetail = ExampleSummary & {
   workflows: ExampleWorkflow[]; model?: Revision;
   sample: { corpus: { episodes: { id: string; outcome: string; text: string }[] }; files: SampleFile[]; held: SampleHeld[] };
 };
-export type ModelChoice = Revision & { label?: string };
+export type ModelChoice = Revision & { label?: string; call_tokens?: number };
 export type ModelPage = { items: ModelChoice[]; example_builders: boolean; connections?: boolean };
 export const pin = ({ id, revision, digest }: ModelChoice): Revision => ({ id, revision, digest });
 

@@ -94,7 +94,7 @@ func TestModelConnectionsAreAdminOnlyKeysStayWriteOnlyAndChoicesFollowEnabledCon
 	if len(page.Items) != 1 || !page.Seal || page.Items[0].KeyHint != "…-key" {
 		t.Fatal("list", page)
 	}
-	if choices := options.choices(ctx); len(choices) != 1 || choices[0].Revision != saved.Current || !strings.Contains(choices[0].Label, "glm-5.2") {
+	if choices := options.choices(ctx); len(choices) != 1 || choices[0].Revision != saved.Current || !strings.Contains(choices[0].Label, "glm-5.2") || choices[0].CallTokens != 4000 {
 		t.Fatal("choices", choices)
 	}
 	off := map[string]any{"expected_revision": 1, "name": "Team GLM", "enabled": false, "settings": settings, "policy": modelconn.Policy{CallTokens: 4000, TimeoutSeconds: 60, Concurrency: 2}}

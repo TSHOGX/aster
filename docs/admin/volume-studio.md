@@ -122,6 +122,12 @@ branch until completed or canceled; another branch can still be committed.
 
 ## Review and merge committed changes
 
+The library page header shows the library name, its profile and the selected branch.
+**Show how it works** opens a four-step guide: start a branch, edit and commit,
+review and merge, publish a version. It opens automatically until a branch is
+selected. Without a branch, files open read-only and the editor asks you to choose
+or create one.
+
 1. Save the content you want to include and complete or cancel that branch's uploads.
 2. Enter a **Commit message** and choose **Commit saved draft**. Unsaved editor
    changes are explicitly excluded from the checkpoint.
@@ -171,8 +177,10 @@ branch until completed or canceled; another branch can still be committed.
    Incomplete uploads stay in **Upload tasks** for recovery and block committing.
    Complete every choice and choose **Prepare resolved integration**. The new
    result needs its own approval.
-5. A qualified reviewer chooses **Approve integration**. A merger then chooses
-   **Merge approved integration**. A changed main, source head or review policy
+5. A qualified reviewer chooses **Approve integration**. **Request changes** and
+   **Reject integration** require a **Review rationale**. A merger then chooses
+   **Merge approved integration** and confirms **Merge** in the dialog. A hint under
+   the buttons says why approval or merge is not yet available. A changed main, source head or review policy
    requires preparing and reviewing a new result.
 
 The **Evaluation checks** panel shows the exact profile, evaluator, path policy and

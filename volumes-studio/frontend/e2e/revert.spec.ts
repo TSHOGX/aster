@@ -71,7 +71,7 @@ for(const width of [390,1440])test(`reviewed inverse draft survives lost creatio
  const review=page.getByRole("region",{name:"Integration review",exact:true});
  await review.getByRole("button",{name:"Prepare integration",exact:true}).click();
  await expect(review.getByRole("button",{name:"Merge approved integration",exact:true})).toBeDisabled();
- await review.getByRole("button",{name:"Approve integration",exact:true}).click();await review.getByRole("button",{name:"Merge approved integration",exact:true}).click();await expect(review).toContainText("Acceptance is complete.");
+ await review.getByRole("button",{name:"Approve integration",exact:true}).click();await review.getByRole("button",{name:"Merge approved integration",exact:true}).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();await expect(review).toContainText("Acceptance is complete.");
  const final=await get("/main");
  for(const [path,want]of Object.entries({"note.txt":"Original content","human.txt":"Preserve later work"})){const r=await page.request.get(`${root}/commits/${final.commit_id}/content?path=${path}`);expect(r.ok()).toBe(true);expect(await r.text()).toBe(want);}
  const old=await page.request.get(`${root}/commits/${target.commit_id}/content?path=note.txt`);expect(await old.text()).toBe("Change to undo");

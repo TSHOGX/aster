@@ -12,6 +12,7 @@ import { useT } from "../lib/i18n";
 import { useRead } from "../lib/use-read";
 import { SessionContext, lastGroupKey, useGroup, useSession } from "./group-context";
 import { GroupList } from "./group-list";
+import { FlowOverview } from "./flow";
 import { PageHeading } from "./group-layout";
 
 export function SpaceShell({ children }: { children: ReactNode }) {
@@ -120,16 +121,7 @@ export function GroupOverview() {
         <Link prefetch={false} href={evolutionSectionPath(group.id, "runs", search)}>{tr("Open run history")}</Link>
       </section>
     </div>
-    <section className="card concept-flow" aria-labelledby="flow-heading"><h2 id="flow-heading">{tr("How the pieces fit together")}</h2>
-      <ol className="flow-steps">
-        <li><Link prefetch={false} href={`${root}workflows/`}><span className="flow-index">1</span><strong>{tr("Workflow")}</strong><small>{tr("How the work runs: a graph of agents and checks with typed inputs and outputs. Start from a built-in example.")}</small></Link></li>
-        <li><Link prefetch={false} href={`${root}templates/`}><span className="flow-index">2</span><strong>{tr("Goal template")}</strong><small>{tr("What you want to produce: the goal, compatible workflows, output format and a suggested directory.")}</small></Link></li>
-        <li><Link prefetch={false} href={`${root}settings/configuration/#bindings`}><span className="flow-index">3</span><strong>{tr("Configuration binding")}</strong><small>{tr("Where it applies: sources to read, the Volume and directory to write, trigger, budget and evaluation mode.")}</small></Link></li>
-        <li><Link prefetch={false} href={`${root}runs/`}><span className="flow-index">4</span><strong>{tr("Run and review")}</strong><small>{tr("Each run writes a branch in Volume Studio. An expert reviews and merges it; publishing is a separate step.")}</small></Link></li>
-      </ol>
-      <p className="flow-optional"><Link prefetch={false} href={`${root}profiles/`}>{tr("Evaluation profile")}</Link> · {tr("Optional. Measures a candidate on a held-out dataset before review. A binding sets it to Off, Informational or Required for merge.")}</p>
-      {!group.active_revision && <p className="hint">{tr(group.can_manage ? "This group has no active configuration yet. Also approve sources under Settings, then review and activate the configuration." : "No active configuration. Ask a configuration manager to complete setup.")}</p>}
-    </section>
+    <FlowOverview>{!group.active_revision && <p className="hint">{tr(group.can_manage ? "This group has no active configuration yet. Also approve sources under Settings, then review and activate the configuration." : "No active configuration. Ask a configuration manager to complete setup.")}</p>}</FlowOverview>
     <section className="card"><div className="section-heading"><h2>{tr("Recent runs")}</h2><Link prefetch={false} href={evolutionSectionPath(group.id, "runs", search)}>{tr("View all")}</Link></div>
       {runs.data && (!runs.data.items.length ? <p>{tr("No runs yet. Start a manual run, or test a workflow draft.")}</p> : <table tabIndex={0} aria-label={tr("Recent runs")}><thead><tr>{["Run", "Execution state", "Handoff", "Evaluation", "Template", "Created at"].map(label => <th key={label} scope="col">{tr(label)}</th>)}</tr></thead>
         <tbody>{runs.data.items.map(run => <tr key={run.id}><th scope="row"><Link prefetch={false} href={`${root}runs/${encodeURIComponent(run.id)}/`}>{run.id}</Link></th><td>{tr(run.state === "pause_requested" ? "Pausing" : run.state)}</td><td>{tr(run.handoff)}</td><td>{tr(run.evaluation_state)}</td><td>{run.pins.template.id} · {run.pins.template.revision}</td><td><time dateTime={run.created_at}>{new Date(run.created_at).toLocaleString(locale)}</time></td></tr>)}</tbody></table>)}

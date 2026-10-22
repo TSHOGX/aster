@@ -100,7 +100,7 @@ for (const width of [390, 1440]) test(`integration operations retain exact reque
   const reviewed = await get(`/integrations/${encodeURIComponent(digest)}`);
   expect(reviewed.reviews.filter((item: { rationale: string }) => item.rationale === approval.rationale)).toHaveLength(1);
 
-  const merged = await lostOperation("/integrations/merge", () => review.getByRole("button", { name: "Merge approved integration", exact: true }).press("Enter"), async () => {
+  const merged = await lostOperation("/integrations/merge", async () => { await review.getByRole("button", { name: "Merge approved integration", exact: true }).press("Enter"); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click(); }, async () => {
     expect((await get("/main")).commit_id).not.toBe(main.commit_id);
   });
   expect(merged.expected_main).toBe(main.commit_id);

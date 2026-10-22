@@ -75,7 +75,7 @@ func (a *Adapter) Choices(ctx context.Context) []modelconn.Choice {
 	result := []modelconn.Choice{}
 	for _, c := range connections {
 		if c.Enabled && c.KeySet && a.Store.SealConfigured() {
-			result = append(result, modelconn.Choice{Ref: c.Current, Label: c.Name + " · " + c.Settings.Model})
+			result = append(result, modelconn.Choice{Ref: c.Current, Label: c.Name + " · " + c.Settings.Model, CallTokens: c.Policy.CallTokens})
 		}
 	}
 	return result

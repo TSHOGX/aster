@@ -8,6 +8,7 @@ import { useRead } from "../lib/use-read";
 import type { Permissions, Revision } from "../lib/evolution";
 import type { TemplateDefinition } from "../lib/evolution-config";
 import { useGroup } from "./group-context";
+import { FlowPosition } from "./flow";
 import { PageHeading, useDirtyGuard } from "./group-layout";
 import { CatalogEditor } from "./catalog-editor";
 import { ExampleGallery } from "./example-gallery";
@@ -31,6 +32,7 @@ export function TemplatesPage() {
   return <>
     <PageHeading title={tr("Goal templates")} description="A template pins a goal, typed ports, an output profile, compatible workflows and evaluation defaults. Publishing a template never changes a group until you activate a configuration that uses it."
       actions={<><button onClick={read.refresh}>{tr("Refresh")}</button>{group.can_edit_workflows && <Link prefetch={false} className="button primary" href={`${root}/templates/new/`}>{tr("New template")}</Link>}</>} />
+    <FlowPosition step="templates" />
     <section className="card" aria-label={tr("Published templates")}>
       {read.loading && <p role="status">{tr("Loading templates…")}</p>}
       {read.status && <div role="alert"><p>{tr("Goal templates are unavailable. Retry when the service is restored.")}</p><button onClick={read.refresh}>{tr("Retry")}</button></div>}
@@ -75,7 +77,7 @@ export function TemplateDetailPage({ id, revision }: { id: string; revision: num
 }
 export function WorkflowsPage() {
   const tr = useT(); const { group } = useGroup();
-  return <><PageHeading title={tr("Workflows")} description="Workflows are typed graphs of agents and deterministic steps. Edit and test a draft, publish an immutable revision, then select it in a goal template." />
+  return <><PageHeading title={tr("Workflows")} description="Workflows are typed graphs of agents and deterministic steps. Edit and test a draft, publish an immutable revision, then select it in a goal template." /><FlowPosition step="workflows" />
     <WorkflowDrafts group={group.id} editable={group.can_edit_workflows} evidence={group.can_read_evidence} />
     <ExampleGallery group={group.id} mode="workflows" /></>;
 }
@@ -89,7 +91,7 @@ export function ProfilesPage() {
 export function RunsPage() {
   const tr = useT(); const { group } = useGroup();
   return <><PageHeading title={tr("Runs")} description="Execution, output handoff and evaluation are tracked separately for every run."
-    actions={group.can_run && <Link prefetch={false} className="button primary" href={`/groups/${enc(group.id)}/runs/new/`}>{tr("New run")}</Link>} />
+    actions={group.can_run && <Link prefetch={false} className="button primary" href={`/groups/${enc(group.id)}/runs/new/`}>{tr("New run")}</Link>} /><FlowPosition step="runs" />
     <RunHistory group={group.id} /></>;
 }
 export function NewRunPage() {

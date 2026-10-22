@@ -257,7 +257,10 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     if (view) await start("review", view.digest, { prepared_digest: view.digest, verdict, rationale });
   };
   const merge = async () => {
-    if (view) await start("merge", view.digest, { prepared_digest: view.digest, expected_main: view.identity.main.commit_id });
+    if (!view) return;
+    // Merging changes main for everyone; confirm with the exact target.
+    if (await studio.ask("Merge into main", "Merge this approved integration into main? Main moves to the prepared result; publishing a version is a separate step.", ["Cancel", "Merge"]) !== "Merge") return;
+    await start("merge", view.digest, { prepared_digest: view.digest, expected_main: view.identity.main.commit_id });
   };
   const requestEvaluation = async (requirement: string) => {
     if (!view) return;
@@ -366,10 +369,11 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
       </section>}
       {view.acceptance === "not_accepted" && <>
         <label>{tr("Review rationale")} <textarea value={rationale} onChange={event => setRationale(event.target.value)} disabled={mutationBlocked} /></label>
-        <button disabled={mutationBlocked || view.readiness !== "ready_for_review"} onClick={() => void run(() => review("approve"))}>{tr("Approve integration")}</button>
-        <button disabled={mutationBlocked} onClick={() => void run(() => review("changes_requested"))}>{tr("Request changes")}</button>
-        <button disabled={mutationBlocked} onClick={() => void run(() => review("reject"))}>{tr("Reject integration")}</button>
-        <button disabled={mutationBlocked || view.readiness !== "ready_for_review" || !currentReviews(view.reviews).some(review => review.verdict === "approve")} onClick={() => void run(merge)}>{tr("Merge approved integration")}</button>
+        <button className="secondary" disabled={mutationBlocked || view.readiness !== "ready_for_review"} onClick={() => void run(() => review("approve"))}>{tr("Approve integration")}</button>
+        <button className="secondary" disabled={mutationBlocked || !rationale.trim()} onClick={() => void run(() => review("changes_requested"))}>{tr("Request changes")}</button>
+        <button className="danger" disabled={mutationBlocked || !rationale.trim()} onClick={() => void run(() => review("reject"))}>{tr("Reject integration")}</button>
+        <button className="primary" disabled={mutationBlocked || view.readiness !== "ready_for_review" || !currentReviews(view.reviews).some(review => review.verdict === "approve")} onClick={() => void run(merge)}>{tr("Merge approved integration")}</button>
+        <p className="hint" role="status">{view.readiness !== "ready_for_review" ? tr("Approval and merge open once required checks pass and the result is current with main.") : !currentReviews(view.reviews).some(review => review.verdict === "approve") ? tr("Merge opens after an approval of this exact result.") : tr("Ready to merge into main.")}{!rationale.trim() && " " + tr("Requesting changes or rejecting needs a rationale.")}</p>
       </>}
     </>}
   </section>;

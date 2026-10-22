@@ -256,4 +256,8 @@ export const examplesZH: Record<string, string> = {
   "Save connection": "保存连接",
   "Requires platform administrator.": "需要平台管理员权限。",
   "No model is available yet. You can preview examples; a platform administrator adds one under Settings → Model connections.": "暂无可用模型。可以先预览示例；平台管理员可在“设置 → 模型连接”中添加。",
+  "Where this page sits": "本页所处位置",
+  "This budget cannot run a model call": "此预算无法执行模型调用",
+  "Raise maximum tokens to {value}": "将最大 token 数提高到 {value}",
+  "Each model call reserves {value} tokens from the run budget before it starts. Raise maximum tokens to at least this value; five calls' worth leaves room for retries.": "每次模型调用开始前都会从运行预算中预留 {value} 个 token。请将最大 token 数至少提高到该值；预留五次调用的额度可为重试留出空间。",
 };

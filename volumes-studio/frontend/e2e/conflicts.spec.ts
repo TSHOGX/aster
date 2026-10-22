@@ -147,7 +147,7 @@ for (const width of [390, 1440]) test(`conflict edits and exact operations recov
   expect(digest).toBeTruthy();
   await expect(page.getByRole("button", { name: "Merge approved integration", exact: true })).toBeDisabled();
   await page.getByRole("button", { name: "Approve integration", exact: true }).click();
-  await page.getByRole("button", { name: "Merge approved integration", exact: true }).click();
+  await page.getByRole("button", { name: "Merge approved integration", exact: true }).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
   await expect(page.getByText("Acceptance is complete. Publishing creates a version; it does not deploy to Projects.")).toBeVisible();
   const accepted = await get("/main");
   expect(accepted).toEqual((await get(`/integrations/${encodeURIComponent(digest)}`)).identity.result);

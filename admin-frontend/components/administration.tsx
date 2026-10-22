@@ -15,6 +15,8 @@ import { PolicyEditor } from "./policy-editor";
 import { StudioPermissionsEditor } from "./studio-permissions";
 import { GroupEditor } from "./group-editor";
 import { ProjectList, ProjectView } from "./project-views";
+import { AdminOverview } from "./admin-overview";
+import { ConfirmProvider } from "@web/confirm";
 import { UserList } from "./user-list";
 import { ResourceEditor } from "./resource-editor";
 import { UserConfiguration } from "./configuration-controls";
@@ -78,9 +80,9 @@ export function Administration() {
     try { await api("/api/auth/logout", { method: "POST" }); clearAppearanceBinding(); location.assign(new URL("/", location.origin).href); }
     catch (error) { setError(String(error)); }
   };
-  return <div className="admin-shell">
+  return <ConfirmProvider><div className="admin-shell">
     <header className="admin-header"><strong>{displayName} <span>{tr("Administration")}</span></strong><nav aria-label={tr("Administration")} onClickCapture={guardNavigation}>
-      {status === "ready" && <><Link href="/users" aria-current={!route.length || route[0] === "users" ? "page" : undefined}>{tr("Users")}</Link><Link href="/groups" aria-current={route[0] === "groups" ? "page" : undefined}>{tr("Groups")}</Link><Link href="/policies" aria-current={route[0] === "policies" ? "page" : undefined}>{tr("Policies")}</Link><Link href="/projects" aria-current={route[0] === "projects" ? "page" : undefined}>{tr("Projects")}</Link><Link href="/resources/network" aria-current={route[0] === "resources" ? "page" : undefined}>{tr("Resource Center")}</Link><Link href="/audit" aria-current={route[0] === "audit" ? "page" : undefined}>{tr("Audit")}</Link></>}
+      {status === "ready" && <><Link href="/" aria-current={!route.length ? "page" : undefined}>{tr("Overview")}</Link><Link href="/users" aria-current={route[0] === "users" ? "page" : undefined}>{tr("Users")}</Link><Link href="/groups" aria-current={route[0] === "groups" ? "page" : undefined}>{tr("Groups")}</Link><Link href="/policies" aria-current={route[0] === "policies" ? "page" : undefined}>{tr("Policies")}</Link><Link href="/projects" aria-current={route[0] === "projects" ? "page" : undefined}>{tr("Projects")}</Link><Link href="/resources/network" aria-current={route[0] === "resources" ? "page" : undefined}>{tr("Resource Center")}</Link><Link href="/audit" aria-current={route[0] === "audit" ? "page" : undefined}>{tr("Audit")}</Link></>}
       <WorkbenchLink />{identity && <button onClick={() => void logout()}>{tr("Sign out")}</button>}
     </nav></header>
     <main>
@@ -89,7 +91,8 @@ export function Administration() {
       {status === "denied" && <><h1>{tr("Access denied")}</h1><p>{tr("A platform administrator role is required.")}</p></>}
       {status === "unavailable" && <><p role="alert">{tr("Account access is unavailable.")}</p><button onClick={() => void reloadIdentity()}>{tr("Retry access check")}</button></>}
       {status === "ready" && identity && <div key={identity.id} onClickCapture={guardNavigation}>
-        {(!route.length || route[0] === "users" && route.length === 1) ? <UserList />
+        {!route.length ? <AdminOverview />
+          : route[0] === "users" && route.length === 1 ? <UserList />
           : route[0] === "users" && route.length === 2 ? <UserEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
           : (route[0] === "groups" || route[0] === "policies") && route.length === 1 ? <PolicyList key={route[0]} kind={route[0]} />
           : (route[0] === "users" || route[0] === "groups") && route.length === 3 && route[2] === "studio-permissions" ? <StudioPermissionsEditor key={`${route[0]}-${route[1]}`} kind={route[0] === "users" ? "account" : "group"} subject={route[1]} actor={identity.id} onDirty={setEditorDirty} />
@@ -102,10 +105,10 @@ export function Administration() {
           : route[0] === "resources" ? <ResourceCenter key={identity.id} accountID={identity.id} section={route[1]} onDirty={setEditorDirty} />
           : route[0] === "audit" && route.length === 1 ? <AuditView />
           : route[0] === "operations" && route.length === 2 ? <OperationView id={route[1]} />
-          : <><h1>{tr("Page not found")}</h1><Link href="/users">{tr("Open users")}</Link></>}
+          : <><h1>{tr("Page not found")}</h1><Link href="/">{tr("Open the administration overview")}</Link></>}
       </div>}
     </main>
-  </div>;
+  </div></ConfirmProvider>;
 }
 function WorkbenchLink() {
   const tr = useT();

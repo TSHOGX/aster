@@ -40,7 +40,7 @@ test("branch creation and selection use real scoped authority", async ({ page })
   await expect(page.locator("pre").filter({ hasText: "Reviewed lesson from a branch." })).toBeVisible();
   await page.getByLabel("Review rationale", { exact: true }).fill("Verified result");
   await page.getByRole("button", { name: "Approve integration", exact: true }).click();
-  await page.getByRole("button", { name: "Merge approved integration", exact: true }).click();
+  await page.getByRole("button", { name: "Merge approved integration", exact: true }).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
   await expect(page.getByText("Acceptance is complete. Publishing creates a version; it does not deploy to Projects.")).toBeVisible();
 
   await page.getByLabel("Version label", { exact: true }).fill("reviewed-v1");
@@ -80,7 +80,7 @@ test("branch creation and selection use real scoped authority", async ({ page })
   await conflicts.getByRole("button", { name: "Prepare resolved integration", exact: true }).click();
   await expect(page.getByRole("button", { name: "Merge approved integration", exact: true })).toBeDisabled();
   await page.getByRole("button", { name: "Approve integration", exact: true }).click();
-  await page.getByRole("button", { name: "Merge approved integration", exact: true }).click();
+  await page.getByRole("button", { name: "Merge approved integration", exact: true }).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
   await expect(page.getByText("Acceptance is complete. Publishing creates a version; it does not deploy to Projects.")).toBeVisible();
 
 });
@@ -135,7 +135,7 @@ test("non-admin experts enter with scoped grants and cannot create or merge libr
     await expect(expert.locator("pre").filter({hasText:"Exact candidate for expert review"})).toBeVisible();
     await expert.getByRole("button",{name:"Approve integration",exact:true}).click();
     await expect(expert.getByRole("button",{name:"Merge approved integration",exact:true})).toBeEnabled();
-    await expert.getByRole("button",{name:"Merge approved integration",exact:true}).click();
+    await expert.getByRole("button",{name:"Merge approved integration",exact:true}).click(); await expert.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
     await expect(expert.getByRole("region",{name:"Integration review",exact:true}).getByRole("alert")).toBeVisible();
     const unchanged=await (await page.request.get(root+"/main")).json();expect(unchanged.commit_id).toBe(main.commit_id);
     await grant(user.user.id,"volume.read","deny",1);
@@ -217,7 +217,7 @@ for (const width of [390, 1440]) test(`browser composes selected paths and later
   await language("en");
   await review.getByLabel("Review rationale", {exact:true}).fill("Accept selected changes; keep.txt remains deferred.");
   await review.getByRole("button", {name:"Approve integration",exact:true}).click();
-  await review.getByRole("button", {name:"Merge approved integration",exact:true}).click();
+  await review.getByRole("button", {name:"Merge approved integration",exact:true}).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
   await expect(review).toContainText("Acceptance is complete.");
   const partialMain = (await get("/main")).commit_id;
   expect((await page.request.get(`${root}/commits/${partialMain}/content?path=keep.txt`)).status()).toBe(404);
@@ -226,7 +226,7 @@ for (const width of [390, 1440]) test(`browser composes selected paths and later
   expect(new URL(page.url()).searchParams.get("integration")).not.toBe(digest);
   await expect(review.getByRole("button", {name:"Merge approved integration",exact:true})).toBeDisabled();
   await review.getByRole("button", {name:"Approve integration",exact:true}).click();
-  await review.getByRole("button", {name:"Merge approved integration",exact:true}).click();
+  await review.getByRole("button", {name:"Merge approved integration",exact:true}).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
   await expect(review).toContainText("Acceptance is complete.");
   const accepted = (await get("/main")).commit_id;
   for (const [path, content] of Object.entries({"keep.txt":"defer this path","selected.txt":"select this path","other.txt":"other source"})) {

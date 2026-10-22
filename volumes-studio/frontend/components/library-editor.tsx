@@ -6,6 +6,7 @@ import { History } from "./history";
 import { IntegrationReview } from "./integration-review";
 import { PathPolicies } from "./path-policies";
 import { BranchCheckpoint } from "./checkpoint";
+import { LibraryHeader } from "./library-header";
 import { BranchSelector } from "./branch-selector";
 import { branchAPI, branchRoot, type Branch } from "../lib/branches";
 
@@ -466,6 +467,7 @@ export function LibraryEditor({ id }: { id: string }) {
   return (
     <main className="studio-shell">
       <ShellHeader library={library} />
+      <LibraryHeader library={library} branch={studio.model.branches[id]} version={version} stage={version ? "publish" : !studio.model.branches[id] ? "branch" : library?.draft_change_count ? "edit" : "review"} />
       <div className="branch-controls">
       <BranchSelector library={id} onSelect={() => { setVersion(""); setSelected(""); setDirectory(""); void run(() => refresh()); }} />
       {!version && studio.model.branches[id] && <BranchCheckpoint key={`${id}:${branchID}`} branch={studio.model.branches[id]} onCommitted={() => { void run(() => refresh()); }} />}
@@ -798,8 +800,8 @@ export function LibraryEditor({ id }: { id: string }) {
               ) : (
                 <div className="editor-empty">
                   <FileText size={30} />
-                  <h2>{version ? tr("Browse version files") : tr("Select a file")}</h2>
-                  <p>{tr("Open a file from the sidebar, or use Go to file.")}</p>
+                  <h2>{version ? tr("Browse version files") : !studio.model.branches[id] ? tr("Choose or start a branch") : tr("Select a file")}</h2>
+                  <p>{version ? tr("Open a file from the sidebar, or use Go to file.") : !studio.model.branches[id] ? tr("Files open read-only until a working branch is selected. Pick a branch above, or enter a name and create one from main.") : tr("Open a file from the sidebar, or use Go to file.")}</p>
                   <div className="actions">
                     <button
                       onClick={() => {
@@ -808,7 +810,7 @@ export function LibraryEditor({ id }: { id: string }) {
                       }}
                     >
                        {tr("Go to file")} </button>
-                    {!version && !library?.archived && (
+                    {!version && !library?.archived && studio.model.branches[id] && (
                       <button onClick={() => input.current?.click()}>
                         <UploadCloud size={16} />
                          {tr("Upload files")} </button>

@@ -183,7 +183,7 @@ for (const width of [390, 1440]) test(`binary oversized and structural conflict 
   await page.screenshot({ path: test.info().outputPath(`integrated-fallback-${width}.png`), fullPage: true });
   await language("en");
   await page.getByRole("button", { name: "Approve integration", exact: true }).click();
-  await page.getByRole("button", { name: "Merge approved integration", exact: true }).click();
+  await page.getByRole("button", { name: "Merge approved integration", exact: true }).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
   await expect(page.getByText("Acceptance is complete. Publishing creates a version; it does not deploy to Projects.")).toBeVisible();
   const accepted = await get("/main");
   const version = await post("/versions", { accepted_commit: accepted.commit_id, label: "Resolved kinds" });

@@ -1,6 +1,7 @@
 'use client';
 import { formatQuantity } from "@web/i18n/locale";
 import { useT } from "@/lib/i18n";
+import { useConfirm } from "@web/confirm";
 
 /* eslint-disable @next/next/no-html-link-for-pages -- Studio is an independently deployed application outside the admin Next router. */
 import Link from 'next/link';
@@ -18,7 +19,7 @@ type Imported = { id: string; source_id: string; publisher_id: string; library_i
 const memory = new Map<string, ImportCommand | null>();
 const unpersisted = new Set<string>();
 export function VolumeImports({ accountID, onDirty }: { accountID: string; onDirty: (value: boolean) => void }) {
-  const tr = useT();
+  const tr = useT(); const confirm = useConfirm();
   const [sources, setSources] = useState<Source[]>([]), [source, setSource] = useState('');
   const [libraries, setLibraries] = useState<Library[]>([]), [library, setLibrary] = useState('');
   const [releases, setReleases] = useState<Release[]>([]), [releaseNext, setReleaseNext] = useState(''), [libraryNext, setLibraryNext] = useState('');
@@ -128,8 +129,8 @@ export function VolumeImports({ accountID, onDirty }: { accountID: string; onDir
   function selectRelease(release: Release) {
     void submit({account:accountID,action:'admit',imported:'',body:JSON.stringify({request_id:crypto.randomUUID(),source_id:source,version_id:release.id,expected_manifest_digest:release.descriptor_digest,consumer_profile:release.profile})});
   }
-  function action(imported: Imported, action: Exclude<ImportAction,'admit'>) {
-    if ((action === 'cancel' || action === 'retire') && !window.confirm(tr(action === 'retire' ? 'Retire this local import? Retirement checks saved Environment and Project references before cleaning up engine volumes.' : 'Cancel this local import? Retirement checks saved Environment and Project references before cleaning up engine volumes.'))) return;
+  async function action(imported: Imported, action: Exclude<ImportAction,'admit'>) {
+    if ((action === 'cancel' || action === 'retire') && !(await confirm({ title: tr(action === 'retire' ? 'Retire this local import?' : 'Cancel this local import?'), body: tr('Retirement checks saved Environment and Project references before cleaning up engine volumes.'), confirm: tr(action === 'retire' ? 'Retire locally' : 'Cancel import'), cancel: tr('Keep import'), danger: true })).confirmed) return;
     void submit({ account:accountID, action, imported:imported.id, body:JSON.stringify({request_id:crypto.randomUUID()}) });
   }
   const matching = (release: Release) => imports.find(i => i.source_id === source && i.version_id === release.id && i.manifest_digest === release.descriptor_digest);
@@ -139,7 +140,7 @@ export function VolumeImports({ accountID, onDirty }: { accountID: string; onDir
     {ready && pending && <div className="panel" role="status"><p>{tr("The request is retained until its result is known.")}</p><button disabled={busy} onClick={() => void submit(pending)}>{tr("Check original request")}</button></div>}
     {storageError&&<p role="alert" className="error">{tr("Local import recovery is unavailable. Keep this tab open until the request is confirmed.")}</p>}
     {ready&&invalid&&<p role="alert" className="error">{tr("Local import recovery is invalid. Discard it before starting another operation.")}</p>}
-    {ready&&(pending||invalid)&&<button disabled={busy} onClick={()=>{if(window.confirm(tr("The original import request may already have completed. Check local imports before discarding recovery."))){remember(null);setInvalid(false);}}}>{tr("Discard import recovery")}</button>}
+    {ready&&(pending||invalid)&&<button className="danger" disabled={busy} onClick={async ()=>{if((await confirm({title:tr("Discard import recovery?"),body:tr("The original import request may already have completed. Check local imports before discarding recovery."),confirm:tr("Discard import recovery"),cancel:tr("Cancel"),danger:true})).confirmed){remember(null);setInvalid(false);}}}>{tr("Discard import recovery")}</button>}
     <div className="form-actions"><label>{tr("Source")}<Select aria-label={tr("Volume source")} value={source} disabled={blocked || catalogBusy} onChange={e => { setSource(e.target.value); setLibraries([]); setLibrary(''); setReleases([]); }}>{sources.map(s => <option key={s.id} value={s.id}>{s.id} · {s.publisher_id}</option>)}</Select></label><label>{tr("Library")}<Select aria-label={tr("Volume library")} value={library} disabled={!libraries.length || blocked || catalogBusy} onChange={e => { setLibrary(e.target.value); setReleases([]); }}>{libraries.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</Select></label><button disabled={busy || catalogBusy} onClick={() => {pages.current=1;setLoadingImports(true);setRefresh(x => x + 1);}}>{tr("Refresh sources and imports")}</button></div>
     {sources.length === 0 && <p>{tr("No trusted Studio sources are configured. An operator must register the publisher identity and service credential.")}</p>}
     {libraryError && <p role="status" className="error">{tr(libraryError)}</p>}
@@ -151,7 +152,7 @@ export function VolumeImports({ accountID, onDirty }: { accountID: string; onDir
     })}</tbody></table></div>}
     {releaseNext && <button disabled={catalogBusy||busy} onClick={()=>void moreCatalog('releases')}>{tr("More releases")}</button>}
     <h3>{tr("Local imports")}</h3><p className="hint">{tr("Ready content is retained locally. Changes or outages in Studio do not update existing projects.")}</p>
-    <div className="table-scroll"><table><thead><tr><th>{tr("Source / version")}</th><th>{tr("State")}</th><th>{tr("Capacity and provenance")}</th><th>{tr("Actions")}</th></tr></thead><tbody>{imports.map(i => <tr key={i.id} id={`import-${i.id}`}><td>{i.source_id}<small>{i.version_id}</small></td><td>{tr(i.state)}{i.error && <small role="status">{tr(i.error.replaceAll('_', ' '))}</small>}</td><td>{formatQuantity(i.capacity_bytes)}  {tr("bytes per engine object")}<small>{tr("Transfer reservation:")} {formatQuantity(i.transfer_reserved_bytes)}  {tr("bytes")}</small><details><summary>{tr("Provenance")}</summary><p>{tr("Publisher:")} {i.publisher_actor || i.publisher_id}</p><p>{tr("Imported by:")} {i.actor_id}</p><p>{tr("Local artifact:")} {i.artifact.id} / {i.artifact.version}</p><code>{i.manifest_digest}</code></details></td><td><div className="form-actions">{i.state === 'ready' && <><Link className="button" href="/resources/environment">{tr("Use in Environment")}</Link><button disabled={blocked || catalogBusy} onClick={() => action(i, 'retire')}>{tr("Retire locally")}</button></>}{['paused', 'failed'].includes(i.state) && <button disabled={blocked || catalogBusy} onClick={() => action(i, 'retry')}>{tr("Retry as current admin")}</button>}{['acquiring', 'source_acquired', 'materializing', 'paused', 'failed'].includes(i.state) && <button disabled={blocked || catalogBusy} onClick={() => action(i, 'cancel')}>{tr("Cancel")}</button>}{['canceled', 'failed'].includes(i.state) && <button disabled={blocked || catalogBusy} onClick={() => action(i, 'retire')}>{tr("Clean up local artifacts")}</button>}</div></td></tr>)}</tbody></table>{imports.length === 0 && <p>{tr("No local imports yet.")}</p>}</div>
+    <div className="table-scroll"><table><thead><tr><th>{tr("Source / version")}</th><th>{tr("State")}</th><th>{tr("Capacity and provenance")}</th><th>{tr("Actions")}</th></tr></thead><tbody>{imports.map(i => <tr key={i.id} id={`import-${i.id}`}><td>{i.source_id}<small>{i.version_id}</small></td><td>{tr(i.state)}{i.error && <small role="status">{tr(i.error.replaceAll('_', ' '))}</small>}</td><td>{formatQuantity(i.capacity_bytes)}  {tr("bytes per engine object")}<small>{tr("Transfer reservation:")} {formatQuantity(i.transfer_reserved_bytes)}  {tr("bytes")}</small><details><summary>{tr("Provenance")}</summary><p>{tr("Publisher:")} {i.publisher_actor || i.publisher_id}</p><p>{tr("Imported by:")} {i.actor_id}</p><p>{tr("Local artifact:")} {i.artifact.id} / {i.artifact.version}</p><code>{i.manifest_digest}</code></details></td><td><div className="form-actions">{i.state === 'ready' && <><Link className="button" href="/resources/environment">{tr("Use in Environment")}</Link><button className="danger" disabled={blocked || catalogBusy} onClick={() => void action(i, 'retire')}>{tr("Retire locally")}</button></>}{['paused', 'failed'].includes(i.state) && <button disabled={blocked || catalogBusy} onClick={() => action(i, 'retry')}>{tr("Retry as current admin")}</button>}{['acquiring', 'source_acquired', 'materializing', 'paused', 'failed'].includes(i.state) && <button disabled={blocked || catalogBusy} onClick={() => action(i, 'cancel')}>{tr("Cancel")}</button>}{['canceled', 'failed'].includes(i.state) && <button disabled={blocked || catalogBusy} onClick={() => action(i, 'retire')}>{tr("Clean up local artifacts")}</button>}</div></td></tr>)}</tbody></table>{imports.length === 0 && <p>{tr("No local imports yet.")}</p>}</div>
     {cursor && <button disabled={loadingImports||busy} onClick={()=>{pages.current++;setLoadingImports(true);setLocalRevision(value=>value+1);}}>{tr("More imports")}</button>}
 
   </section>;

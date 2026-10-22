@@ -487,6 +487,8 @@ func (s *Store) Revision(ctx context.Context, ref evolution.Revision) (Connectio
 type Choice struct {
 	Ref   evolution.Revision `json:"ref"`
 	Label string             `json:"label"`
+	// CallTokens is reserved from the run budget for every call.
+	CallTokens int64 `json:"call_tokens"`
 }
 
 // StoredKey decrypts a connection's key for an administrator's test request.

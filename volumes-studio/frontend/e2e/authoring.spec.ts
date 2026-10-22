@@ -55,7 +55,7 @@ async function acceptBranch(page: Page, checkpoint = true) {
  }
   await page.getByRole("button", { name: "Prepare integration", exact: true }).click();
   await page.getByRole("button", { name: "Approve integration", exact: true }).click();
-  await page.getByRole("button", { name: "Merge approved integration", exact: true }).click();
+  await page.getByRole("button", { name: "Merge approved integration", exact: true }).click(); await page.getByRole("dialog", { name: "Merge into main" }).getByRole("button", { name: "Merge", exact: true }).click();
   await expect(page.getByText("Acceptance is complete. Publishing creates a version; it does not deploy to Projects.")).toBeVisible();
 }
 async function publishAccepted(page: Page) {

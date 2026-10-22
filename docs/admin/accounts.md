@@ -2,8 +2,12 @@
 
 [Documentation](../README.md) · Administration
 
-Sign in with an administrator account and open `/admin`. Use **Users**, **Groups**,
-**Policies** and **Audit** to manage access. Host operators create the first
+Sign in with an administrator account and open `/admin`. The **Overview** shows the
+current number of users, groups, policies and Projects, and explains in order how
+users, groups, policies, Resource Center, Projects and Audit fit together. Use
+**Users**, **Groups**, **Policies** and **Audit** to manage access. Destructive
+actions such as suspending an account, resetting a password, deleting a policy or
+retiring an import ask for confirmation in a dialog that lists their effect. Host operators create the first
 administrator during [installation](../operators/installation.md).
 
 ## Create an account or reset a password
@@ -341,7 +345,11 @@ whether a key is set and its last four characters, and **Edit** keeps the stored
 unless you enter a new one. Changing the base URL, model, output limit, temperature or
 JSON mode creates a new revision; existing workflows keep the revision they pinned.
 Under **Limits and prices**, **Tokens reserved per call** is reserved from the run budget
-for each call, so a binding's maximum tokens must be at least that value. Turning
+for each call, so a binding's maximum tokens must be at least that value. The
+configuration page warns when the group ceiling or a binding budget is below the
+largest reservation and offers **Raise maximum tokens** to fix it. Workflows,
+Templates, Configuration and Runs each show a one-line step indicator marking where
+the page sits in the workflow → template → binding → run flow. Turning
 **Enabled** off stops new calls. Enabled connections appear in the editor's
 **Registered model** list and in example installation.
 

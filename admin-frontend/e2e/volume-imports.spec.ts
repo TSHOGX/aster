@@ -68,6 +68,7 @@ for(const action of ['retry','cancel','retire'])test(`import ${action} preserves
  await page.goto('/admin/resources/volumes');
  const panel=page.getByRole('region',{name:'Published library volumes',exact:true});
  await panel.getByRole('button',{name:action==='retry'?'Retry as current admin':action==='cancel'?'Cancel':'Retire locally',exact:true}).click();
+ if(action!=='retry')await page.getByRole('dialog').getByRole('button',{name:action==='cancel'?'Cancel import':'Retire locally',exact:true}).click();
  await expect(panel.getByRole('button',{name:'Check original request',exact:true})).toBeEnabled();
  denied=true;await page.reload();
  await expect(panel.getByRole('alert')).toContainText('Denied');
@@ -123,7 +124,7 @@ test('malformed import recovery blocks mutations and failed storage preserves ex
  });
  await page.goto('/admin/resources/volumes');const panel=page.getByRole('region',{name:'Published library volumes',exact:true});
  await expect(panel).toContainText('Local import recovery is invalid.');await expect(panel.getByRole('button',{name:'Import release',exact:true})).toBeDisabled();
- await panel.getByRole('button',{name:'Discard import recovery',exact:true}).click();await expect(panel.getByRole('button',{name:'Import release',exact:true})).toBeEnabled();
+ await panel.getByRole('button',{name:'Discard import recovery',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'Discard import recovery',exact:true}).click();await expect(panel.getByRole('button',{name:'Import release',exact:true})).toBeEnabled();
  await page.evaluate(key=>{const original=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(k===key)throw new Error('storage unavailable');return original.call(this,k,v);};},key);
  await panel.getByRole('button',{name:'Import release',exact:true}).click();await expect(panel.getByRole('button',{name:'Check original request',exact:true})).toBeEnabled();
  await expect(panel).toContainText('Local import recovery is unavailable.');
