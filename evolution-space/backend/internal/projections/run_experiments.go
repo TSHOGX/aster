@@ -168,9 +168,6 @@ func (s *Store) CreateRunExperiment(ctx context.Context, input RunExperimentRequ
 		return result, err
 	}
 	ref := evolution.Revision{ID: input.Workflow.ID, Revision: 1, Digest: evolution.Digest(workflowBody)}
-	if err = s.PublishWorkflow(ctx, ref, workflowBody); err != nil {
-		return result, err
-	}
 	result = source
 	result.ID, result.State, result.Fence = input.ID, "queued", 0
 	result.CreatedAt = time.Now().UTC()
@@ -206,6 +203,21 @@ func (s *Store) CreateRunExperiment(ctx context.Context, input RunExperimentRequ
 		if err = requireSealedGenerationArtifact(ctx, tx, artifact); err != nil {
 			return result, err
 		}
+	}
+	// Publishing with the admission keeps a refused admission from leaving a
+	// permanent experiment graph behind.
+	if err = publishWorkflow(ctx, tx, ref, workflowBody); err != nil {
+		return result, err
+	}
+	// A concurrent identical request may have committed first; replay it.
+	if err = tx.QueryRowContext(ctx, "SELECT request FROM runs WHERE id=? AND group_id=?", input.ID, input.GroupID).Scan(&prior); err == nil {
+		tx.Rollback()
+		if !bytes.Equal(prior, request) {
+			return result, ErrConflict
+		}
+		return s.Run(ctx, input.GroupID, input.ID)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return result, err
 	}
 	_, err = tx.ExecContext(ctx, "INSERT INTO runs(id,group_id,binding_id,configuration_revision,occurrence_id,experiment_of,request,body,state) VALUES(?,?,?,?,?,?,?,?,?)", result.ID, result.GroupID, result.BindingID, result.Pins.ConfigurationRevision, occurrence, result.ExperimentOf, request, body, result.State)
 	if err != nil {

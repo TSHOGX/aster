@@ -221,7 +221,7 @@ func (s *Store) SubmitRunResult(ctx context.Context, scope evolution.RunResultSc
 		}
 	}
 	if !noChange {
-		if err = s.settleRunResult(ctx, scope.Output.LibraryID, receipt); err != nil {
+		if err = settle(ctx, func(ctx context.Context) error { return s.settleRunResult(ctx, scope.Output.LibraryID, receipt) }); err != nil {
 			s.poisoned = true
 			return receipt, err
 		}

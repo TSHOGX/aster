@@ -91,7 +91,7 @@ func (s *Store) RevertBranch(ctx context.Context, a Actor, library string, input
 }
 
 func (s *Store) createBranch(ctx context.Context, a Actor, library string, input CreateBranchInput, parent, operation, body string) (Branch, error) {
-	if !manifest.ValidID(library) || !evolution.ObjectID(input.BaseCommit) || !validText(input.Name, 128) || strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Name) != input.Name || input.Name == "main" {
+	if !manifest.ValidID(library) || !evolution.ObjectID(input.BaseCommit) || !validText(input.Name, 128) || strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Name) != input.Name || input.Name == "main" || strings.HasPrefix(input.Name, "run-") {
 		return Branch{}, ErrInvalid
 	}
 	if err := s.authorizeLibrary(ctx, a, library, "volume.author"); err != nil {
@@ -196,7 +196,7 @@ func (s *Store) createBranch(ctx context.Context, a Actor, library string, input
 			return b, err
 		}
 	}
-	if err = s.settleBranch(ctx, b); err != nil {
+	if err = settle(ctx, func(ctx context.Context) error { return s.settleBranch(ctx, b) }); err != nil {
 		s.poisoned = true
 		return b, err
 	}

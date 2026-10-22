@@ -3,8 +3,11 @@ package studioclient
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"net"
 	"net/http"
@@ -89,5 +92,33 @@ func (c *Client) File(ctx context.Context, grant evolution.EvaluationGrant, side
 		response.Body.Close()
 		return nil, fmt.Errorf("Studio file identity mismatch")
 	}
-	return response.Body, nil
+	return &verifiedFile{body: response.Body, hash: sha256.New(), remaining: size, digest: entry.Digest}, nil
 }
+
+// verifiedFile hashes the body as it streams and fails at EOF unless the
+// bytes match the pinned size and digest, so altered or truncated content
+// never reads as the pinned file.
+type verifiedFile struct {
+	body      io.ReadCloser
+	hash      hash.Hash
+	remaining int64
+	digest    string
+}
+
+func (f *verifiedFile) Read(p []byte) (int, error) {
+	if int64(len(p)) > f.remaining+1 {
+		p = p[:f.remaining+1]
+	}
+	n, err := f.body.Read(p)
+	f.hash.Write(p[:n])
+	f.remaining -= int64(n)
+	if f.remaining < 0 {
+		return n, fmt.Errorf("Studio file exceeds its pinned size")
+	}
+	if errors.Is(err, io.EOF) && (f.remaining != 0 || fmt.Sprintf("sha256:%x", f.hash.Sum(nil)) != f.digest) {
+		return n, fmt.Errorf("Studio file does not match its pinned digest")
+	}
+	return n, err
+}
+
+func (f *verifiedFile) Close() error { return f.body.Close() }

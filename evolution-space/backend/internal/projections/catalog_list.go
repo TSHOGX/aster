@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 type CatalogListInput struct {
@@ -14,6 +15,9 @@ type CatalogListInput struct {
 	AfterID       string `json:"after_id"`
 	AfterRevision int64  `json:"after_revision"`
 	Limit         int    `json:"limit"`
+	// SharedOnly hides run-scoped workflows (experiments and draft tests),
+	// which belong to the group that ran them, from group-facing listings.
+	SharedOnly bool
 }
 type CatalogPage struct {
 	Revisions    []evolution.Revision `json:"revisions"`
@@ -33,7 +37,11 @@ func (s *Store) CatalogRevisions(ctx context.Context, input CatalogListInput) (C
 	args := []any{input.Kind, input.AfterID, input.AfterID, input.AfterRevision, input.Limit + 1}
 	switch input.Kind {
 	case "workflow":
-		query = "SELECT id,revision,digest FROM workflow_revisions WHERE (id>? OR (id=? AND revision>?)) ORDER BY id,revision LIMIT ?"
+		query = "SELECT id,revision,digest FROM workflow_revisions WHERE (id>? OR (id=? AND revision>?))"
+		if input.SharedOnly {
+			query += " AND id NOT LIKE 'experiment-%' AND id NOT LIKE 'draft-test-%' AND id NOT LIKE 'scope-%'"
+		}
+		query += " ORDER BY id,revision LIMIT ?"
 		args = args[1:]
 	case "service", "template", "profile":
 	default:
@@ -111,4 +119,10 @@ func (s *Store) LatestDefinition(ctx context.Context, kind, id string) (evolutio
 		return ref, ErrNotFound
 	}
 	return ref, err
+}
+
+// RunScopedWorkflow reports whether a workflow ID was published for one run's
+// experiment or draft test rather than shared through the catalog.
+func RunScopedWorkflow(id string) bool {
+	return strings.HasPrefix(id, "experiment-") || strings.HasPrefix(id, "draft-test-") || strings.HasPrefix(id, "scope-")
 }

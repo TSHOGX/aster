@@ -98,7 +98,7 @@ func BrowserTemplateAPI(client *appidentity.Client, store *projections.Store) fu
 			write(w, 400, map[string]string{"error": "invalid_cursor"})
 			return
 		}
-		page, err := store.CatalogRevisions(r.Context(), projections.CatalogListInput{Kind: "workflow", AfterID: r.URL.Query().Get("after_id"), AfterRevision: revision, Limit: 50})
+		page, err := store.CatalogRevisions(r.Context(), projections.CatalogListInput{Kind: "workflow", AfterID: r.URL.Query().Get("after_id"), AfterRevision: revision, Limit: 50, SharedOnly: true})
 		if err != nil {
 			write(w, 422, map[string]string{"error": "workflows_unavailable"})
 			return
@@ -112,6 +112,10 @@ func BrowserTemplateAPI(client *appidentity.Client, store *projections.Store) fu
 		ref, err := browserCatalogRef(r)
 		if err != nil {
 			write(w, 400, map[string]string{"error": "invalid_workflow_reference"})
+			return
+		}
+		if projections.RunScopedWorkflow(ref.ID) {
+			write(w, 404, map[string]string{"error": "workflow_not_found"})
 			return
 		}
 		body, err := store.CatalogDefinition(r.Context(), "workflow", ref)

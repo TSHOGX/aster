@@ -14,6 +14,8 @@ type Change = { path: string; change: string };
 type FilePreview = { commit_id: string; entry: Entry; text?: string; preview: string };
 type CompositionOption = { branch: Branch; changes: BranchChange[]; next: string; total?: number };
 const compositionKey = (branch: Branch) => `${branch.id}:${branch.head}`;
+const verdictLabel: Record<string, string> = { approve: "Approved", changes_requested: "Changes requested", reject: "Rejected" };
+
 export function IntegrationReview({ branch }: { branch: Branch }) {
   const tr = useT();
   const studio = useStudio();
@@ -359,7 +361,7 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
           </>}
         </section>;
       })}</section>}
-      {view.reviews.map(review => <p key={review.id}>{review.verdict}: {review.rationale}</p>)}
+      {view.reviews.map(review => <p key={review.id}>{tr(verdictLabel[review.verdict] ?? review.verdict)}: {review.rationale}</p>)}
       {view.acceptance === "accepted" && <section aria-label={tr("Publish accepted commit")}>
         <p>{tr("Acceptance is complete. Publishing creates a version; it does not deploy to Projects.")}</p>
         <label>{tr("Version label")} <input value={label} disabled={mutationBlocked} onChange={event => setLabel(event.target.value)} /></label>

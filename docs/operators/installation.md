@@ -63,13 +63,13 @@ Replace the engine store identity, Minimal and Work manifest paths/digests, serv
 content paths. Set `public_dns_resolvers` for the Public built-in. Restricted is
 the standard-user default.
 
-Set `evolution_space.endpoint` to the private TLS address exposed by the
-Evolution Space browser/worker service (the reference host uses
-`https://10.203.0.2:18447`) and `evolution_space.credential_env` to the
-environment variable containing the central service credential. The deployment
-validator rejects a complete build when this endpoint is absent. Keep the worker
-listener private; only the front door may route `/evolution-space/` to its TLS
-gateway.
+Set `evolution_space.endpoint` to the private TLS address of the Evolution Space
+service listener (`-listen`), not its browser gateway (`-browser-listen`); for
+example `https://evolution-space.internal.example:18448`. Set
+`evolution_space.credential_env` to the environment variable containing the
+central service credential. The deployment validator rejects a complete build
+when this endpoint is absent. Keep the service listener private; only the front
+door may route `/evolution-space/` to the browser gateway.
 
 Read [configuration](configuration.md) before enabling model gateways: deployments
 using Khora's dedicated gateway UID need reachable **non-loopback** engine TLS,

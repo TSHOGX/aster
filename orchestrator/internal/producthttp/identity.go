@@ -221,7 +221,12 @@ func (a *Authentication) identityRevoke(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 func (a *Authentication) identityStudioAccess(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.identityService(w, r); !ok {
+	client, ok := a.identityService(w, r)
+	if !ok {
+		return
+	}
+	if client.ID != "studio" {
+		writeError(w, 403, "studio service required")
 		return
 	}
 	var request evolution.AccessRequest
@@ -333,6 +338,9 @@ func (a *Authentication) identityRunAdmissionAuthority(w http.ResponseWriter, r 
 	writeJSON(w, 200, map[string]bool{"allowed": allowed})
 }
 
+// identityCatalogAuthority validates the catalog scope only. Catalog metadata is
+// shared by every group, so the decision is not per-principal; callers still
+// authorize the requesting member before serving it.
 func (a *Authentication) identityCatalogAuthority(w http.ResponseWriter, r *http.Request) {
 	client, ok := a.identityService(w, r)
 	if !ok {

@@ -163,5 +163,9 @@ func (a *EvaluationInputAPI) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": entry.Path}))
 	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
 	size, _ := manifest.ParseSize(entry.Size)
-	_, _ = io.CopyN(w, reader, size)
+	// Headers are sent; a mismatch can only cut the body short, which the
+	// declared Content-Length and digest let the reader detect.
+	if _, err := io.Copy(w, io.LimitReader(reader, size+1)); err != nil {
+		return
+	}
 }

@@ -287,7 +287,9 @@ func (a *Adapter) execute(ctx context.Context, key runner.ModelCallKey, submissi
 			budget = settings.MaxOutputTokens
 		}
 		if price := connection.Policy.OutputMicrosPerMillion; price > 0 {
-			if byCost := (submission.Ceiling.CostMicros-used.CostMicros)*1_000_000/price - estimate(messages); byCost < budget {
+			// The prompt is billed at the input rate; only the rest pays for output.
+			prompt := (estimate(messages)*connection.Policy.InputMicrosPerMillion + 999_999) / 1_000_000
+			if byCost := (submission.Ceiling.CostMicros - used.CostMicros - prompt) * 1_000_000 / price; byCost < budget {
 				budget = byCost
 			}
 		}

@@ -80,7 +80,11 @@ func (s *Store) Merge(ctx context.Context, a Actor, library string, input MergeI
 	}
 	qualified := 0
 	for _, reviewer := range reviewers {
-		if err := s.authorizeLibrary(ctx, reviewer, library, "volume.review"); err != nil {
+		// A reviewer who has since lost review access no longer counts, but
+		// does not block a merge that still has enough qualified approvals.
+		if err := s.authorizeLibrary(ctx, reviewer, library, "volume.review"); errors.Is(err, ErrAuthority) {
+			continue
+		} else if err != nil {
 			return result, err
 		}
 		qualified++
@@ -126,7 +130,9 @@ func (s *Store) Merge(ctx context.Context, a Actor, library string, input MergeI
 			return result, err
 		}
 	}
-	if err = s.settleMerge(ctx, library, result.OperationID, prepared.Main.CommitID, result.AcceptedCommit); err != nil {
+	if err = settle(ctx, func(ctx context.Context) error {
+		return s.settleMerge(ctx, library, result.OperationID, prepared.Main.CommitID, result.AcceptedCommit)
+	}); err != nil {
 		s.poisoned = true
 		return result, err
 	}

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -84,6 +85,12 @@ func BrowserModelConnectionAPI(options BrowserOptions) func(appidentity.Session,
 		}
 		key := strings.TrimSpace(input.Key)
 		if key == "" && input.ID != "" {
+			// A stored key is only ever sent to the host it was saved for.
+			stored, err := storedBaseURL(r.Context(), options.Connections, input.ID)
+			if err != nil || stored != strings.TrimRight(input.Settings.BaseURL, "/") {
+				write(w, 200, modelconn.TestResult{Error: "Enter the API key again to test a different base URL."})
+				return
+			}
 			if key, err = options.Connections.StoredKey(r.Context(), input.ID); err != nil {
 				write(w, 200, modelconn.TestResult{Error: "Enter an API key; no usable key is stored for this connection."})
 				return
@@ -98,4 +105,17 @@ func BrowserModelConnectionAPI(options BrowserOptions) func(appidentity.Session,
 	return func(session appidentity.Session, w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(w, contextWithBrowserSession(r, session))
 	}
+}
+
+func storedBaseURL(ctx context.Context, connections ModelConnections, id string) (string, error) {
+	items, err := connections.List(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, item := range items {
+		if item.ID == id {
+			return strings.TrimRight(item.Settings.BaseURL, "/"), nil
+		}
+	}
+	return "", errors.New("model connection not found")
 }

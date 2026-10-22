@@ -18,7 +18,9 @@ const empty: Draft = { id: "", name: "", enabled: true, base_url: "https://", mo
 const fromConnection = (c: Connection): Draft => ({ id: c.id, name: c.name, enabled: c.enabled, base_url: c.settings.base_url, model: c.settings.model, api_key: "", max_output_tokens: String(c.settings.max_output_tokens), temperature: c.settings.temperature === undefined ? "" : String(c.settings.temperature), json_mode: c.settings.json_mode, call_tokens: String(c.policy.call_tokens), input_price: String(c.policy.input_micros_per_million), output_price: String(c.policy.output_micros_per_million), timeout_seconds: String(c.policy.timeout_seconds), concurrency: String(c.policy.concurrency) });
 
 async function send<T>(method: string, path: string, body: unknown): Promise<{ status: number; value?: T; error?: string; message?: string }> {
-  const session = await (await fetch(`${base}/api/v1/session`, { credentials: "same-origin", cache: "no-store" })).json() as Session;
+  const sessionResponse = await fetch(`${base}/api/v1/session`, { credentials: "same-origin", cache: "no-store" });
+  if (!sessionResponse.ok) return { status: sessionResponse.status, error: "session_unavailable", message: "Your session has ended. Sign in again, then retry." };
+  const session = await sessionResponse.json() as Session;
   const response = await fetch(`${base}/api/v1/${path}`, { method, credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": session.csrf }, body: JSON.stringify(body) });
   const value = await response.json().catch(() => undefined);
   return response.ok ? { status: response.status, value: value as T } : { status: response.status, error: value?.error, message: value?.message };
@@ -44,14 +46,21 @@ function Editor() {
   if (page.status === 409) return <p role="alert">{tr("Model connections are not enabled on this installation. An operator must set model_connections in the native registry and restart Evolution Space.")}</p>;
   if (page.status || !page.data) return <div role="alert"><p>{tr("Model connections are unavailable. Retry when the service is restored.")}</p><button onClick={page.refresh}>{tr("Retry")}</button></div>;
   const set = (change: Partial<Draft>) => { setDraft(value => value && { ...value, ...change }); setTest(undefined); };
-  const number = (text: string) => Number.isSafeInteger(Number(text)) ? Number(text) : NaN;
+  const number = (text: string) => /^\d+$/.test(text.trim()) ? Number(text.trim()) : NaN;
   function body(d: Draft) {
     const temperature = d.temperature.trim() === "" ? undefined : Number(d.temperature);
     return { settings: { base_url: d.base_url.trim(), model: d.model.trim(), max_output_tokens: number(d.max_output_tokens), ...(temperature === undefined ? {} : { temperature }), json_mode: d.json_mode },
       policy: { call_tokens: number(d.call_tokens), input_micros_per_million: number(d.input_price), output_micros_per_million: number(d.output_price), timeout_seconds: number(d.timeout_seconds), concurrency: number(d.concurrency) } };
   }
+  // Blank or malformed numbers would otherwise be sent as 0 or null.
+  function invalidNumbers(d: Draft) {
+    const whole = [d.max_output_tokens, d.call_tokens, d.input_price, d.output_price, d.timeout_seconds, d.concurrency].some(text => Number.isNaN(number(text)));
+    const temperature = d.temperature.trim() !== "" && !Number.isFinite(Number(d.temperature));
+    return whole || temperature;
+  }
   async function runTest() {
     if (!draft) return;
+    if (invalidNumbers(draft)) { setError("Enter whole numbers for limits and prices, and a number or nothing for temperature."); return; }
     setBusy(true); setError(""); setTest(undefined);
     const result = await send<TestResult>("POST", "model-connections/test", { ...(expected ? { id: draft.id } : {}), settings: body(draft).settings, ...(draft.api_key ? { api_key: draft.api_key } : {}) }).catch(() => ({ status: 0 } as { status: number; value?: TestResult }));
     setBusy(false);
@@ -60,6 +69,7 @@ function Editor() {
   async function save() {
     if (!draft) return;
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(draft.id)) { setError("Use letters, digits, hyphens or underscores for the connection ID."); return; }
+    if (invalidNumbers(draft)) { setError("Enter whole numbers for limits and prices, and a number or nothing for temperature."); return; }
     setBusy(true); setError(""); setStatus("");
     const result = await send<Connection>("PUT", `model-connections/${encodeURIComponent(draft.id)}`, { expected_revision: expected, name: draft.name.trim(), enabled: draft.enabled, ...body(draft), ...(draft.api_key ? { api_key: draft.api_key } : {}) }).catch(() => ({ status: 0 } as { status: number; value?: Connection; error?: string; message?: string }));
     setBusy(false);

@@ -41,7 +41,7 @@ export function LibraryBar({ id, library, branch, stage, version, creating, setC
   return <header className="library-bar">
     <h1 className="visually-hidden">{library?.name ?? tr("Library")}</h1>
     <BranchSelector library={id} creating={creating} setCreating={open => { setCreating(open); if (open) setCommitting(false); }} onSelect={onBranch} />
-    <span className={`bar-status${branch || version ? "" : " warning"}`} role="status">{status}</span>
+    <span className={`bar-status${branch || version ? "" : " warning"}`}>{status}</span>
     <span className="bar-spacer" />
     {library?.profile === "shared-assets-v1" && <StateBadge tone="info">{tr("Shared assets")}</StateBadge>}
     {library?.archived && <StateBadge tone="danger">{tr("Archived")}</StateBadge>}
@@ -51,7 +51,7 @@ export function LibraryBar({ id, library, branch, stage, version, creating, setC
       <BranchCheckpoint key={`${branch.library_id}:${branch.id}`} branch={branch} onCommitted={onCommitted} />
     </div>}
     <div id="studio-guide" className="bar-panel bar-guide" hidden={!help}>
-      <Guide compact label={tr("How changes reach a published version")} steps={steps} current={stage} />
+      <Guide compact label={tr("Change workflow steps")} steps={steps} current={stage} />
       <span className="hint">{tr("Evolution Space writes generated content to its own branches. Review them here like any other branch; nothing reaches main without approval.")}</span>
     </div>
   </header>;

@@ -67,7 +67,7 @@ func canonicalWorkflowDraft(value evolution.Workflow) ([]byte, error) {
 // Both expected revisions are required to avoid overwriting concurrent edits.
 func (s *Store) SaveWorkflowDraft(ctx context.Context, group string, input WorkflowDraftInput) (WorkflowDraft, error) {
 	var result WorkflowDraft
-	if !manifest.ValidID(group) || !manifest.ValidID(input.ID) || input.ExpectedRevision < 0 || input.ExpectedLayoutRevision < 0 || input.Workflow.ID != input.ID {
+	if !manifest.ValidID(group) || !manifest.ValidID(input.ID) || input.ExpectedRevision < 0 || input.ExpectedLayoutRevision < 0 || input.Workflow.ID != input.ID || RunScopedWorkflow(input.ID) {
 		return result, fmt.Errorf("invalid workflow draft identity")
 	}
 	body, err := canonicalWorkflowDraft(input.Workflow)

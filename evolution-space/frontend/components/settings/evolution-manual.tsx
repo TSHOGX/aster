@@ -48,7 +48,7 @@ function ManualForm({group,permissions,configuration,onDirty}:{group:string;perm
    const value=await mutate<Result>(`/api/admin/groups/${encodeURIComponent(group)}/evolution/manual`,request);
    if(!value.batch_id || !value.runs || Object.keys(request.budgets).some(id=>!value.runs[id]))throw new Error("The server returned an incomplete response.");
    setResult(value);setSelected([]);setPending("");sessionStorage.removeItem(key);
-  }catch(failure){setError(failure instanceof Error?failure.message:String(failure));if(failure instanceof APIError && (failure.status===401||failure.status===403))window.dispatchEvent(new Event("focus"))}finally{inFlight.current=false;setBusy(false)}
+  }catch(failure){setError(failure instanceof Error?failure.message:String(failure));if(failure instanceof APIError && (failure.status===401||failure.status===403))window.dispatchEvent(new Event("evolution:session-expired"))}finally{inFlight.current=false;setBusy(false)}
  }
  function start(){
   if(inFlight.current)return;

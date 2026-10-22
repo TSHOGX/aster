@@ -30,6 +30,7 @@ export function BranchCheckpoint({ branch, onCommitted }: { branch: Branch; onCo
       const checkpoint = await branchAPI.checkpoint(operation.branch, operation.message, operation.request, studio.session.csrf);
       pending.current = null; setUncertain(false); setResult(checkpoint);
       studio.selectBranch({ ...operation.branch, head: checkpoint.commit_id });
+      setMessage("");
       onCommitted();
     } catch (e) {
       setError(String(e));

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { branchAPI, type Branch } from "../lib/branches";
-import { requestID } from "../lib/api";
+import { APIError, requestID } from "../lib/api";
 import { storageRead, storageWrite } from "../lib/workbench";
 import { useT } from "../lib/i18n";
 import { GitBranch, Plus } from "lucide-react";
@@ -28,12 +28,22 @@ export function BranchSelector({ library, onSelect, creating, setCreating }: { l
     const abort = new AbortController();
     void (async () => {
       const page = await branchAPI.list(library, "", abort.signal);
-      const selected = new URL(location.href).searchParams.get("branch");
-      const branch = selected ? await branchAPI.read(library, selected, abort.signal) : null;
       if (abort.signal.aborted) return;
-      setBranches(branch && !page.branches.some(item => item.id === branch.id) ? [...page.branches, branch] : page.branches);
-      setNext(page.next);
-      if (branch) restoreSelection(branch);
+      setBranches(page.branches); setNext(page.next);
+      const selected = new URL(location.href).searchParams.get("branch");
+      if (selected) {
+        try {
+          const branch = await branchAPI.read(library, selected, abort.signal);
+          if (abort.signal.aborted) return;
+          setBranches(items => items.some(item => item.id === branch.id) ? items : [...items, branch]);
+          restoreSelection(branch);
+        } catch (e) {
+          if (abort.signal.aborted) return;
+          // A stale link must not keep failing on every reload.
+          const url = new URL(location.href); url.searchParams.delete("branch"); history.replaceState(null, "", url);
+          setError(String(e));
+        }
+      }
       const retained = storageRead("session", storageKey);
       if (retained) {
         const value: unknown = JSON.parse(retained);
@@ -52,7 +62,9 @@ export function BranchSelector({ library, onSelect, creating, setCreating }: { l
     try {
       const branch = await branchAPI.read(library, id);
       studio.selectBranch(branch);
-      const url = new URL(location.href); url.searchParams.set("branch", id); url.searchParams.delete("version"); history.replaceState(null, "", url);
+      const url = new URL(location.href); url.searchParams.set("branch", id);
+      if (id !== studio.model.branches[library]?.id) for (const key of ["integration", "conflict", "publication", "history_head"]) url.searchParams.delete(key);
+      url.searchParams.delete("version"); history.replaceState(null, "", url);
       onSelect();
     } catch (e) { setError(String(e)); } finally { setBusy(false); }
   };
@@ -74,7 +86,12 @@ export function BranchSelector({ library, onSelect, creating, setCreating }: { l
       setBranches(items => items.some(item => item.id === branch.id) ? items : [...items, branch]); setName("");
       setCreating(false);
       await select(branch.id);
-    } catch (e) { setError(String(e)); } finally { setBusy(false); }
+    } catch (e) {
+      if (e instanceof APIError && e.status < 500 && e.status !== 401) {
+        pending.current = null; setPendingCreate(false); storageWrite("session", storageKey, "");
+      }
+      setError(String(e));
+    } finally { setBusy(false); }
   };
   return <>
     <section aria-label={tr("Working branch")} className="bar-branch">
@@ -82,7 +99,7 @@ export function BranchSelector({ library, onSelect, creating, setCreating }: { l
         <option value="">{tr("Select a working branch")}</option>
         {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
       </select></label>
-      {next && <button className="ghost" disabled={busy} onClick={() => { setBusy(true); void branchAPI.list(library, next).then(page => { setBranches(items => [...items, ...page.branches]); setNext(page.next); }).catch(e => setError(String(e))).finally(() => setBusy(false)); }}>{tr("Load more")}</button>}
+      {next && <button className="ghost" disabled={busy} onClick={() => { setBusy(true); void branchAPI.list(library, next).then(page => { setBranches(items => [...items, ...page.branches.filter(branch => !items.some(item => item.id === branch.id))]); setNext(page.next); }).catch(e => setError(String(e))).finally(() => setBusy(false)); }}>{tr("Load more")}</button>}
       <button type="button" className="ghost" aria-expanded={creating} aria-controls="studio-new-branch" onClick={() => setCreating(!creating)}><Plus size={14} aria-hidden="true" />{tr("New branch")}</button>
     </section>
     <div id="studio-new-branch" className="bar-panel" hidden={!creating}>

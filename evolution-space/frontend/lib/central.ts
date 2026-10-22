@@ -16,7 +16,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       : "The server is unavailable. Retry to load current data.");
   }
   // An expired central session makes Space revalidate its own derived session.
-  if (response.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event("focus"));
+  if (response.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event("evolution:session-expired"));
   if (response.status === 204) return undefined as T;
   const data = await response.json().catch(() => { throw new APIError(response.status, mutation ? "outcome_unknown" : "response_invalid", "The server returned an incomplete response."); });
   if (!response.ok) throw new APIError(response.status, data.code || "request_failed", data.error || `Request failed (${response.status}).`, data.field);

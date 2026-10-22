@@ -31,6 +31,8 @@ function Inspector({ group, run }: { group: string; run: string }) {
   const access = useRead<GroupPage>(`/groups/${encodeURIComponent(group)}`);
   const canRun = access.data?.items[0]?.can_run === true;
   const search = useSearchParams(); const selectedID = search.get("attempt") ?? "";
+  // Reads see the latest selection without re-running the full refresh on every click.
+  const selection = useRef(selectedID);
   const [selectedAttempt, setSelectedAttempt] = useState<Attempt>(); const [selectionMissing, setSelectionMissing] = useState(false);
   function selectAttempt(id: string) {
     const url = new URL(window.location.href);
@@ -102,6 +104,7 @@ function Inspector({ group, run }: { group: string; run: string }) {
         }
         return { ...result!, provider_observations: [...observations.values()] };
       };
+      const selectedID = selection.current;
       const readSelectedAttempt = async () => {
         if (!selectedID || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(selectedID)) return undefined;
         const response = await fetch(`${root}/attempts/${encodeURIComponent(selectedID)}`, options);
@@ -141,14 +144,28 @@ function Inspector({ group, run }: { group: string; run: string }) {
       const expired = current && failure instanceof APIError && failure.status === 410;
       setValue(current); clearEvidence(); setError(expired ? "Run evidence has expired. Retained run metadata is still available." : current ? "Run evidence is unavailable. Retry or check source access." : "Run detail is unavailable. Retry or check group access."); setStale(!expired);
     } finally { if (activeRead.current === controller) activeRead.current = null; }
-  }, [root, group, clearEvidence, selectedID]);
+  }, [root, group, clearEvidence]);
+  const settled = !!value && ["completed", "failed", "cancelled"].includes(value.state) && !["pending", "queued", "not_ready"].includes(value.handoff);
+  const pollEvery = useRef(3000);
+  useEffect(() => { pollEvery.current = settled ? 30000 : 3000; }, [settled]);
   useEffect(() => {
     // The effect synchronizes external projections with this keyed run view.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void read();
-    const timer = window.setInterval(() => void read(false), 3000);
-    return () => { window.clearInterval(timer); activeRead.current?.abort(); };
+    // Settled runs change rarely, and hidden tabs need no polling at all.
+    let timer = 0;
+    const schedule = () => { timer = window.setTimeout(() => { if (!document.hidden) void read(false); schedule(); }, pollEvery.current); };
+    schedule();
+    return () => { window.clearTimeout(timer); activeRead.current?.abort(); };
   }, [read]);
+  // A new attempt selection only needs the next incremental read.
+  useEffect(() => {
+    if (selection.current === selectedID) return;
+    selection.current = selectedID;
+    // Supersede an in-flight poll so the new selection is read now, without clearing evidence.
+    activeRead.current?.abort(); activeRead.current = null;
+    void read(false);
+  }, [selectedID, read]);
   async function control(action: string) { if (!value || !canRun || busy) return; setBusy(true); try { const response = await fetch(`${root}/control`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", Origin: location.origin, "X-CSRF-Token": (await (await fetch(`${base}/api/v1/session`, { credentials: "same-origin" })).json() as { csrf: string }).csrf }, body: JSON.stringify({ request_id: crypto.randomUUID(), run_id: run, expected_fence: value.fence, action }) }); if (!response.ok) throw new Error(); await read(); } catch { setError("Run control is unavailable or the run changed. Reload before retrying."); } finally { setBusy(false); } }
   async function retryRun() { if (!value || !canRun || busy || !["completed", "failed", "cancelled"].includes(value.state)) return; setBusy(true); setError(""); try {
     // Keep this operation stable after a lost reply, including a page reload.

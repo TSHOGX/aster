@@ -108,6 +108,8 @@ func authoringError(w http.ResponseWriter, err error) {
 		writeError(w, 409, "unfinished_work")
 	case errors.Is(err, authoring.ErrQuota):
 		writeError(w, 507, "storage_quota_exceeded")
+	case errors.Is(err, identity.ErrUnavailable):
+		writeError(w, 503, "identity_unavailable")
 	default:
 		writeError(w, 500, "storage_unavailable")
 	}

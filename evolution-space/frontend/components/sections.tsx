@@ -47,7 +47,7 @@ export function TemplatesPage() {
 export function TemplateCreatePage() {
   const tr = useT(); const { group } = useGroup(); const search = useSearchParams(); const root = `/groups/${enc(group.id)}`;
   const revision = search.has("from_id") && search.get("mode") !== "copy";
-  return <><PageHeading title={tr(revision ? "New template revision" : "New goal template")} crumbs={[{ label: tr("Goal templates"), href: `${root}/templates/` }, { label: tr(revision ? "New revision" : "New template") }]} /><TemplateForm /></>;
+  return <><PageHeading title={tr(revision ? "New template revision" : "New goal template")} crumbs={[{ label: tr("Goal templates"), href: `${root}/templates/` }, { label: tr(revision ? "New revision" : "New template") }]} /><TemplateForm key={search.toString()} /></>;
 }
 export function TemplateDetailPage({ id, revision }: { id: string; revision: number }) {
   const tr = useT(); const { group } = useGroup(); const search = useSearchParams(); const root = `/groups/${enc(group.id)}`;

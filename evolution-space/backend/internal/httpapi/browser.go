@@ -76,34 +76,46 @@ func BrowserAPIWith(client *appidentity.Client, store *projections.Store, option
 	modelConnections := BrowserModelConnectionAPI(options)
 	return func(session appidentity.Session, w http.ResponseWriter, r *http.Request) {
 		request := r.WithContext(context.WithValue(r.Context(), browserSessionKey{}, session))
-		if strings.HasPrefix(r.URL.Path, "/evolution-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/workflows/") || strings.HasSuffix(r.URL.Path, "/workflows")) {
-			workflow(session, w, r)
-			return
-		}
-		if strings.HasPrefix(r.URL.Path, "/evolution-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/runs/") || strings.HasSuffix(r.URL.Path, "/runs")) {
-			runs(session, w, r)
-			return
-		}
-		if strings.HasPrefix(r.URL.Path, "/evolution-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/evaluations/") || strings.HasSuffix(r.URL.Path, "/evaluations")) {
-			evaluations(session, w, r)
-			return
-		}
-		if strings.HasPrefix(r.URL.Path, "/evolution-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/profiles/") || strings.HasSuffix(r.URL.Path, "/profiles")) {
-			profiles(session, w, r)
-			return
-		}
-		if strings.HasPrefix(r.URL.Path, "/evolution-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/templates/") || strings.HasSuffix(r.URL.Path, "/templates") || strings.Contains(r.URL.Path, "/published-workflows/") || strings.HasSuffix(r.URL.Path, "/published-workflows")) {
-			templates(session, w, r)
-			return
-		}
 		if r.URL.Path == "/evolution-space/api/v1/model-connections" || strings.HasPrefix(r.URL.Path, "/evolution-space/api/v1/model-connections/") {
 			modelConnections(session, w, r)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/evolution-space/api/v1/groups/") && (strings.Contains(r.URL.Path, "/examples/") || strings.HasSuffix(r.URL.Path, "/examples") || strings.HasSuffix(r.URL.Path, "/models") || strings.HasSuffix(r.URL.Path, "/datasets")) {
+		// Dispatch on the resource segment right after the group ID, so group
+		// or resource IDs that look like resource names cannot misroute.
+		switch groupResource(r.URL.Path) {
+		case "workflows":
+			workflow(session, w, r)
+			return
+		case "runs":
+			runs(session, w, r)
+			return
+		case "evaluations":
+			evaluations(session, w, r)
+			return
+		case "profiles":
+			profiles(session, w, r)
+			return
+		case "templates", "published-workflows":
+			templates(session, w, r)
+			return
+		case "examples", "models", "datasets":
 			catalogExamples(session, w, r)
 			return
 		}
 		mux.ServeHTTP(w, request)
 	}
+}
+
+// groupResource returns the path segment after /groups/{group}/, or "".
+func groupResource(path string) string {
+	rest, ok := strings.CutPrefix(path, "/evolution-space/api/v1/groups/")
+	if !ok {
+		return ""
+	}
+	_, rest, ok = strings.Cut(rest, "/")
+	if !ok {
+		return ""
+	}
+	resource, _, _ := strings.Cut(rest, "/")
+	return resource
 }

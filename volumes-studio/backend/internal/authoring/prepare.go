@@ -156,7 +156,9 @@ func (s *Store) PrepareMerge(ctx context.Context, a Actor, library string, input
 		if err = tx.Commit(); err != nil {
 			return result, err
 		}
-		if err = s.pinConflictInputs(ctx, library, result.ConflictWorkspaceID, base, main, b.Head); err != nil {
+		if err = settle(ctx, func(ctx context.Context) error {
+			return s.pinConflictInputs(ctx, library, result.ConflictWorkspaceID, base, main, b.Head)
+		}); err != nil {
 			s.poisoned = true
 			return result, err
 		}
@@ -281,7 +283,7 @@ func (s *Store) persistPrepared(ctx context.Context, a Actor, library, request, 
 			return result, err
 		}
 	}
-	if err = s.pinPrepared(ctx, library, result); err != nil {
+	if err = settle(ctx, func(ctx context.Context) error { return s.pinPrepared(ctx, library, result) }); err != nil {
 		s.poisoned = true
 		return result, err
 	}

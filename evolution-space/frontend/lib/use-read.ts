@@ -26,7 +26,8 @@ export function useRead<T>(path: string, retainWhileLoading = false, retainOnUna
   }, [path, nonce, retainWhileLoading, retainOnUnavailable]);
   useEffect(() => {
     window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
+    window.addEventListener("evolution:session-expired", refresh);
+    return () => { window.removeEventListener("focus", refresh); window.removeEventListener("evolution:session-expired", refresh); };
   }, [refresh]);
   return { ...(state.path === path ? state : { path, loading: true }), refresh };
 }

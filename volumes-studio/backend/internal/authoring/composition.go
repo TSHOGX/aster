@@ -272,7 +272,7 @@ func (s *Store) ComposeMerge(ctx context.Context, a Actor, library string, input
 	if err = tx.Commit(); err != nil {
 		return result, err
 	}
-	if err = s.pinPrepared(ctx, library, result.PreparedResult); err != nil {
+	if err = settle(ctx, func(ctx context.Context) error { return s.pinPrepared(ctx, library, result.PreparedResult) }); err != nil {
 		s.poisoned = true
 		return result, err
 	}

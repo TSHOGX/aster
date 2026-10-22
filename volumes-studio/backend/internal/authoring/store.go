@@ -491,11 +491,14 @@ func (s *Store) Create(ctx context.Context, a Actor, input CreateInput) (Library
 	if err = tx.Commit(); err != nil {
 		return l, err
 	}
-	if _, err = s.bootstrapHistory(ctx, l.ID, l.Profile); err != nil {
+	if err = settle(ctx, func(ctx context.Context) error { _, err := s.bootstrapHistory(ctx, l.ID, l.Profile); return err }); err != nil {
 		s.poisoned = true
 		return l, err
 	}
-	if _, err = s.db.ExecContext(ctx, "UPDATE libraries SET history_state='ready' WHERE id=?", l.ID); err != nil {
+	if err = settle(ctx, func(ctx context.Context) error {
+		_, err := s.db.ExecContext(ctx, "UPDATE libraries SET history_state='ready' WHERE id=?", l.ID)
+		return err
+	}); err != nil {
 		s.poisoned = true
 		return l, err
 	}

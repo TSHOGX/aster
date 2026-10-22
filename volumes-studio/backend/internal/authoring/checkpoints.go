@@ -105,7 +105,7 @@ func (s *Store) Checkpoint(ctx context.Context, a Actor, library, branch string,
 			return result, err
 		}
 	}
-	if err = s.settleCheckpoint(ctx, library, result); err != nil {
+	if err = settle(ctx, func(ctx context.Context) error { return s.settleCheckpoint(ctx, library, result) }); err != nil {
 		s.poisoned = true
 		return result, err
 	}

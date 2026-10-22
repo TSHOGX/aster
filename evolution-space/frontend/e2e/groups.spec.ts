@@ -611,7 +611,7 @@ for (const variant of [{ locale: "en-US", width: 1440 }, { locale: "zh-CN", widt
    await login(page, user); await settleOverview(page); await page.goto(`/evolution-space/groups/${beta.id}/`);
    await page.getByRole("link", { name: tr("Sign in", "登录"), exact: true }).click();
    await expect(page.getByRole("region", { name: tr("Group overview", "团队概览"), exact: true })).toBeVisible();
-   const workflow = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8")); workflow.id = `draft-test-${crypto.randomUUID().slice(0, 8)}`;
+   const workflow = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../../contracts/evolution/testdata/skills.valid.json"), "utf8")); workflow.id = `trial-draft-${crypto.randomUUID().slice(0, 8)}`;
    const session = await (await page.request.get("/evolution-space/api/v1/session")).json();
    const draftPath = `/evolution-space/api/v1/groups/${beta.id}/workflows/${workflow.id}/draft`;
    const headers = { Origin: origin, "X-CSRF-Token": session.csrf };

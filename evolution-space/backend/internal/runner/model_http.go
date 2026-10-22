@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -311,6 +312,9 @@ func (p *HTTPModel) settle(ctx context.Context, call projections.ProviderCall, n
 	if err = validateToolObservations(node, observation); err != nil {
 		return outcome, err
 	}
+	// Providers sometimes echo the credential they rejected; evidence is
+	// readable by inspectors, so credential-like tokens never reach it.
+	observation.Error = credentialText.ReplaceAllString(observation.Error, "[redacted]")
 	raw, err = json.Marshal(observation)
 	if err != nil {
 		return outcome, ErrModelUnavailable
@@ -383,3 +387,5 @@ func validateToolObservations(call workflow.Call, value ModelObservation) error 
 }
 
 var _ ModelProvider = (*HTTPModel)(nil)
+
+var credentialText = regexp.MustCompile(`(?i)(bearer\s+\S+|\b(sk|pk|rk|ak)-[A-Za-z0-9_-]{8,}|\b(api[_-]?key|token|secret|password)\s*[=:]\s*\S+|\b[A-Za-z0-9_-]{32,}\b)`)
