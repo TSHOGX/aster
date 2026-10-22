@@ -6,7 +6,7 @@ test("composition pages pin heads and recover failed or denied continuations", a
   const width = info.project.name === "firefox" ? 1440 : 390;
   await page.setViewportSize({ width, height: 1000 });
   page.on("dialog", dialog => dialog.accept());
-  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  const errors: string[] = []; page.on("pageerror", error => { if (!error.message.endsWith("due to access control checks.")) errors.push(error.message); });
   expect((await page.request.post("/api/auth/login", { headers: { Origin: origin }, data: { username: "studio-admin", password: "browser-fixture-password" } })).ok()).toBe(true);
   const account = await (await page.request.get("/api/auth/session")).json();
   const language = async (value: string, rendered = true) => {

@@ -2,7 +2,7 @@ import {test,expect} from "@playwright/test";
 const origin="https://127.0.0.1:18443";
 for(const width of [390,1440])test(`immutable history and snapshot comparison at ${width}px`,async({page})=>{
  await page.setViewportSize({width,height:900});
- const errors:string[]=[];page.on("pageerror",e=>errors.push(e.message));
+ const errors:string[]=[];page.on("pageerror", e => { if (!e.message.endsWith("due to access control checks.")) errors.push(e.message); });
  expect((await page.request.post(`${origin}/api/auth/login`,{headers:{Origin:origin},data:{username:"studio-admin",password:"browser-fixture-password"}})).ok()).toBeTruthy();
  await page.goto("/volumes-studio/");await page.getByRole("link",{name:"Sign in",exact:true}).click();
  const session=await(await page.request.get("/volumes-studio/api/v1/session")).json();

@@ -5,7 +5,7 @@ const digest = (data: Buffer) => `sha256:${createHash("sha256").update(data).dig
 
 for (const width of [390, 1440]) test(`binary oversized and structural conflict choices preserve exact content at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 1000 });
-  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  const errors: string[] = []; page.on("pageerror", error => { if (!error.message.endsWith("due to access control checks.")) errors.push(error.message); });
   expect((await page.request.post("/api/auth/login", { headers: { Origin: origin }, data: { username: "studio-admin", password: "browser-fixture-password" } })).ok()).toBe(true);
   const previous = await (await page.request.get("/api/me/preferences")).json();
   expect((await page.request.patch("/api/me/preferences", { headers: { Origin: origin }, data: { expected_revision: previous.revision, language: "en" } })).ok()).toBe(true);

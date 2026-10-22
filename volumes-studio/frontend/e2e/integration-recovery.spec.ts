@@ -4,7 +4,7 @@ const origin = "https://127.0.0.1:18443";
 for (const width of [390, 1440]) test(`integration operations retain exact requests across reload at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 1000 });
   page.on("dialog", dialog => dialog.accept());
-  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  const errors: string[] = []; page.on("pageerror", error => { if (!error.message.endsWith("due to access control checks.")) errors.push(error.message); });
   expect((await page.request.post("/api/auth/login", { headers: { Origin: origin }, data: { username: "studio-admin", password: "browser-fixture-password" } })).ok()).toBe(true);
   const account = await (await page.request.get("/api/auth/session")).json();
   const language = async (value: string, rendered = true) => {

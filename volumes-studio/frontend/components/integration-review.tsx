@@ -42,6 +42,9 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
   const root = `/libraries/${encodeURIComponent(branch.library_id)}`;
   const readRequest = useRef<AbortController>(undefined), running = useRef(false), mounted = useRef(true);
   const [reloadRevision, setReloadRevision] = useState(0);
+  // The composition catalog was built for this head and reload; a background
+  // refresh that reports the same head must not discard loaded pages or picks.
+  const compositionBuilt = useRef({ key: "", head: "", reload: -1 });
   const evidenceRevision = useRef(0);
   const operationLabels: Record<IntegrationAction, string> = { prepare: "Prepare integration", compose: "Prepare selected composition", review: "Review rationale", merge: "Merge approved integration", evaluation: "Request evaluation", publish: "Publish accepted commit" };
   const unavailable = "Integration evidence is unavailable. Reload or check Volume access.";
@@ -111,8 +114,10 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
     return () => abort.abort();
   }, [root, branch.library_id, reloadRevision]);
   useEffect(() => {
+    const built = compositionBuilt.current, key = `${branch.library_id}:${branch.id}`;
+    if (built.key === key && built.head === branch.head && built.reload === reloadRevision) return;
     const abort = new AbortController(), revision = evidenceRevision.current;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Replace the scoped composition catalog when its selected immutable head changes.
+    // Replace the scoped composition catalog when its selected immutable head changes.
     setCompositionLoading(true); setComposition([]); setCompositionNext("");
     void (async () => {
       const page = await branchAPI.list(branch.library_id, "", abort.signal);
@@ -123,6 +128,7 @@ export function IntegrationReview({ branch }: { branch: Branch }) {
       const options: CompositionOption[] = all.filter(item => item.head && item.head !== item.initial_base).map(item => item.id === selected.id && selectedPage
         ? { branch: item, changes: selectedPage.changes, next: selectedPage.next, total: selectedPage.total }
         : { branch: item, changes: [], next: "" });
+      compositionBuilt.current = { key, head: selected.head, reload: reloadRevision };
       setComposition(options); setCompositionNext(page.next);
       setSelectedComposition(previous => Object.fromEntries(options.map(option => [compositionKey(option.branch), previous[compositionKey(option.branch)] ?? (option.branch.id === branch.id ? option.changes.map(change => change.path) : [])])));
     })().catch(() => { if (!abort.signal.aborted) { hideEvidence(true); setError(unavailable); } }).finally(() => { if (!abort.signal.aborted) setCompositionLoading(false); });

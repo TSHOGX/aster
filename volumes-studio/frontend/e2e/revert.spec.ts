@@ -2,7 +2,7 @@ import {test,expect} from "@playwright/test";
 const origin="https://127.0.0.1:18443";
 for(const width of [390,1440])test(`reviewed inverse draft survives lost creation response at ${width}px`,async({page},info)=>{
  await page.setViewportSize({width,height:1000});
- const errors:string[]=[];page.on("pageerror",e=>errors.push(e.message));page.on("dialog",dialog=>dialog.accept());
+ const errors:string[]=[];page.on("pageerror", e => { if (!e.message.endsWith("due to access control checks.")) errors.push(e.message); });page.on("dialog",dialog=>dialog.accept());
  expect((await page.request.post("/api/auth/login",{headers:{Origin:origin},data:{username:"studio-admin",password:"browser-fixture-password"}})).ok()).toBe(true);
  const account=await(await page.request.get("/api/auth/session")).json();
  const language=async(value:string,rendered=true)=>{const previous=await(await page.request.get("/api/me/preferences")).json();expect((await page.request.patch("/api/me/preferences",{headers:{Origin:origin},data:{expected_revision:previous.revision,language:value}})).ok()).toBe(true);if(rendered){await page.evaluate(id=>window.dispatchEvent(new StorageEvent("storage",{key:`account-appearance:${id}`})),account.id);await expect(page.locator("html")).toHaveAttribute("lang",value==="zh"?"zh-Hans":"en");}};

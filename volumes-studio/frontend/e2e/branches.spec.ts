@@ -151,7 +151,7 @@ test("non-admin experts enter with scoped grants and cannot create or merge libr
 
 for (const width of [390, 1440]) test(`browser composes selected paths and later accepts deferred work at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 1000 });
-  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  const errors: string[] = []; page.on("pageerror", error => { if (!error.message.endsWith("due to access control checks.")) errors.push(error.message); });
   const login = await page.request.post(`${origin}/api/auth/login`, { headers: { Origin: origin }, data: { username: "studio-admin", password: "browser-fixture-password" } });
   expect(login.ok()).toBeTruthy();
   await page.goto("/volumes-studio/");

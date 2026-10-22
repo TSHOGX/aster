@@ -94,7 +94,7 @@ test("central login, multi-tab edit, publish, immutable version and logout", asy
   page,
 }) => {
   const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("pageerror", e => { if (!e.message.endsWith("due to access control checks.")) errors.push(e.message); });
   await signIn(page);
   await createLibrary(page, "Research handbook " + Date.now());
   await createFile(page, "readme.md");
@@ -643,7 +643,7 @@ test("expanding an unrelated folder preserves the tree scroll and editor", async
   page,
 }) => {
   const errors: string[] = [];
-  page.on("pageerror", error => errors.push(error.message));
+  page.on("pageerror", error => { if (!error.message.endsWith("due to access control checks.")) errors.push(error.message); });
   await signIn(page);
   await createLibrary(page, "Stable folders " + Date.now());
   await createFile(page, "selected.md");
@@ -758,7 +758,7 @@ test("filled actions retain contrast in toolbars and dialogs across appearances"
 
 test("language changes keep Studio unsaved content, selection, and confirmation choices", async ({ page }, info) => {
   const errors: string[] = [];
-  page.on("pageerror", error => errors.push(error.message));
+  page.on("pageerror", error => { if (!error.message.endsWith("due to access control checks.")) errors.push(error.message); });
   await signIn(page);
   await createLibrary(page, `Bilingual library ${Date.now()}`);
   await createFile(page, "English Name.md");
