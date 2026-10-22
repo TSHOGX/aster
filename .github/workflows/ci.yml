@@ -99,7 +99,7 @@ jobs:
   # Each browser runs the Studio suite on its own runner and fixture.
   studio-browser:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -122,14 +122,22 @@ jobs:
         run: echo "version=$(node -p "require('./volumes-studio/frontend/node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v6
         with:
-          path: |
-            ~/.cache/ms-playwright
-            ~/.cache/apt-playwright
+          path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-${{ runner.arch }}-playwright-${{ steps.playwright.outputs.version }}-${{ matrix.browser }}
+      - uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/apt-playwright
+          key: ${{ runner.os }}-${{ runner.arch }}-apt-playwright-${{ matrix.browser }}-${{ github.run_id }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-apt-playwright-${{ matrix.browser }}-
       - run: scripts/install-playwright.sh volumes-studio/frontend ${{ matrix.browser }}
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           APT_ARCHIVE_CACHE: ~/.cache/apt-playwright
+      - if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/apt-playwright
+          key: ${{ runner.os }}-${{ runner.arch }}-apt-playwright-${{ matrix.browser }}-${{ github.run_id }}-${{ github.run_attempt }}
       - run: npm --prefix volumes-studio/frontend run build
       - run: scripts/check.sh studio-browser-suite ${{ matrix.browser }}
       - name: Failed Studio browser evidence
@@ -151,7 +159,7 @@ jobs:
 
   evolution-space-browser:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -175,14 +183,22 @@ jobs:
         run: echo "version=$(node -p "require('./evolution-space/frontend/node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v6
         with:
-          path: |
-            ~/.cache/ms-playwright
-            ~/.cache/apt-playwright
+          path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-${{ runner.arch }}-playwright-${{ steps.playwright.outputs.version }}-${{ matrix.browser }}
+      - uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/apt-playwright
+          key: ${{ runner.os }}-${{ runner.arch }}-apt-playwright-${{ matrix.browser }}-${{ github.run_id }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-apt-playwright-${{ matrix.browser }}-
       - run: scripts/install-playwright.sh evolution-space/frontend ${{ matrix.browser }}
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           APT_ARCHIVE_CACHE: ~/.cache/apt-playwright
+      - if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/apt-playwright
+          key: ${{ runner.os }}-${{ runner.arch }}-apt-playwright-${{ matrix.browser }}-${{ github.run_id }}-${{ github.run_attempt }}
       - run: npm --prefix evolution-space/frontend run build
       - run: scripts/check.sh evolution-space-browser ${{ matrix.browser }}
       - name: Failed Evolution Space browser evidence
@@ -205,7 +221,7 @@ jobs:
   # Real-process gates: Studio evaluation and the native evolution journeys.
   integration:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -237,14 +253,22 @@ jobs:
         run: echo "version=$(node -p "require('./volumes-studio/frontend/node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v6
         with:
-          path: |
-            ~/.cache/ms-playwright
-            ~/.cache/apt-playwright
+          path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-${{ runner.arch }}-playwright-${{ steps.playwright.outputs.version }}-chromium
+      - uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/apt-playwright
+          key: ${{ runner.os }}-${{ runner.arch }}-apt-playwright-chromium-${{ github.run_id }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-apt-playwright-chromium-
       - run: scripts/install-playwright.sh volumes-studio/frontend chromium
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           APT_ARCHIVE_CACHE: ~/.cache/apt-playwright
+      - if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/apt-playwright
+          key: ${{ runner.os }}-${{ runner.arch }}-apt-playwright-chromium-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Build Studio
         if: matrix.gate == 'studio-integration'
         run: npm --prefix volumes-studio/frontend run build
@@ -293,7 +317,7 @@ jobs:
 
   frontend:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       GOPRIVATE: github.com/TSHOGX/khora
     steps:
@@ -336,14 +360,22 @@ jobs:
         run: echo "version=$(node -p "require('./frontend/node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v6
         with:
-          path: |
-            ~/.cache/ms-playwright
-            ~/.cache/apt-playwright
+          path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-${{ runner.arch }}-playwright-${{ steps.playwright.outputs.version }}-chromium
+      - uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/apt-playwright
+          key: ${{ runner.os }}-${{ runner.arch }}-apt-playwright-chromium-${{ github.run_id }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-apt-playwright-chromium-
       - run: scripts/install-playwright.sh frontend chromium
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           APT_ARCHIVE_CACHE: ~/.cache/apt-playwright
+      - if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/apt-playwright
+          key: ${{ runner.os }}-${{ runner.arch }}-apt-playwright-chromium-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Frontend lint
         run: scripts/check.sh frontend-lint
       - name: Frontend unit tests

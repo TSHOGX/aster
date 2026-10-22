@@ -20,13 +20,16 @@ Acquire::http::Timeout "60";
 CONF
   mkdir -p "$cache"
   sudo find "$cache" -maxdepth 1 -name '*.deb' -exec cp -t /var/cache/apt/archives/ {} +
+  # Keep every completed download, even when the step times out, so the next
+  # run resumes instead of fetching the same packages from a slow mirror.
+  save() {
+    sudo find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -n -t "$cache" {} + || true
+    sudo chown -R "$(id -u):$(id -g)" "$cache" || true
+  }
+  trap save EXIT
 fi
 for attempt in 1 2; do
   if (cd "$dir" && npx --no-install playwright install --with-deps "$@"); then
-    if [[ -n "$cache" ]]; then
-      sudo find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -t "$cache" {} +
-      sudo chown -R "$(id -u):$(id -g)" "$cache"
-    fi
     exit 0
   fi
   echo "Playwright install attempt $attempt failed" >&2
