@@ -9,8 +9,11 @@ export default defineConfig({
   timeout: 60000,
   workers: 1,
   fullyParallel: false,
+  // One CI retry reports transient failures as flaky; a repeat failure still fails.
+  retries: process.env.CI ? 1 : 0,
+  forbidOnly: !!process.env.CI,
   outputDir: "./test-results",
-  reporter: "list",
+  reporter: [["list"], ["json", { outputFile: "test-results/browser-report.json" }]],
   use: {
     baseURL: "https://127.0.0.1:18443",
     ignoreHTTPSErrors: true,

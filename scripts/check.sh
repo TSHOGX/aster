@@ -15,7 +15,8 @@ case "${1:-all}" in
     npm --prefix evolution-space/frontend run typecheck
     ;;
   evolution-space-browser)
-    npm --prefix evolution-space/frontend run test:browser
+    # Optional second argument selects one Playwright project (browser).
+    npm --prefix evolution-space/frontend run test:browser -- ${2:+--project="$2"}
     ;;
   studio)
     go -C volumes-studio/backend build -mod=readonly ./...
@@ -30,8 +31,11 @@ case "${1:-all}" in
     npm --prefix volumes-studio/frontend run typecheck
     ;;
   evolution-browser)
+    # Every frontend these real-process gates serve is built here, so the gate
+    # does not depend on an earlier job or step having built Studio.
     npm --prefix admin-frontend run build
     npm --prefix evolution-space/frontend run build
+    npm --prefix volumes-studio/frontend run build
     ADMIN_EVOLUTION_BROWSER_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses/backfill$' -count=1
     go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeMultiGroupRealProcesses$' -count=1
     ADMIN_EVOLUTION_MANUAL_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeManualRunRealProcesses$' -count=1
@@ -45,7 +49,14 @@ case "${1:-all}" in
     ADMIN_EVOLUTION_UPGRADE_TEST=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses/browser-retry$' -count=1
     ;;
   studio-browser)
-    npm --prefix volumes-studio/frontend run test:browser
+    "$0" studio-browser-suite
+    "$0" studio-integration
+    ;;
+  studio-browser-suite)
+    # Optional second argument selects one Playwright project (browser).
+    npm --prefix volumes-studio/frontend run test:browser -- ${2:+--project="$2"}
+    ;;
+  studio-integration)
     go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestNativeGenerationRealProcesses$' -count=1
     STUDIO_TEST_EVALUATION_BROWSER=1 STUDIO_TEST_EVALUATION_CANCEL=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^Test(RequiredEvaluation|PartialCompositionEvaluation|ReviewedRevertEvaluation)RealProcesses$' -count=1
     STUDIO_TEST_EVALUATION_BROWSER=1 go -C orchestrator test -mod=readonly -tags integration ./internal/producthttp -run '^TestEvaluationPolicyRealProcesses$' -count=1
@@ -123,5 +134,5 @@ case "${1:-all}" in
     "$0" backend
     "$0" frontend
     ;;
-  *) echo 'Usage: scripts/check.sh [source|evolution-space|evolution-space-frontend|evolution-space-browser|evolution-browser|studio|studio-frontend|studio-browser|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|frontend-edge|all]' >&2; exit 2 ;;
+  *) echo 'Usage: scripts/check.sh [source|evolution-space|evolution-space-frontend|evolution-space-browser [project]|evolution-browser|studio|studio-frontend|studio-browser|studio-browser-suite [project]|studio-integration|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|frontend-edge|all]' >&2; exit 2 ;;
 esac

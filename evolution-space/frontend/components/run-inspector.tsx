@@ -147,7 +147,7 @@ function Inspector({ group, run }: { group: string; run: string }) {
   }, [root, group, clearEvidence]);
   const settled = !!value && ["completed", "failed", "cancelled"].includes(value.state) && !["pending", "queued", "not_ready"].includes(value.handoff);
   const pollEvery = useRef(3000);
-  useEffect(() => { pollEvery.current = settled ? 30000 : 3000; }, [settled]);
+  useEffect(() => { pollEvery.current = settled ? 10000 : 3000; }, [settled]);
   useEffect(() => {
     // The effect synchronizes external projections with this keyed run view.
     // eslint-disable-next-line react-hooks/set-state-in-effect

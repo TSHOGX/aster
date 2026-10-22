@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -139,10 +138,7 @@ func verifyNativeWorkflowUpgrade(t *testing.T, ctx context.Context, f nativeWork
 	}
 	must(t, json.Unmarshal(raw, &library))
 	second.Bindings[0].Output.LibraryID = library.ID
-	for _, action := range []string{"volume.read", "volume.configure"} {
-		_, err = f.Store.ApplyStudioGrant(ctx, f.Token, product.StudioGrantCommand{RequestID: "pinned-" + strings.ReplaceAll(action, ".", "-"), Kind: "account", SubjectID: f.Actor, LibraryID: library.ID, Action: action, Effect: "allow"})
-		must(t, err)
-	}
+	// The creating account already holds every Studio action on its library.
 	for i := range second.Sources {
 		second.Sources[i].AudienceGroups = []string{second.GroupID}
 		_, err = f.Store.SetEvolutionSourcePolicy(ctx, f.Token, second.GroupID, product.EvolutionSourcePolicyInput{RequestID: "pinned-source", Source: second.Sources[i]})

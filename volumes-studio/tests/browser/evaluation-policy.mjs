@@ -28,7 +28,7 @@ try {
   const merge = async () => {
     await expect(approve).toBeEnabled(); await approve.click();
     const accept = page.getByRole('button', { name: 'Merge approved integration', exact: true });
-    await expect(accept).toBeEnabled(); await accept.click();
+    await expect(accept).toBeEnabled(); await accept.click(); await page.getByRole('dialog', { name: 'Merge into main' }).getByRole('button', { name: 'Merge', exact: true }).click();
     await expect(page.getByText('Acceptance is complete. Publishing creates a version; it does not deploy to Projects.')).toBeVisible();
   };
   const account = await (await page.request.get(`${config.origin}/api/auth/session`)).json();

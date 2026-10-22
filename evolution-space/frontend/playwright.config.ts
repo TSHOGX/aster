@@ -6,7 +6,9 @@ export default defineConfig({
     { name: "webkit", use: { browserName: "webkit" } },
   ],
   testDir: "./e2e", timeout: 60000, workers: 1, fullyParallel: false,
-  outputDir: "./test-results", reporter: "list",
+  // One CI retry reports transient failures as flaky; a repeat failure still fails.
+  retries: process.env.CI ? 1 : 0, forbidOnly: !!process.env.CI,
+  outputDir: "./test-results", reporter: [["list"], ["json", { outputFile: "test-results/browser-report.json" }]],
   use: { baseURL: "https://127.0.0.1:18543", ignoreHTTPSErrors: true, trace: "retain-on-failure" },
   webServer: { command: "node ../tests/browser/serve.mjs", url: "https://127.0.0.1:18543/evolution-space/", ignoreHTTPSErrors: true, timeout: 120000, reuseExistingServer: false, gracefulShutdown: { signal: "SIGTERM", timeout: 5000 } },
 });

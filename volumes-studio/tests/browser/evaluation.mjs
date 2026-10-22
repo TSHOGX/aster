@@ -116,7 +116,7 @@ try {
     await post('/integrations/reviews', { prepared_digest: humanPrepared.digest, verdict: 'approve' });
     await post('/integrations/merge', { prepared_digest: humanPrepared.digest, expected_main: original.identity.main.commit_id });
     const refused = page.waitForResponse(response => response.url().endsWith('/integrations/merge') && response.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Merge approved integration', exact: true }).click();
+    await page.getByRole('button', { name: 'Merge approved integration', exact: true }).click(); await page.getByRole('dialog', { name: 'Merge into main' }).getByRole('button', { name: 'Merge', exact: true }).click();
     expect((await refused).status()).toBe(409);
     await expect(page.getByRole('region', { name: 'Integration review', exact: true }).getByRole('alert')).toBeVisible();
     expect(await get('/main')).toEqual(humanPrepared.identity.result);
@@ -154,7 +154,7 @@ try {
     comparativeResult = await get(`/integrations/${encodeURIComponent(newDigest)}`);
     writeFileSync(config.result_file, JSON.stringify(comparativeResult));
   }
-  await page.getByRole('button', { name: 'Merge approved integration', exact: true }).click();
+  await page.getByRole('button', { name: 'Merge approved integration', exact: true }).click(); await page.getByRole('dialog', { name: 'Merge into main' }).getByRole('button', { name: 'Merge', exact: true }).click();
   await expect(page.getByText('Acceptance is complete. Publishing creates a version; it does not deploy to Projects.')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   expect(errors).toEqual([]);

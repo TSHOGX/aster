@@ -85,7 +85,9 @@ test("native checkpoint experiment, comparison and connection recovery", async (
   await expect(comparison).toBeVisible();
   const timeline = page.locator("section.card").filter({ has: page.getByRole("heading", { name: tr("Event timeline", "事件时间线"), exact: true }) }).locator("ol > li");
   await expect(timeline).toHaveCount(events.events.length);
-  await expect.poll(() => resumed, { timeout: 10000 }).toBe(true);
+  // The replayed page keeps the cursor at 0, so resuming takes two incremental
+  // polls; settled runs poll every 10s.
+  await expect.poll(() => resumed, { timeout: 30000 }).toBe(true);
   await expect(timeline).toHaveCount(events.events.length);
   await expect(page.getByRole("main").locator("details")).toHaveCount(attempts.length);
   await expect(page.getByRole("heading", { name: tr("Run status: completed", "运行状态: 已完成"), exact: true })).toBeVisible();

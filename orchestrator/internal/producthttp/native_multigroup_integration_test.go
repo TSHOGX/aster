@@ -133,10 +133,7 @@ func (f *nativeMixedGroups) start(t *testing.T, ctx context.Context, store *prod
 		ID string `json:"id"`
 	}
 	request("POST", "libraries", map[string]string{"request_id": "beta-library", "name": "Beta output", "profile": "shared-assets-v1"}, &library)
-	for _, action := range []string{"volume.read", "volume.author", "volume.review", "volume.merge", "volume.configure"} {
-		_, err := store.ApplyStudioGrant(ctx, token, product.StudioGrantCommand{RequestID: "beta-" + strings.ReplaceAll(action, ".", "-"), Kind: "account", SubjectID: actor, LibraryID: library.ID, Action: action, Effect: "allow"})
-		must(t, err)
-	}
+	// Creating a library grants its creator every Studio action; no self-grant is needed.
 	raw, _ := json.Marshal(alpha)
 	var beta evolution.Configuration
 	must(t, json.Unmarshal(raw, &beta))

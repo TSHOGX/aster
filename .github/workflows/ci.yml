@@ -24,7 +24,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   evolution-space:
@@ -76,7 +76,7 @@ jobs:
 
   backend:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 20
     env:
       GOPRIVATE: github.com/TSHOGX/khora
     steps:
@@ -95,24 +95,150 @@ jobs:
       - name: Install pinned native Session test dependencies
         run: npm ci --ignore-scripts --prefix orchestrator/internal/runtimerelease
       - run: scripts/check.sh backend
-      - name: Install Studio browser gate dependencies
-        run: npm ci --prefix volumes-studio/frontend
-      - run: npx --no-install playwright install --with-deps chromium firefox webkit
-        working-directory: volumes-studio/frontend
+
+  # Each browser runs the Studio suite on its own runner and fixture.
+  studio-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: orchestrator/go.mod
+          cache-dependency-path: |
+            orchestrator/go.sum
+            volumes-studio/backend/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: volumes-studio/frontend/package-lock.json
+      - run: npm ci --prefix volumes-studio/frontend
+      - id: playwright
+        run: echo "version=$(node -p "require('./volumes-studio/frontend/node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-${{ runner.arch }}-playwright-${{ steps.playwright.outputs.version }}-${{ matrix.browser }}
+      - run: scripts/install-playwright.sh volumes-studio/frontend ${{ matrix.browser }}
       - run: npm --prefix volumes-studio/frontend run build
-      - run: scripts/check.sh studio-browser
-      - run: npm ci --prefix evolution-space/frontend
-      - run: npm --prefix evolution-space/frontend run build
-      - run: scripts/check.sh evolution-space-browser
-      - name: Install admin evolution browser gate dependencies
-        run: npm ci --prefix admin-frontend
-      - name: Native evolution authoring and activation browser gates
-        run: scripts/check.sh evolution-browser
-      - name: Failed evolution browser evidence
+      - run: scripts/check.sh studio-browser-suite ${{ matrix.browser }}
+      - name: Failed Studio browser evidence
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: evolution-browser-failure-${{ github.run_attempt }}
+          name: studio-browser-${{ matrix.browser }}-${{ github.run_attempt }}
+          path: volumes-studio/frontend/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Studio browser timing report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: studio-browser-timings-${{ matrix.browser }}-${{ github.run_attempt }}
+          path: volumes-studio/frontend/test-results/browser-report.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  evolution-space-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: orchestrator/go.mod
+          cache-dependency-path: |
+            orchestrator/go.sum
+            evolution-space/backend/go.sum
+            volumes-studio/backend/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: evolution-space/frontend/package-lock.json
+      - run: npm ci --prefix evolution-space/frontend
+      - id: playwright
+        run: echo "version=$(node -p "require('./evolution-space/frontend/node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-${{ runner.arch }}-playwright-${{ steps.playwright.outputs.version }}-${{ matrix.browser }}
+      - run: scripts/install-playwright.sh evolution-space/frontend ${{ matrix.browser }}
+      - run: npm --prefix evolution-space/frontend run build
+      - run: scripts/check.sh evolution-space-browser ${{ matrix.browser }}
+      - name: Failed Evolution Space browser evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evolution-space-browser-${{ matrix.browser }}-${{ github.run_attempt }}
+          path: evolution-space/frontend/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Evolution Space browser timing report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evolution-space-browser-timings-${{ matrix.browser }}-${{ github.run_attempt }}
+          path: evolution-space/frontend/test-results/browser-report.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Real-process gates: Studio evaluation and the native evolution journeys.
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        gate: [studio-integration, evolution-browser]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: orchestrator/go.mod
+          cache-dependency-path: |
+            orchestrator/go.sum
+            evolution-space/backend/go.sum
+            volumes-studio/backend/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            volumes-studio/frontend/package-lock.json
+            evolution-space/frontend/package-lock.json
+            admin-frontend/package-lock.json
+      - run: npm ci --prefix volumes-studio/frontend
+      - name: Install Evolution Space and Administration frontends
+        if: matrix.gate == 'evolution-browser'
+        run: |
+          npm ci --prefix evolution-space/frontend
+          npm ci --prefix admin-frontend
+      - id: playwright
+        run: echo "version=$(node -p "require('./volumes-studio/frontend/node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-${{ runner.arch }}-playwright-${{ steps.playwright.outputs.version }}-chromium
+      - run: scripts/install-playwright.sh volumes-studio/frontend chromium
+      - name: Build Studio
+        if: matrix.gate == 'studio-integration'
+        run: npm --prefix volumes-studio/frontend run build
+      - run: scripts/check.sh ${{ matrix.gate }}
+      - name: Failed integration browser evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.gate }}-failure-${{ github.run_attempt }}
           path: |
             evolution-space/frontend/test-results/numbered-retry
             evolution-space/frontend/test-results/dynamic
@@ -125,8 +251,29 @@ jobs:
             volumes-studio/frontend/test-results/path-policies
           retention-days: 7
           if-no-files-found: ignore
+
+  race:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GOPRIVATE: github.com/TSHOGX/khora
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: orchestrator/go.mod
+          cache-dependency-path: orchestrator/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - name: Fetch private engine dependency
+        env:
+          KHORA_READ_TOKEN: ${{ secrets.KHORA_READ_TOKEN }}
+        run: scripts/fetch-go-dependencies.sh
+      - name: Install pinned native Session test dependencies
+        run: npm ci --ignore-scripts --prefix orchestrator/internal/runtimerelease
       - name: Core race checks (main and explicit qualification)
-        if: github.event_name != 'pull_request'
         run: scripts/check.sh race
 
   frontend:
@@ -170,8 +317,13 @@ jobs:
           cache: pip
           cache-dependency-path: frontend/e2e/requirements.txt
       - run: python -m pip install -r frontend/e2e/requirements.txt
-      - run: npx --no-install playwright install --with-deps chromium
-        working-directory: frontend
+      - id: playwright
+        run: echo "version=$(node -p "require('./frontend/node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-${{ runner.arch }}-playwright-${{ steps.playwright.outputs.version }}-chromium
+      - run: scripts/install-playwright.sh frontend chromium
       - name: Frontend lint
         run: scripts/check.sh frontend-lint
       - name: Frontend unit tests
@@ -184,8 +336,7 @@ jobs:
         run: scripts/check.sh frontend-edge
       - name: Install additional release browsers
         if: inputs.cross_browser
-        run: npx --no-install playwright install --with-deps firefox webkit
-        working-directory: frontend
+        run: scripts/install-playwright.sh frontend firefox webkit
       - name: Cross-browser scheduling controls (reuse build)
         if: inputs.cross_browser
         run: npx --no-install playwright test --config playwright.pickers.config.ts
