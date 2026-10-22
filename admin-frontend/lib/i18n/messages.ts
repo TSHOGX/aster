@@ -1042,6 +1042,8 @@ export const ZH: Record<string, string> = {
   "Every administrative change and sensitive access is recorded here for review.": "所有管理变更和敏感访问都会记录在此以供审查。",
   "Content and evolution are managed in their own applications:": "内容与演进在各自的应用中管理：",
   "for reviewed file libraries, and": "管理经过审核的文件库，",
+  "Volume Studio": "Volume Studio",
+  "Evolution Space": "演进空间",
   "for group knowledge workflows. Grant access to them from a user or group page.": "管理团队知识工作流。可在用户或用户组页面授予访问权限。",
   "Open the administration overview": "打开管理概览",
   "Delete policy “{name}”?": "删除策略“{name}”？",

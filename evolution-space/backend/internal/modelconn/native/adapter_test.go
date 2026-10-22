@@ -31,7 +31,9 @@ func input(base string, key *string) modelconn.Input {
 type fakeService struct {
 	calls   atomic.Int32
 	replies []func(w http.ResponseWriter, r *http.Request)
-	gate    chan struct{}
+	// gate holds requests until closed; handlers from cancelled calls may
+	// still read it while the test clears it.
+	gate atomic.Pointer[chan struct{}]
 }
 
 func (f *fakeService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -43,9 +45,9 @@ func (f *fakeService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
 		return
 	}
-	if f.gate != nil {
+	if gate := f.gate.Load(); gate != nil {
 		select {
-		case <-f.gate:
+		case <-*gate:
 		case <-r.Context().Done():
 			return
 		}
@@ -157,7 +159,8 @@ func TestAdapterFailureInterruptionCancellationAndDisabledConnections(t *testing
 		t.Fatal("cancel before dispatch", value)
 	}
 	// Cancelling an in-flight call stops it and counts the reserved ceiling.
-	service.gate = make(chan struct{})
+	gate := make(chan struct{})
+	service.gate.Store(&gate)
 	key, submission = newCall("run-1", "in-flight")
 	result := make(chan []byte, 1)
 	go func() { raw, _ := adapter.Submit(ctx, key, submission); result <- raw }()
@@ -177,7 +180,7 @@ func TestAdapterFailureInterruptionCancellationAndDisabledConnections(t *testing
 	if submitted := decode(t, <-result); submitted.State != "cancelled" {
 		t.Fatal("submit result after cancel", submitted)
 	}
-	service.gate = nil
+	service.gate.Store(nil)
 	disabled := input("http://127.0.0.1:1/v1", nil)
 	disabled.ExpectedRevision, disabled.Enabled = 1, false
 	c, _ := adapter.Store.Get(ctx, ref.ID)
