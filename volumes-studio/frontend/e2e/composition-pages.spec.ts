@@ -72,15 +72,15 @@ test("composition pages pin heads and recover failed or denied continuations", a
   await expect(composition).toContainText("Showing 200 of 202 committed paths.");
   await expect(composition).toContainText(advanced.commit_id);
   await composition.getByRole("button", {name:"Clear selected paths",exact:true}).click();
-  await composition.getByRole("button", {name:"More committed paths",exact:true}).press("Enter");
+  await expect(composition.getByRole("button", {name:"More committed paths",exact:true})).toBeEnabled(); await composition.getByRole("button", {name:"More committed paths",exact:true}).press("Enter");
   await expect(composition).toContainText("Showing 202 of 202 committed paths.");
   await expect(composition.getByRole("checkbox", {checked:true})).toHaveCount(0);
   await composition.getByRole("checkbox", {name:"entry-200.txt · added",exact:true}).check();
-  await composition.getByRole("button", {name:"More source branches",exact:true}).press("Enter");
+  await expect(composition.getByRole("button", {name:"More source branches",exact:true})).toBeEnabled(); await composition.getByRole("button", {name:"More source branches",exact:true}).press("Enter");
   // The branch's frozen head is displayed, while its paths load only on demand.
   const lateFieldset = composition.locator("fieldset").filter({has:page.getByRole("button",{name:"Load committed paths",exact:true})});
   await expect(lateFieldset).toHaveCount(1);
-  await lateFieldset.getByRole("button",{name:"Load committed paths",exact:true}).press("Enter");
+  await expect(lateFieldset.getByRole("button",{name:"Load committed paths",exact:true})).toBeEnabled(); await lateFieldset.getByRole("button",{name:"Load committed paths",exact:true}).press("Enter");
   await expect(composition.getByRole("checkbox",{name:"late.txt · added",exact:true})).not.toBeChecked();
   await composition.getByRole("checkbox",{name:"late.txt · added",exact:true}).check();
   await language("zh");

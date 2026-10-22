@@ -24,6 +24,8 @@ for(const width of [390,1440])test(`immutable history and snapshot comparison at
   if(new URL(route.request().url()).searchParams.get("head")!==main.commit_id)return route.continue();
   const response=await route.fetch();initialArrived();await initialHeld;await route.fulfill({response}).catch(()=>{});
  });
+ // Let the library list finish loading; WebKit reports a fetch cancelled by navigation as a page error.
+ await page.waitForLoadState("networkidle");
  await page.goto(`/volumes-studio/libraries/${library.id}?branch=${branch.id}&view=history`);
  const history=page.getByRole("region",{name:"Commit history and comparison",exact:true});
  await initialWaiting;
