@@ -157,15 +157,23 @@ func (a *EvaluationInputAPI) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer reader.Close()
+	writePinnedFile(w, reader, entry)
+}
+
+// writePinnedFile verifies the Studio stream before any response bytes are
+// written. A same-length substitution still reads as a complete body once
+// Content-Length has been declared, so the digest check has to fail first.
+func writePinnedFile(w http.ResponseWriter, reader io.Reader, entry manifest.Entry) {
+	payload, err := io.ReadAll(reader)
+	size, sizeErr := manifest.ParseSize(entry.Size)
+	if err != nil || sizeErr != nil || int64(len(payload)) != size {
+		write(w, 503, map[string]string{"error": "input_file_unavailable"})
+		return
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", entry.Size)
 	w.Header().Set("X-Content-Digest", entry.Digest)
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": entry.Path}))
 	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
-	size, _ := manifest.ParseSize(entry.Size)
-	// Headers are sent; a mismatch can only cut the body short, which the
-	// declared Content-Length and digest let the reader detect.
-	if _, err := io.Copy(w, io.LimitReader(reader, size+1)); err != nil {
-		return
-	}
+	_, _ = w.Write(payload)
 }
