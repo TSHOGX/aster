@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { branchAPI, type Branch } from "../lib/branches";
+import { applyBranchSelection } from "../lib/branch-selection";
 import { APIError, requestID } from "../lib/api";
 import { storageRead, storageWrite } from "../lib/workbench";
 import { useT } from "../lib/i18n";
@@ -61,10 +62,14 @@ export function BranchSelector({ library, onSelect, creating, setCreating }: { l
     setBusy(true); setError("");
     try {
       const branch = await branchAPI.read(library, id);
+      // selectBranch replaces the stored branch immediately, so the previous id
+      // has to be read first. Comparing afterwards is always false and leaves
+      // the previous branch's integration, conflict and history in the URL.
+      const previous = studio.model.branches[library]?.id;
       studio.selectBranch(branch);
-      const url = new URL(location.href); url.searchParams.set("branch", id);
-      if (id !== studio.model.branches[library]?.id) for (const key of ["integration", "conflict", "publication", "history_head"]) url.searchParams.delete(key);
-      url.searchParams.delete("version"); history.replaceState(null, "", url);
+      const url = new URL(location.href);
+      applyBranchSelection(url, previous, id);
+      history.replaceState(null, "", url);
       onSelect();
     } catch (e) { setError(String(e)); } finally { setBusy(false); }
   };
