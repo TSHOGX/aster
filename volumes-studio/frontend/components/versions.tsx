@@ -4,6 +4,7 @@ import { message, useT } from "../lib/i18n";
 
 import { useEffect, useRef, useState } from "react";
 import type { Branch } from "../lib/branches";
+import { applyBranchSelection } from "../lib/branch-selection";
 import { api, Library, requestID, Version } from "../lib/api";
 import { Page, query, relativeTime } from "../lib/workbench";
 import { Menu, Modal, Picker } from "./ui";
@@ -215,8 +216,11 @@ export function Versions({
           name: `${v.label.slice(0, 80)}-${request.slice(0, 8)}`,
           base_commit: v.accepted_commit,
         });
+        const previous = studio.model.branches[library.id]?.id;
         studio.selectBranch(branch);
-        const url = new URL(location.href); url.searchParams.set("branch", branch.id); url.searchParams.delete("version"); history.replaceState(null, "", url);
+        const url = new URL(location.href);
+        applyBranchSelection(url, previous, branch.id);
+        history.replaceState(null, "", url);
         onInspect("");
       } else
         await studio.write(`/operations/${v.id}/${action}`, {
