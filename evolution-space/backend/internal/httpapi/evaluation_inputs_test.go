@@ -33,6 +33,16 @@ func TestPinnedInputIsWithheldWhenTheStreamFailsAfterAFullRead(t *testing.T) {
 	}
 }
 
+func TestPinnedInputRejectsAnOversizedStream(t *testing.T) {
+	payload := []byte("oversized-candidate-body")
+	entry := manifest.Entry{Path: "candidate.txt", Kind: "file", Size: "18", Digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}
+	w := httptest.NewRecorder()
+	writePinnedFile(w, bytes.NewReader(payload), entry)
+	if w.Code != 503 || bytes.Contains(w.Body.Bytes(), payload) {
+		t.Fatalf("oversized stream was accepted: %d %q", w.Code, w.Body.String())
+	}
+}
+
 func TestPinnedInputWritesOnlyAVerifiedBody(t *testing.T) {
 	payload := []byte("reviewed-candidate")
 	entry := manifest.Entry{Path: "candidate.txt", Kind: "file", Size: "18", Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}

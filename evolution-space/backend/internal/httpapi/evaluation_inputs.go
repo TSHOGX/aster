@@ -163,9 +163,11 @@ func (a *EvaluationInputAPI) serve(w http.ResponseWriter, r *http.Request) {
 // writePinnedFile verifies the Studio stream before any response bytes are
 // written. A same-length substitution still reads as a complete body once
 // Content-Length has been declared, so the digest check has to fail first.
+// The buffer is bounded to the pinned size plus one byte, so a stream longer
+// than the manifest entry is rejected without first being read whole.
 func writePinnedFile(w http.ResponseWriter, reader io.Reader, entry manifest.Entry) {
-	payload, err := io.ReadAll(reader)
 	size, sizeErr := manifest.ParseSize(entry.Size)
+	payload, err := io.ReadAll(io.LimitReader(reader, size+1))
 	if err != nil || sizeErr != nil || int64(len(payload)) != size {
 		write(w, 503, map[string]string{"error": "input_file_unavailable"})
 		return
