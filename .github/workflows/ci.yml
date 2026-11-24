@@ -291,10 +291,16 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # The race-instrumented product suite outgrew one 30-minute run; shards
+  # split its tests round-robin (shard 0 also runs the smaller packages).
   race:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     env:
       GOPRIVATE: github.com/TSHOGX/khora
     steps:
@@ -313,7 +319,7 @@ jobs:
       - name: Install pinned native Session test dependencies
         run: npm ci --ignore-scripts --prefix orchestrator/internal/runtimerelease
       - name: Core race checks (main and explicit qualification)
-        run: scripts/check.sh race
+        run: scripts/check.sh race ${{ matrix.shard }}/4
 
   frontend:
     runs-on: ubuntu-24.04
